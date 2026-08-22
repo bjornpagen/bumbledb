@@ -1,11 +1,3 @@
-//! The lawful artifacts: the human markdown (the enforcement map
-//! rendered whole — the parity documentation IS the data the twin DDL
-//! was built from — then one family table per durability lane under
-//! the lane's config prose, then the rejection-latency note) and the
-//! machine JSON (`{"world":"lawful", …}`, hand-rolled through
-//! [`crate::json::push_str_lit`] — the dependency quarantine forbids
-//! serde).
-
 use std::fmt::Write as _;
 
 use crate::duralane;
@@ -14,8 +6,6 @@ use crate::json::push_str_lit;
 use super::enforcement;
 use super::run::LawRow;
 
-/// Nanoseconds as the report's microsecond columns (three decimals —
-/// the trace writer's format).
 #[expect(
     clippy::cast_precision_loss,
     reason = "reporting accepts lossy integer-to-float conversion"
@@ -24,7 +14,6 @@ fn us(ns: u64) -> String {
     format!("{:.3}", ns as f64 / 1000.0)
 }
 
-/// The human artifact.
 #[must_use]
 pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
     let mut out = String::new();
@@ -76,9 +65,6 @@ pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
          post-state fold certifies it).\n",
     );
 
-    // The trace pass (--trace): the traced twin sample's flame top-10
-    // per family — the JUDGMENT_* spans, readable; the artifacts sit
-    // under <out>/trace/lawful/<lane>/.
     if rows.iter().any(|row| row.flame.is_some()) {
         let _ = writeln!(out, "\n## Flame summaries (per family, --trace)\n");
         for row in rows {
@@ -91,7 +77,6 @@ pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
     out
 }
 
-/// One report row as JSON.
 fn push_row(out: &mut String, row: &LawRow) {
     out.push_str("{\"family\":");
     push_str_lit(out, row.family);
@@ -117,10 +102,6 @@ fn push_row(out: &mut String, row: &LawRow) {
 }
 
 /// The machine artifact — emitted only after every lane's post-state
-/// fold passed (the orchestration renders last), so `"poststate":"ok"`
-/// is a certified claim, never a default. Carries the provenance stamp
-/// (the one shared emitter in [`crate::report`], shared-machine stamp
-/// included, built here at render time = lane end).
 #[must_use]
 pub fn json(seed: u64, rows: &[LawRow]) -> String {
     let mut out = String::new();
