@@ -3,49 +3,22 @@ use crate::exec::sink::{Acc, AggregateSink, GroupState, SinkSpec, i64_to_word};
 use crate::interval::sweep::{Continuation, sweep};
 
 impl AggregateSink {
-    /// Finalizes each group into `emit` as **word rows** (find order,
-    /// each find contributing its width — an interval find is two
-    /// words), assembling rows in a caller-reused scratch. Sums are
-    /// range-checked here, once — deterministic by construction (i128
-    /// cannot overflow summing fewer than 2^64 i64 terms). Empty input
-    /// yields zero rows: a global aggregate over nothing is the empty
-    /// set, not a 0 or NULL row.
-    ///
-    /// Fold groups emit one row each; Pack groups emit **one row per
-    /// maximal segment** of the group's claim union (relation-shaped —
-    /// the claim lists sort here, hence `&mut self`).
-    ///
+
     /// # Errors
-    ///
-    /// `Overflow` when a Sum's final value exceeds its result type; errors
-    /// from `emit` propagate.
+
     pub fn finalize_into(
         &mut self,
         answer_scratch: &mut Vec<u64>,
         mut emit: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-        // Pack's sort pass, ahead of the emit loop (which iterates the
-        // group map immutably): each live group's claim list orders by
-        // start word — the sweep's ONE precondition, so the comparator
-        // is the start word alone (a full `[start, end]` lexicographic
-        // compare paid a second word per decision for a tie order the
-        // sweep cannot observe: overlapping and identical claims
-        // collapse into the same maximal segment whatever their end
-        // order). The sort is `sort_unstable` — the existing in-place
-        // machinery, allocation-free, so the warm gate covers it; a
-        // pooled radix over the start words stays unearned until a
-        // bench shows this pass dominating a profile (t5_pack_key's
-        // 35µs/44% warm-finalize share is the standing candidate).
+
         let live = self.group_count();
         if let GroupState::Pack { claims, .. } = &mut self.group_state {
             for claims in &mut claims[..live] {
                 claims.sort_unstable_by_key(|&[start, _]| start);
             }
         }
-        // The two group representations walk in mint order either way
-        // (the map preserves insertion order; the dense ordinals ARE the
-        // mint record) — the dense walk reconstructs each key's words
-        // from its mixed-radix ordinal (finding 049).
+
         match &self.groups {
             crate::exec::sink::GroupTable::Hashed(map) => {
                 for (key, group_idx) in map.iter() {
@@ -69,8 +42,6 @@ impl AggregateSink {
         Ok(())
     }
 
-    /// One group's emission by head shape — the finalize walk's body,
-    /// shared by both group representations.
     fn emit_group(
         &self,
         key: &[u64],
@@ -105,14 +76,6 @@ impl AggregateSink {
         }
     }
 
-    /// One Pack group's emission: the sweep's maximal-run continuation
-    /// (`crate::interval::sweep` — the one segment walk, this is its
-    /// second caller) over the group's start-sorted claims, one head answer
-    /// per maximal segment — group key interleaved per find order, the
-    /// segment's two words at the Pack position. Adjacency merges,
-    /// identical claims collapse, and a ray (`end == MAX`) is the
-    /// frontier no later claim exceeds, so a packed ray is a ray — all
-    /// three are the sweep's laws, not cases here.
     fn emit_pack_group(
         &self,
         key: &[u64],
@@ -120,8 +83,7 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         emit: &mut impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
-        /// The emit continuation: consumed segments need nothing; a
-        /// maximal run is one answer.
+
         struct PackEmit<'a, F> {
             finds: &'a [SinkSpec],
             key: &'a [u64],
@@ -177,7 +139,6 @@ impl AggregateSink {
         )
     }
 
-    /// Range-checks and word-encodes one accumulator.
     fn finalize_acc(acc: Acc, find_idx: usize) -> Result<u64> {
         match acc {
             Acc::SumSigned(total) => i64::try_from(total).map(i64_to_word).map_err(|_| {
@@ -194,11 +155,8 @@ impl AggregateSink {
         }
     }
 
-    /// Convenience finalization into fresh vectors (tests).
-    ///
     /// # Errors
-    ///
-    /// As [`Self::finalize_into`].
+
     #[cfg(test)]
     pub fn into_answers(mut self) -> Result<Vec<Vec<u64>>> {
         let mut rows = Vec::with_capacity(self.groups.len());
