@@ -1,8 +1,4 @@
-//! Derived tables → `WITH [RECURSIVE]` (lossy SQLite image of this
-//! cut). Interiors emit as `interior{id}` CTEs in declaration order;
-//! rec is `rec`. Main is the SELECT. Zero CTEs is a plain query — the
-//! same SQL as the old CQ path. No UNION ALL. No CTE after the rec —
-//! `CLOSURE_ROOTS` inlines the anti-join into main.
+//! No CTE after the rec —
 
 use bumbledb::ir::{FindTerm, ProjectionRule, Rec, RecRule, RecStep};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
@@ -10,13 +6,7 @@ use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value
 use super::query::{QueryShape, SharedParams, arm_body, rule_core};
 use super::{Translated, VarCols, derived_cte_name};
 
-/// Translate a Query: derived tables as CTEs in declaration order, then
-/// main. Zero CTEs → no `WITH` clause (the CQ path).
-///
 /// # Errors
-///
-/// Interval-typed derived columns, or anything [`super::query::translate_rules`]
-/// names on a rule.
 pub fn translate_query(
     query: &Query,
     schema: &Schema,
@@ -190,11 +180,7 @@ fn main_select(
     super::query::translate_rules(rules, schema, sets, params)
 }
 
-/// Interval-typed derived columns are the remaining translator limit.
-///
 /// # Errors
-///
-/// An interior or rec head column whose type is interval.
 pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), String> {
     match query {
         Query {
