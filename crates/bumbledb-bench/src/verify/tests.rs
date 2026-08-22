@@ -12,10 +12,7 @@ fn cfg(tag: &str) -> VerifyConfig {
             seed: 1,
             scale: Scale::S,
         },
-        // 25 randomized cases: the debug-build engine takes seconds per
-        // heavy random shape, so 25 keeps the full three-lane test
-        // inside a unit-test budget (release verify runs use
-        // DEFAULT_RANDOM_CASES).
+
         random_cases: 25,
         out_dir: scratch(tag),
     }
@@ -34,27 +31,21 @@ fn the_stamp_tracks_every_ingredient() {
     assert_ne!(stamp_value(&cases), baseline, "case count is an ingredient");
 }
 
-/// The stamp is bound to the binary that
-/// earned it. The fingerprint ingredient is blake3 of the running
-/// executable, and flipping it flips the stamp — a stamp computed
-/// under any other fingerprint is rejected.
 #[test]
 fn the_stamp_is_bound_to_the_binary() {
     let base = cfg("stamp-binary");
-    // The fingerprint is exactly blake3 of the running executable.
+
     let exe = std::env::current_exe().expect("exe");
     let bytes = std::fs::read(exe).expect("read");
     let mut digest = bumbledb::digest::Digest::new();
     digest.update(&bytes);
     assert_eq!(binary_fingerprint(), digest.finalize());
 
-    // Flipping the fingerprint flips the stamp...
     let mut foreign = binary_fingerprint();
     foreign[0] ^= 0xFF;
     let foreign_stamp = stamp_value_with(&base, &foreign);
     assert_ne!(foreign_stamp, stamp_value(&base));
 
-    // ...and stamp_matches rejects a stamp another binary earned.
     std::fs::create_dir_all(&base.out_dir).expect("dir");
     let path = base.out_dir.join("verify.stamp");
     std::fs::write(&path, &foreign_stamp).expect("write");
@@ -64,8 +55,6 @@ fn the_stamp_is_bound_to_the_binary() {
     let _ = std::fs::remove_dir_all(&base.out_dir);
 }
 
-/// One side erroring where the other answers is a mismatch
-/// bundle with an `ERROR:` artifact — never a panic, never a stamp.
 #[test]
 fn divergence_by_error_is_a_bundle_not_a_panic() {
     let mut config = cfg("error-divergence");
@@ -105,15 +94,13 @@ fn stamp_matches_accepts_and_rejects() {
     let _ = std::fs::remove_dir_all(&base.out_dir);
 }
 
-/// A deliberately wrong SQL for one family fails the run with full
-/// arbitration bundles.
 #[test]
 fn a_wrong_oracle_fails_with_a_bundle() {
     let mut config = cfg("mismatch");
     config.random_cases = 0;
     let failure = run_with_sql_override(&config, |family| {
         (family == "point").then(|| {
-            // Off-by-one: the wrong posting's values on every hit.
+
             "SELECT DISTINCT t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0 \
              WHERE t0.\"id\" = ?1 + 1"
                 .to_owned()
@@ -139,22 +126,11 @@ fn a_wrong_oracle_fails_with_a_bundle() {
     let _ = std::fs::remove_dir_all(&config.out_dir);
 }
 
-/// The full oracle at S: families + 25 randomized cases agree, and the
-/// stamp lands. (Re-armed by PRD 06: the naive model seeds
-/// closed-relation extensions, so the vocabulary containments commit on
-/// both oracles.)
 #[test]
 fn a_full_verify_at_s_succeeds() {
     let config = cfg("full");
     let report = run(&config).expect("verify succeeds");
-    // README.md's published oracle count ("N-case differential oracle";
-    // "N cases" under Measurement discipline) is the COMPLETED count of
-    // the default release run — this config differs from it in
-    // random_cases alone, and only the randomized lane consumes that
-    // knob, at exactly four draws per query. Projecting this run to the
-    // defaults must therefore land on the README's number (the ca7fc313
-    // precedent: the README is trued to the stamp) — any roster or lane
-    // change fails HERE until README.md is trued with it.
+
     assert_eq!(
         report.cases + u64::from(DEFAULT_RANDOM_CASES - config.random_cases) * 4,
         2_879,
@@ -169,8 +145,6 @@ fn a_full_verify_at_s_succeeds() {
     let _ = std::fs::remove_dir_all(&config.out_dir);
 }
 
-/// bench-003: the mixed `random_query` entry feeds the stamp. A default
-/// randomized batch must include interiors/rec — not a second reach loop.
 #[test]
 fn the_default_randomized_batch_draws_an_interiors_or_rec_query() {
     let cfg = GenConfig {
