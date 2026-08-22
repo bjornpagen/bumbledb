@@ -199,7 +199,6 @@ fn parse_str(bytes: &[u8], pos: &mut usize) -> Result<String, String> {
                 *pos += 1;
             }
             Some(_) => {
-
                 let rest = std::str::from_utf8(&bytes[*pos..])
                     .map_err(|_| format!("invalid UTF-8 at byte {pos}"))?;
                 let c = rest.chars().next().expect("non-empty");
