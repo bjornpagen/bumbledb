@@ -49,7 +49,6 @@ pub fn random_descriptor(rng: &mut Rng) -> SchemaDescriptor {
 }
 
 fn random_relation(rng: &mut Rng, idx: usize) -> RelationDescriptor {
-
     let name = if rng.chance(1, 8) {
         pick(rng, RELATION_NAMES)
     } else {
@@ -111,7 +110,7 @@ fn random_type(rng: &mut Rng) -> ValueType {
 }
 
 fn random_extension(rng: &mut Rng, fields: &[FieldDescriptor]) -> Box<[Row]> {
-    let rows = draw(rng, 4); 
+    let rows = draw(rng, 4);
     (0..rows)
         .map(|row| {
             let handle = if rng.chance(1, 8) {
@@ -150,7 +149,6 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
     match value_type {
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),
         ValueType::U64 => {
-
             if rng.chance(1, 8) {
                 Value::U64(u64::from(u16::MAX) + 1 + rng.range(16))
             } else {
@@ -222,7 +220,7 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
             let source = random_side(rng, relations);
             let weight = random_weight(rng, relations, source.relation);
             let hi = if rng.chance(1, 3) {
-                None 
+                None
             } else {
                 Some(random_bound(rng, relations, target.relation))
             };
@@ -306,7 +304,7 @@ fn random_projection(
     relation: RelationId,
 ) -> Box<[FieldId]> {
     let span = field_span(relations, relation);
-    let len = draw(rng, 4); 
+    let len = draw(rng, 4);
     (0..len).map(|_| random_field_id(rng, span)).collect()
 }
 
