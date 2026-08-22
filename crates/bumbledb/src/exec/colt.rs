@@ -1,43 +1,17 @@
-//! COLT — the Column-Oriented Lazy Trie (docs/architecture/40-execution.md), per paper §4.2 with the
-//! chunked-child-list deviation (`docs/architecture/40-execution.md`).
-//!
+//! COLT — the Column-Oriented Lazy Trie, per paper §4.2 with the
+//! chunked-child-list deviation.
 //! Aliasing safety is representational: nodes, chunks, map slots, and key
 //! words live in index-addressed pools (`NodeRef`-style u32 indices, never
 //! pointers) — the fix for v5's `UnsafeCell` aliasing UB (post-mortem
 //! §36). The *bounds* checks on iteration
-//! gathers are debug-asserted once per batch segment and elided in
 //! release (`get_unchecked` per the 00-product unsafe policy: this
-//! module is on the allowlist, and every unchecked read sits behind a
 //! segment-level invariant stated at the site). Nothing is ever built
-//! eagerly: a node is offsets into the base columns until a `get` (or a
-//! non-suffix `iter`) forces exactly one level.
-//!
-//! Iteration is batched copy-out ([`Colt::iter_batch`]): entries are
-//! `(key words, child cursor)` pairs — **the child comes with the key**;
-//! re-probing the map just enumerated is inexpressible through this API
-//! (post-mortem §34).
-//!
-//! The probe path is `#[inline(always)]` end to end (measured):
-//! an L2-resident probe stream's surviving cost class is instructions
-//! retired per probe, and call ceremony was first on the bill. The
-//! lint's "usually a bad idea" is measured wrong here, and the inlining
-//! is machine-checked by `scripts/check-asm.sh`, not trusted to the
-//! attribute.
 #![allow(clippy::inline_always)]
 
 pub(super) use crate::image::view::{BoundView, View};
 
-/// Positions per full chunk: bounded pointer traversal, independent loads
-/// within a chunk (the deviation from the paper's growable per-key vectors).
 const CHUNK_LEN: usize = 64;
 
-/// Positions in a chain's FIRST chunk — the graded geometry (finding
-/// 094, measured per the R22 microbench doctrine: the force+iterate
-/// pin at fanouts {2, 4, 8, 64}, `tests/pins.rs`): the common
-/// foreign-key-join fanouts (2–8 duplicates per key) fit their whole
-/// chain in one small span instead of paying a 64-position reservation
-/// per key — 8× less slab at fanout 2 — while chains that outgrow it
-/// step to full [`CHUNK_LEN`] chunks and lose nothing.
 const FIRST_CHUNK_CAP: usize = 8;
 
 /// Labeled key count. The label records *what kind* of number this is —
@@ -45,19 +19,18 @@ const FIRST_CHUNK_CAP: usize = 8;
 /// unforced vector's positions, an **upper bound** on its distinct keys
 /// (duplicate-inflated) and simultaneously the exact cost of iterating
 /// it unforced. Both are admissible iteration-cost bounds, so cover
-/// choice compares magnitudes first and uses the label only to break
-/// ties (docs/architecture/40-execution.md) — label-first preference is exactly the bug that
+/// ties — label-first preference is exactly the bug that
 /// iterated a 500-key forced map instead of a 7-row view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCount {
-    /// Distinct keys of a forced map.
+
     Exact(u64),
-    /// Position count of an unforced vector (duplicate-inflated).
+
     Estimate(u64),
 }
 
 impl KeyCount {
-    /// The iteration-cost bound the label qualifies.
+
     #[must_use]
     pub fn magnitude(self) -> u64 {
         match self {
@@ -84,7 +57,7 @@ pub enum SuffixRun<'a> {
 }
 
 impl SuffixRun<'_> {
-    /// Positions in this run.
+
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -93,8 +66,6 @@ impl SuffixRun<'_> {
         }
     }
 
-    /// Whether the run is empty (clippy's `len` companion; the executor
-    /// counts, sinks fold — nothing branches on emptiness yet).
     #[must_use]
     #[expect(
         dead_code,
@@ -109,48 +80,34 @@ impl SuffixRun<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodeRef(u32);
 
-/// Opaque resume token for [`Colt::iter_batch`]; start at `default()`.
-///
+/// Opaque resume token for [`Colt::iter_batch`]; start at `default`.
 /// Bit 63 tags every nonzero token with the node state that minted it
 /// (clear = positions iteration, set = forced-map iteration), and bits
 /// 56–62 carry the minting [`Colt::reset`] epoch — so a token that
-/// outlives a force of its node OR a reset of its trie is caught by a
-/// release assert instead of being silently reinterpreted against
 /// changed state — the silent-omission wrong-results class, closed on
 /// both staleness axes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BatchToken(u64);
 
-/// The [`BatchToken`] state tag: set on forced-map (dense-index) tokens,
-/// clear on positions tokens. Positions tokens cannot collide with it
-/// or with the epoch field below: the root form is a view index (≤ u32
-/// space) and the chunked form packs `(chunk + 2) << 32 | offset`,
-/// which reaches bit 56 only past 2²³ chunks (≈2²⁹ positions at full
-/// chunks) — at the map's physical row bound (~5×10⁸ at 32 GiB);
-/// debug-checked at the mint site.
 const DENSE_TOKEN_TAG: u64 = 1 << 63;
 
-/// The [`BatchToken`] reset-epoch field, bits 56–62: every nonzero
-/// token carries the [`Colt`] epoch that minted it.
 const TOKEN_EPOCH_MASK: u64 = 0x7F << 56;
 
-/// The token payload below the epoch and tag fields.
 const TOKEN_PAYLOAD_MASK: u64 = !(DENSE_TOKEN_TAG | TOKEN_EPOCH_MASK);
 
-/// The token-kind mismatch message: fired when a resume token minted
-/// under one node state is presented after that state changed.
+/// The token-kind mismatch message: fired when a resume token minted under one
+/// node state is presented after that state changed.
 const STALE_TOKEN: &str = "iteration token outlived a force — drain before probing this cursor";
 
-/// The token-epoch mismatch message: fired when a resume token minted
-/// in one generation is presented after a reset re-minted the pools.
+/// The token-epoch mismatch message: fired when a resume token minted in one
+/// generation is presented after a reset re-minted the pools.
 const STALE_EPOCH: &str = "iteration token outlived a reset — drain before the next execution";
 
-/// Where an unforced node's positions come from.
 #[derive(Debug, Clone, Copy)]
 enum Positions {
-    /// The root: iterate the view directly (all positions or survivors).
+
     Root,
-    /// A chunked child list: `(first, last, count)`.
+
     Chunks { first: u32, last: u32, count: u32 },
 }
 
@@ -160,105 +117,73 @@ enum NodeState {
     Forced { map: u32 },
 }
 
-/// One chunk of a child list: a `(start, cap, len, next)` frame over
-/// the shared position slab (`Colt::chunk_positions`) — 12 bytes of
-/// metadata, positions sized to the geometry instead of a fixed
-/// 64-position array per chunk. The graded capacities
-/// ([`FIRST_CHUNK_CAP`] first, [`CHUNK_LEN`] after) live entirely in
-/// `cap`; every walker reads `positions[start..start + len]`.
 #[derive(Debug, Clone, Copy)]
 struct Chunk {
-    /// Start of this chunk's reserved span in the position slab.
+
     start: u32,
-    /// The reserved span's length.
+
     cap: u8,
-    /// The occupied prefix.
+
     len: u8,
-    /// Next chunk index, or `u32::MAX`.
+
     next: u32,
 }
 
-/// A decoded occupied-slot child (emptiness lives in the ctrl
-/// bytes; a bucket's packed child word is always one of these).
 #[derive(Debug, Clone, Copy)]
 enum Slot {
-    /// Singleton optimization: the first position lives inline; a chunked
-    /// node is allocated only on the second.
+
     Single(u32),
     Node(NodeRef),
 }
 
-/// One forced level's open-addressed map, bucket-of-8 layout
-/// (measured): 8 slots per bucket — 8 ctrl bytes as one
-/// aligned word in the ctrl slab, then `8 × arity` key words
-/// **column-major within the bucket** (key word 0 of all 8 slots
-/// contiguous — the NEON sweep's natural shape) and 8 packed child
-/// words, contiguous in the bucket slab with stride `8·arity + 8`. A
-/// probe loads the bucket ONCE and resolves all 8 candidates from it;
-/// overflow steps to the NEXT bucket (bucket-linear probing —
-/// measured displacement negligible below 0.4 load). No tombstones
-/// (build-once, never deleted from). Sizing targets ≤ 0.4 load — the
-/// measured occupancy-invariant band (flat probes 0.15–0.4) — from the
-/// position-count guess, rehash-doubling in bucket units when the next
-/// insert would cross it: `(len + 1) * 5 > nbuckets * 16`
-/// (5/16 = 1/(8·0.4), 8 slots per bucket);
-/// iteration never touches the slot array — it walks the dense
-/// occupied list. Slot indices everywhere (dense entries, probe
-/// returns) stay GLOBAL (`bucket·8 + slot`), so ctrl indexing and the
-/// dense list are unchanged from the linear layout.
+/// Sizing targets ≤ 0.4 load — the measured occupancy-invariant band (flat
+/// probes 0.15–0.4) — from the position-count guess, rehash-doubling in bucket
+/// units when the next insert would cross it: `(len + 1) * 5 > nbuckets * 16`
+/// (5/16 = 1/(8·0.4), 8 slots per bucket); iteration never touches the slot
+/// array — it walks the dense occupied list.
 #[derive(Debug, Clone, Copy)]
 struct Map {
     arity: usize,
-    /// Power-of-two bucket count; home bucket = `hash & (nbuckets−1)`.
+
     nbuckets: usize,
     len: u32,
-    /// Start of this map's ctrl range (`nbuckets * 8` bytes, 8-aligned
-    /// groups — a bucket's ctrl word never straddles groups).
+
     ctrl_start: usize,
-    /// Start of this map's buckets (`nbuckets * (8·arity + 8)` words).
+
     bucket_start: usize,
-    /// Start of this map's occupied-slot list in the dense slab —
-    /// `len` entries, insertion-ordered, O(keys) to walk.
+
     dense_start: usize,
 }
 
 impl Map {
-    /// Words per bucket: `8 × arity` keys (column-major) + 8 children.
+
     fn stride(&self) -> usize {
         8 * self.arity + 8
     }
 
-    /// Slot capacity (8 per bucket) — the test-facing sizing number.
     #[cfg(test)]
     fn capacity(&self) -> usize {
         self.nbuckets * 8
     }
 
-    /// Bucket-slab word index of a global slot's bucket base.
     #[inline(always)]
     fn bucket_base(&self, idx: usize) -> usize {
         self.bucket_start + (idx >> 3) * self.stride()
     }
 
-    /// Bucket-slab word index of one key word of a global slot
-    /// (column-major within the bucket).
     #[inline(always)]
     fn key_word_at(&self, idx: usize, word: usize) -> usize {
         self.bucket_base(idx) + word * 8 + (idx & 7)
     }
 
-    /// Bucket-slab word index of a global slot's packed child.
     #[inline(always)]
     fn child_at(&self, idx: usize) -> usize {
         self.bucket_base(idx) + 8 * self.arity + (idx & 7)
     }
 }
 
-/// The packed child word's node tag (bit 63): set = `NodeRef` index,
-/// clear = a single pinned position. Both payloads are u32.
 const CHILD_NODE_TAG: u64 = 1 << 63;
 
-/// Packs a slot child into its bucket word.
 fn pack_child(slot: Slot) -> u64 {
     match slot {
         Slot::Single(position) => u64::from(position),
@@ -266,7 +191,6 @@ fn pack_child(slot: Slot) -> u64 {
     }
 }
 
-/// Unpacks a bucket child word (the slot is occupied by ctrl).
 #[inline(always)]
 fn unpack_child(word: u64) -> Slot {
     if word & CHILD_NODE_TAG == 0 {
@@ -278,8 +202,7 @@ fn unpack_child(word: u64) -> Slot {
     }
 }
 
-/// One prepended selection level's shape (docs/architecture/
-/// 40-execution.md, § selection levels): the image columns its trie keys
+/// One prepended selection level's shape: the image columns its trie keys
 /// decode from (one column for a scalar field, the start/end pair for an
 /// interval field), and whether the level is **set-bound** — a
 /// `Term::ParamSet` position, probed once per element with the survivor
@@ -313,9 +236,6 @@ enum SelectionKind {
     Set,
 }
 
-/// Selection-free tries are vacuous success. A cursor exists only on
-/// the arms that have one — `Pending` is the unselected selection-bearing
-/// start, not a dummy root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Start {
     Vacuous(Cursor),
@@ -323,12 +243,10 @@ enum Start {
     Selected(Cursor),
 }
 
-/// Pool high-water snapshot taken just before a select builds its first
-/// union node: everything appended past it — the union's position copies
-/// and every map the join forces beneath it — belongs to one execution's
-/// set values and is provably dead at the next `select`, which truncates
-/// back to the mark (capacity retained: the warm fixpoint the allocation
-/// contract requires, docs/architecture/40-execution.md).
+/// Pool high-water snapshot taken just before a select builds its first union
+/// node: everything appended past it — the union's position copies and every
+/// map the join forces beneath it — belongs to one execution's set values and
+/// is provably dead at the next `select`, which truncates back to the mark.
 #[derive(Debug, Clone, Copy)]
 struct PoolMark {
     nodes: usize,
@@ -344,61 +262,45 @@ struct PoolMark {
 /// enum over an `Arc`'d image plus survivor positions) and its pools, so a
 /// prepared query can hold and [`Colt::reset`] it across executions with
 /// every capacity retained (the 40-execution doc's zero-alloc discipline).
-///
-/// RULED (audit 29): no `Vec::new` / `to_vec` / `.clone()` on
+/// RULED (audit 29): no `Vec::new` / `to_vec` / `.clone` on
 /// refill/advance — those paths truncate to a [`PoolMark`] and reuse.
 pub struct Colt {
     view: View,
-    /// Per selection level: point-probe vs set-union ([`SelectionKind`]).
-    /// Depth (`selection_kinds.len()`) is the prepended Eq-constant
-    /// prefix (docs/architecture/40-execution.md); join levels sit below.
+
     selection_kinds: Vec<SelectionKind>,
-    /// The union watermark of the current execution's set probes, if any
-    /// ([`PoolMark`]).
+
     union_mark: Option<PoolMark>,
-    /// Per-select probe-hit scratch (capacity retained).
+
     select_hits: Vec<Cursor>,
-    /// Per-select union-position scratch (capacity retained).
+
     select_positions: Vec<u32>,
-    /// The post-selection start for the current execution. A cursor is
+
     /// present only after a vacuous or completed select.
     start: Start,
-    /// Per trie level — selection levels first, then join levels — the
-    /// image column index of each key variable. Public APIs take *join*
-    /// levels; internal code indexes this directly.
+
     schema_columns: Vec<Vec<usize>>,
     nodes: Vec<NodeState>,
     chunks: Vec<Chunk>,
-    /// The chunk position slab: every chunk's reserved span, one
-    /// contiguous pool ([`Chunk`]).
+
     chunk_positions: Vec<u32>,
-    /// The first-chunk capacity — [`FIRST_CHUNK_CAP`] everywhere but
-    /// the geometry pin, which A/Bs the graded and flat geometries in
-    /// one process (`tests/pins.rs`).
+
     first_chunk_cap: u8,
     maps: Vec<Map>,
-    /// Ctrl bytes for every forced map, range per map.
+
     ctrl: Vec<u8>,
-    /// Interleaved bucket rows for every forced map, range per map.
+
     buckets: Vec<u64>,
-    /// The dense occupied-slot lists, one contiguous range per map
-    /// (docs/architecture/40-execution.md). A rehash abandons its old range at the slab's
-    /// interior — reclaimed by [`Colt::reset`], a documented ≤2× slab
-    /// transient within a generation.
+
     dense: Vec<u32>,
-    /// Reused key-decoding scratch.
+
     scratch: Vec<u64>,
-    /// The force pass's staged key words (capacity retained — one
-    /// `FORCE_BATCH × arity` high-water).
+
     stage_keys: Vec<u64>,
-    /// The force pass's staged positions (capacity retained).
+
     stage_positions: Vec<u32>,
-    /// The reset epoch, minted into every nonzero [`BatchToken`]'s bits
+
     /// 56–62: a token that crosses a [`Colt::reset`] is refused loudly
-    /// instead of being silently reinterpreted against the new
-    /// generation's pools — the same class the bit-63 tag closes on the
-    /// force axis. Wraps at 128 (7 bits); a wrap-collision needs a
-    /// token held across exactly 128 resets, far past any driver shape.
+
     epoch: u8,
 }
 
@@ -431,20 +333,17 @@ mod prefetch;
 mod probe;
 mod select;
 
-// The tag/hash/mask primitives shared with the sink `WordMap` — one
-// definition (`exec/swar.rs`), two independent probe structures.
 use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask};
 
 /// The probe hash for a key — exposed so the vectorized executor's phase 1
-/// can compute all hashes (pure ALU) before phase 2 issues any bucket load
 /// (D4's two-phase probing, the 40-execution doc).
+/// can compute all hashes (pure ALU) before phase 2 issues any bucket load
 #[must_use]
 #[inline(always)]
 pub fn hash_key(words: &[u64]) -> u64 {
     hash_words(words)
 }
 
-/// [`hash_key`] with the word count fixed at compile time — the
 /// executor's phase-1 const-arity dispatch target (the wordmap's
 /// `hash_core` precedent). Hash-identical to [`hash_key`] by
 /// construction: both delegate to the one `swar` fold, and the
