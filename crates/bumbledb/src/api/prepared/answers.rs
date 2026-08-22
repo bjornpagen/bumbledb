@@ -43,7 +43,6 @@ impl Answers {
     }
 
     /// # Panics
-
     #[must_use]
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
@@ -150,7 +149,6 @@ impl Answers {
 
 impl<'a> Answer<'a> {
     /// # Panics
-
     #[must_use]
     pub fn get(&self, column: usize) -> AnswerValue<'a> {
         self.buffer.get(self.answer, column)
