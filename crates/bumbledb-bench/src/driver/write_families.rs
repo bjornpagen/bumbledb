@@ -22,7 +22,6 @@ pub(crate) fn write_families(
     trace_dir: Option<&Path>,
     flames: &mut Vec<report::FlameEmbed>,
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
-
     type EngineRunner = fn(&Db<Ledger>, GenConfig) -> Result<harness::Measurement, String>;
     type OracleRunner =
         fn(&rusqlite::Connection, GenConfig) -> Result<harness::Measurement, String>;
@@ -42,7 +41,6 @@ pub(crate) fn write_families(
             writebench::cold_containment_walk,
             sqlite_run::cold_containment_walk,
         ),
-
         (
             "cold_containment_walk_delete",
             writebench::cold_containment_walk_delete,
