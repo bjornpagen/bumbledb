@@ -1,9 +1,3 @@
-//! The staging law at the checker (PRD 08): σ literals seal at validate
-//! ([`CompiledCheck`]), the commit path consumes constants, and only
-//! interned text resolves per commit. The replay matrix pins the typed
-//! verdicts (statement ids included) so the staging move is
-//! behavior-preserving by test, not by hope.
-
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Result, Violation};
 use crate::schema::ValidateDescriptor as _;
@@ -25,15 +19,11 @@ const ACCOUNT: RelationId = RelationId(0);
 const TRANSFER: RelationId = RelationId(1);
 const REPORT: RelationId = RelationId(2);
 
-/// Declared statement order (no fresh fields, no closed relations).
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const TRANSFER_ACCOUNT: StatementId = StatementId(1);
 const TRANSFER_ACCOUNT_ID: ContainmentId = ContainmentId(0);
 const REPORT_ACCOUNT_ID: ContainmentId = ContainmentId(1);
 
-/// Account(id; key id) — Transfer(account | flagged == true) <=
-/// Account(id) carries a sealable bool σ; Report(account | note ==
-/// "urgent") <= Account(id) carries the one commit-resolved kind.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -90,10 +80,6 @@ fn transfer(schema: &Schema, account: u64, flagged: bool) -> Vec<u8> {
     )
 }
 
-/// The [shape] pin: the bool literal's canonical byte sealed at validate
-/// (`Encoded`), the str literal held as text (`Interned`) — encoding work
-/// left for the commit path is exactly the dictionary lookup, nothing
-/// else.
 #[test]
 fn sigma_literals_seal_at_validate() {
     let schema = schema();
@@ -121,9 +107,6 @@ fn sigma_literals_seal_at_validate() {
     assert_eq!(schema.key(KeyId(0)).id, ACCOUNT_KEY);
 }
 
-/// The `Interned`-miss path still yields `Never`: with "urgent" never
-/// interned, no stored fact can satisfy the σ — while the sealed bool σ
-/// materializes as a plain compare with zero dictionary traffic.
 #[test]
 fn an_uninterned_sigma_literal_resolves_to_never() {
     let dir = TempDir::new("sealed-never");
@@ -146,16 +129,12 @@ fn an_uninterned_sigma_literal_resolves_to_never() {
     ));
 }
 
-/// The replay matrix: one σ-bearing theory, a hand-built op stream, every
-/// verdict typed and statement-id-exact — the staging move changed where
-/// literals encode, never what the judgment says.
 #[test]
 fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     let dir = TempDir::new("sealed-replay");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
 
-    // In-σ source without its target: the violation names the statement.
     let flagged = transfer(&schema, 9, true);
     let result = apply_delta(&env, &schema, &[], &[(TRANSFER, flagged.clone())]);
     let violations = expect_rejected(result);
@@ -177,7 +156,6 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     assert_eq!(*direction, Direction::SourceUnsatisfied);
     assert_eq!(**violating, *flagged);
 
-    // Out-of-σ source: no edge, no probe, commits against the empty store.
     apply_delta(
         &env,
         &schema,
@@ -187,7 +165,6 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     .expect("a fact outside σ has no edge")
     .expect("admitted");
 
-    // Target and in-σ source land together: the final state satisfies.
     apply_delta(
         &env,
         &schema,
@@ -197,9 +174,6 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
     .expect("target and source in one delta")
     .expect("admitted");
 
-    // The Never σ: "urgent" was never interned, so no Report fact can
-    // satisfy the selection — an insert with a different interned note
-    // commits although its would-be target is absent.
     let noted: Result<Vec<u8>> = try {
         let view = env.read_txn()?;
         let mut delta = WriteDelta::new(&schema);
@@ -218,11 +192,11 @@ fn a_sigma_bearing_stream_replays_the_same_verdicts() {
 }
 
 /// The disjunctive σ (`f == {a, b}`): the set seals as `EncodedSet` in
-/// canonical order, the commit judgment reads membership among the
-/// alternatives (a singleton binding stays byte-identical to the classic
-/// arm), and a str set drops never-interned alternatives — all missing is
-/// `Never` (`lean/Bumbledb/Schema.lean: Selection.satisfies` — the
-/// field's value a MEMBER of the spelled set).
+/// canonical order, the commit judgment reads membership among the alternatives
+/// (a singleton binding stays byte-identical to the classic arm), and a str set
+/// drops never-interned alternatives — all missing is `Never`
+/// (`lean/Bumbledb/Schema.lean: Selection.satisfies` — the field's value a
+/// MEMBER of the spelled set).
 #[test]
 fn a_literal_set_sigma_seals_and_judges_membership() {
     use bumbledb_theory::schema::LiteralSet;
@@ -264,7 +238,6 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
     .validate()
     .expect("valid fixture");
 
-    // Sealed shape: the alternatives in canonical (sorted) order.
     assert_eq!(
         schema
             .containment(ContainmentId(0))
@@ -292,7 +265,6 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
         )
     };
 
-    // A member of the set without its target: rejected, source side.
     let result = apply_delta(&env, &schema, &[], &[(TRANSFER, status_transfer(3))]);
     let violations = expect_rejected(result);
     assert!(matches!(
@@ -304,14 +276,10 @@ fn a_literal_set_sigma_seals_and_judges_membership() {
         }, _)] if *statement == schema.cite(StatementId(1))
     ));
 
-    // Outside the set: no edge, no probe — commits against the empty
-    // store.
     apply_delta(&env, &schema, &[], &[(TRANSFER, status_transfer(2))])
         .expect("a fact outside the set has no edge")
         .expect("admitted");
 
-    // The other member, landing with its target: the final state
-    // satisfies.
     apply_delta(
         &env,
         &schema,
