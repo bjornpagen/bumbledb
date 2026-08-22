@@ -15,7 +15,6 @@ pub(crate) fn complete_admit_empty(schema: &Schema) -> Result<Admission<()>> {
 }
 
 impl<S: Theory> Db<S> {
-
     /// # Errors
 
     pub fn create(path: &Path, schema: S) -> Result<Admission<Self>> {
@@ -70,7 +69,6 @@ impl<S: Theory> Db<S> {
 }
 
 impl<S> Db<S> {
-
     pub(super) fn assemble(env: Environment, schema: Schema) -> Result<Self> {
         let generation = env.read_txn()?.generation()?;
         let schema = Arc::new(schema);
