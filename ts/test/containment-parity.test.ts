@@ -237,6 +237,46 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		])
 		assert.equal(lower(admitted).statements.length, 2)
 	})
+
+	test("a key widened WHOLE to bare Statement degrades the whole type-tier wall — never a false wall", function bareStatementKey() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		// The key vanishes into a bare Statement binding: its data no longer
+		// states {kind: "key"}, so a per-element roster read would MISS it and
+		// judge the containment's literal faces against a partial roster — a
+		// false wall on a schema the value tier admits. The total detector
+		// (law.ts, HasUndecidableKey): a data["kind"] that INCLUDES "key"
+		// without being one concrete KeyData degrades the WHOLE wall to
+		// silent, so this call COMPILES (no expect-error) and the value tier
+		// (which reads the key off the VALUE) admits.
+		const widenedStmt: Statement = key(Target, ["scope", "value"])
+		const admitted = schema("BareStatementKey", { Source, Target }, [
+			widenedStmt,
+			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
+		])
+		assert.equal(lower(admitted).statements.length, 2)
+	})
+
+	test("a KeyStatement UNION degrades the whole type-tier wall — the roster cannot state which key the value carries", function keyStatementUnion() {
+		const Source = relation("Source", { scope: u64, value: str })
+		const Target = relation("Target", { scope: u64, value: str })
+		const Other = relation("Other", { tag: u64 })
+		// A union of two concrete KeyStatements includes "key" in its kind
+		// but is not ONE concrete KeyData — the declared-key roster cannot
+		// state which key the value carries, so any per-element read is
+		// partial for one of the union's arms. The same total judgment: the
+		// whole wall degrades silent, this call COMPILES, and the value tier
+		// judges the actual key value (here the Target key — admitted).
+		function pickKey(flag: boolean) {
+			return flag ? key(Target, ["scope", "value"]) : key(Other, ["tag"])
+		}
+		const unionKey = pickKey(true)
+		const admitted = schema("KeyStatementUnion", { Source, Target, Other }, [
+			unionKey,
+			contained(on(Source, ["scope", "value"]), on(Target, ["scope", "value"]))
+		])
+		assert.equal(lower(admitted).statements.length, 2)
+	})
 })
 
 // ————————————————————————————————————————————————————————————————————————

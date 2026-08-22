@@ -16,7 +16,11 @@
  * is refused for concrete AND generic owners (the `owner`/`column` literals
  * fail `VarsOf<R>` structurally, and the general path's judgment stands
  * behind); (6) a misspelled concrete field still errors at the position and
- * at construction; and the DELIBERATE exclusion — `not()` gains no
+ * at construction; (7) an aliased extra-key record (`{ ...v(R), extra }` —
+ * a shape excess-property checking never sees) is refused at EVERY
+ * full-binding site through `ExactVars` and falls to the general form's
+ * judgment, compile refusal and construction twin alike; and the
+ * DELIBERATE exclusion — `not()` gains no
  * full-binding form (a full-fresh-var negation is a boundness refusal at
  * construction; blessing the spelling generically would type-admit a
  * guaranteed construction error) — stays a compile refusal. Lowering-only:
@@ -229,6 +233,88 @@ describe("the generic full-binding law", function suite() {
 		assert.equal(filtered.data.params.length, 2, "both params registered in first-use order")
 		const pins: [ParamsPin, RowPin] = [true, true]
 		assert.equal(pins.length, 2)
+	})
+
+	test("an aliased extra-key record is refused at every full-binding site — ExactVars restores the pre-0.16.0 exactness", function aliasedExtraKey() {
+		// Excess-property checking covers only inline literals, so an aliased
+		// or function-returned `{ ...v(R), extra: otherVar }` record used to
+		// match the full-binding form structurally while the pre-0.16.0
+		// general form refused it (CheckBindings → the unknown-field arm).
+		// ExactVars (scope.ts) maps a foreign key to a variable type whose
+		// mint column is `never`, so the record fails the full-binding
+		// intersection at EVERY site, falls to the general form, and is
+		// refused at compile time AND by the construction twin (`relation R
+		// has no field extra`).
+		const accountExtras = { ...v(Account), extra: v(Holder).id }
+		const holderExtras = { ...v(Holder), extra: v(Account).id }
+
+		// Site 1 — QueryRuleScope.match (the rule's first atom).
+		assert.throws(function scopeSite() {
+			query(Ledger).rule((r) => {
+				// @ts-expect-error — extra is not a column of Account; the aliased record falls to the general form
+				return r.match(Account, accountExtras).find({ n: r.count() })
+			})
+		}, /relation Account has no field extra/)
+
+		// Site 2 — QueryRuleChain.match (a later atom).
+		assert.throws(function chainSite() {
+			query(Ledger).rule((r) => {
+				// @ts-expect-error — extra is not a column of Holder; the aliased record falls to the general form
+				return r.match(Account, v(Account)).match(Holder, holderExtras).find({ n: r.count() })
+			})
+		}, /relation Holder has no field extra/)
+
+		// Site 3 — InteriorRuleScope.match.
+		assert.throws(function interiorScopeSite() {
+			// @ts-expect-error — extra is not a column of Account; the aliased record falls to the general form
+			query(Ledger).interior("mid", (r) => r.match(Account, accountExtras).find({ h: accountExtras.holder }))
+		}, /relation Account has no field extra/)
+
+		// Site 4 — InteriorRuleChain.match.
+		assert.throws(function interiorChainSite() {
+			query(Ledger).interior("mid", (r) => {
+				const a = v(Account)
+				// @ts-expect-error — extra is not a column of Holder; the aliased record falls to the general form
+				return r.match(Account, a).match(Holder, holderExtras).find({ h: a.holder })
+			})
+		}, /relation Holder has no field extra/)
+
+		// Site 5 — RecRuleScope.match (a rec arm's first atom).
+		assert.throws(function recScopeSite() {
+			query(Ledger).reach("reach", {
+				base: [
+					(r) => {
+						const { id: c } = v(Holder)
+						return r.match(Holder, { id: c }).find({ c })
+					}
+				],
+				rec: [
+					(r) => {
+						// @ts-expect-error — extra is not a column of Holder; the aliased record falls to the general form
+						return r.match(Holder, holderExtras).find({ c: holderExtras.id })
+					}
+				]
+			})
+		}, /relation Holder has no field extra/)
+
+		// Site 6 — RecRuleChain.match (a later atom on a rec arm).
+		assert.throws(function recChainSite() {
+			query(Ledger).reach("reach", {
+				base: [
+					(r) => {
+						const { id: c } = v(Holder)
+						return r.match(Holder, { id: c }).find({ c })
+					}
+				],
+				rec: [
+					(r) => {
+						const p = v(Parent)
+						// @ts-expect-error — extra is not a column of Holder; the aliased record falls to the general form
+						return r.match(Parent, p).match(Holder, holderExtras).find({ c: p.parent })
+					}
+				]
+			})
+		}, /relation Holder has no field extra/)
 	})
 
 	test("r.match(A, v(B)) is refused — concrete owners", function crossOwnerConcrete() {

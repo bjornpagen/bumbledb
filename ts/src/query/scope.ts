@@ -148,6 +148,26 @@ type VarsOf<R extends MatchOwner> = {
 }
 
 /**
+ * The exactness judgment of the six full-binding `match` forms (`#query/
+ * lower.ts` intersects it into the `bindings` parameter): a mapped type
+ * over the INFERRED record `B` requiring every entry to be a variable
+ * whose mint COLUMN is the entry's own key restricted to `R`'s matchable
+ * fields — for a column of `R` that is just the {@link VarsOf} entry's own
+ * shape, and for a FOREIGN key the column type is `never`, which no
+ * mintable variable inhabits. So an aliased or function-returned record
+ * carrying an extra key (`{ ...v(Account), extra: otherVar }` — shapes
+ * excess-property checking never sees, it covers inline literals only)
+ * fails the intersection and falls to the general form's judgment: the
+ * pre-0.16.0 compile refusal, restored. The identity record `v(rel)` still
+ * unifies for GENERIC `R` — the judgment is intersections and index
+ * constraints only, no deferred conditional anywhere, so the full-binding
+ * law (50-generic-binding.md, "The ruling") stands untouched.
+ */
+type ExactVars<R extends MatchOwner, B> = {
+	readonly [K in keyof B]: Var<AnyField, R["name"], K & keyof MatchFields<R> & string>
+}
+
+/**
  * The trusted admission seam of the variable-record mint (the pattern's
  * home is `isTypedScope` in `#query/lower.ts`): the checkable fact — one own
  * enumerable variable per sealed column — is verified before the record is
@@ -385,6 +405,7 @@ export type {
 	AnyVar,
 	ClassedField,
 	Duration,
+	ExactVars,
 	Flatten,
 	InferredOf,
 	JoinOk,

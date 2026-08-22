@@ -83,6 +83,7 @@ import { parseQueryIr } from "#query/parse-ir.ts"
 import type {
 	AnyVar,
 	ClassedField,
+	ExactVars,
 	Flatten,
 	InferredOf,
 	ParamEntry,
@@ -208,11 +209,12 @@ interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaCla
 	 * position slot, same owner, same column — discharges the join judgment by
 	 * construction (proposals/one-representation/50-generic-binding.md, "The
 	 * ruling"); an all-var record contributes no params, so the chain starts
-	 * paramless.
+	 * paramless. {@link ExactVars} maps a foreign key to `never`, so an
+	 * aliased extra-key record falls to the general form's judgment.
 	 */
-	match<R extends QueryRelation<Rels>>(
+	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
-		bindings: VarsOf<R>
+		bindings: B & ExactVars<R, B>
 	): QueryRuleChain<Rels, Record<never, never>, Classes>
 	/** The first EDB atom of the rule: fields bind variables, params, ∈-sets, or bare literals; absence is the wildcard. */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
@@ -243,8 +245,13 @@ interface QueryRuleChain<
 	 * slot IS its position slot) discharges the join judgment by construction
 	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
 	 * all-var record contributes no params — P rides through unchanged.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
 	 */
-	match<R extends QueryRelation<Rels>>(relation: R, bindings: VarsOf<R>): QueryRuleChain<Rels, P, Classes>
+	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
+		relation: R,
+		bindings: B & ExactVars<R, B>
+	): QueryRuleChain<Rels, P, Classes>
 	/** One more positive EDB atom — variable reuse joins, class-equal by the mint-slot judgment. */
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
@@ -272,10 +279,12 @@ interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends Schema
 	 * slot IS its position slot) discharges the join judgment by construction
 	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
 	 * all-var record contributes no params, so the chain starts paramless.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
 	 */
-	match<R extends QueryRelation<Rels>>(
+	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
-		bindings: VarsOf<R>
+		bindings: B & ExactVars<R, B>
 	): InteriorRuleChain<Rels, Record<never, never>, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
@@ -299,8 +308,13 @@ interface InteriorRuleChain<
 	 * slot IS its position slot) discharges the join judgment by construction
 	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
 	 * all-var record contributes no params — P rides through unchanged.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
 	 */
-	match<R extends QueryRelation<Rels>>(relation: R, bindings: VarsOf<R>): InteriorRuleChain<Rels, P, Classes>
+	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
+		relation: R,
+		bindings: B & ExactVars<R, B>
+	): InteriorRuleChain<Rels, P, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
@@ -323,10 +337,12 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 	 * slot IS its position slot) discharges the join judgment by construction
 	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
 	 * all-var record contributes no params, so the chain starts paramless.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
 	 */
-	match<R extends QueryRelation<Rels>>(
+	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
-		bindings: VarsOf<R>
+		bindings: B & ExactVars<R, B>
 	): RecRuleChain<Rels, Record<never, never>, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
@@ -355,8 +371,13 @@ interface RecRuleChain<
 	 * slot IS its position slot) discharges the join judgment by construction
 	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
 	 * all-var record contributes no params — P rides through unchanged.
+	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
+	 * extra-key record falls to the general form's judgment.
 	 */
-	match<R extends QueryRelation<Rels>>(relation: R, bindings: VarsOf<R>): RecRuleChain<Rels, P, Classes>
+	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
+		relation: R,
+		bindings: B & ExactVars<R, B>
+	): RecRuleChain<Rels, P, Classes>
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
