@@ -9,30 +9,14 @@ use crate::naive::ParamValue;
 use crate::translate::ParamSlot;
 
 impl<S> Run<'_, S> {
-    /// Executes one query × param draw on both stores and compares.
-    /// Returns `false` once the bundle budget is exhausted (stop the
-    /// run). Set params bind through the engine's `ParamArg` surface;
-    /// the `SQLite` side receives the per-draw re-rendered SQL in
-    /// `case.sql` with its element lists embedded as literals.
-    ///
-    /// Divergence-by-error is a mismatch, not a panic: if either side
-    /// errors at prepare or execute where the other answers, that is an
-    /// arbitration bundle with the erring side's `ERROR: <text>` in
-    /// place of its answers — the audit confirmed a real divergence class
-    /// here (`SQLite`'s transient SUM overflow vs the i128 accumulator).
-    /// Both-sides-error is a bundle too: no case is *expected* to error
-    /// today, so agreement-in-error would hide a tool defect as
-    /// verification. Setup errors (store open, corpus load) stay panics.
+
     pub(super) fn check(
         &mut self,
         case: &Case<'_>,
         param_order: &[ParamSlot],
         params: &[ParamValue],
     ) -> bool {
-        // Column types come from the engine's prepared query; without
-        // them the oracle's answers cannot even be decoded, so a prepare
-        // failure is an engine-side error and the oracle records "not
-        // executed" rather than a fabricated second error.
+
         let mut rendered_query = None;
         let (ours, theirs): (
             Result<Vec<compare::Answer>, String>,
@@ -105,8 +89,7 @@ impl<S> Run<'_, S> {
                 .out_dir
                 .join(format!("mismatch-{}", self.bundles.len()));
             std::fs::create_dir_all(&bundle).expect("bundle dir");
-            // The rule notation first (`ir::render` — total on malformed
-            // queries, so a roster rejection still shows its query), the
+
             // raw IR after for arbitration by structure.
             std::fs::write(
                 bundle.join("query.txt"),
@@ -133,7 +116,6 @@ impl<S> Run<'_, S> {
     }
 }
 
-/// Renders a comparison multiset for a bundle artifact.
 fn render_answers(answers: &[compare::Answer]) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
