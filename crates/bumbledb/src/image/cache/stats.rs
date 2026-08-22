@@ -1,6 +1,5 @@
 //! Cache observability counters. Under the `trace` feature these are
-//! per-op atomics (a cost the default build must not carry — the
-//! feature ruling, docs/architecture/60-validation.md); off, the
+//! per-op atomics; off, the
 //! counters type is a ZST and every method an inline empty body, so
 //! instrumented call sites are written once, `#[cfg]`-free — the
 //! obs.rs law, applied to the cache. Reader: the benchmark report.
@@ -14,11 +13,9 @@ pub(super) struct CacheCounters {
     hits: AtomicU64,
     misses: AtomicU64,
     builds: AtomicU64,
-    /// Copy-on-append extensions of a surviving base — the miss arm that
-    /// copied columns and decoded only the tail.
+
     appends: AtomicU64,
-    /// Carry-forwards — the zero-copy miss arm that re-keyed an untouched
-    /// relation's `Arc` at the reader's generation.
+
     carries: AtomicU64,
     evicted: AtomicU64,
 }
@@ -67,7 +64,6 @@ impl CacheCounters {
 
 /// One reading of the cache counters. A miss resolves through exactly one
 /// of `builds` / `appends` / `carries` — the delete-fallback pin's
-/// instrument: a delta that deleted from a relation forces its next read
 /// through `builds`; a delete-free one lands in `appends` or `carries`.
 #[cfg(feature = "trace")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,12 +76,6 @@ pub struct CacheStats {
     pub evicted: u64,
 }
 
-// ---------------------------------------------------------------------
-// Feature off: identical signatures, empty bodies, ZST — call sites
-// never write #[cfg] (the obs.rs law).
-// ---------------------------------------------------------------------
-
-/// The cache counters (inert: the `trace` feature is off).
 #[cfg(not(feature = "trace"))]
 #[derive(Debug)]
 pub(super) struct CacheCounters;
