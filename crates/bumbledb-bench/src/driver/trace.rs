@@ -8,15 +8,10 @@ use crate::{corpus, families, trace_out};
 use super::corpus::gen_config;
 use super::ensure_corpus;
 
-/// `trace`: one traced warm+cold pair for one read family — artifacts
-/// only, the quick-look tool.
-///
 /// # Errors
-///
-/// Unknown family; setup errors.
 pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     // An obs-less capture is empty — refuse before writing span-free
-    // artifacts (the shared --trace honesty rule).
+
     if !cfg!(feature = "obs") {
         return Err(super::bench::obs_missing("trace"));
     }
@@ -36,8 +31,6 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
         })?;
     let paths = ensure_corpus(&corpus.dir, cfg)?;
 
-    // The cold half touches (commits), so trace runs on a scratch copy —
-    // never the verified corpus.
     let scratch = paths.root.join("trace-scratch");
     let _ = std::fs::remove_dir_all(&scratch);
     let db = Db::create(&scratch.join("db"), Ledger)
