@@ -7,7 +7,6 @@ use super::{
 
 impl Executor {
     /// positions per run before the sink sees them; a leaf that could
-
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
