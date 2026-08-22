@@ -576,8 +576,6 @@ impl<'spec> Resolver<'spec> {
         slot
     }
 
-    /// BEFORE newtype-dropping (authoring-time only — descriptors and
-
     fn coherent(&mut self, statement: usize, source: &SideSpec, target: &SideSpec) {
         let position_of = |name: &str| self.spec.relations.iter().position(|r| &*r.name == name);
         let (Some(source_rel), Some(target_rel)) =
@@ -707,8 +705,6 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// vocabulary is closed at the row (ruling 6), and the refusal is
-
     fn weight(
         &mut self,
         statement: usize,
@@ -739,8 +735,6 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// the projection tuple (ruled 2026-07-24, C1). A dotted name
-
     fn bound(&mut self, statement: usize, target_rel: Option<usize>, bound: &BoundSpec) -> Bound {
         let name = match bound {
             BoundSpec::Lit(n) => return Bound::Lit(*n),
@@ -765,8 +759,6 @@ impl<'spec> Resolver<'spec> {
             BoundSpec::Duration(_) => Bound::TargetDuration(slot.field),
         }
     }
-
-    /// (ruled 2026-07-24): the containment-respelled ban fires on the
 
     fn capacity_window(
         &mut self,
@@ -835,11 +827,15 @@ impl<'spec> Resolver<'spec> {
 
 impl SchemaSpec {
     /// # Errors
-
+    ///
+    /// [`SchemaSpecError`] carrying every unresolvable name, banned spelling,
+    /// over-wide extension row, and past-u16 field roster, in spec order.
+    ///
     /// # Panics
-
+    ///
     /// Only on one programmer-invariant violation: more than 2³²
-
+    /// relations — unreachable (the spec's own relations vector exceeds
+    /// memory first; the engine's `validate` states the same bound).
     #[expect(
         clippy::too_many_lines,
         reason = "the one lowering pass — one arm per statement form, \
