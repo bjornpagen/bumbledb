@@ -61,7 +61,6 @@ pub fn attempt_ops(sizes: LawSizes, count: usize) -> Vec<AttemptOp> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LawCursor {
-
     pub attempt: u64,
 
     pub steer: u64,
