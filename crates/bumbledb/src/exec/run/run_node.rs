@@ -1,5 +1,4 @@
 //! The leaf pass over one node's cover batch (single-node and last-node).
-
 use super::anti_probe::anti_probe_pass;
 use super::{
     BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, KeyCount, LeafBatch,
@@ -11,7 +10,6 @@ impl Executor {
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
     )]
-
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
