@@ -1,14 +1,3 @@
-//! Write and cold benchmark runners (docs/architecture/60-validation.md): single-commit
-//! latency (fsync-bound), batch commit, insert-stream throughput, and the cold
-//! first-execution spike. All `Kind::Report` — described honestly, never
-//! gated.
-//!
-//! Corpus discipline: these runners mutate the store they are handed, so
-//! bench NEVER points them at a verified corpus in place — it loads (or
-//! copies) its own scratch corpus per invocation, keeping the verify
-//! stamp honest. Inserted posting ids are minted via `tx.reserve`, so
-//! samples cannot collide with corpus ids.
-
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::Path;
@@ -20,12 +9,9 @@ use crate::families::{self, param_args};
 use crate::harness::{self, Measurement, Protocol, Rotation};
 use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId, ids};
 
-/// The registered protocol for a write family (shared with the `SQLite`
-/// mirror runners in `sqlite_run`).
-///
+/// The registered protocol for a write family (shared with the `SQLite` mirror
+/// runners in `sqlite_run`).
 /// # Panics
-///
-/// On an unregistered name (a programmer error).
 pub(crate) fn write_protocol(name: &str) -> Protocol {
     families::write_families()
         .iter()
@@ -34,8 +20,6 @@ pub(crate) fn write_protocol(name: &str) -> Protocol {
         .protocol
 }
 
-/// One seeded posting body (everything but the id), referencing existing
-/// corpus rows.
 pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> Posting {
     Posting {
         id,
@@ -47,16 +31,8 @@ pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> P
     }
 }
 
-/// `commit_single` on bumbledb: one sample = one `db.write` reserving a
-/// `PostingId` and inserting one seeded posting through the typed path.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
@@ -70,21 +46,8 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
     })
 }
 
-/// `commit_witnessed` on bumbledb: one sample = one `Db::write_from`
-/// under a fresh read snapshot as the witness, inserting one seeded
-/// posting — `commit_single` plus the generation witness (the
-/// `70-api.md` conditional write). Single-threaded, so the witness
-/// never moves and every sample commits; the family prices the witness
-/// mechanism (a snapshot generation read + one integer compare inside
-/// the critical section), not contention.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
@@ -101,16 +64,8 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
     })
 }
 
-/// `commit_batch` on bumbledb: one sample = one `db.write` inserting 512
-/// seeded postings.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);
@@ -130,28 +85,15 @@ pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
     })
 }
 
-/// The relations an insert-stream sample's throwaway store is pre-seeded
-/// with: the whole corpus minus the posting mass (the timed part is the
-/// posting load; `PostingTag` rides with it — its containment targets
-/// postings, so it cannot precede them).
 pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
     (0..ids::RELATIONS)
         .map(RelationId)
         .filter(|rel| *rel != ids::POSTING && *rel != ids::POSTING_TAG)
 }
 
-/// `insert_stream` on bumbledb: one sample = one `db.write` inserting the
-/// full posting stream (and its tags) into a pre-seeded throwaway store
 /// under `scratch` (S-minus-postings, built before any timing starts).
-/// Facts/sec derives from `work / stats`.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// On scratch I/O failures.
 pub fn insert_stream_bumbledb(
     cfg: GenConfig,
     scratch: &Path,
@@ -198,21 +140,9 @@ pub fn insert_stream_bumbledb(
     })
 }
 
-/// `cold_containment_walk`: `measure_cold` over the `containment_walk` family — every sample
-/// pays a touch commit (generation bump, cache eviction), so the timed
-/// execution carries the image-rebuild spike. The `SQLite` mirror runs
 /// the identical protocol (`sqlite_run::cold_containment_walk`): it keeps no
-/// derived cache, so its number is the honest post-commit query cost —
-/// the comparison that prices our cold path instead of reporting it
-/// absolute.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Only on registry corruption (`containment_walk` missing).
 pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let family = families::all()
         .iter()
@@ -234,32 +164,13 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
     )
 }
 
-/// One delete+reinsert swap commit on `Posting` — the cookbook's
-/// canonical revision idiom (recipe 20's `delete(old)` + `insert(new)`;
-/// primer's attemptText output swap), the majority write shape the
-/// insert-only families never exercise. One `db.write`: delete the
-/// previous revision, mint a fresh id (ids are never reissued), insert
-/// the replacement. The replacement genuinely changes bytes (a fresh id
-/// alone guarantees it — a same-bytes delete+insert would cancel in the
-/// delta and commit nothing).
-///
-/// Delete-bearing **by contract**, not by hope: a no-op delete (the
-/// previous revision absent) refuses INSIDE the write closure, so the
-/// whole transaction aborts and a refused swap leaves the store
-/// byte-identical — the lane can never drift into measuring the
-/// insert-only fork, and a refusal never commits the replacement insert
-/// it would otherwise have smuggled in. Containment-safe by
-/// construction: the swapped posting is this runner's own (no
-/// `PostingTag` references it), and the replacement's references are
-/// drawn from committed corpus rows.
-///
+/// Delete-bearing **by contract**, not by hope: a no-op delete (the previous
+/// revision absent) refuses INSIDE the write closure, so the whole transaction
+/// aborts and a refused swap leaves the store byte-identical — the lane can
+/// never drift into measuring the insert-only fork, and a refusal never commits
+/// the replacement insert it would otherwise have smuggled in.
 /// # Errors
-///
-/// Engine errors, stringified; a non-delete-bearing swap, named.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub(crate) fn posting_swap(
     db: &Db<Ledger>,
     rng: &mut Rng,
@@ -268,9 +179,7 @@ pub(crate) fn posting_swap(
 ) -> Result<Posting, String> {
     db.write(|tx| {
         if tx.delete([prev])?.changed() == 0 {
-            // The in-closure sentinel abort (the fuzz harness's
-            // deliberate-abandon precedent): returning `Err` here drops
-            // the delta whole, so nothing below ever reaches the store.
+
             return Err(bumbledb::Error::from(std::io::Error::other(
                 "the swap touch must be delete-bearing: the previous revision was absent",
             )));
@@ -284,16 +193,10 @@ pub(crate) fn posting_swap(
     .map(|admission| admission.unwrap().value)
 }
 
-/// The first swap target — one seeded posting committed before any
-/// timing, so every touch (warmups included) has a revision to delete.
-///
+/// The first swap target — one seeded posting committed before any timing, so
+/// every touch (warmups included) has a revision to delete.
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Panics if `reserve(1)` returns an empty range, which the engine never does.
 pub(crate) fn posting_swap_seed(
     db: &Db<Ledger>,
     rng: &mut Rng,
@@ -309,40 +212,9 @@ pub(crate) fn posting_swap_seed(
     .map(|admission| admission.unwrap().value)
 }
 
-/// `cold_containment_walk_delete` (PRD-I2): `cold_containment_walk`'s
-/// sibling, identical in every respect except the touch commit — a
-/// **delete-bearing** swap ([`posting_swap`]: delete one `Posting` +
-/// reinsert a revision) instead of one Org insert. The delete lands on
-/// a relation the timed walk reads, so the timed number carries the
-/// rebuild a delete-bearing commit induces — the cost the majority
-/// write shape (recipe-20/attemptText delete+reinsert) actually pays on
-/// its next cold read, invisible to every other family by construction.
-///
-/// **The I1 interaction contract (the pair is the discriminator's
-/// end-to-end witness):** under I1's append-only incremental images,
-/// `cold_containment_walk` (insert touch) should collapse while this
-/// lane must NOT improve — the walked relation carries a delete every
-/// sample, so the append arm never fires for it. Append lane fast,
-/// delete lane unmoved; if the delete lane moves under I1's twin, the
-/// discriminator is wrong and the landing stops. Today (full rebuild on
-/// every commit) the two lanes should read approximately equal.
-///
-/// Report-class, never gated — and structurally ungated: the ALL-WIN
-/// gate (`report::RunReport::all_win`) iterates the READ families only;
-/// write/cold rows never enter it. No README claim rides on this row;
-/// it exists so the compact-vs-mask fork's trigger is a measurement,
-/// not an argument (the mask PRD stays unwritten; see the decider twin
-/// beside the kernel, `filter_mask_twin`). First honest numbers arrive
-/// in the Measure phase under `scripts/measure.sh` — nothing is claimed
 /// before that run.
-///
 /// # Errors
-///
-/// Engine errors, stringified.
-///
 /// # Panics
-///
-/// Only on registry corruption (`containment_walk` missing).
 pub fn cold_containment_walk_delete(
     db: &Db<Ledger>,
     cfg: GenConfig,
@@ -373,19 +245,8 @@ pub fn cold_containment_walk_delete(
     )
 }
 
-/// The delete lane's traced twin (issue 32): one seeded swap + one
-/// delete-bearing touch + the containment walk, inside a single cold
-/// capture. Own seed page (`cfg.seed ^ 0x0115_0005`) so the twin never
-/// collides with the timed stream (`0x0115_0004`). A `None` dir is the
-/// untraced run.
-///
 /// # Errors
-///
-/// Engine errors and trace I/O, stringified.
-///
 /// # Panics
-///
-/// Only on registry corruption (`containment_walk` missing).
 pub fn trace_cold_containment_walk_delete(
     db: &Db<Ledger>,
     cfg: GenConfig,
@@ -435,8 +296,6 @@ mod tests {
         dir
     }
 
-    /// A store holding every posting containment target (the commit families need
-    /// referenced rows, not the posting mass).
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
         let db = Db::create(dir, Ledger).expect("create").expect("accepted");
         for rel in non_posting_relations() {
@@ -450,9 +309,6 @@ mod tests {
         db
     }
 
-    /// Both commit families run their full protocols on bumbledb, and the
-    /// source corpus directory is never touched — the runs happen against
-    /// a copy, whose generation grows while the original's stands still.
     #[test]
     fn commits_run_and_preserve_the_source_corpus() {
         let dir = scratch("commit");
@@ -461,8 +317,6 @@ mod tests {
         let generation_before = db.generation().expect("generation");
         drop(db);
 
-        // The scratch copy: bench never mutates a verified corpus in
-        // place.
         let copy = dir.join("copy");
         std::fs::create_dir_all(&copy).expect("copy dir");
         for entry in std::fs::read_dir(&source).expect("read source") {
@@ -477,8 +331,7 @@ mod tests {
         let batch = commit_batch_bumbledb(&db, CFG).expect("commit_batch");
         assert!(batch.stats.min > 0);
         assert_eq!(batch.work, 512 * 32);
-        // The witnessed twin: single-threaded, so the witness never
-        // moves and every sample commits.
+
         let witnessed = commit_witnessed_bumbledb(&db, CFG).expect("commit_witnessed");
         assert!(witnessed.stats.min > 0);
         assert_eq!(witnessed.work, 64, "one row per sample");
@@ -496,7 +349,7 @@ mod tests {
     }
 
     /// The insert-stream runner completes its protocol with positive
-    /// throughput.
+
     #[test]
     fn insert_stream_reports_positive_throughput() {
         let dir = scratch("insert-stream");
@@ -513,7 +366,7 @@ mod tests {
     }
 
     /// The cold protocol runs, and rebuild cost shows: cold p50 is at
-    /// least warm p50 on the same corpus (a 1x-margin inequality only).
+
     #[test]
     fn cold_containment_walk_costs_at_least_warm() {
         let dir = scratch("cold");
@@ -549,8 +402,7 @@ mod tests {
     }
 
     /// The delete lane's protocol runs, and rebuild cost shows:
-    /// delete-cold p50 is at least warm p50 on the same corpus (the
-    /// same 1x-margin inequality the insert-touch lane pins).
+
     #[test]
     fn cold_containment_walk_delete_costs_at_least_warm() {
         let dir = scratch("cold-delete");
@@ -585,9 +437,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The delete lane's traced twin (issue 32): one Chrome+folded pair
-    /// under the given dir, the cold capture carrying the delete-bearing
-    /// touch. Smoke, not a measurement.
     #[cfg(feature = "obs")]
     #[test]
     fn cold_containment_walk_delete_traced_twin_lands() {
@@ -619,14 +468,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The touch-shape pin — the lane's reason to exist: every swap
-    /// commit genuinely carries one Delete disposition for the walked
-    /// relation. Enforced by contract in [`posting_swap`] (a no-op
-    /// delete aborts the transaction whole, so a drift to insert-only
-    /// cannot silently measure the wrong fork), and falsified here from
-    /// both sides: a live previous revision swaps (delete `Ok(true)`
-    /// inside, fresh id out, generation bumped), while a stale one —
-    /// already deleted — REFUSES rather than degrading to an insert,
     /// and the refusal commits NOTHING (the generation does not move).
     #[test]
     fn posting_swap_touch_is_delete_bearing_by_contract() {
@@ -643,8 +484,7 @@ mod tests {
             db.generation().expect("generation") > generation_before,
             "the swap is one state-changing commit"
         );
-        // The stale side: `seed` is gone, so a swap against it must
-        // refuse — the delete-bearing contract, not a silent insert.
+
         let generation_at_refusal = db.generation().expect("generation");
         let refusal = posting_swap(&db, &mut rng, &sizes, &seed);
         assert!(
@@ -652,14 +492,13 @@ mod tests {
             "a swap whose delete is a no-op must refuse"
         );
         // The refusal aborts the transaction whole: no stray insert-only
-        // commit rides along (the abort happens inside the closure, so
-        // the replacement insert never reaches the store).
+
         assert_eq!(
             db.generation().expect("generation"),
             generation_at_refusal,
             "a refused swap must leave the store untouched"
         );
-        // The live chain continues: the last revision swaps again.
+
         let after = posting_swap(&db, &mut rng, &sizes, &next).expect("swap chain");
         assert!(after.id.0 > next.id.0);
         drop(db);
