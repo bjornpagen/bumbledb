@@ -1,13 +1,9 @@
-//! KeyProbe-probe access path dispatch (docs/architecture/40-execution.md,
-//! § access paths): the point-lookup fast path that routes qualifying
-//! queries around the join machinery entirely (`50-storage.md`'s `U`/`M`
+//! KeyProbe-probe access path dispatch: the point-lookup fast path that routes qualifying
 //! read-side readers).
-//!
 //! The dispatch is a **representation**, not a runtime mode: classification
 //! happens once at prepare time into the prepared rule sum; the branch
 //! exists exactly once. No images are touched on the key-probe path —
 //! it works identically on a cold, just-committed database (the latency
-//! property the decision exists for).
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
@@ -32,9 +28,9 @@ pub(crate) use key_probe_fact::key_probe_fact;
 pub struct KeyProbeVar {
     pub field: FieldId,
     pub var: VarId,
-    /// First binding slot.
+
     pub slot: usize,
-    /// Width in words: 2 for an interval variable, 1 otherwise.
+
     pub width: usize,
 }
 
@@ -64,16 +60,14 @@ impl KeyProbeKind {
 pub struct KeyProbePlan {
     pub relation: RelationId,
     pub kind: KeyProbeKind,
-    /// Filters not consumed by the key, checked on the fetched fact
-    /// (fields outside the key's projection may still be constrained).
+
     pub remaining_filters: Vec<FilterPredicate>,
-    /// Variables decoded from the fetched fact; slot layout follows this
-    /// order through each entry's `(slot, width)` span.
+
     pub vars: Vec<KeyProbeVar>,
 }
 
 impl KeyProbePlan {
-    /// The first slot index of a variable.
+
     #[must_use]
     pub fn slot_of(&self, var: VarId) -> usize {
         self.vars
@@ -83,7 +77,6 @@ impl KeyProbePlan {
             .slot
     }
 
-    /// A variable's slot width in words.
     #[must_use]
     pub fn width_of(&self, var: VarId) -> usize {
         self.vars
@@ -93,7 +86,6 @@ impl KeyProbePlan {
             .width
     }
 
-    /// Total binding-slot words (the `SlotWidth` layout over `vars`).
     #[must_use]
     pub fn slot_count(&self) -> usize {
         self.vars.last().map_or(0, |v| v.slot + v.width)
