@@ -63,7 +63,7 @@ import {
 	weigh,
 	within
 } from "#index.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { put } from "#test/put.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cookbook-"))
@@ -189,7 +189,7 @@ async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<
 	const created = await native.dbCreate(dir, spec)
 	assert.equal(created.tag, "accepted", `${name}: the engine admits the theory`)
 	const fingerprint = native.dbFingerprint(created.db)
-	native.dbClose(created.db)
+	dbClose(created.db)
 	const recipe = recipeIdOf(name)
 	if (recipe !== undefined) {
 		witnessed.set(recipe, fingerprint)
@@ -202,7 +202,7 @@ async function admit<Rels extends SchemaRelations>(name: string, theory: Schema<
 	const reopened = await native.dbOpen(dir, spec)
 	assert.ok(reopened.ok, `${name}: the identical theory reopens the store`)
 	assert.equal(native.dbFingerprint(reopened.db), fingerprint, `${name}: the fingerprint is stable across reopen`)
-	native.dbClose(reopened.db)
+	dbClose(reopened.db)
 	const db = await Db.open(dir, theory)
 	return { db, fingerprint }
 }

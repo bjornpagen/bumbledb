@@ -25,7 +25,7 @@ import type {
 	TxHandle,
 	WitnessHandle
 } from "#native.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 import type { SchemaSpec } from "#spec.ts"
 
@@ -635,7 +635,7 @@ describe("ffi round trip against a real store", function suite() {
 		assert.match(badCreate.message, /nope/)
 
 		native.preparedClose(prepared)
-		native.dbClose(db)
+		dbClose(db)
 
 		const otherSpec: SchemaSpec = {
 			relations: spec.relations,
@@ -662,7 +662,7 @@ describe("ffi round trip against a real store", function suite() {
 		}
 		assert.throws(insertOnSpent, /closed/, "a spent transaction handle throws typed")
 
-		native.dbClose(db)
-		assert.throws(() => native.dbClose(db), /closed/, "double close throws typed")
+		dbClose(db)
+		assert.throws(() => dbClose(db), /closed/, "double close throws typed")
 	})
 })

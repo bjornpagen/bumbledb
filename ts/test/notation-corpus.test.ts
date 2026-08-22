@@ -28,7 +28,7 @@ import { on } from "#face.ts"
 import { i64, interval, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle, QueryIr } from "#native.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { AnyQuery } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
@@ -433,7 +433,7 @@ describe("the notation conformance corpus (TS replay)", () => {
 	})
 
 	after(function cleanup() {
-		native.dbClose(db)
+		dbClose(db)
 		fs.rmSync(tmpRoot, { recursive: true, force: true })
 	})
 

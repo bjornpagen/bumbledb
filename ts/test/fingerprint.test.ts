@@ -31,7 +31,7 @@ import { closed } from "#closed.ts"
 import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { capacity, contained, key, mirrors } from "#statements.ts"
@@ -140,14 +140,14 @@ describe("the cross-host fingerprint lock", function suite() {
 			PIN,
 			"the SDK-lowered theory must hash to the cross-host pin (crate/src/fingerprint_lock.rs carries the same constant)"
 		)
-		native.dbClose(created.db)
+		dbClose(created.db)
 	})
 
 	test("reopen verifies the stored fingerprint and reads the same identity back", async function reopen() {
 		const reopened = await native.dbOpen(storeDir, lower(CrossHost))
 		assert.ok(reopened.ok, "the identical theory reopens the store")
 		assert.equal(native.dbFingerprint(reopened.db), PIN)
-		native.dbClose(reopened.db)
+		dbClose(reopened.db)
 	})
 
 	test("a twisted twin is refused as fingerprintMismatch data", async function twisted() {

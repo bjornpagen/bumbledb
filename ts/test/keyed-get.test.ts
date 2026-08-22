@@ -23,7 +23,7 @@ import { after, describe, test } from "node:test"
 import type { Fact } from "#index.ts"
 import { Db, interval, key, relation, schema, str, u64 } from "#index.ts"
 import { lower } from "#lower.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
@@ -233,7 +233,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		const byGrp = native.dbRead(handle, function read(instance, _witness) {
 			return native.instanceGet(instance, programRel.id, declaredKey.id, [g])
 		})
-		native.dbClose(handle)
+		dbClose(handle)
 		assert.deepEqual(
 			byGrp,
 			[p, g, "linear equations"],

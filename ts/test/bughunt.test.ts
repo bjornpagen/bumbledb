@@ -36,7 +36,7 @@ import {
 } from "#index.ts"
 import { lower } from "#lower.ts"
 import type { InstanceHandle, TxHandle } from "#native.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { accepted } from "#test/accepted.ts"
 import { put } from "#test/put.ts"
 
@@ -503,9 +503,9 @@ describe("native handle lifecycle probes", function nativeSuite() {
 			return true
 		})
 		assert.equal(outcome.tag, "accepted", "an empty commit lands after the aborted predecessor")
-		native.dbClose(handle)
+		dbClose(handle)
 		assert.throws(function doubleClose() {
-			native.dbClose(handle)
+			dbClose(handle)
 		}, /closed db/)
 	})
 
@@ -521,6 +521,6 @@ describe("native handle lifecycle probes", function nativeSuite() {
 		assert.throws(function scanAfterClose() {
 			native.instanceScan(leaked as InstanceHandle, 0)
 		}, /closed instance/)
-		native.dbClose(handle)
+		dbClose(handle)
 	})
 })

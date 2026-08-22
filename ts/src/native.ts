@@ -392,11 +392,6 @@ interface Native {
 	 * schema fingerprint (`fingerprintMismatch` as data).
 	 */
 	dbOpen(path: string, spec: SchemaSpec): Promise<DbOpenResult>
-	/**
-	 * Closes the handle. Dependent handles each hold the engine alive; the
-	 * environment (and its exclusive lock) releases when the last closes.
-	 */
-	dbClose(db: DbHandle): void
 	/** The PRD-02 manifest — every name → id table, one plain object. */
 	dbManifest(db: DbHandle): Manifest
 	/**
@@ -558,6 +553,11 @@ const SHIPPED_PLATFORMS = "darwin-arm64"
  */
 const requireNative = createRequire(import.meta.url)
 
+/** The napi object as loaded — `dbClose` is test-only, not on {@link Native}. */
+interface NativeBinding extends Native {
+	dbClose(db: DbHandle): void
+}
+
 /**
  * Resolves and loads the native bridge from its per-platform binary package
  * (`@bjornpagen/bumbledb-<platform>-<arch>`) — the Biome/esbuild/napi-rs
@@ -575,7 +575,7 @@ const requireNative = createRequire(import.meta.url)
  * Parameterized on `platform`/`arch` so the resolution law is exercised for
  * foreign hosts as a unit, without spawning a foreign process.
  */
-function loadNativeBinding(platform: string, arch: string): Native {
+function loadNativeBinding(platform: string, arch: string): NativeBinding {
 	const platformPackage = `@bjornpagen/bumbledb-${platform}-${arch}`
 
 	// Presence probe: the platform package's OWN manifest resolves iff the
@@ -604,7 +604,13 @@ function loadNativeBinding(platform: string, arch: string): Native {
  * initialization and an absent or unloadable artifact fails fast here rather
  * than at first use.
  */
-const native: Native = loadNativeBinding(process.platform, process.arch)
+const binding: NativeBinding = loadNativeBinding(process.platform, process.arch)
+const native: Native = binding
+
+/** Test-only handle close — not part of the public {@link Native} shape. */
+function dbClose(db: DbHandle): void {
+	binding.dbClose(db)
+}
 
 /**
  * Engine throw identity: a real `Error` carrying `kind` from the
@@ -709,4 +715,4 @@ export type {
 	WitnessHandle,
 	WriteTag
 }
-export { bridged, bridgedAsync, errorFromThrow, loadNativeBinding, native, SHIPPED_PLATFORMS }
+export { bridged, bridgedAsync, dbClose, errorFromThrow, loadNativeBinding, native, SHIPPED_PLATFORMS }

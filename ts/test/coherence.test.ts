@@ -19,7 +19,7 @@ import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
 
 import { ErrNewtypeMismatch } from "#db.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import type { SchemaSpec } from "#spec.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-coherence-"))
@@ -77,13 +77,13 @@ describe("the coherence wall's engine twin", function suite() {
 	test("bare pairs with bare and the store creates", async function bareBare() {
 		const outcome = await native.dbCreate(path.join(tmpRoot, "bare"), paired(undefined, undefined))
 		assert.equal(outcome.tag, "accepted", "bare faces pair with bare faces")
-		native.dbClose(outcome.db)
+		dbClose(outcome.db)
 	})
 
 	test("one shared label passes the wall", async function shared() {
 		const outcome = await native.dbCreate(path.join(tmpRoot, "shared"), paired("Key", "Key"))
 		assert.equal(outcome.tag, "accepted", "agreeing labels pass")
-		native.dbClose(outcome.db)
+		dbClose(outcome.db)
 	})
 
 	test("ErrNewtypeMismatch is the matchable sentinel Db's admission wraps", function sentinel() {

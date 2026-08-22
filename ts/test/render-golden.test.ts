@@ -33,7 +33,7 @@ import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle, Manifest, StatementKindTag } from "#native.ts"
-import { native } from "#native.ts"
+import { dbClose, native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { type AnySchema, schema } from "#schema.ts"
 import { capacity, contained, key, mirrors, renderStatement, type Statement } from "#statements.ts"
@@ -236,10 +236,10 @@ let psiDb: DbHandle | undefined
 
 after(function cleanup() {
 	if (db !== undefined) {
-		native.dbClose(db)
+		dbClose(db)
 	}
 	if (psiDb !== undefined) {
-		native.dbClose(psiDb)
+		dbClose(psiDb)
 	}
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
