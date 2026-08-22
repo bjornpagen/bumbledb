@@ -1,16 +1,3 @@
-/**
- * The wire-tag golden — the TS half of the `wire_tags!` tripwire
- * (cleanup-0.5.0 U3 kill 10). The bridge's tag tables
- * (`ts/crate/src/tags.rs`) render `test/fixtures/tags.json` and a cargo
- * test verifies the file against them; THIS test closes the TS direction:
- * each const roster below is (a) compile-pinned EXACTLY equal to the
- * mirrored union in `native.ts`/`spec.ts` (identity-strength `Equal`
- * probes, both directions) and (b) runtime-asserted equal to the golden's
- * entry. A core-enum change therefore breaks the bridge compile
- * (exhaustive `tag()`), then the golden (cargo test), then this suite —
- * the three-place mirror can no longer drift silently in any direction.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import { test } from "node:test"
@@ -45,7 +32,6 @@ import type {
 	WeightSpec
 } from "#spec.ts"
 
-/** Identity-strength type equality (the house probe). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Expect<T extends true> = T extends true ? true : never
 
@@ -102,7 +88,6 @@ const ROSTERS = {
 	prepareKind: ["irError"]
 } as const
 
-/** The compile pins: each roster IS its mirrored union, exactly (both directions). */
 type Pins = [
 	Expect<Equal<(typeof ROSTERS.value)[number], TaggedValue["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.valueType)[number], ValueTypeSpec["kind"]>>,
