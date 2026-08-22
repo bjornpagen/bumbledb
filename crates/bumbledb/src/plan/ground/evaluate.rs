@@ -4,7 +4,6 @@
 //! . A query atom over
 //! it whose filters are prepare-resolvable constants is therefore not a
 //! join to plan: the evaluator runs the filters against the sealed rows
-
 use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate};
