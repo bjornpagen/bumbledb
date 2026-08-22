@@ -4,7 +4,6 @@
 //! and each disjunct becomes a rule: atoms cloned, conditions = the
 //! disjunct's leaves. The validated artifact carries only the flat
 //! [`LoweredRule`] — no `Or` survives the boundary, and the planner and
-
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Rule};
 
 /// One Or-free rule — the only rule shape downstream of validation: the
