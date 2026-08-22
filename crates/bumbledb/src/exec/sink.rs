@@ -1,45 +1,10 @@
-//! The two consumers of bindings (docs/architecture/40-execution.md): set-projection with dedup and
+//! The two consumers of bindings: set-projection with dedup and
 //! the D2 subtree-skip signal, and aggregate folds with binding dedup
-//! (`docs/architecture/40-execution.md` D2/D3; semantics normative in
-//! `20-query-ir.md`).
-//!
-//! **The sinks are where union lives** (docs/architecture/40-execution.md
-//! § the rule loop): one sink hears every rule of a query, its seen-set
+//! .
+//! **The sinks are where union lives**: one sink hears every rule of a query, its seen-set
 //! spanning rules — reset once per execution, never per rule — so a later
 //! rule re-deriving a head fact is absorbed exactly like a within-rule
-//! duplicate. No merge node, no concat-then-dedup pass exists anywhere
-//! else. The seen-set keys are **rule-independent by provenance**
-//! (ruled 2026-07-23, R2): the projection sink keys the projected find
-//! tuple; the multi-rule aggregate sink keys the head projection
-//! (`union_spans`) for a hand-written rule set — variables are
-//! rule-scoped there, so the head is the only shared vocabulary — and
-//! the **shared slot arrays** for a DNF-derived rule set (the disjuncts
-//! of one written rule share one variable scope, so disjunction widens
-//! membership without moving the fold domain — the or-transparency law,
 //! `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
-//! Rule-disjointness remains diagnostic knowledge, but the executor does
-//! not spend it: a measured attempt to replace the spanning map with
-//! per-rule drains was slower. See the refutation in
-//! `docs/architecture/40-execution.md`.
-//!
-//! Aggregation never materializes the join: group maps live in sink state;
-//! the fold domain of every aggregate is the group's **set of distinct
-//! full bindings over all query variables** — two postings of amount 100
-//! to one account are two distinct bindings (their fresh ids differ), so
-//! `Sum(amount) by account` is 200, under ANY spelling of the rule's
-//! conditions (`or` included — the DNF re-key above). Only a
-//! hand-written multi-rule query coarsens the domain to the head
-//! projection. The stated footgun: joining a
-//! multiplicity-adding relation multiplies the binding set, exactly as in
-//! SQL.
-//!
-//! Slots are **words**, not variables: a multi-word variable occupies
-//! consecutive binding slots — two for an interval, ⌈N/8⌉ for a
-//! bytes<N> value (the [`crate::ir::normalize::SlotWidth`] layout) — so
-//! every [`FindSpec`] carries its slot span and every consumer walks
-//! widths: the seen-set keys the full slot array (every span word
-//! hashed), the group key concatenates spans, and emitted rows are word
-//! rows the result buffer re-assembles by find type.
 
 use crate::encoding::encode_i64;
 use crate::exec::wordmap::WordMap;
@@ -61,11 +26,11 @@ pub use crate::ir::FoldOp;
 pub enum AggSpec {
     Count,
     Fold {
-        /// `Sum` / `Min` / `Max` — never `Count`.
+
         op: FoldOp,
         slot: usize,
         width: usize,
-        /// Whether the input is I64 (its column word is the sign-flipped
+
         /// biased form; Sum must decode before accumulating).
         signed: bool,
     },
@@ -100,64 +65,49 @@ impl AggSpec {
 /// binding-slot layout (`ValidatedPlan::slots`) — never assumed 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindSpec {
-    /// A projected (group-key) variable: first binding slot + width in
-    /// words (2 for an interval variable, ⌈N/8⌉ for bytes<N>, 1 for
-    /// everything else).
+
     Var { slot: usize, width: usize },
-    /// A fold aggregate: nullary Count, or Sum/Min/Max over a slot.
+
     Agg(AggSpec),
-    /// The coalescing fold (`Pack` — 20-query-ir § aggregation): the
-    /// interval variable's two-slot span. Relation-shaped group state —
-    /// per group the sink accumulates the claim list; finalize sorts by
-    /// start word and drives the shared segment sweep
-    /// (`crate::interval::sweep`), one head answer per maximal segment.
-    /// Validation admits at most one per head and no fold
-    /// companions.
+
     Pack { slot: usize },
 }
 
-/// What a sink executes after construction parsed [`FindSpec`]. Measures
-/// have already become derived scratch words, so the symbolic
-/// `Duration`/`AggDuration` shapes cannot reach any execution consumer.
-/// Minted only by `aggregate::parse_finds`.
+/// What a sink executes after construction parsed [`FindSpec`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SinkSpec {
-    /// A projected/group-key slot span.
+
     Var { slot: usize, width: usize },
-    /// A fold: Count contributes no slot; a Fold reads one.
+
     Agg(AggSpec),
-    /// A coalescing interval claim.
+
     Pack { slot: usize },
 }
 
-/// Live dedup regime (R2). Construction mints the arm; `seen` lives only
-/// on Bindings/Union/DnfUnion, the witness only on Elided, and DNF vs
-/// head-projection is which union arm — not a sidecar bool.
 #[derive(Debug)]
 pub(in crate::exec::sink) enum DedupState {
     Bindings {
         seen: WordMap<()>,
     },
-    /// Head projection — hand-written multi-rule.
+
     Union {
         seen: WordMap<()>,
         spans: Vec<(usize, usize)>,
     },
-    /// VarId-ordered slots — DNF-derived multi-rule.
+
     DnfUnion {
         seen: WordMap<()>,
         spans: Vec<(usize, usize)>,
     },
     Elided {
-        /// Plan proof that minted this arm. Retained as evidence; the
-        /// arm itself is the elision observable.
+
         #[allow(dead_code)]
         witness: crate::plan::fj::DistinctWitness,
     },
 }
 
 impl DedupState {
-    /// `true` when this binding should fold (first-seen, or elided).
+
     pub(in crate::exec::sink) fn consider(
         &mut self,
         binding_scratch: &[u64],
@@ -195,8 +145,6 @@ impl DedupState {
     }
 }
 
-/// Decodes a binding word back to the i64 it encodes (the biased word form
-/// is order-preserving; arithmetic needs the logical value).
 fn word_to_i64(word: u64) -> i64 {
     (word ^ (1 << 63)).cast_signed()
 }
@@ -206,7 +154,6 @@ fn i64_to_word(value: i64) -> u64 {
 }
 
 /// One projected word's source: a binding slot read verbatim. The
-/// retired measure arm is uninhabited at prepare (query-side Duration
 /// is gone); the variant stays so the sink match stays total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjSource {
@@ -214,17 +161,11 @@ pub enum ProjSource {
     Measure { start: usize },
 }
 
-/// Projection execution is either all direct slots (the fast paths) or
-/// includes a computed measure (the ray-checking paths). The measure
-/// table and resolved batch sources live only on the measured arm.
 #[derive(Debug)]
 enum ProjectionSources {
     Plain(Vec<usize>),
 }
 
-/// Expands find specs into projected word sources, find-**word** order:
-/// an interval find contributes its two consecutive slots (the
-/// `SlotWidth` layout), a measure find one computed word.
 fn sources_of(finds: &[SinkSpec], measures: &[(usize, usize)]) -> ProjectionSources {
     let mut sources = Vec::new();
     extend_sources(finds, measures, &mut sources);
@@ -239,8 +180,6 @@ fn sources_of(finds: &[SinkSpec], measures: &[(usize, usize)]) -> ProjectionSour
     )
 }
 
-/// [`sources_of`]'s in-place body — the rule loop's re-aim path rebuilds
-/// into retained capacity (the warm allocation contract).
 fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec<ProjSource>) {
     out.clear();
     for spec in finds {
@@ -262,58 +201,35 @@ fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec
 /// nothing projection-relevant (D2 — legal for this sink only).
 #[derive(Debug)]
 pub struct ProjectionSink {
-    /// Parsed, measure-free head specs. Kept for allocation-silent
-    /// re-aiming across rules; emit paths consume `sources` below.
+
     finds: Vec<SinkSpec>,
-    /// The projected word sources in find-**word** order: an interval
-    /// find contributes its two consecutive slots (the `SlotWidth` layout,
-    /// expanded by the constructor's caller from the plan's layout map).
+
     sources: ProjectionSources,
     seen: WordMap<()>,
     scratch: Vec<u64>,
-    /// Per-slot leaf-batch sources, recomputed at batch entry —
-    /// per-slot work, not per-row (the pointer-keyed
-    /// skip-if-same-shape cache measured < 2%
-    /// at family level and was deleted): `Key` reads the batch keys,
-    /// `Outer` the outer bindings.
+
     batch_sources: Vec<crate::exec::run::LeafSource>,
-    /// Row-major staging rows of one hoisted scan run — the
-    /// column-outer gather's target, `run length × arity` words with
-    /// retained capacity (the allocation contract's touched-data
-    /// bound). Sized by the run, never by a width cap: the projection
-    /// arity is unbounded by construction.
+
     scan_rows: Vec<u64>,
-    /// Rows consumed by the open scan.
+
     scan_count: u64,
 }
 
-/// The group map's representation, structural at construction (finding
-/// 049): GROUP BY over enum-like closed dimensions — the dominant OLAP
-/// grouping shape — takes pure arithmetic instead of a hash.
 #[derive(Debug)]
 enum GroupTable {
-    /// Open-domain group keys: the SWAR map.
+
     Hashed(WordMap<usize>),
-    /// Every group-key word ranges over a schema-proven dense domain —
-    /// a closed extension's row ids are its declaration indices `0..N`
-    /// (containment keeps every committed referencing word in-domain)
-    /// and bool's strict 0/1 encoding is `0..2` — so the group index is
-    /// mixed-radix arithmetic into a flat table: no hash, no ctrl-line
-    /// probe, no insert branch on the hit path.
+
     Dense {
-        /// Per key word, in key order: the domain size.
+
         radixes: Box<[u16]>,
-        /// ordinal → group index + 1 (`0` = untouched). `Π radix` words,
-        /// capped at construction ([`DENSE_GROUPS_CAP`]).
+
         table: Box<[u32]>,
-        /// group index → ordinal, in mint order — finalize reconstructs
-        /// the key words from it (the map regime's insertion order).
+
         ordinals: Vec<u32>,
     },
 }
 
-/// The dense table's size ceiling — the group-map capacity hint's
-/// existing clamp: past it the open-domain map wins on memory.
 pub(crate) const DENSE_GROUPS_CAP: u32 = 4096;
 
 impl GroupTable {
@@ -337,29 +253,23 @@ impl GroupTable {
     }
 }
 
-/// One accumulator cell.
 #[derive(Debug, Clone, Copy)]
 enum Acc {
-    /// i128 accumulation: deterministic under any fold order — set folds
-    /// have none; one range check at finalization (u128 for unsigned).
+
     SumSigned(i128),
     SumUnsigned(u128),
-    /// Min/Max compare column words — correct because words are
-    /// order-preserving (docs/architecture/40-execution.md).
+
     Min(u64),
     Max(u64),
     Count(u64),
 }
 
-/// Where a scan-fold input reads. Count contributes no slot.
 #[derive(Debug, Clone, Copy)]
 enum FoldSource {
     Outer,
     Column(usize),
 }
 
-/// Fold accumulators and Pack claim lists are exclusive: validation
-/// admits at most one Pack per head and no fold companions.
 #[derive(Debug)]
 pub(in crate::exec::sink) enum GroupState {
     Folds {
@@ -381,63 +291,36 @@ pub(in crate::exec::sink) enum GroupState {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
-    /// Live R2 regime: seen-set on Bindings/Union/DnfUnion, witness on
-    /// Elided. Construction mints the arm and keeps it.
+
     dedup: DedupState,
-    /// The measure-free sink specs in **derived-slot form**: construction
-    /// parses every measure onto a derived binding-scratch word —
-    /// `Duration { slot }` becomes `Var { slot: derived, width: 1 }` and
-    /// `AggDuration { op, slot }` becomes an unsigned
-    /// `Agg(Fold { slot: derived })` — so group keys, dedup keys, folds,
-    /// and finalize consume plain words with zero measure awareness. The
-    /// representation move: the measure gets a word in the sink's row,
-    /// not a branch in its folds.
+
     finds: Vec<SinkSpec>,
-    /// The measure table minted by that parse: (derived scratch word,
-    /// interval variable's first slot) — computed once per row landing
-    /// in `binding_scratch` (`fold_scratch_row`), ray-checked
-    /// (`end == MAX` poisons [`Self::ray`]). Non-empty forces the
-    /// per-row fold arm: derived words exist only in
-    /// the scratch row, so no gather kernel or scan pushdown can read
-    /// them.
+
     measures: Vec<(usize, usize)>,
-    /// The rule's real binding-slot count — `binding_scratch` extends
-    /// past it by one derived word per measure.
+
     real_slots: usize,
-    /// Group-key slot spans (the `Var` specs, in find order): (first
-    /// slot, width in words) — the `SlotWidth` layout, never assumed 1.
+
     group_spans: Vec<(usize, usize)>,
-    /// Group key words -> accumulator row index. Key arity = the spans'
-    /// total width. Representation is bind-time data ([`GroupTable`]):
-    /// dense arithmetic when the schema proves every key word a small
-    /// domain, the SWAR map otherwise — never a hot-loop branch beyond
-    /// the enum's own dispatch (finding 049).
+
     groups: GroupTable,
-    /// Fold accumulators or Pack claim lists — exclusive by validation.
+
     group_state: GroupState,
-    /// Head-projection / DNF-span key assembly scratch (union regimes).
+
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,
-    /// Batch-fold accumulator staging: the group's row is copied here,
-    /// folded, and written back once per batch.
+
     acc_scratch: Vec<Acc>,
-    /// Dedup-pass survivors (the seen-set regime's batch fold): entries
-    /// whose full binding was first-seen this batch, gather-folded after
-    /// the dedup pass exactly like the elided path.
+
     dedup_survivors: Vec<u32>,
-    /// The open scan's per-fold leaf-word sources (Count contributes
-    /// no slot — it rides [`AggSpec::Count`]). `Column` folds a leaf
-    /// word; `Outer` finishes from the constant outer value at `end_scan`.
+
     scan_sources: Vec<FoldSource>,
-    /// Rows consumed by the open scan.
+
     scan_count: u64,
-    /// The leaf-shape classification, recomputed at each batch entry
-    /// (per-slot work, never per-row): outer slots for the per-row
-    /// prefill, and whether the group key is batch-constant.
+
     cached_outer_slots: Vec<usize>,
     cached_constant_group: bool,
-    /// Group-map probes actually issued (the group-probe hoist observable).
+
     #[cfg(test)]
     group_probes: usize,
 }
