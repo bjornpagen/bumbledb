@@ -24,7 +24,6 @@ use bumbledb_theory::Value;
 /// theory data (hosted in `bumbledb-theory`), so the engine-side sealing
 /// pass hangs off it here rather than as an inherent method.
 pub trait ValidateDescriptor: Sized {
-
     /// # Errors
 
     fn validate(self) -> Result<Schema, SchemaError>;
@@ -43,7 +42,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                   statement form, clearer kept together"
     )]
     fn validate(self) -> Result<Schema, SchemaError> {
-
         for (rel_idx, decl) in self.relations.iter().enumerate() {
             let columns = derived_columns(decl);
             if columns > usize::from(u16::MAX) {
@@ -122,7 +120,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                                 KeyForm::Pointwise { tail, disjoint }
                             }
                             FunctionalityEvidence::Scalar => {
-
                                 let mint = first_fresh_field(&relations[relation.0 as usize]);
                                 if projection.len() == 1 && mint == Some(projection[0]) {
                                     KeyForm::FreshRow {
@@ -732,7 +729,6 @@ fn validate_capacity(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<SealedCapacity, SchemaError> {
-
     // nothing at any weight (`lean/Bumbledb/Capacity.lean:
 
     // duplicate spelling (`lean/Bumbledb/Subsumption.lean:
@@ -1520,7 +1516,6 @@ fn validate_relation(
             });
         }
         if let ValueType::FixedBytes { len } = field.value_type {
-
             if len == 0 || usize::from(len) > crate::encoding::MAX_FIXED_BYTES {
                 return Err(SchemaError::FixedBytesWidthOutOfRange {
                     relation: rel_id,
@@ -1530,7 +1525,6 @@ fn validate_relation(
             }
         }
         if let ValueType::FixedInterval { width, .. } = field.value_type {
-
             if width == 0 || width == u64::MAX {
                 return Err(SchemaError::IntervalWidthOutOfRange {
                     relation: rel_id,
@@ -1609,7 +1603,6 @@ fn validate_extension(
     layout: &FactLayout,
     rows: &[super::Row],
 ) -> Result<Box<[super::SealedRow]>, SchemaError> {
-
     if rows.is_empty() {
         return Err(SchemaError::EmptyExtension { relation: rel_id });
     }
