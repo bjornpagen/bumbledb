@@ -1,31 +1,9 @@
-//! `SchemaSpec` — the bindings contract (`docs/architecture/70-api.md`
-//! § the `SchemaSpec` bindings contract): a schema as **named plain data**,
+//! `SchemaSpec` — the bindings contract: a schema as **named plain data**,
 //! the runtime peer of the `schema!` grammar. A foreign host (the Node
 //! bindings, ETL tooling, any language that can build owned strings,
 //! vectors, and integers) describes its theory here and lowers it to the
-//! [`SchemaDescriptor`] the engine already takes — the macro and the spec
 //! produce indistinguishable descriptors, so the same theory built either
 //! way carries the same fingerprint.
-//!
-//! The division of labor mirrors the macro's exactly:
-//!
-//! - [`SchemaSpec::descriptor`] does what macro EXPANSION does — name→id
-//!   resolution (relations, fields, closed-relation handles, capacity
-//!   weights and bounds), the
-//!   canonical-utterance ban table over capacity spellings and literal
-//!   sets, and the newtype-coherence check over every statement's paired
-//!   faces (`docs/architecture/30-dependencies.md` § the taxonomy is
-//!   checked; authoring-time only — newtypes never reach the descriptor)
-//!   — surfacing every failure as the typed [`SchemaSpecError`],
-//!   which enumerates ALL unresolvable names and banned spellings rather
-//!   than stopping at the first (a foreign host gets one round trip).
-//! - Everything semantic beyond names stays where the macro defers it:
-//!   the engine's `SchemaDescriptor::validate` inside `Db::create` /
-//!   `Db::open`, as the typed `SchemaError`.
-//!
-//! No serde, no wire format: the spec is owned Rust data
-//! (`String`/`Vec`/integers); a bindings crate marshals it however it
-//! likes and the engine never learns the encoding.
 
 use std::collections::BTreeMap;
 
@@ -55,7 +33,7 @@ pub struct SchemaSpec {
 pub struct RelationSpec {
     pub name: Box<str>,
     pub fields: Vec<FieldSpec>,
-    /// Closedness as one sum: `Some` = closed, `None` = ordinary
+
     /// (ruled 2026-07-23, R7).
     pub closed: Option<ClosedSpec>,
 }
@@ -63,18 +41,13 @@ pub struct RelationSpec {
 /// A closed relation's closed half, fused: the handle newtype and the
 /// ground axioms travel together, so the two states the grammar forbids
 /// — an ordinary relation carrying a handle newtype, a closed relation
-/// without one — are unrepresentable (`docs/architecture/70-api.md`
-/// § the `SchemaSpec` bindings contract; ruled 2026-07-23, R7), exactly
+/// without one — are unrepresentable, exactly
 /// as the macro's mandatory `as NewType` makes them unspellable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClosedSpec {
-    /// The handle newtype name (the macro's mandatory `as NewType`) —
-    /// host-side nominal vocabulary, never a fingerprint input: it
-    /// exists so [`LiteralSpec::Handle`] literals can resolve through a
-    /// referencing field's [`FieldSpec::newtype`], and it is dropped at
-    /// lowering (the descriptor never carries names of host types).
+
     pub newtype: Box<str>,
-    /// The ground axioms in declaration order (row id = index).
+
     pub rows: Vec<RowSpec>,
 }
 
@@ -88,15 +61,9 @@ pub struct ClosedSpec {
 pub struct FieldSpec {
     pub name: Box<str>,
     pub value_type: ValueType,
-    /// The host newtype name (the macro's `as NewType`) — carried for
-    /// handle resolution only ([`LiteralSpec::Handle`] resolves through
-    /// the selected field's newtype to its closed relation, the macro's
-    /// own rule) and dropped at lowering: two specs differing only in
-    /// newtype names lower to identical descriptors, exactly as two
-    /// `schema!` invocations differing only in `as` names do.
+
     pub newtype: Option<Box<str>>,
-    /// `fresh` — the mint mark, legal on `u64` (validated at the
-    /// engine's `SchemaDescriptor::validate`, as the macro defers it).
+
     pub fresh: bool,
 }
 
@@ -135,9 +102,9 @@ pub enum LiteralSetSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SideSpec {
     pub relation: Box<str>,
-    /// π — ordered, the statement's written order.
+
     pub projection: Vec<Box<str>>,
-    /// σ — (field, literal-or-set) bindings, read conjunctively.
+
     pub selection: Vec<(Box<str>, LiteralSetSpec)>,
 }
 
@@ -151,11 +118,11 @@ pub struct SideSpec {
 /// pinned-column composition idiom (ruled 2026-07-24, ruling 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WeightSpec {
-    /// Absent bracket: unit weight — the count instance.
+
     Unit,
-    /// `[field]`: a u64-encoded field of the SOURCE row, by name.
+
     Field(Box<str>),
-    /// `[Duration(field)]`: a SOURCE interval position's measure.
+
     Duration(Box<str>),
 }
 
@@ -168,11 +135,11 @@ pub enum WeightSpec {
 /// [`SpecIssue::CapacityDependentFloor`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundSpec {
-    /// A non-negative integer literal.
+
     Lit(u64),
-    /// A u64-encoded field of TARGET's row, by name.
+
     Field(Box<str>),
-    /// `Duration(field)`: a TARGET interval position's measure.
+
     Duration(Box<str>),
 }
 
@@ -184,18 +151,13 @@ pub enum BoundSpec {
 /// crossing carries what it carries) and rejected by
 /// [`SchemaSpec::descriptor`] with the canonical form named — the same
 /// per-aggregate ban table the macro enforces at expansion (a ban is
-/// canonical-utterance policing when weight-independent, semantic
-/// deduplication when not — the containment-respelled ban fires on the
-/// unit instance only).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapacityWindowSpec {
-    /// `{n}` — THE exact-measure spelling; `{0}` is the exclusion.
+
     Exact(BoundSpec),
-    /// `{lo..hi}` — both bounds explicit, lo < hi on literals.
+
     Range { lo: BoundSpec, hi: BoundSpec },
-    /// `{lo..*}` — a floor, no ceiling (unit instance: lo ≥ 2, since
-    /// unit `{1..*}` is the bare containment respelled — the weighted
-    /// `<=[w]{1..*}` is legal; `{0..*}` says nothing at any weight).
+
     Floor(BoundSpec),
 }
 
@@ -205,23 +167,18 @@ pub enum CapacityWindowSpec {
 /// adjacent containment descriptors (`source <= target` first).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementSpec {
-    /// `R(X) -> R` — the key form. No selection exists on this variant:
-    /// the FD-with-selection shape is unrepresentable, as in the
-    /// descriptor.
+
     Fd {
         relation: Box<str>,
         projection: Vec<Box<str>>,
     },
-    /// `source(X | φ) <= target(Y | ψ)`; `bidirectional: true` is the
-    /// `==` spelling.
+
     Containment {
         source: SideSpec,
         target: SideSpec,
         bidirectional: bool,
     },
-    /// `target(Y | ψ) <=[weight]{window} source(X | φ)` — B-family,
-    /// target-left: the target is the per-group parent, the source is
-    /// weighed. Fields sit in the operator's read order — target,
+
     /// weight, window, source (ruled 2026-07-24, C2).
     Capacity {
         target: SideSpec,
@@ -231,7 +188,6 @@ pub enum StatementSpec {
     },
 }
 
-/// Which side of a containment or window a selection binding rides —
 /// half of [`LiteralAt::Selection`]'s address. FDs carry no selection
 /// (the shape is unrepresentable), so two sides name every binding site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -240,7 +196,6 @@ pub enum StatementSide {
     Target,
 }
 
-/// The structural address of one literal in a [`SchemaSpec`] — the two
 /// provenances a literal can have (a statement side's σ binding, a
 /// closed relation's extension row), with no third. Carried by the
 /// handle-shaped issues so a holder of the spec's source tokens (the
@@ -248,17 +203,14 @@ pub enum StatementSide {
 /// never the whole invocation. `Ord` because it is a map key there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LiteralAt {
-    /// `statements[statement]`, the `side` side's `selection[binding]`,
-    /// literal `literal` within the binding's set (`0` for the bare
-    /// [`LiteralSetSpec::One`] spelling).
+
     Selection {
         statement: usize,
         side: StatementSide,
         binding: usize,
         literal: usize,
     },
-    /// `relations[relation].closed.rows[row].values[column]` — the column
-    /// in declared-intrinsic order (the synthetic `id` is no column).
+
     Row {
         relation: usize,
         row: usize,
@@ -278,9 +230,7 @@ pub struct FaceNewtype {
 }
 
 impl FaceNewtype {
-    /// The face as an error names it: `` `Rel.field` (`NewType`) `` or
-    /// `` `Rel.field` (no newtype) `` — public so the macro's teaching
-    /// message and the spec path's `Display` speak one citation.
+
     #[must_use]
     pub fn cite(&self) -> String {
         match &self.newtype {
@@ -296,139 +246,98 @@ impl FaceNewtype {
 /// [`SchemaSpec::statements`] (the spec's own order, before `==`
 /// lowering); handle-shaped payloads carry [`LiteralAt`], the literal's
 /// structural address, alongside the names `Display` speaks.
-///
 /// Every capacity-window and literal-set variant's `Display` names the
-/// canonical form verbatim as the ban table does
-/// (`docs/architecture/70-api.md` § the canonical-utterance law) — an
-/// error is a paste-back instruction, not a shrug.
+/// — an
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecIssue {
-    /// A statement names a relation the spec never declares.
+
     UnknownRelation {
         statement: usize,
         relation: Box<str>,
     },
-    /// A projection or selection names a field its relation never
-    /// declares (a closed relation's sealed shape includes `id`).
+
     UnknownField {
         statement: usize,
         relation: Box<str>,
         field: Box<str>,
     },
-    /// A handle literal on a field whose newtype names no closed
-    /// relation — the handle namespace is per-closed-relation, entered
-    /// only through a referencing field's newtype (the macro's rule).
+
     NotAHandleField {
-        /// The offending literal's structural address.
+
         at: LiteralAt,
         relation: Box<str>,
         field: Box<str>,
         handle: Box<str>,
     },
-    /// A handle the named closed relation's extension never declares.
+
     UnknownHandle {
-        /// The offending literal's structural address.
+
         at: LiteralAt,
         closed: Box<str>,
         handle: Box<str>,
     },
-    /// A relation whose SEALED field roster (a closed relation's
-    /// synthetic `id` included) exceeds the u16 field-id space — no
+
     /// [`FieldId`] past it can be minted, so the cap runs before any
-    /// statement resolves a name (the engine's check-before-mint
-    /// ordering; its declaration-boundary twin is the engine's
-    /// `SchemaError::RelationTooManyColumns`, whose derived-column cap
-    /// is strictly tighter — every field spans at least one column —
-    /// so nothing this pass admits panics there).
+
     RelationTooManyFields {
-        /// The relation's declaration index into
-        /// [`SchemaSpec::relations`].
+
         relation: usize,
         name: Box<str>,
-        /// The sealed field count.
+
         fields: usize,
     },
-    /// An extension row supplies more values than its relation declares
-    /// columns — the excess is unrepresentable in the descriptor (the
-    /// column zip has nowhere to put it), so the lowering rejects here
-    /// rather than truncate silently. The fewer-values case survives
-    /// lowering intact and stays the engine's
-    /// `SchemaError::ExtensionArityMismatch` (the two-boundary split).
+
     RowArityExcess {
-        /// The offending row's declaration indices into
-        /// [`SchemaSpec::relations`] and its extension.
+
         relation: usize,
         row: usize,
         name: Box<str>,
         declared: usize,
         supplied: usize,
     },
-    /// Two closed relations claim one handle newtype — a handle newtype
-    /// names exactly one closed relation.
+
     DuplicateHandleNewtype {
         newtype: Box<str>,
-        /// The claimants' declaration indices into
-        /// [`SchemaSpec::relations`]; `second_relation` is the later
-        /// claimant — the declaration a caller marks.
+
         first_relation: usize,
         second_relation: usize,
         first: Box<str>,
         second: Box<str>,
     },
-    /// `{hi..lo}` with hi > lo (literals) — inverted, unsatisfiable.
-    /// Literal-gated: a dependent ceiling resolves per row and is not
-    /// statically invertible.
+
     CapacityInverted { statement: usize, lo: u64, hi: u64 },
-    /// `{n..n}` — an exact measure is written `{n}`.
+
     CapacityExactRespelled { statement: usize, count: u64 },
-    /// `{0..0}` — the exclusion is written `{0}`.
+
     CapacityExclusionRespelled { statement: usize },
-    /// `{0..*}` — vacuous; provably says nothing, at any weight
+
     /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
     CapacityVacuous { statement: usize },
-    /// Unit `{1..*}` — says only what the bare containment says. Fires
-    /// on the count instance ONLY (the per-aggregate ban law, ruled
+
     /// 2026-07-24): `<=[w]{1..*}` — "positive total" — is a different,
-    /// legal law.
+
     CapacityContainmentRespelled { statement: usize },
-    /// A dependent bound in the floor (or exact) slot — dependent bounds
+
     /// are hi-slot only (ruled 2026-07-24, C6): a dependent floor has no
-    /// use case, and inversion with idents is statically undecidable, so
-    /// the descriptor cannot carry the shape.
+
     CapacityDependentFloor { statement: usize },
-    /// The path spelling `[a.b]` in the weight bracket — the weight
+
     /// vocabulary is closed at the row (ruled 2026-07-24, ruling 6):
-    /// joined weights are supported by statement composition (the
-    /// pinned-column idiom `Display` spells out), never by admitting
-    /// terms into the bracket.
+
     WeightPathRefused { statement: usize, path: Box<str> },
-    /// The path spelling `{lo..a.b}` in a dependent bound — the bound
-    /// vocabulary is closed at the TARGET row exactly as the weight's is
-    /// at the source's (ruling 6, one law both slots): without this arm
-    /// a dotted bound fell through to [`SpecIssue::UnknownField`], a
-    /// different verdict than the macro's and the TS surface's — one
+
     /// spelling, one refusal, every authoring wall.
     BoundPathRefused { statement: usize, path: Box<str> },
-    /// A `Many` literal set with fewer than two literals — `{L}` is the
-    /// bare literal and `{}` selects nothing.
+
     DegenerateLiteralSet {
         statement: usize,
         field: Box<str>,
         len: usize,
     },
-    /// A paired-face statement (containment, `==`, or a capacity
-    /// statement) puts two columns whose newtype labels disagree at one
-    /// projection position — the coherence check
-    /// (`docs/architecture/30-dependencies.md` § the taxonomy is
-    /// checked): the faces of a dependency agree on their newtype, or
-    /// neither carries one (labeled pairs only with the SAME label,
-    /// bare pairs only with bare — the TS wall's own law, adopted so
-    /// the two hosts judge identically). Authoring-time only: newtypes
-    /// are dropped at lowering, so descriptors, fingerprints, and
-    /// stores never see this law.
+
     StatementNewtypeMismatch {
         statement: usize,
-        /// The projection position (0-based) where the faces disagree.
+
         position: usize,
         source: FaceNewtype,
         target: FaceNewtype,
@@ -590,7 +499,7 @@ impl std::fmt::Display for SpecIssue {
 pub struct SchemaSpecError(Box<[SpecIssue]>);
 
 impl SchemaSpecError {
-    /// Every issue, in spec order.
+
     #[must_use]
     pub fn issues(&self) -> &[SpecIssue] {
         &self.0
@@ -609,20 +518,13 @@ impl std::fmt::Display for SchemaSpecError {
 
 impl std::error::Error for SchemaSpecError {}
 
-/// The resolution pass's working state: the spec, the handle namespace
-/// (newtype → closed relation index), and the issue collector.
 struct Resolver<'spec> {
     spec: &'spec SchemaSpec,
-    /// Handle newtype → the owning closed relation's index.
+
     handles: BTreeMap<&'spec str, usize>,
     issues: Vec<SpecIssue>,
 }
 
-/// One slot of a relation's SEALED shape, resolved by name: the field id
-/// plus the newtype label the position carries — a closed relation's
-/// synthetic `id` carries the handle newtype. The spec-side peer of
-/// [`RelationDescriptor::sealed_fields`] (which cannot serve here: the
-/// descriptor deliberately drops the newtypes this resolution needs).
 #[derive(Clone, Copy)]
 struct SealedSlot<'spec> {
     field: FieldId,
@@ -630,7 +532,7 @@ struct SealedSlot<'spec> {
 }
 
 impl<'spec> Resolver<'spec> {
-    /// The relation's declaration index, or an issue.
+
     fn relation(&mut self, statement: usize, name: &str) -> Option<usize> {
         let found = self.spec.relations.iter().position(|r| &*r.name == name);
         if found.is_none() {
@@ -642,13 +544,6 @@ impl<'spec> Resolver<'spec> {
         found
     }
 
-    /// Relation `rel_idx`'s sealed slot named `name`, or `None` when the
-    /// sealed shape never declares it — THE one spec-side judgment of
-    /// the synthetic-id law: a closed relation's `id` is the synthetic
-    /// handle field at [`FieldId`] 0 (carrying the handle newtype) and
-    /// declared columns sit at index + 1, the numbering every sealed
-    /// statement addresses (the macro materializes the same shape at
-    /// parse). Silent: the issue-pushing face is [`Resolver::field`].
     fn slot(&self, rel_idx: usize, name: &str) -> Option<SealedSlot<'spec>> {
         let relation = &self.spec.relations[rel_idx];
         if let (Some(closed), "id") = (&relation.closed, name) {
@@ -659,18 +554,13 @@ impl<'spec> Resolver<'spec> {
         }
         let index = relation.fields.iter().position(|f| &*f.name == name)?;
         let sealed = index + usize::from(relation.closed.is_some());
-        // A past-u16 sealed index exists only on a relation the
-        // sealed-field cap already issued (`RelationTooManyFields`), so
-        // the placeholder never escapes (a nonempty issue list fails
-        // the whole construction — the `literal` law).
+
         Some(SealedSlot {
             field: FieldId(u16::try_from(sealed).unwrap_or(0)),
             newtype: relation.fields[index].newtype.as_deref(),
         })
     }
 
-    /// [`Resolver::slot`] for statement resolution: the slot, or an
-    /// [`SpecIssue::UnknownField`].
     fn field(&mut self, statement: usize, rel_idx: usize, name: &str) -> Option<SealedSlot<'spec>> {
         let slot = self.slot(rel_idx, name);
         if slot.is_none() {
@@ -683,20 +573,8 @@ impl<'spec> Resolver<'spec> {
         slot
     }
 
-    /// The coherence check — the newtype law over one statement's
-    /// paired faces (`docs/architecture/30-dependencies.md` § the
-    /// taxonomy is checked): positionwise over the two projections, the
-    /// paired columns' newtype labels must agree — labeled with the
-    /// SAME label, bare with bare; a labeled↔bare pairing is the
-    /// mismatch too. σ selections never change the pairing (a
-    /// ψ-selected face pairs by its projection exactly as a bare one),
-    /// and a column in no paired-face statement is untouched — a
-    /// deliberately-bare pointer stays legal. Runs on the spec's names,
     /// BEFORE newtype-dropping (authoring-time only — descriptors and
-    /// fingerprints carry no newtypes); unresolvable names are skipped
-    /// (resolution reports them), and unequal projection arities pair
-    /// the common prefix (the engine's `ContainmentArityMismatch` owns
-    /// the rest).
+
     fn coherent(&mut self, statement: usize, source: &SideSpec, target: &SideSpec) {
         let position_of = |name: &str| self.spec.relations.iter().position(|r| &*r.name == name);
         let (Some(source_rel), Some(target_rel)) =
@@ -732,14 +610,6 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// One literal at its field position — a [`LiteralSpec::Handle`]
-    /// resolves through `newtype`, the field's already-resolved label
-    /// (threaded from the caller's [`SealedSlot`] — never a by-name
-    /// rescan), to its closed relation's declaration-order row id, the
-    /// macro's own resolution. `at` is the literal's structural address,
-    /// carried by the handle-shaped issues. On an issue the placeholder
-    /// `Value::U64(0)` stands in; placeholders never escape (a nonempty
-    /// issue list fails the whole construction).
     fn literal(
         &mut self,
         at: LiteralAt,
@@ -779,15 +649,6 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// One side lowered: names to ids, literal sets through the
-    /// degenerate-set ban (the canonical-utterance law — `{L}` is the
-    /// bare literal, `{}` is no binding), handles through the namespace.
-    /// `which` tags the side for the handle-shaped issues' addresses.
-    /// Total, per the `literal` law: whatever resolved lowers, an
-    /// unresolvable relation yields the empty placeholder side, and
-    /// placeholders never escape (a nonempty issue list fails the whole
-    /// construction) — the one final gate owns validity, so no per-side
-    /// branch re-judges it.
     fn side(&mut self, statement: usize, which: StatementSide, side: &SideSpec) -> Side {
         let Some(rel_idx) = self.relation(statement, &side.relation) else {
             return Side {
@@ -843,16 +704,8 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// A capacity weight resolved against the SOURCE relation's sealed
-    /// roster: `Unit` passes through, names resolve by field
-    /// ([`Resolver::field`] reports the unknowns), and a dotted name
-    /// short-circuits to [`SpecIssue::WeightPathRefused`] — the weight
     /// vocabulary is closed at the row (ruling 6), and the refusal is
-    /// typed at this surface because the descriptor's [`Weight`] carries
-    /// a [`FieldId`]: a path is unrepresentable one layer down.
-    /// `source_rel` is `None` when the source relation itself is
-    /// unresolvable (the side resolution reports that); the placeholder
-    /// never escapes (a nonempty issue list fails the construction).
+
     fn weight(
         &mut self,
         statement: usize,
@@ -883,15 +736,8 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// One capacity bound resolved against the TARGET relation's sealed
-    /// roster — by NAME against the whole field roster, never through
     /// the projection tuple (ruled 2026-07-24, C1). A dotted name
-    /// short-circuits to [`SpecIssue::BoundPathRefused`] exactly as the
-    /// weight's does (ruling 6, one law both slots — the placeholder
-    /// never escapes: a nonempty issue list fails the construction).
-    /// Name resolution only: the u64/interval typing of the named field
-    /// is the engine validator's (`validate_capacity`), the same
-    /// two-boundary split every selection literal observes.
+
     fn bound(&mut self, statement: usize, target_rel: Option<usize>, bound: &BoundSpec) -> Bound {
         let name = match bound {
             BoundSpec::Lit(n) => return Bound::Lit(*n),
@@ -917,16 +763,8 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// The canonical-utterance ban table over capacity spellings — the
-    /// macro's ban table, as data: survivors lower to the descriptor's
-    /// `(lo, hi)`; every banned spelling is an issue whose `Display`
-    /// names the canonical form. Per-aggregate where weight-sensitive
     /// (ruled 2026-07-24): the containment-respelled ban fires on the
-    /// unit instance ONLY; the literal bans (inverted, vacuous,
-    /// respelled exacts) are weight-independent. Dependent bounds are
-    /// hi-slot only (C6): a dependent floor or exact is the typed
-    /// [`SpecIssue::CapacityDependentFloor`]; a dependent ceiling
-    /// carries no static ban (it resolves per row).
+
     fn capacity_window(
         &mut self,
         statement: usize,
@@ -971,8 +809,7 @@ impl<'spec> Resolver<'spec> {
                         (lo, Some(Bound::Lit(hi)))
                     }
                     Some(hi) => (lo, Some(Bound::Lit(hi))),
-                    // A dependent ceiling: resolve the name; no static
-                    // ban is decidable on a per-row bound.
+
                     None => (lo, Some(self.bound(statement, target_rel, hi))),
                 }
             }
@@ -994,31 +831,13 @@ impl<'spec> Resolver<'spec> {
 }
 
 impl SchemaSpec {
-    /// Lowers the spec to the [`SchemaDescriptor`] the engine takes —
-    /// exactly what `schema!` expansion does: name→id resolution
-    /// (declaration order mints every id), handle resolution through
-    /// field newtypes, `==` lowering to two adjacent containments
-    /// (`source <= target` first), and the canonical-utterance ban table
-    /// over window spellings and literal sets. Nothing else is judged
-    /// here: semantic validation stays at the engine's
-    /// `SchemaDescriptor::validate` inside `Db::create` / `Db::open`
-    /// (the typed `SchemaError`), the same two-boundary split the macro
-    /// observes.
-    ///
+
     /// # Errors
-    ///
-    /// [`SchemaSpecError`] carrying EVERY unresolvable name, banned
-    /// spelling, over-wide extension row (the one shape lowering cannot
-    /// represent — see [`SpecIssue::RowArityExcess`]), and past-u16
-    /// field roster ([`SpecIssue::RelationTooManyFields`] — no id could
-    /// be minted, so the cap runs here, never as a panic on the
-    /// wire-facing path), in spec order — never just the first.
-    ///
+
     /// # Panics
-    ///
+
     /// Only on one programmer-invariant violation: more than 2³²
-    /// relations — unreachable (the spec's own relations vector exceeds
-    /// memory first; the engine's `validate` states the same bound).
+
     #[expect(
         clippy::too_many_lines,
         reason = "the one lowering pass — one arm per statement form, \
@@ -1031,9 +850,7 @@ impl SchemaSpec {
             issues: Vec::new(),
         };
         // The sealed-field cap runs FIRST — before any statement
-        // resolves a name and mints a u16 [`FieldId`] (the engine
-        // validator's check-before-mint ordering): past the cap the
-        // id mint placeholders, and the placeholder never escapes.
+
         for (idx, relation) in self.relations.iter().enumerate() {
             let sealed = relation.fields.len() + usize::from(relation.closed.is_some());
             if sealed > usize::from(u16::MAX) {
@@ -1045,10 +862,7 @@ impl SchemaSpec {
             }
         }
         for (idx, relation) in self.relations.iter().enumerate() {
-            // The option is the kind: a closed relation carries its
-            // handle newtype by construction (R7), so entering the
-            // namespace is plain iteration — no silent skip stands in
-            // for a typed issue.
+
             let Some(closed) = &relation.closed else {
                 continue;
             };
@@ -1088,11 +902,7 @@ impl SchemaSpec {
                         .iter()
                         .enumerate()
                         .map(|(row_idx, row)| {
-                            // The zip below drops any literal past the
-                            // declared columns — unrepresentable, so it
-                            // is an issue, not a truncation (the
-                            // short-row case survives lowering and is
-                            // the engine validator's arity check).
+
                             if row.values.len() > relation.fields.len() {
                                 resolver.issues.push(SpecIssue::RowArityExcess {
                                     relation: rel_idx,
@@ -1148,8 +958,7 @@ impl SchemaSpec {
                             }
                             RelationId(u32::try_from(rel_idx).expect("relation count fits u32"))
                         }
-                        // The placeholder relation — never escapes (the
-                        // final gate), the same totality as `side`.
+
                         None => RelationId(0),
                     };
                     statements.push(StatementDescriptor::Functionality {
@@ -1185,15 +994,12 @@ impl SchemaSpec {
                     source,
                 } => {
                     resolver.coherent(index, source, target);
-                    // Silent index lookups for the weight/bound rosters —
-                    // the side resolutions below report an unresolvable
-                    // relation exactly once.
+
                     let position_of =
                         |name: &str| self.relations.iter().position(|r| &*r.name == name);
                     let source_rel = position_of(&source.relation);
                     let target_rel = position_of(&target.relation);
-                    // The per-aggregate gate reads the SPELLING (a failed
-                    // weight resolution lowers a placeholder `Unit`, and a
+
                     // placeholder must not widen the ban table).
                     let unit = matches!(weight, WeightSpec::Unit);
                     let weight = resolver.weight(index, source_rel, weight);
