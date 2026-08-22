@@ -1,10 +1,8 @@
 //! Test-only ascending position iteration over a [`View`].
-
 use super::View;
 
 impl View {
     /// # Panics
-
     /// Only on a programmer-invariant violation: an image beyond the u32
     #[cfg(test)]
     pub fn positions(&self) -> impl Iterator<Item = u32> + '_ {
