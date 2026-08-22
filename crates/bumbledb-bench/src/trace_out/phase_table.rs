@@ -6,7 +6,6 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
 
     let mut cells: Vec<(usize, usize, u64, u64)> = Vec::new();
     for event in events.iter().filter(|e| e.cat() == Category::Phase) {
-
         let Some((phase, node)) = parse_phase(event.point()) else {
             continue;
         };
@@ -41,7 +40,6 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
         "phase", "calls", "total_us", "avg_ns", "excl_us"
     );
     for &(node, phase, ns, calls) in &cells {
-
         let excl = if phase == 4 {
             ns.saturating_sub(node_total(node + 1))
         } else {
