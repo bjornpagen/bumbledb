@@ -151,12 +151,12 @@ describe("closed relations", function describeClosed() {
 
 	test("axiom rows are minted as OWN properties for every admitted name", function probeProtoHandle() {
 		/**
- * "__proto__" is a legal identifier (the macro analog admits it), so
- * the axiom row must land as an OWN property — own-property definition
- * shadows the object-protocol accessor instead of silently riding it
- * (which would swap the record's prototype instead of creating the
- * row).
- */
+		 * "__proto__" is a legal identifier (the macro analog admits it), so
+		 * the axiom row must land as an OWN property — own-property definition
+		 * shadows the object-protocol accessor instead of silently riding it
+		 * (which would swap the record's prototype instead of creating the
+		 * row).
+		 */
 		const handles = ["Alpha", "__proto__"] as const
 		const K = closed("K", handles)
 		assert.deepEqual(
@@ -211,10 +211,9 @@ describe("selection literal resolution", function describeSelections() {
 	})
 
 	test("where() rides the same machine: an ill-typed forged spelling still faces the roster", function probeWhereRoster() {
-
 		const { Account } = buildLedgerPieces()
 		assert.throws(function bigintForged() {
-
+			// @ts-expect-error — H1: a closed field's selection literal is the handle union; a bigint no longer typechecks
 			Account.where({ kind: 7n })
 		}, /expected a Kind handle name \(string\), got bigint/)
 		assert.throws(function outOfRoster() {
