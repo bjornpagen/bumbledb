@@ -361,7 +361,7 @@ function not(
  * interval's element domain, and a quantifier is not an addition, so bool
  * (orderable, never numeric) is exactly here refused. A CLOSED reference
  * is excluded even though its kind is `u64`: a vocabulary's declaration-id
- * order is an accident, not semantics 
+ * order is an accident, not semantics
  * § orderability), so every order-comparison and fold position refuses
  * closed-bound terms — the construction-time validations in
  * `#query/lower.ts` are that ban's runtime twin.
