@@ -1,5 +1,4 @@
 //! Admitted heap instance: an immutable packed catalog plus query.
-
 use std::sync::Arc;
 
 use crate::Answers;
@@ -156,7 +155,6 @@ impl<S> OwnedInstance<S> {
     }
 
     /// # Errors
-
     /// # Panics
     pub fn count(&self, relation: RelationId) -> Result<u64> {
         let Some(rel) = self.core.schema.relation_checked(relation) else {
