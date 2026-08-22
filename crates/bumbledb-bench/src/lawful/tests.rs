@@ -172,12 +172,10 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
 
     let attempts = sizes.tasks * sizes.attempts_per_task;
     let ops = vec![
-
         write(vec![(
             ids::ATTEMPT,
             vec![Value::U64(attempts), Value::U64(1), Value::U64(2)],
         )]),
-
         write(vec![
             (
                 ids::ATTEMPT,
@@ -193,12 +191,10 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
                 vec![Value::U64(sizes.steers), Value::U64(0)],
             ),
         ]),
-
         write(vec![(
             ids::ATTEMPT,
             vec![Value::U64(attempts + 2), Value::U64(1), Value::U64(2)],
         )]),
-
         write(vec![(
             ids::ATTEMPT,
             vec![
@@ -207,7 +203,6 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
                 Value::U64(0),
             ],
         )]),
-
         write(
             (0..7)
                 .map(|k| {
@@ -222,7 +217,6 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
                 })
                 .collect(),
         ),
-
         write(vec![(ids::STEER_SCOPE, vec![Value::U64(0), Value::U64(5)])]),
     ];
 
