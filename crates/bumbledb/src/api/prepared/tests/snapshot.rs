@@ -21,7 +21,6 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     assert_eq!(out.len(), 1);
     drop(txn);
 
-    // New commit, new snapshot: the pinned *plan* runs over fresh data.
     insert_postings(&env, &schema, &[(2, 7, "new", 2)]);
     let txn = env.read_txn().expect("txn");
     prepared
@@ -35,10 +34,6 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     assert_eq!(out.len(), 2);
 }
 
-/// Prepare pins no image — the refcount
-/// proof. Executions bind views; a commit plus one execution at the
-/// new generation reaps every stale binding, releasing the old
-/// image entirely (only the test's own Arc survives).
 #[test]
 fn prepare_pins_no_images_and_reaping_releases_them() {
     let dir = TempDir::new("prepared-unbound-views");
@@ -59,8 +54,6 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
         "prepare pinned an image"
     );
 
-    // Two residual windows: the active and one parked binding both
-    // hold views over the generation-1 image.
     for floor in [-100, 15] {
         prepared
             .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(floor)])
@@ -72,10 +65,6 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     );
     drop(txn);
 
-    // Commit generation 2 and evict everything (the lineage-disabled
-    // twin of the `advance` Db::write runs); the first execution at the
-    // new generation reaps the stale parked binding and rebuilds the
-    // active one.
     insert_postings(&env, &schema, &[(3, 7, "c", 30)]);
     cache.advance(crate::GenerationId::from_storage(2), &[POSTING], &[]);
     let txn = env.read_txn().expect("txn");
@@ -89,9 +78,6 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     );
 }
 
-/// Prepare on a cold cache builds no images — zero
-/// `image_build`/`cache_hit` events; the first execution pays the
-/// build exactly where a cold execution always paid it.
 #[cfg(feature = "trace")]
 #[test]
 fn prepare_emits_no_image_events() {
