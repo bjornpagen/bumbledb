@@ -1,5 +1,4 @@
 //! P-cores 2.4–3.5 GHz and manufactured fake 2× findings before this
-
 use std::time::{Duration, Instant};
 
 pub const CONTAMINATION_GHZ: f64 = 3.2;
@@ -16,7 +15,6 @@ const PROXY_ITERS: u64 = 30_000;
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
 )]
-
 fn chain(seed: u64, iters: u64) -> u64 {
     let mut x = seed | 1;
     for _ in 0..iters {
@@ -175,7 +173,6 @@ mod tests {
     use super::*;
 
     /// The plausibility band transcribes aarch64 physics: only there is
-
     /// per mul, so off aarch64 the estimate is indicative, not a claim —
     #[test]
     #[cfg_attr(
