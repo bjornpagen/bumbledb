@@ -86,7 +86,6 @@ impl Colt {
     }
 
     /// # Panics
-
     /// Only on a programmer-invariant violation: `out` shorter than the
     pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
         let level = self.join_index(level);
