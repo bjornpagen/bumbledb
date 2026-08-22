@@ -3,7 +3,6 @@
 //! and compares exactly these bytes. Canonical means injective
 //! : one value, one byte string, so
 //! value equality is `fact_bytes` equality.
-
 mod decode;
 mod encode;
 mod fact_hash;
@@ -76,7 +75,6 @@ pub struct FixedBytesValue {
 
 impl FixedBytesValue {
     /// # Panics
-
     /// On a programmer-invariant violation: a width outside
     #[must_use]
     pub fn new(raw: &[u8]) -> Self {
