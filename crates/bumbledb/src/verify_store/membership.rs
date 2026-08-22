@@ -19,8 +19,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<()> {
             s.malformed(key, "M key relation");
             return Ok(());
         };
-        // Closed relations have no rows in the store: presence is the
-        // finding (the F pass's exemption, mirrored).
+
         if relation.body().closed_rows().is_some() {
             s.corrupt(CorruptionError::ClosedRelationEntry {
                 relation: rel,
