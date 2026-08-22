@@ -93,7 +93,6 @@ impl StoreMeta {
 /// every constructor classifies the block itself through this ONE function —
 /// never the same branch hand-written three ways.
 pub(super) enum MetaBlock {
-
     Present(Database<Bytes, Bytes>),
 
     HalfCreated,
