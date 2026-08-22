@@ -17,18 +17,14 @@ impl<S> Db<S> {
 
 impl<S> WriteTx<'_, S> {
     /// # Errors
-
     /// axioms, never minted — `fresh` is already refused at declaration,
-
     /// after a prefix entered the delta.
     pub fn reserve<T: Fresh<Schema = S>>(&mut self, count: u64) -> Result<FreshRange<T>> {
         self.mutation.reserve(count)
     }
 
     /// refused at declaration, so a closed relation's witness is
-
     /// # Errors
-
     /// foreign-witness refusal.
     pub fn reserve_at(&mut self, field: FreshField<S>, count: u64) -> Result<FreshRange<u64>> {
         self.mutation.reserve_at(field, count)
