@@ -76,7 +76,6 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
 
 #[test]
 fn delete_and_reinsert_of_a_committed_fact_commits_as_an_empty_delta() {
-
     let dir = TempDir::new("commit-reestablish");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -100,7 +99,6 @@ fn delete_and_reinsert_of_a_committed_fact_commits_as_an_empty_delta() {
 
 #[test]
 fn insert_and_delete_of_an_absent_fact_commits_as_an_empty_delta() {
-
     let dir = TempDir::new("commit-cancel-absent");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -203,7 +201,7 @@ fn counters_after_reopen_match_a_recount_of_f_entries() {
         .expect("iter")
         .count() as u64;
     assert_eq!(count, scanned);
-    assert_eq!(count, 3); 
+    assert_eq!(count, 3);
 
     let hw_key = keys::stat_key(TARGET, StatKind::RowIdHighWater);
     assert_eq!(
@@ -344,7 +342,6 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
 
 #[test]
 fn fresh_ids_reserved_in_a_rejected_txn_are_burned() {
-
     // before the commit's fate is known, and a rejection carries the
 
     // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`;
@@ -401,7 +398,6 @@ fn einval() -> Error {
 
 #[test]
 fn from_commit_types_the_raw_errno_class_and_nothing_else() {
-
     assert!(
         matches!(einval(), Error::CommitSync { retries: 0, error } if error.raw_os_error() == Some(22))
     );
