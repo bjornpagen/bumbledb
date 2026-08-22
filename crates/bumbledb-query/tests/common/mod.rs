@@ -1,5 +1,4 @@
 //! Shared integration-test scaffolding.
-
 use std::path::{Path, PathBuf};
 
 pub struct TempDir(PathBuf);
