@@ -6,10 +6,7 @@ use bumbledb::{ParamId, Value};
 use super::{Builder, ParamSlot, VarCols};
 
 fn sql_string_literal(text: &str) -> Result<String, String> {
-    // A NUL truncates SQLite's tokenizer mid-statement — the rest of the
-    // SQL silently vanishes. The generator's grammar never emits NUL
-    // (asserted in querygen's coverage test), so this boundary stays loud
-    // instead of buying CAST(X'..' AS TEXT) generality nobody generates.
+
     if text.contains('\0') {
         return Err("NUL byte in string literal (would truncate the SQL statement)".to_owned());
     }
@@ -25,9 +22,6 @@ fn sql_u64(value: u64) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-/// One scalar literal. Interval literals render as their two halves
-/// ([`interval_halves`]) — reaching here with one is a translator bug
-/// surfaced as an error, never silently-wrong SQL.
 fn sql_literal(value: &Value) -> Result<String, String> {
     Ok(match value {
         Value::Bool(v) => u8::from(*v).to_string(),
@@ -49,8 +43,6 @@ fn sql_literal(value: &Value) -> Result<String, String> {
     })
 }
 
-/// An interval literal's two halves as SQL integers — the raw typed
-/// endpoints (u64 halves under the same `< 2⁶³` axiom as scalar u64).
 fn interval_halves(value: &Value) -> Result<(String, String), String> {
     match value {
         Value::IntervalU64(interval) => Ok((sql_u64(interval.start())?, sql_u64(interval.end())?)),
@@ -75,10 +67,6 @@ fn op_sql(op: CmpOp) -> &'static str {
     }
 }
 
-/// One Allen basic's endpoint formula over half-open interval halves —
-/// the per-basic SQL the mask disjunction ORs together (kept
-/// deliberately naive: correctness first, and the naive model's
-/// independent `basic_holds` arithmetic keeps it honest).
 fn basic_sql(basic: bumbledb::Basic, ls: &str, le: &str, rs: &str, re: &str) -> String {
     use bumbledb::Basic;
     match basic {
@@ -98,15 +86,11 @@ fn basic_sql(basic: bumbledb::Basic, ls: &str, le: &str, rs: &str, re: &str) -> 
     }
 }
 
-/// A rendered comparison side: one SQL expression for a scalar term, the
-/// two half expressions for an interval-typed one.
 enum Rendered {
     One(String),
     Pair(String, String),
 }
 
-/// The set side of an `Eq`, if any (validation admits sets under `Eq`
-/// only, and never on both sides).
 fn set_side(comparison: &Comparison) -> Option<(ParamId, &Term)> {
     match (&comparison.lhs, &comparison.rhs) {
         (Term::ParamSet(param), other) | (other, Term::ParamSet(param)) => Some((*param, other)),
@@ -115,9 +99,7 @@ fn set_side(comparison: &Comparison) -> Option<(ParamId, &Term)> {
 }
 
 impl Builder<'_> {
-    /// The FROM-clause name of one atom's source: the schema relation,
-    /// or — for an interior/rec atom — its derived table's CTE
-    /// (`interior{id}` / `rec`).
+
     fn source_table(&self, atom: &Atom) -> String {
         match atom.source {
             bumbledb::AtomSource::Edb(relation) => self.schema.relation(relation).name().to_owned(),
@@ -125,9 +107,6 @@ impl Builder<'_> {
         }
     }
 
-    /// One bound field's (column name, interval-typed?): the declared
-    /// schema field, or a derived CTE's positional column (`c{i}` —
-    /// scalar by the reach lane's shape gate: interval-typed derived
     /// columns are refused before any rule renders).
     fn source_column(&self, atom: &Atom, field: bumbledb::FieldId) -> (String, bool) {
         match atom.source {
@@ -151,8 +130,6 @@ impl Builder<'_> {
         format!("?{}", index + 1)
     }
 
-    /// The bound element list of a set param — translation *input*, not a
-    /// placeholder: set params are re-rendered per execution.
     fn set_values(&self, param: ParamId) -> Result<&[Value], String> {
         self.sets
             .iter()
@@ -161,13 +138,6 @@ impl Builder<'_> {
             .ok_or_else(|| format!("param set {} has no bound element list", param.0))
     }
 
-    /// `column IN (v1, ..., vk)` with the set rendered as literals —
-    /// re-rendered per execution, so prepared-statement parity is not
-    /// claimed for set-bound families
-    /// (`docs/architecture/60-validation.md` says so). The empty set
-    /// renders the honest constant `1 = 0`: `IN ()` is unwritable SQL,
-    /// and `IN (NULL)` is the three-valued trap — it yields NULL, not
-    /// false, which flips to the wrong answer under negation.
     fn in_list(&self, column: &str, param: ParamId) -> Result<String, String> {
         let values = self.set_values(param)?;
         if values.is_empty() {
@@ -177,9 +147,6 @@ impl Builder<'_> {
         Ok(format!("{column} IN ({})", rendered.join(", ")))
     }
 
-    /// Membership of *any* element of a set in the interval's half
-    /// columns — an OR of endpoint tests (`IN` has no interval form);
-    /// the empty set renders `1 = 0` exactly as [`Builder::in_list`].
     fn set_membership(&self, start: &str, end: &str, param: ParamId) -> Result<String, String> {
         let values = self.set_values(param)?;
         if values.is_empty() {
@@ -192,14 +159,10 @@ impl Builder<'_> {
                 Ok(format!("{start} <= {point} AND {point} < {end}"))
             })
             .collect::<Result<_, String>>()?;
-        // Always parenthesized — a `(x)` around one test is
-        // SQLite-identical, and the single-test special case bought
-        // nothing but the branch.
+
         Ok(format!("({})", tests.join(" OR ")))
     }
 
-    /// The non-variable arms of a scalar-field binding — one rule for
-    /// both polarities (negation is a position, not a kind of atom).
     fn scalar_constant(
         &mut self,
         column: &str,
@@ -218,10 +181,6 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// The non-variable arms of an interval-field binding: an
-    /// interval-typed term is value equality on the halves; an
-    /// element-typed term is point membership `start <= t AND t < end`;
-    /// a set is membership per element.
     fn interval_constant(
         &mut self,
         start: &str,
@@ -260,7 +219,7 @@ impl Builder<'_> {
     pub(super) fn render_atom(&mut self, atom: &Atom) -> Result<(), String> {
         let table = self.source_table(atom);
         if atom.bindings.is_empty() {
-            // The nonemptiness gate.
+
             self.conditions
                 .push(format!("EXISTS (SELECT 1 FROM \"{table}\")"));
             return Ok(());
@@ -280,8 +239,7 @@ impl Builder<'_> {
                                 start: first_start,
                                 end: first_end,
                             }) => {
-                                // A repeat occurrence equates the halves
-                                // to the first, pairwise.
+
                                 out.push(format!("{first_start} = {start}"));
                                 out.push(format!("{first_end} = {end}"));
                             }
@@ -296,8 +254,7 @@ impl Builder<'_> {
                             }
                         }
                     }
-                    // Point membership through a variable: its scalar
-                    // anchor may be bound by a later atom — defer.
+
                     Term::Var(var) => self.deferred.push((start, end, *var)),
                     _ => self.interval_constant(&start, &end, term, &mut out)?,
                 }
@@ -306,8 +263,7 @@ impl Builder<'_> {
                 match term {
                     Term::Var(var) => match self.columns.get(var) {
                         Some(VarCols::Scalar(first)) => {
-                            // A later binding (cross-atom or in-atom
-                            // repeat) equates to the first.
+
                             out.push(format!("{first} = {column}"));
                         }
                         Some(VarCols::Interval { .. }) => {
@@ -328,8 +284,6 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// Flushes the deferred membership tests: every positive atom has
-    /// been walked, so each point variable's scalar column exists.
     pub(super) fn flush_deferred(&mut self) -> Result<(), String> {
         for (start, end, var) in std::mem::take(&mut self.deferred) {
             let Some(VarCols::Scalar(column)) = self.columns.get(&var) else {
@@ -344,15 +298,10 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// One negated atom as a `NOT EXISTS` correlated subquery appended to
-    /// the core's WHERE (`docs/architecture/60-validation.md`). A negated
-    /// atom binds nothing (the safety rule), so every variable correlates
-    /// to its positive column; the `n{index}` alias space is disjoint
-    /// from `t0..`, so self-negation is aliased fresh by construction.
     pub(super) fn negated_atom(&mut self, index: usize, atom: &Atom) -> Result<(), String> {
         let table = self.source_table(atom);
         if atom.bindings.is_empty() {
-            // The negated nonemptiness gate: the relation must be empty.
+
             self.conditions
                 .push(format!("NOT EXISTS (SELECT 1 FROM \"{table}\")"));
             return Ok(());
@@ -436,7 +385,7 @@ impl Builder<'_> {
     }
 
     pub(super) fn comparison(&mut self, comparison: &Comparison) -> Result<(), String> {
-        // Eq against a set: "any element" — the literal IN form.
+
         if matches!(comparison.op, CmpOp::Eq)
             && let Some((param, other)) = set_side(comparison)
         {
@@ -450,18 +399,14 @@ impl Builder<'_> {
         let lhs = self.render_term(&comparison.lhs)?;
         let rhs = self.render_term(&comparison.rhs)?;
         let conjunct = match (comparison.op, lhs, rhs) {
-            // Interval value equality is pairwise on the halves; the
-            // negation is a disjunction, parenthesized because it joins
-            // the WHERE by AND.
+
             (CmpOp::Eq, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
                 format!("{ls} = {rs} AND {le} = {re}")
             }
             (CmpOp::Ne, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
                 format!("({ls} <> {rs} OR {le} <> {re})")
             }
-            // The Allen mask: per-basic endpoint formulas OR'd — the
-            // query's SELECT DISTINCT keeps the disjunction honest
-            // (`60-validation.md`).
+
             (CmpOp::Allen { mask }, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
                 let arms: Vec<String> = bumbledb::Basic::ALL
                     .iter()
@@ -473,7 +418,7 @@ impl Builder<'_> {
                 }
                 format!("({})", arms.join(" OR "))
             }
-            // Point containment: the membership form.
+
             (CmpOp::PointIn, Rendered::Pair(ls, le), Rendered::One(point)) => {
                 format!("{ls} <= {point} AND {point} < {le}")
             }
