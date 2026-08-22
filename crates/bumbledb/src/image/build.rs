@@ -52,7 +52,6 @@ fn allocate_with(
     row_count: usize,
     mut padder: StridePadder,
 ) -> Result<Frame> {
-
     let spans = column_spans(field_types);
     let byte_cols = spans
         .iter()
@@ -411,8 +410,9 @@ pub(crate) fn append<C: CatalogRead>(
 /// source-agnostic after decode, and here the source is cheaper still:
 #[derive(Debug)]
 pub enum TransientImage {
-
-    Empty { capacity: usize },
+    Empty {
+        capacity: usize,
+    },
     Occupied {
         image: Arc<RelationImage>,
 
@@ -427,7 +427,6 @@ impl Default for TransientImage {
 }
 
 impl TransientImage {
-
     /// # Panics
 
     /// Only on programmer-invariant violations: a row narrower than the
@@ -438,7 +437,6 @@ impl TransientImage {
         row_count: usize,
         rows: impl Iterator<Item = &'r [u64]>,
     ) -> Arc<RelationImage> {
-
         self.fill(field_types, 0, row_count, |_| rows, CapacityPolicy::Exact)
     }
 
