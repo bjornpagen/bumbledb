@@ -6,7 +6,6 @@ use crate::translate::Translated;
 use super::PreparedFamily;
 
 impl<'c> PreparedFamily<'c> {
-
     /// # Errors
 
     pub fn new(
