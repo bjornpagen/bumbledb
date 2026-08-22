@@ -10,7 +10,6 @@ use bumbledb_theory::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Signature {
-
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
         let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
         let columns = rule
@@ -52,7 +51,6 @@ impl Context {
         rule: &LoweredRule,
         group_key: &BTreeSet<VarId>,
     ) -> Result<(), ValidationError> {
-
         // one Pack per head (the multi-Pack product is refused with its
 
         let mut fold_seen = false;
