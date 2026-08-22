@@ -1,36 +1,3 @@
-/**
- * `query()` and the IR lowering, REFERENCE-IDENTITY edition. A query is
- * built kysely-shaped — variables minted by {@link v} outside the rule and
- * reused by REFERENCE to join:
- *
- *   query(S).rule((r) => {
- *     const acct = v(Account)
- *     const h = v(Holder)
- *     return r
- *       .match(Account, { id: acct.id, holder: acct.holder })
- *       .match(Holder, { id: acct.holder })
- *       .where(r.eq(acct.holder, r.param("root")))
- *       .find({ account: acct.id, holder: acct.holder })
- *   })
- *
- * — and is an INERT value: `Query<Rels, Row, Params>` with `Row` inferred
- * from each rule's `.find` RECORD (its keys ARE the answer columns) and
- * `Params` inferred to be EXACTLY the params the rules use (params are typed
- * BY USE; a param no rule uses never registers). Variable IDENTITY is the
- * object reference: reusing one value across binding positions IS the join,
- * lowering is a pure function of the query value down to the
- * bridge's `QueryIr` (`bumbledb/crates/bumbledb/src/ir.rs`): relations by
- * declaration ordinal, variables by dense per-rule first-occurrence ids
- * (keyed on the object REFERENCE — the discipline is unchanged, only the map
- * key moved from name to reference), params by first-use order. Lowering is
- * STABLE — the same query value lowers to deeply-equal IR every time, and
- * two identically-written queries (fresh mints each) lower identically.
- * Construction validates negation safety and boundness (typed by the var's
- * label — object identity is invisible to the type tier, so these are
- * construction-time walls); everything else (types, aggregate
- * rosters, rule caps) is the ENGINE's judge, surfacing at prepare.
- */
-
 import * as errors from "@superbuilders/errors"
 import { sealedFieldsOf } from "#closed.ts"
 import type { AnyField, ClosedRoster } from "#fields.ts"
@@ -94,81 +61,46 @@ import type {
 import { fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term } from "#query/scope.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 
-/**
- * The matchable members of a schema's record — ordinary relations AND
- * closed vocabularies (ψ query atoms; the ENGINE decides folding vs virtual
- * image, the SDK lowers pass-through).
- */
 type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], MatchOwner>
 
-/** Reads an inferred-params carrier off a rec reference or rule value. */
 type ParamsOf<T> = InferredOf<T> extends { readonly params: infer P extends ParamsRecord } ? P : Record<never, never>
 
-/** Reads an inferred-row carrier off a rule value or query. */
 type RowOf<T> = InferredOf<T> extends { readonly row: infer R } ? R : never
 
-/**
- * A derived table's HEAD signature as classed slots, keyed by column
- * name; `undefined` on values that carry no head.
- */
 type HeadShape = Readonly<Record<string, ClassedField>> | undefined
 
-/**
- * One finished rule as a plain value: the runtime data plus the inferred
- * row/params carrier (and, for an interior or rec rule, the head
- * record of classed slots an `.interior(name)` join pairs against).
- * `.rule(...)` consumes it.
- */
 interface RuleValue<Row, P extends ParamsRecord, Head extends HeadShape = undefined> {
 	readonly rule: RuleData
 	readonly [inferred]?: { readonly row: Row; readonly params: P; readonly head: Head }
 }
 
-/** Any finished rule value. */
 type AnyRuleValue = RuleValue<unknown, ParamsRecord, HeadShape>
 
-/** Reads an inferred-head carrier off a rule value or rec reference. */
 type HeadOf<T> =
 	InferredOf<T> extends { readonly head: infer H extends Readonly<Record<string, ClassedField>> } ? H : undefined
 
-/** One `.interior(name)` position's judgment: a variable. */
 type InteriorBindingOk<V> = V extends AnyVar ? true : false
 
-/**
- * The validated `.interior(name)` bindings record: every entry must be a
- * variable. Arity and class against the named table's head are
- * construction-time (the name is a string, so the head is not a type-level
- * fact).
- */
 type CheckInteriorBindings<B> = {
 	readonly [K in keyof B]: InteriorBindingOk<B[K]> extends true ? B[K] : never
 }
 
-/** One interior-rule builder function. */
 type InteriorBuild<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> = (
 	r: InteriorRuleScope<Rels, Classes>
 ) => AnyRuleValue
 
-/** One rec-arm builder function. */
 type RecBuild<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> = (
 	r: RecRuleScope<Rels, Classes>
 ) => AnyRuleValue
 
-/** A build function's rule value. */
 type BuiltRule<F> = F extends (r: never) => infer RV ? RV : never
 
-/** The intersected params record of a tuple of rule builds. */
 type BuildsParams<Builds extends readonly ((r: never) => AnyRuleValue)[]> = ShapeOf<ParamsOf<BuiltRule<Builds[number]>>>
 
-/**
- * The term/predicate/aggregate constructor vocabulary every rule builder
- * carries — pure value builders. Variables are minted by the free {@link v},
- * outside the rule, and reused by reference; `r` no longer mints them.
- */
 interface TermOps {
-	/** Names one scalar parameter: typed by its use; the key of the execute params object. */
+
 	readonly param: typeof makeParam
-	/** Names one ∈-set parameter (the IR's `ParamSet`): bound to a readonly array at execution. */
+
 	readonly inSet: typeof makeSetParam
 	readonly eq: typeof eq
 	readonly ne: typeof ne
@@ -188,89 +120,81 @@ interface TermOps {
 	readonly pack: typeof pack
 }
 
-/** The rule builder a `query(S).rule(...)` callback receives (`Classes` — the join judge's authority). */
 interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	/**
-	 * The FULL binding: every column of R bound to its own v(R) mint — the
-	 * identity atom, stated as a signature so it holds for GENERIC R too
-	 * (VarsOf unifies with itself by identity; the general form's deferred
-	 * conditionals cannot). The mint invariant — a variable's mint slot IS its
-	 * position slot, same owner, same column — discharges the join judgment by
-	 * construction (proposals/one-representation/50-generic-binding.md, "The
-	 * ruling"); an all-var record contributes no params, so the chain starts
-	 * paramless. {@link ExactVars} maps a foreign key to `never`, so an
-	 * aliased extra-key record falls to the general form's judgment.
-	 */
+ * The FULL binding: every column of R bound to its own v(R) mint — the
+ * identity atom, stated as a signature so it holds for GENERIC R too
+ * (VarsOf unifies with itself by identity; the general form's deferred
+ * conditionals cannot). The mint invariant — a variable's mint slot IS its
+ * position slot, same owner, same column — discharges the join judgment by
+ * construction (proposals/one-representation/50-generic-binding.md, "The
+ * ruling"); an all-var record contributes no params, so the chain starts
+ * paramless. {@link ExactVars} maps a foreign key to `never`, so an
+ * aliased extra-key record falls to the general form's judgment.
+ */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
 	): QueryRuleChain<Rels, Record<never, never>, Classes>
-	/** The first EDB atom of the rule: fields bind variables, params, ∈-sets, or bare literals; absence is the wildcard. */
+
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
-	/**
-	 * A rule may START with a finished table: an interior atom is a positive
-	 * occurrence exactly as the engine represents it, so its variables ground
-	 * — the identity projection `(c) | reach(c);` is spellable with no
-	 * re-grounding join over a domain relation.
-	 */
+
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
 	): QueryRuleChain<Rels, Record<never, never>, Classes>
 }
 
-/** The chain of a plain query rule: more atoms, residual predicates, then the head. */
 interface QueryRuleChain<
 	Rels extends SchemaRelations,
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/**
-	 * The FULL binding: every column of R bound to its own v(R) mint — the
-	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params — P rides through unchanged.
-	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
-	 * extra-key record falls to the general form's judgment.
-	 */
+ * The FULL binding: every column of R bound to its own v(R) mint — the
+ * identity atom, generic R included. The mint invariant (a variable's mint
+ * slot IS its position slot) discharges the join judgment by construction
+ * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+ * all-var record contributes no params — P rides through unchanged.
+ * {@link ExactVars} maps a foreign key to `never`, so an aliased
+ * extra-key record falls to the general form's judgment.
+ */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
 	): QueryRuleChain<Rels, P, Classes>
-	/** One more positive EDB atom — variable reuse joins, class-equal by the mint-slot judgment. */
+
 	match<R extends QueryRelation<Rels>, const B extends MatchShape<MatchFields<R>>>(
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
-	/** One residual predicate: a comparison, an `and`/`or` tree, or a negated atom (`r.not`). */
+
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
 	): QueryRuleChain<Rels, Flatten<P & CondParamsShape<C>>, Classes>
-	/** One interior atom over a finished table (an earlier interior, or the rec). */
+
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
 	): QueryRuleChain<Rels, P, Classes>
-	/** The head projection: a `find` RECORD whose keys name the answer columns. */
+
 	find<const F extends FindShape>(entries: F & CheckFind<F>): RuleValue<RowOfFind<F>, P>
 }
 
-/** The rule builder an `interior("mid", ...)` callback receives. */
 interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses>
 	extends TermOps {
 	/**
-	 * The FULL binding: every column of R bound to its own v(R) mint — the
-	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params, so the chain starts paramless.
-	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
-	 * extra-key record falls to the general form's judgment.
-	 */
+ * The FULL binding: every column of R bound to its own v(R) mint — the
+ * identity atom, generic R included. The mint invariant (a variable's mint
+ * slot IS its position slot) discharges the join judgment by construction
+ * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+ * all-var record contributes no params, so the chain starts paramless.
+ * {@link ExactVars} maps a foreign key to `never`, so an aliased
+ * extra-key record falls to the general form's judgment.
+ */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -285,21 +209,20 @@ interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends Schema
 	): InteriorRuleChain<Rels, Record<never, never>, Classes>
 }
 
-/** The chain of an interior rule: bound-variable heads only. */
 interface InteriorRuleChain<
 	Rels extends SchemaRelations,
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/**
-	 * The FULL binding: every column of R bound to its own v(R) mint — the
-	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params — P rides through unchanged.
-	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
-	 * extra-key record falls to the general form's judgment.
-	 */
+ * The FULL binding: every column of R bound to its own v(R) mint — the
+ * identity atom, generic R included. The mint invariant (a variable's mint
+ * slot IS its position slot) discharges the join judgment by construction
+ * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+ * all-var record contributes no params — P rides through unchanged.
+ * {@link ExactVars} maps a foreign key to `never`, so an aliased
+ * extra-key record falls to the general form's judgment.
+ */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -318,17 +241,16 @@ interface InteriorRuleChain<
 	find<const F extends FindShape>(entries: F & CheckRecFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
-/** The rule builder a `.reach("reach", { base, rec })` arm receives. */
 interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
 	/**
-	 * The FULL binding: every column of R bound to its own v(R) mint — the
-	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params, so the chain starts paramless.
-	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
-	 * extra-key record falls to the general form's judgment.
-	 */
+ * The FULL binding: every column of R bound to its own v(R) mint — the
+ * identity atom, generic R included. The mint invariant (a variable's mint
+ * slot IS its position slot) discharges the join judgment by construction
+ * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+ * all-var record contributes no params, so the chain starts paramless.
+ * {@link ExactVars} maps a foreign key to `never`, so an aliased
+ * extra-key record falls to the general form's judgment.
+ */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -343,26 +265,20 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 	): RecRuleChain<Rels, Record<never, never>, Classes>
 }
 
-/**
- * The chain of a rec arm. `.interior("reach", …)` is the self-atom
- * on rec arms (and a prior interior on either list). `find` takes bound
- * variables only — aggregates and the measure are unrepresentable in a
- * rec head.
- */
 interface RecRuleChain<
 	Rels extends SchemaRelations,
 	P extends ParamsRecord,
 	Classes extends SchemaClasses = SchemaClasses
 > {
 	/**
-	 * The FULL binding: every column of R bound to its own v(R) mint — the
-	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params — P rides through unchanged.
-	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
-	 * extra-key record falls to the general form's judgment.
-	 */
+ * The FULL binding: every column of R bound to its own v(R) mint — the
+ * identity atom, generic R included. The mint invariant (a variable's mint
+ * slot IS its position slot) discharges the join judgment by construction
+ * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
+ * all-var record contributes no params — P rides through unchanged.
+ * {@link ExactVars} maps a foreign key to `never`, so an aliased
+ * extra-key record falls to the general form's judgment.
+ */
 	match<R extends QueryRelation<Rels>, B extends VarsOf<R>>(
 		relation: R,
 		bindings: B & ExactVars<R, B>
@@ -381,38 +297,32 @@ interface RecRuleChain<
 	find<const F extends FindShape>(entries: F & CheckRecFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
-/** A query's runtime description — everything lowering, the wire marshal, and answer decode read. */
 type QueryData =
 	| {
 			readonly kind: "cq"
-			/** Named interiors in declaration order (DAG). */
+
 			readonly interiors: readonly InteriorData[]
-			/** The main rules in written order (multiple rules = set union). */
+
 			readonly rules: readonly RuleData[]
-			/** The head columns (every rule derives the same head; written order = answer column order). */
+
 			readonly finds: readonly FindColumn[]
-			/** The registered params in first-use order across the query walk (= dense `ParamId`s). */
+
 			readonly params: readonly ParamEntry[]
 	  }
 	| {
 			readonly kind: "reach"
-			/** Named interiors in declaration order (DAG). */
+
 			readonly interiors: readonly InteriorData[]
-			/** The linear rec (base and rec arms nonempty by type). */
+
 			readonly rec: RecData
-			/** The main rules in written order (multiple rules = set union). */
+
 			readonly rules: readonly RuleData[]
-			/** The head columns (every rule derives the same head; written order = answer column order). */
+
 			readonly finds: readonly FindColumn[]
-			/** The registered params in first-use order across the query walk (= dense `ParamId`s). */
+
 			readonly params: readonly ParamEntry[]
 	  }
 
-/**
- * An inert query value. `Row` is the inferred answer-row object type;
- * `Params` the inferred execute-params object type — exactly the params the
- * rules use. Prepare with `db.prepare(q)`.
- */
 interface Query<
 	Rels extends SchemaRelations,
 	Row,
@@ -421,34 +331,26 @@ interface Query<
 > {
 	readonly schema: Schema<Rels, Classes>
 	readonly data: QueryData
-	/** One more rule — the query's answers are the SET UNION of its rules' answers; every rule derives the same head. */
+
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
 	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes>
-	/** Construction error: interiors precede main rules. Uncallable after `.rule()`. */
+
 	interior(name: string, ...builds: never[]): never
-	/** Construction error: reach precedes main rules. Uncallable after `.rule()`. */
+
 	reach(name: string, arms: never): never
 	readonly [inferred]?: { readonly row: Row; readonly params: Params }
 }
 
-/** Any query value as lowering and the runtime consume it. */
 interface AnyQuery {
 	readonly schema: AnySchema
 	readonly data: QueryData
 }
 
-/** Extracts a query value's inferred answer-row type. */
 type QueryRow<Q extends AnyQuery> = RowOf<Q>
 
-/** Extracts a query value's inferred execute-params type. */
 type QueryParams<Q extends AnyQuery> = ParamsOf<Q>
 
-/**
- * The entry value of `query(S)`: interiors, then reach (moves to
- * {@link QueryReachStart}), then the first `.rule` mints the query.
- * `interior` / `reach` exist only on this CQ start.
- */
 type QueryStart<
 	Rels extends SchemaRelations,
 	Classes extends SchemaClasses = SchemaClasses,
@@ -467,7 +369,6 @@ type QueryStart<
 	): QueryReachStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>>
 }
 
-/** After `.reach()`: interior/reach are unrepresentable; only `.rule` remains. */
 type QueryReachStart<
 	Rels extends SchemaRelations,
 	Classes extends SchemaClasses = SchemaClasses,
@@ -478,7 +379,6 @@ type QueryReachStart<
 	): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>
 }
 
-/** The frozen constructor vocabulary every rule builder spreads. */
 const termOps: TermOps = Object.freeze({
 	param: makeParam,
 	inSet: makeSetParam,
@@ -500,21 +400,18 @@ const termOps: TermOps = Object.freeze({
 	pack
 })
 
-/** One rule under construction: immutable — every chain step is a fresh state. Boundness rides the `bound` set of var references. */
 interface RuleBuildState {
 	readonly items: readonly RuleItem[]
 	readonly bound: ReadonlySet<AnyVar>
 	readonly paramUses: readonly ParamUse[]
 }
 
-/** The empty rule state. */
 const EMPTY_RULE: RuleBuildState = Object.freeze({
 	items: Object.freeze([]),
 	bound: new Set<AnyVar>(),
 	paramUses: Object.freeze([])
 })
 
-/** One resolved bindings record: the atom entries, the variable references it binds, and the params it uses. */
 interface ResolvedBindings {
 	readonly atom: AtomData
 	readonly vars: readonly AnyVar[]
@@ -539,11 +436,6 @@ function mintSlotOf(context: ChainContext, ref: AnyVar): ClassedField {
 	return { field: ref.field, class: context.classes[ref.owner.name]?.[ref.column] }
 }
 
-/**
- * Judges one membership ARRAY at a binding position — legal exactly at a
- * CLOSED-reference field, holding ≥ 2 DISTINCT handle names. The returned
- * name is CONTENT-ADDRESSED (vocabulary + the member SET).
- */
 function membershipSet(
 	context: string,
 	field: AnyField,
@@ -580,14 +472,6 @@ function membershipSet(
 	return { name: `∈ ${roster.name} ${JSON.stringify(key)}`, members: Object.freeze(members) }
 }
 
-/**
- * Resolves a bindings record against an atom owner's matchable fields, in
- * the record's written order: terms classify by their runtime tag,
- * everything else is a bare literal. Every VARIABLE binding judges
- * `fieldJoins(mintSlot, positionSlot)` and throws on a class-unequal reuse
- * (the runtime twin of `CheckBindings`); the bound refs are collected for
- * the rule's boundness set.
- */
 function resolveBindings(
 	context: ChainContext,
 	label: string,
@@ -675,7 +559,6 @@ function resolveBindings(
 	return { atom: Object.freeze({ relation, bindings: Object.freeze(entries) }), vars, uses }
 }
 
-/** Extends a rule state with one positive atom; the bound variable references accumulate into the boundness set. */
 function advanceMatch(
 	context: ChainContext,
 	state: RuleBuildState,
@@ -694,7 +577,6 @@ function advanceMatch(
 	})
 }
 
-/** Resolves one comparison side to its runtime term (variables and the measure ride by reference). */
 function cmpTermDataOf(value: unknown): CmpTermData {
 	if (isTerm(value)) {
 		switch (value[term]) {
@@ -711,11 +593,6 @@ function cmpTermDataOf(value: unknown): CmpTermData {
 	return Object.freeze({ kind: "literal" as const, value })
 }
 
-/**
- * One comparison side's contribution to the param census: a param/set side
- * anchors to its SIBLING — a variable's field descriptor or the measure; an
- * unanchorable use records with no anchor.
- */
 function sideUses(op: CmpKind, side: CmpTermData, sibling: CmpTermData, uses: ParamUse[]): void {
 	if (side.kind !== "param" && side.kind !== "setParam") {
 		return
@@ -739,7 +616,6 @@ function sideUses(op: CmpKind, side: CmpTermData, sibling: CmpTermData, uses: Pa
 	)
 }
 
-/** Lowers one condition VALUE to its runtime data, recording param uses. */
 function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 	if (cond.cond === "cmp") {
 		const lhs = cmpTermDataOf(cond.lhs)
@@ -771,7 +647,6 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 	)
 }
 
-/** Extends a rule state with one `.where` item (a condition or a negated atom). */
 function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCond): RuleBuildState {
 	if (typeof cond !== "object" || cond === null || !("cond" in cond)) {
 		throw errors.new("where() takes a comparison, an and()/or() tree, or a negated atom")
@@ -807,15 +682,6 @@ function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCon
 	})
 }
 
-/**
- * Extends a rule state with one interior atom (a named record over head keys;
- * vars validated at completion). A POSITIVE interior atom is a positive
- * occurrence exactly as the engine represents it (`check_atoms` walks Interior
- * and Edb in one loop), so its variables GROUND: they enter the rule's
- * boundness set, may ride the head, and satisfy negation safety — the
- * interior-only identity projection of a finished table is spellable with no
- * re-grounding join. A NEGATED one binds nothing, only rejects.
- */
 function advanceInterior(
 	state: RuleBuildState,
 	target: DerivedTable,
@@ -847,7 +713,6 @@ function advanceInterior(
 	})
 }
 
-/** Narrows a find entry to an aggregate value. */
 function isAggregateEntry(value: unknown): value is { readonly agg: string; readonly over?: unknown } {
 	return typeof value === "object" && value !== null && "agg" in value
 }
@@ -860,7 +725,6 @@ function asVarTerm(context: string, value: unknown): AnyVar {
 	throw errors.new(`${context}: expected a variable`)
 }
 
-/** Classifies one aggregate find entry into its runtime data (variables ride by reference). */
 function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: unknown }): AggData {
 	if (entry.agg === "count") {
 		return Object.freeze({ op: "count" as const })
@@ -882,11 +746,6 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 	}
 }
 
-/**
- * Classifies one find entry into its named answer column (the KEY names the
- * column, `count` included). The `slot`/`closed` slices are resolved LATER,
- * at rule completion, where boundness and the mint slots are in hand.
- */
 function findColumnOf(name: string, entry: unknown): FindColumn {
 	if (isTerm(entry)) {
 		if (entry[term] === "var") {
@@ -914,7 +773,7 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 }
 
 /**
- * The orderable ban's pointed refusal (`docs/architecture/10-data-model.md`
+ * The orderable ban's pointed refusal 
  * § orderability): a closed reference is equality-and-membership only.
  */
 function closedOrderError(context: string, position: string, vocabulary: string): Error {
@@ -923,19 +782,16 @@ function closedOrderError(context: string, position: string, vocabulary: string)
 	)
 }
 
-/** The comparison ops under the orderable ban (order roster + point membership). */
 function isOrderOp(op: CmpKind | "binding"): op is "lt" | "le" | "gt" | "ge" | "pointIn" {
 	return op === "lt" || op === "le" || op === "gt" || op === "ge" || op === "pointIn"
 }
 
-/** Requires a variable to be bound by a relation atom of the rule (the boundness wall — invisible to the type tier). */
 function assertBound(where: string, bound: ReadonlySet<AnyVar>, ref: AnyVar): void {
 	if (!bound.has(ref)) {
 		throw errors.new(`${where}: the variable ${ref.label} is not bound by a relation atom of the rule`)
 	}
 }
 
-/** Requires a variable to be interval-typed (the measure's and pack's domain), off its own descriptor. */
 function assertInterval(where: string, ref: AnyVar): void {
 	if (ref.field.kind !== "interval") {
 		throw errors.new(
@@ -944,7 +800,6 @@ function assertInterval(where: string, ref: AnyVar): void {
 	}
 }
 
-/** Requires a variable's own field to be non-closed (the orderable ban's runtime twin). */
 function assertNotClosed(where: string, position: string, ref: AnyVar): void {
 	const roster = rosterOf(ref.field)
 	if (roster !== undefined) {
@@ -952,11 +807,6 @@ function assertNotClosed(where: string, position: string, ref: AnyVar): void {
 	}
 }
 
-/**
- * The classed mint slot one answer column's VALUES flow from: a projected
- * variable's mint slot. Counts, folds, `pack` and the measure derive
- * numbers/intervals, so they resolve no slot.
- */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
 	if (entry.kind === "var") {
@@ -965,7 +815,6 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 	return undefined
 }
 
-/** Validates one find column's variable references (boundness + the orderable/interval walls, off the var's own field). */
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
@@ -999,11 +848,6 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 	}
 }
 
-/**
- * Validates one condition's variable references against the rule's bound
- * set — and, for `eq`/`ne` over two variables, holds the class wall through
- * the mint slots (the unification IS a join; bare pairs only with bare).
- */
 function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: CondData): void {
 	const label = contextLabel(context)
 	if (cond.kind === "cmp") {
@@ -1038,16 +882,6 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 	}
 }
 
-/**
- * Validates one interior item: every head column of the table is bound exactly
- * once (a missing or extra key is a pointed error) and each variable joins
- * its head column's classed slot. A POSITIVE interior atom GROUNDS its
- * variables (a positive occurrence, exactly the engine's representation),
- * so no boundness precondition exists; a NEGATED one binds nothing — its
- * variables must be positively bound elsewhere in the rule, the same
- * safety rule as EDB negation. When the table's own first rule is in flight
- * (`finds` empty), the completing rule's OWN find columns ARE the head.
- */
 function validateInterior(
 	context: ChainContext,
 	bound: ReadonlySet<AnyVar>,
@@ -1101,12 +935,6 @@ function validateInterior(
 	}
 }
 
-/**
- * Completes one rule: enriches the find columns (declaration-order-safe
- * keys, boundness validated, each column's classed slot and closed slice
- * resolved), then walks the body walls — negated-atom boundness safety, interior
- * head pairing, and condition validation.
- */
 function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: readonly FindColumn[]): RuleData {
 	const label = contextLabel(context)
 	if (rawColumns.length === 0) {
@@ -1138,15 +966,10 @@ function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: 
 	return Object.freeze({ items: state.items, finds: Object.freeze(columns), paramUses: state.paramUses })
 }
 
-/** Builds one typed rule value over completed rule data. */
 function makeRuleValue<Row, P extends ParamsRecord>(rule: RuleData): RuleValue<Row, P> {
 	return Object.freeze({ rule })
 }
 
-/**
- * The one runtime chain every context shares — non-generic on purpose. The
- * typed chain interfaces apply at the scope factories' boundaries.
- */
 interface RawChain {
 	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
 	where(cond: AnyCond): RawChain
@@ -1154,18 +977,15 @@ interface RawChain {
 	find(entries: Readonly<Record<string, unknown>>): RuleValue<never, never>
 }
 
-/** The runtime rule-builder shape beneath every typed scope. */
 interface RawScope extends TermOps {
 	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
 	interior(name: string, bindings: Readonly<Record<string, unknown>>): RawChain
 }
 
-/** The declared derived tables a chain may name. */
 type DerivedEnv =
 	| { readonly interiors: readonly InteriorData[] }
 	| { readonly interiors: readonly InteriorData[]; readonly rec: RecHandle | RecHead | RecData }
 
-/** Which rule family a chain builds — plus the schema's runtime class map and theory value (the join judge's authority). */
 type ChainContext = { readonly classes: SchemaClasses; readonly theory: AnySchema } & DerivedEnv &
 	(
 		| { readonly kind: "query" }
@@ -1174,7 +994,6 @@ type ChainContext = { readonly classes: SchemaClasses; readonly theory: AnySchem
 		| { readonly kind: "rec-arm"; readonly self: RecHead }
 	)
 
-/** The diagnostic label of a chain context. */
 function contextLabel(context: ChainContext): string {
 	switch (context.kind) {
 		case "query":
@@ -1188,12 +1007,10 @@ function contextLabel(context: ChainContext): string {
 	}
 }
 
-/** RecHandle is name-only staging; RecHead/RecData carry the sealed finds. */
 function isRecHead(rec: RecHandle | RecHead | RecData): rec is RecHead {
 	return Array.isArray((rec as RecHead).finds)
 }
 
-/** Resolves a derived-table name against the context's visible tables. */
 function lookupDerived(context: ChainContext, name: string): DerivedTable {
 	const interior = context.interiors.find(function byName(candidate) {
 		return candidate.name === name
@@ -1222,7 +1039,6 @@ function lookupDerived(context: ChainContext, name: string): DerivedTable {
 	throw errors.new(`${contextLabel(context)}: no derived table named ${name} is in scope`)
 }
 
-/** Validates and records one interior atom per the context's cut. */
 function interiorAdvance(
 	context: ChainContext,
 	state: RuleBuildState,
@@ -1232,11 +1048,6 @@ function interiorAdvance(
 	return advanceInterior(state, lookupDerived(context, name), bindings, "interior")
 }
 
-/**
- * Validates and records one NEGATED finished-table atom — main and interior
- * rules: a finished set is a set. Rec bodies refuse every negation
- * (`NegationInRec` — self is the wall; EDB / earlier-interior is this-cut).
- */
 function notInteriorAdvance(
 	context: ChainContext,
 	state: RuleBuildState,
@@ -1251,7 +1062,6 @@ function notInteriorAdvance(
 	return advanceInterior(state, lookupDerived(context, name), bindings, "negatedInterior")
 }
 
-/** Classifies one find record per the context (interior and rec heads project bound variables only). */
 function findColumns(context: ChainContext, entries: Readonly<Record<string, unknown>>): FindColumn[] {
 	const columns: FindColumn[] = []
 	const derivedHead = context.kind !== "query"
@@ -1270,7 +1080,6 @@ function findColumns(context: ChainContext, entries: Readonly<Record<string, unk
 	return columns
 }
 
-/** Builds one runtime chain (immutably — every step is a fresh chain over fresh state). */
 function makeRawChain(context: ChainContext, state: RuleBuildState): RawChain {
 	const chain: RawChain = {
 		match(relation, bindings) {
@@ -1290,7 +1099,6 @@ function makeRawChain(context: ChainContext, state: RuleBuildState): RawChain {
 	return chain
 }
 
-/** Builds one runtime rule-builder over a context. */
 function makeRawScope(context: ChainContext): RawScope {
 	const scope: RawScope = {
 		...termOps,
@@ -1318,7 +1126,6 @@ function isTypedScope<S>(scope: RawScope): scope is RawScope & S {
 	return typeof scope.match === "function"
 }
 
-/** Builds one query-rule builder (the typed face of the raw builder). */
 function makeQueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: AnySchema,
 	env: DerivedEnv
@@ -1330,7 +1137,6 @@ function makeQueryRuleScope<Rels extends SchemaRelations, Classes extends Schema
 	return raw
 }
 
-/** Builds one interior-rule builder. */
 function makeInteriorRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: AnySchema,
 	env: DerivedEnv,
@@ -1343,7 +1149,6 @@ function makeInteriorRuleScope<Rels extends SchemaRelations, Classes extends Sch
 	return raw
 }
 
-/** Builds one rec-arm builder. */
 function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: AnySchema,
 	env: DerivedEnv,
@@ -1384,12 +1189,10 @@ function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaCl
 	return raw
 }
 
-/** Renders one head column's closed slice for the rule-alignment check's diagnostics. */
 function renderClosedSlice(closed: ClosedRoster | undefined): string {
 	return closed === undefined ? "a bare value" : `a ${closed.name} reference`
 }
 
-/** Renders one head column's signature for the rule-alignment check. */
 function headSignature(column: FindColumn): string {
 	const entry = column.entry
 	if (entry.kind === "var" || entry.kind === "measure") {
@@ -1402,12 +1205,10 @@ function headSignature(column: FindColumn): string {
 	return `${column.name}:${agg.op}`
 }
 
-/** The roster a param anchor carries: present exactly on a closed-reference field anchor. */
 function anchorRosterOf(anchor: AnyField | "measure" | undefined): ClosedRoster | undefined {
 	return anchor === "measure" ? undefined : rosterOf(anchor)
 }
 
-/** Renders one param anchor's closedness for the registry's coherence diagnostics. */
 function renderParamAnchor(roster: ClosedRoster | undefined): string {
 	return roster === undefined ? "a non-closed position" : `a ${roster.name} reference`
 }
@@ -1499,14 +1300,7 @@ function paramRegistryOf(
 			if (entry === undefined) {
 				throw errors.new(`query param ${name} lost its registry entry`)
 			}
-			/**
-			 * A membership array's handle names are program constants, so the
-			 * entry stores the resolved IMAGE: each name rides the one
-			 * roster-verification point (`taggedHandleId`, through
-			 * `taggedCmpLiteral`) exactly once, HERE — an out-of-roster name
-			 * fails at build, and every execute returns this frozen value by
-			 * reference.
-			 */
+
 			let membership: QueryParam | undefined
 			if (entry.members !== undefined) {
 				const anchor = entry.anchor
@@ -1527,7 +1321,6 @@ function paramRegistryOf(
 	)
 }
 
-/** The runtime query shape beneath the typed `Query` face. */
 interface RawQuery {
 	readonly schema: AnySchema
 	readonly data: QueryData
@@ -1536,7 +1329,6 @@ interface RawQuery {
 	reach(name: string, arms: never): never
 }
 
-/** Asserts every rule in a list derives the same head (name, aggregate shape, closed slice, class). */
 function assertAlignedHeads(label: string, rules: readonly RuleData[]): void {
 	const first = rules[0]
 	if (first === undefined) {
@@ -1575,13 +1367,6 @@ function afterMainError(what: string): Error {
 	)
 }
 
-/**
- * Assembles the runtime query value over completed rules: every rule must
- * derive the SAME head (name and aggregate shape, position for position —
- * the decode labels and the engine's alignment rule agree), and the param
- * registry folds in query-walk order. CQ lowering does not mention rec;
- * Reach carries RecData by value.
- */
 function makeRawQuery(
 	theory: AnySchema,
 	interiors: readonly InteriorData[],
@@ -1641,7 +1426,6 @@ function makeQuery<Rels extends SchemaRelations, Row, P extends ParamsRecord, Cl
 	return makeRawQuery(theory, interiors, rec, rules) as unknown as Query<Rels, Row, P, Classes>
 }
 
-/** Collects one Interior from its builders. */
 function collectInterior<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: Schema<Rels, Classes>,
 	env: DerivedEnv,
@@ -1662,7 +1446,6 @@ function collectInterior<Rels extends SchemaRelations, Classes extends SchemaCla
 	return Object.freeze({ name, finds: first.finds, rules: Object.freeze(rules) })
 }
 
-/** Collects the Rec from tagged base/rec builder arrays. */
 function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[],
@@ -1712,7 +1495,6 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	return recData
 }
 
-/** Builds the CQ query start (interiors, then reach or the first main rule). */
 function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClasses, P extends ParamsRecord>(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[]
@@ -1768,7 +1550,6 @@ function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClas
 	return start as unknown as QueryStart<Rels, Classes, P>
 }
 
-/** Builds the Reach query start (rec sealed; only the first main rule remains). */
 function makeQueryReachStart<Rels extends SchemaRelations, Classes extends SchemaClasses, P extends ParamsRecord>(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[],
@@ -1787,24 +1568,12 @@ function makeQueryReachStart<Rels extends SchemaRelations, Classes extends Schem
 	return start as unknown as QueryReachStart<Rels, Classes, P>
 }
 
-/**
- * Opens a query over a schema: `query(S).rule(r => ...)`, optionally with
- * `interior` / `reach` first. Each `.rule` adds one conjunctive rule;
- * multiple rules are the set union. The schema's law-computed class map and
- * theory value ride into every rule builder — the join walls compare
- * against the mint slots off it.
- */
 function query<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: Schema<Rels, Classes>
 ): QueryStart<Rels, Classes> {
 	return makeQueryStart<Rels, Classes, Record<never, never>>(theory, [])
 }
 
-/**
- * Tags one closed-reference literal: the handle NAME, verified against the
- * roster and translated to its declaration-order row id, tagged u64. THE
- * single roster-verification point of the query surface.
- */
 function taggedHandleId(
 	context: string,
 	closed: { readonly name: string; readonly handles: readonly string[] },
@@ -1822,11 +1591,6 @@ function taggedHandleId(
 	return { kind: "u64", value: BigInt(id) }
 }
 
-/**
- * Tags one literal in an interval element domain: a bigint tags as the
- * element (the membership typing rule's point side), an interval-shaped
- * value as the interval (value equality).
- */
 function taggedAtElementDomain(context: string, element: "u64" | "i64", value: unknown): TaggedValue {
 	if (typeof value === "bigint") {
 		if (element === "u64") {
@@ -1843,10 +1607,6 @@ function taggedAtElementDomain(context: string, element: "u64" | "i64", value: u
 	throw literalShapeError(context, "bigint (point) or { start, end } (interval)", value)
 }
 
-/**
- * Tags one host literal at a FIELD position (atom bindings): the field's
- * structural kind directs the tag, never a guess.
- */
 function taggedLiteral(context: string, field: AnyField, value: unknown): TaggedValue {
 	const roster = rosterOf(field)
 	if (roster !== undefined) {
@@ -1926,7 +1686,6 @@ function taggedCmpLiteral(
 	return taggedLiteral(context, sibling, value)
 }
 
-/** The shared lowering context of one `lowerQuery` run. */
 interface LowerContext {
 	readonly theory: AnySchema
 	readonly relationIds: ReadonlyMap<string, number>
@@ -1935,12 +1694,10 @@ interface LowerContext {
 	readonly params: ReadonlyMap<string, ParamEntry>
 }
 
-/** One rule's dense variable numbering: first occurrence in written order, keyed on the object REFERENCE. */
 interface VarIds {
 	of(ref: AnyVar): number
 }
 
-/** Creates one rule-scoped variable numberer. */
 function freshVarIds(): VarIds {
 	const assigned = new Map<AnyVar, number>()
 	return {
@@ -1956,7 +1713,6 @@ function freshVarIds(): VarIds {
 	}
 }
 
-/** Resolves a param name to its dense positional id. */
 function paramIdOf(ctx: LowerContext, name: string): number {
 	const id = ctx.paramIds.get(name)
 	if (id === undefined) {
@@ -1965,10 +1721,6 @@ function paramIdOf(ctx: LowerContext, name: string): number {
 	return id
 }
 
-/**
- * Lowers one EDB atom (either polarity). A CLOSED owner lowers through the
- * same edb source, with field ordinals over the SEALED shape.
- */
 function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	const member = ctx.theory.relations[atom.relation.name]
 	if (member !== atom.relation) {
@@ -1993,7 +1745,6 @@ function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	return { source: { kind: "edb", relation: relationId }, bindings }
 }
 
-/** Lowers one binding term. A membership ARRAY lowers to the existing param-set term over its content-addressed entry. */
 function lowerBindingTerm(ctx: LowerContext, context: string, binding: BindingEntry, ids: VarIds): TermIr {
 	const bound = binding.term
 	switch (bound.kind) {
@@ -2041,7 +1792,6 @@ function lowerInteriorAtom(
 	return { source: { kind: "interior", interior }, bindings: irBindings }
 }
 
-/** Lowers one comparison side; literals tag by the sibling's anchor (op-aware at `pointIn`). */
 function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData, ids: VarIds, op: CmpKind): TermIr {
 	switch (side.kind) {
 		case "var":
@@ -2064,7 +1814,6 @@ function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData
 	}
 }
 
-/** Resolves the anchor a comparison literal tags by: the sibling variable's field, the measure, or an anchored param. */
 function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | "measure" | undefined {
 	if (sibling.kind === "var") {
 		return sibling.ref.field
@@ -2078,7 +1827,6 @@ function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | "measu
 	return undefined
 }
 
-/** Lowers one comparison. */
 function lowerComparison(ctx: LowerContext, cmp: CmpData, ids: VarIds): ComparisonIr {
 	if (cmp.op.kind === "allen") {
 		return {
@@ -2094,7 +1842,6 @@ function lowerComparison(ctx: LowerContext, cmp: CmpData, ids: VarIds): Comparis
 	}
 }
 
-/** Lowers one condition node (comparison leaf or and/or tree). */
 function lowerCondition(ctx: LowerContext, cond: CondData, ids: VarIds): ConditionTreeIr {
 	if (cond.kind === "cmp") {
 		return { kind: "leaf", cmp: lowerComparison(ctx, cond, ids) }
@@ -2107,7 +1854,6 @@ function lowerCondition(ctx: LowerContext, cond: CondData, ids: VarIds): Conditi
 	}
 }
 
-/** Lowers one find entry to its per-rule find term. */
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 	if (entry.kind === "var") {
 		return { kind: "var", var: ids.of(entry.over) }
@@ -2130,7 +1876,6 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 	}
 }
 
-/** One aggregate's var-free head-op kind (`AggOp::head_op`). */
 function headOpOf(agg: AggData): HeadOpIr {
 	switch (agg.op) {
 		case "count":
@@ -2142,7 +1887,6 @@ function headOpOf(agg: AggData): HeadOpIr {
 	}
 }
 
-/** One find entry's var-free head shape. */
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
 	if (entry.kind === "var" || entry.kind === "measure") {
@@ -2151,7 +1895,6 @@ function headTermOf(column: FindColumn): HeadTermIr {
 	return { kind: "aggregate", op: headOpOf(entry.agg) }
 }
 
-/** Lowers one rule: body walked in written order (var ids by first occurrence), finds last. */
 function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
 	const ids = freshVarIds()
 	const atoms: AtomIr[] = []
@@ -2191,11 +1934,6 @@ function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
 	}
 }
 
-/**
- * Lowers a query value to the bridge's `QueryIr` — pure and stable:
- * interiors in declaration order, then CQ or Reach, then main. Every
- * registered param must carry a field anchor by now.
- */
 function lowerQuery(q: AnyQuery): ParsedQuery {
 	const theory = q.schema
 	const relationIds = new Map<string, number>()
