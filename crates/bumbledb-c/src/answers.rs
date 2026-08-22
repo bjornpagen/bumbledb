@@ -1,7 +1,6 @@
 //! The owned answers carrier: execution crosses the
 //! engine's flat `Answers` buffer WHOLE behind one opaque handle; the host
 //! decodes cell by cell through bounds-checked accessors.
-
 use bumbledb::Answers;
 
 use crate::db::bdb_instance_ref;
