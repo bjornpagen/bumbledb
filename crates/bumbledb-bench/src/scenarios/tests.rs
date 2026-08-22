@@ -179,7 +179,6 @@ fn the_alloc_pass_scopes_a_reading_per_query() {
 #[test]
 fn a_failed_capture_never_leaves_the_thread_local_capture_live() {
     fn unprepared() -> bumbledb::Query {
-
         bumbledb::Query::single(bumbledb::Rule {
             finds: vec![bumbledb::FindTerm::Var(bumbledb::VarId(0))],
             atoms: vec![crate::fixture::atom(
@@ -214,7 +213,6 @@ fn a_failed_capture_never_leaves_the_thread_local_capture_live() {
 
 #[test]
 fn the_traced_warm_draw_is_the_median_cost_one() {
-
     let costs = [50u64, 10, 40, 900];
     let median = super::trace::median_param(4, &mut |i| Ok(costs[i])).expect("ranked");
     assert_eq!(median, 0);
