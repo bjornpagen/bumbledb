@@ -59,7 +59,6 @@ fn measure_calls_exactly_warmups_plus_samples_and_sums_work() {
 
 #[test]
 fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
-
     let samples = [100u64, 175, 175, 175, 100];
     let ghz = [3.5f64, 2.0, 2.0, 2.0, 3.5];
 
