@@ -1415,8 +1415,7 @@ impl Emitter<'_> {
         })
     }
 
-    /// and an explicitly indexed dense in-order variable list is refused
-
+    /// Interior/rec atom: bare idents are ordered dense bindings; indexed labels are sparse/selection; the two never mix.
     fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: u32) -> Parse<String> {
         let bindings = self.interior_bindings(scope, atom)?;
         Ok(format!(
