@@ -34,7 +34,6 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
 /// the empty set.
 #[test]
 fn a_plan_dropping_a_gate_occurrence_is_rejected() {
-
     let query = normalized(
         vec![occurrence(0, 0, &[(1, X)]), occurrence(1, 1, &[])],
         vec![],
@@ -117,7 +116,6 @@ fn a_subatom_over_a_negated_occurrence_is_rejected() {
 
 #[test]
 fn anti_probe_attaches_to_the_earliest_all_bound_node() {
-
     let mut occurrences = clover().occurrences;
     occurrences.push(negated(3, 2, &[(1, X), (2, B)]));
     let query = normalized(occurrences, vec![]);
@@ -164,7 +162,6 @@ fn negated_occurrences_get_probe_order_trie_schemas() {
 
 #[test]
 fn trie_schemas_match_the_papers_triangle_worked_example() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
@@ -201,7 +198,6 @@ fn trie_schemas_match_the_papers_triangle_worked_example() {
 
 #[test]
 fn gj_style_plan_has_multiple_covers_on_the_first_node() {
-
     let plan = FjPlan {
         nodes: vec![
             Node {
@@ -230,7 +226,6 @@ fn gj_style_plan_has_multiple_covers_on_the_first_node() {
 
 #[test]
 fn residuals_attach_to_the_first_node_binding_both_sides() {
-
     let query = normalized(
         clover().occurrences,
         vec![FilterPredicate::FieldsCompare {
@@ -252,7 +247,6 @@ fn residuals_attach_to_the_first_node_binding_both_sides() {
 /// unbound, and the executor compared against a zero slot.
 #[test]
 fn placement_rechecks_every_variable_at_every_node() {
-
     let query = normalized(
         clover().occurrences,
         vec![FilterPredicate::FieldsCompare {
@@ -279,7 +273,6 @@ fn placement_rechecks_every_variable_at_every_node() {
 
 #[test]
 fn self_join_plans_validate_over_occurrences() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
@@ -316,7 +309,6 @@ fn duplicate_occurrence_within_a_node_is_rejected() {
 
 #[test]
 fn distinct_witness_tracks_key_coverage() {
-
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, X), (1, A)]),
