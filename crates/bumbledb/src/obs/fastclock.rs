@@ -2,7 +2,7 @@
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
-)] 
+)]
 #[inline]
 #[must_use]
 pub fn ticks() -> u64 {
@@ -19,7 +19,7 @@ pub fn ticks() -> u64 {
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
-)] 
+)]
 #[inline]
 #[must_use]
 pub fn ticks_ss() -> u64 {
