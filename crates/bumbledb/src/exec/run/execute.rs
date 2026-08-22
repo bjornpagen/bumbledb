@@ -1,5 +1,4 @@
 //! Executor construction and the per-execution entry point.
-
 use super::{
     AllenResidualSpec, AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor,
     LeafPrecompute, NodePrecompute, NodeScratch, PipeTables, PointProbeSpec, ResidualSpec, Sink,
@@ -146,14 +145,12 @@ impl Executor {
     }
 
     /// # Panics
-
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
     )]
-
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,
@@ -305,9 +302,7 @@ impl Executor {
     }
 
     /// # Errors
-
     /// # Panics
-
     /// Only on programmer-invariant violations (sources not matching the
     pub fn execute<S: Sink, C: Counters>(
         &mut self,
