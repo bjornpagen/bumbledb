@@ -33,16 +33,19 @@ pub extern "C" fn bdb_version() -> *const c_char {
         .cast::<c_char>()
 }
 
-/// C ABI generation. `3` is instance-lifetime: admission unions, the
-/// builder/owned/witness handles, and the retirement of snapshot-named
-/// functions.
+/// C ABI generation. `4` is the 0.17.0 purge: the measure/duration
+/// family left the query surface, so `bdb_error_kind` and
+/// `bdb_find_term_kind` renumbered — a host compiled against the
+/// generation-3 header misreads those tags and must recompile. (`3` was
+/// instance-lifetime: admission unions, the builder/owned/witness
+/// handles, and the retirement of snapshot-named functions.)
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "extern export: the unsafe(no_mangle) ABI attribute"
 )]
 pub extern "C" fn bdb_abi_version() -> u32 {
-    3
+    4
 }
 
 macro_rules! c_tag {

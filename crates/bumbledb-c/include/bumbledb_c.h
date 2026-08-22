@@ -289,8 +289,8 @@ typedef struct bdb_instance_ref bdb_instance_ref;
 typedef struct bdb_owned_instance bdb_owned_instance;
 
 // The opaque prepared-query handle. Field order is load-bearing: the
-// prepared value drops before the optional store `Arc`. Heap-prepared
 // queries hold `None`.
+// prepared value drops before the optional store `Arc`. Heap-prepared
 typedef struct bdb_prepared bdb_prepared;
 
 // Owned row carrier for scans and point reads.
@@ -329,22 +329,14 @@ typedef struct bdb_bytes_view {
 // are ignored inbound and zeroed outbound. Boring and flat by design —
 // no union, no packing.
 typedef struct bdb_value {
-  // Integer tag; valid values are [`bdb_value_kind`]. Unknown tags are
-  // `BDB_STATUS_MISUSE` (the field is `u32` so an out-of-range C enum
-  // is not UB).
   uint32_t kind;
-  // 0 or 1 when `kind` is Bool; any other byte is misuse.
   uint8_t bool_value;
   uint64_t u64_value;
   int64_t i64_value;
-  // `String`: UTF-8 text (checked at the boundary).
   struct bdb_string_view string_value;
-  // `FixedBytes`: exactly the field's N bytes (the engine checks N).
   struct bdb_bytes_view bytes_value;
-  // `IntervalU64`: half-open `[start, end)`, `start < end` checked.
   uint64_t interval_u64_start;
   uint64_t interval_u64_end;
-  // `IntervalI64`: half-open `[start, end)`, `start < end` checked.
   int64_t interval_i64_start;
   int64_t interval_i64_end;
 } bdb_value;
@@ -353,9 +345,7 @@ typedef struct bdb_value {
 // public `ParamArg` shape (Scalar | Set).
 typedef struct bdb_param {
   uint32_t kind;
-  // `Scalar`: the value.
   struct bdb_value scalar;
-  // `Set`: `set_len` tagged values.
   const struct bdb_value *set;
   size_t set_len;
 } bdb_param;
@@ -717,9 +707,12 @@ extern "C" {
 // bridge's `engine_version` as a C string the host can print.
 const char *bdb_version(void);
 
-// C ABI generation. `3` is instance-lifetime: admission unions, the
-// builder/owned/witness handles, and the retirement of snapshot-named
-// functions.
+// C ABI generation. `4` is the 0.17.0 purge: the measure/duration
+// family left the query surface, so `bdb_error_kind` and
+// `bdb_find_term_kind` renumbered — a host compiled against the
+// generation-3 header misreads those tags and must recompile. (`3` was
+// instance-lifetime: admission unions, the builder/owned/witness
+// handles, and the retirement of snapshot-named functions.)
 uint32_t bdb_abi_version(void);
 
 // Mints an empty answers carrier (never fails; owns nothing yet).
@@ -747,7 +740,6 @@ enum bdb_status bdb_answers_get(const struct bdb_answers *answers,
 // Frees the carrier (invalidating every view borrowed from it).
 enum bdb_status bdb_answers_destroy(struct bdb_answers *answers);
 
-// Executes a prepared query against the instance with positional
 // params, filling the caller's reusable carrier (cleared first,
 // capacity retained). The prepared handle is taken exclusively for the
 // call (`&mut` on the engine side — one execution at a time); executing
@@ -823,7 +815,6 @@ enum bdb_status bdb_instance_builder_destroy(struct bdb_instance_builder *builde
 
 enum bdb_status bdb_owned_instance_destroy(struct bdb_owned_instance *instance);
 
-// Borrows an owned instance through the common [`bdb_instance_ref`]
 // query surface.
 enum bdb_status bdb_owned_instance_read(const struct bdb_owned_instance *instance,
                                         bdb_owned_instance_read_callback callback,

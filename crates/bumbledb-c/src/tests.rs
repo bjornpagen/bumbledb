@@ -1914,7 +1914,7 @@ fn version_symbols() {
         version.contains(env!("CARGO_PKG_VERSION")),
         "version string: {version}"
     );
-    assert_eq!(bdb_abi_version(), 3);
+    assert_eq!(bdb_abi_version(), 4);
 }
 
 #[test]

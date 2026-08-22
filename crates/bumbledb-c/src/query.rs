@@ -328,22 +328,6 @@ fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
     Ok(Atom { source, bindings })
 }
 
-fn fold_op_in(view: bdb_agg_op) -> BridgeResult<FoldOp> {
-    Ok(match tag_in::<bdb_head_op>(view.kind)? {
-        bdb_head_op::Sum => FoldOp::Sum,
-        bdb_head_op::Min => FoldOp::Min,
-        bdb_head_op::Max => FoldOp::Max,
-        bdb_head_op::Count => {
-            return Err(fail_shape(
-                "Count is BDB_FIND_TERM_KIND_COUNT, not AGGREGATE",
-            ));
-        }
-        bdb_head_op::Pack => {
-            return Err(fail_shape("Pack is a pack find, not a fold AGGREGATE"));
-        }
-    })
-}
-
 fn head_op_in(op: u32) -> BridgeResult<HeadOp> {
     Ok(match tag_in::<bdb_head_op>(op)? {
         bdb_head_op::Sum => HeadOp::Sum,
