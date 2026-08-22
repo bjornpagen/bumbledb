@@ -4,7 +4,6 @@
 //! time), a second theory: accounts of persons, per-person calendars, events
 //! with bounded and ray horizons, attendance with RSVP arms (the the algebra's
 //! vocabulary exists for. Same protocol as the ledger
-
 use bumbledb::schema::ValidateDescriptor as _;
 pub mod corpus;
 pub mod corpus_gen;
