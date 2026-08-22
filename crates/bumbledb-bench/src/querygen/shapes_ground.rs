@@ -72,7 +72,6 @@ pub(super) fn existence_walk(b: &mut Builder, rng: &mut Rng) {
     let target = b.add_atom(target_rel);
     b.bind(target, key_field, Term::Var(join));
     match rng.range(9) {
-
         0..=2 => {
             b.find_var(payload);
             let extra = b.bind_var(target, extra_field);
