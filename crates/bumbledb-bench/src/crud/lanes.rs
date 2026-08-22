@@ -1,31 +1,5 @@
-//! The crud family runners — one engine runner and one `SQLite` runner
-//! per family, both folding the SAME precomputed op stream
-//! ([`super::ops`]) over their own store, so post-state equality is a
-//! consequence of the representation, not a hope ([`crate::poststate`]
-//! is the judge). Every runner takes its [`Protocol`] explicitly —
-//! tests pass tiny protocols; no protocol is baked into a runner.
-//!
-//! **The `SQLite` twins play their own best game**: their writes are
-//! the NATIVE SQL for each shape — bound `INSERT`s, `UPDATE … WHERE`,
-//! the conflict-target upsert, `DELETE … WHERE` — inside
-//! `BEGIN IMMEDIATE … COMMIT` on reused prepared statements (the
-//! `sqlite_run::commits` shape), never a transliteration of our
-//! delete+insert revision idiom.
-//!
-//! **Refusal contracts ride inside the write closures** (the
-//! `writebench::posting_swap` precedent): a delete lane that stops
-//! deleting, an update whose previous value is gone, or an upsert that
-//! stops matching its stream aborts the transaction whole — engine
-//! side by an in-closure `Err` (the delta drops, nothing commits),
-//! `SQLite` side by `ROLLBACK` — instead of silently measuring the
-//! wrong fork.
-//!
-//! **Fresh minting** threads a [`FreshCursor`] through the
-//! insert-bearing runners of ONE engine's pass; each engine gets its
-//! own cursor, so the two passes mint identical id/key/val/payload
-//! sequences by construction. The engine side asserts the minted fresh
-//! id equals the cursor inside the closure — mint drift is a loud
-//! abort, never a divergent measurement.
+//! Every runner takes its [`Protocol`] explicitly — tests pass tiny protocols;
+//! no protocol is baked into a runner.
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
@@ -41,44 +15,31 @@ use crate::translate;
 use super::ops::{self, UpdateOp, UpsertOp};
 use super::{Counter, CounterByKey, CrudDocId, CrudSizes, CrudWorld, Doc, ids, schema};
 
-/// The mixed lane's read fan: 9 point reads per single-row insert — the
-/// 90/10 shape.
 const MIXED_READS: u32 = 9;
 
-/// The native `Doc` insert (id, key, val, payload — declaration order).
 const DOC_INSERT: &str = "INSERT INTO \"Doc\" VALUES (?1, ?2, ?3, ?4)";
-/// The native counter update.
+
 const COUNTER_UPDATE: &str = "UPDATE \"Counter\" SET \"val\" = ?1 WHERE \"key\" = ?2";
-/// The native upsert — the conflict target is the UNIQUE index the
-/// `Counter(key) -> Counter` statement renders on the mirror.
+
 const COUNTER_UPSERT: &str = "INSERT INTO \"Counter\" VALUES (?1, ?2) \
                               ON CONFLICT(\"key\") DO UPDATE SET \"val\" = excluded.\"val\"";
-/// The rmw round trip's read half.
+
 const COUNTER_SELECT: &str = "SELECT \"val\" FROM \"Counter\" WHERE \"key\" = ?1";
-/// The native pool delete.
+
 const DOC_DELETE: &str = "DELETE FROM \"Doc\" WHERE \"id\" = ?1";
 
-/// The shared fresh-mint cursor: starts at `docs + delete_pool` (the
 /// fresh mint base both engines share after load) and advances one per
-/// minted `Doc` row. One cursor per engine pass — the inserted row is
-/// `{ id: cursor, key: cursor, val: cursor, payload: f(seed, cursor) }`
-/// on BOTH sides by construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreshCursor(pub u64);
 
 impl FreshCursor {
-    /// The mint base: the first id above the loaded corpus (standing
-    /// docs plus the delete pool).
+
     #[must_use]
     pub fn at_base(sizes: CrudSizes) -> Self {
         Self(sizes.docs + sizes.delete_pool)
     }
 }
 
-/// The `crud_read_point` query (timed in the crud orchestration; the
-/// query LIVES here): a single rule finding `(id, val)` of the one
-/// `Doc` whose `key` binds the parameter — the `points.rs` `by_key`
-/// shape over the crud world.
 #[must_use]
 pub fn read_query() -> Query {
     Query::single(Rule {
@@ -96,21 +57,20 @@ pub fn read_query() -> Query {
     })
 }
 
-/// The protocol's total closure invocations — every stream's required
-/// length.
+/// The protocol's total closure invocations — every stream's required length.
 fn invocations(proto: Protocol) -> usize {
     usize::try_from(proto.warmups + proto.samples).expect("protocol counts are small")
 }
 
-/// The in-closure refusal sentinel (the `posting_swap` precedent):
-/// returning this from a write closure drops the delta whole, so a
-/// refused sample commits nothing.
+/// The in-closure refusal sentinel (the `posting_swap` precedent): returning
+/// this from a write closure drops the delta whole, so a refused sample commits
+/// nothing.
 fn refuse(what: &str) -> bumbledb::Error {
     bumbledb::Error::from(std::io::Error::other(what.to_owned()))
 }
 
-/// A stream whose length disagrees with the protocol is refused at
-/// runner entry — the count contract is part of the representation.
+/// A stream whose length disagrees with the protocol is refused at runner entry
+/// — the count contract is part of the representation.
 fn check_stream(family: &str, len: usize, proto: Protocol) -> Result<(), String> {
     let want = invocations(proto);
     if len == want {
@@ -122,14 +82,10 @@ fn check_stream(family: &str, len: usize, proto: Protocol) -> Result<(), String>
     }
 }
 
-/// One corpus-axiom u64 as the `SQLite` INTEGER it maps to.
 fn sql_u64(value: u64) -> i64 {
     i64::try_from(value).expect("corpus ids and keys stay below 2^63")
 }
 
-/// One freshly minted `Doc`, engine side, inside an open transaction:
-/// alloc, assert the mint equals the cursor (drift aborts the
-/// transaction whole), insert, advance.
 fn mint_doc(
     tx: &mut bumbledb::WriteTx<'_, CrudWorld>,
     seed: u64,
@@ -152,8 +108,6 @@ fn mint_doc(
     Ok(())
 }
 
-/// One freshly minted `Doc`, `SQLite` side, inside an open transaction:
-/// the cursor binds directly (the `commits.rs` host-counter precedent).
 fn mint_doc_sqlite(conn: &Connection, seed: u64, cursor: &mut FreshCursor) -> Result<(), String> {
     let id = sql_u64(cursor.0);
     conn.prepare_cached(DOC_INSERT)
@@ -164,14 +118,7 @@ fn mint_doc_sqlite(conn: &Connection, seed: u64, cursor: &mut FreshCursor) -> Re
     Ok(())
 }
 
-/// `crud_insert` and its batch siblings on bumbledb: one sample = one
-/// `db.write` minting `per_commit` fresh `Doc` rows through the typed
-/// path (`per_commit` = 1/10/100/1000 for the four registered
-/// families). work = `per_commit` per sample.
-///
 /// # Errors
-///
-/// Engine errors, stringified; a cursor-drifted mint, named.
 pub fn insert_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -194,13 +141,7 @@ pub fn insert_bumbledb(
     })
 }
 
-/// `crud_insert` and its batch siblings on `SQLite`: one sample =
-/// `per_commit` bound executions of the native `INSERT` on a reused
-/// prepared statement inside `BEGIN IMMEDIATE … COMMIT`.
-///
 /// # Errors
-///
-/// `SQLite` errors, stringified.
 pub fn insert_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -230,16 +171,8 @@ pub fn insert_sqlite(
     })
 }
 
-/// `crud_update` / `crud_update_hot` on bumbledb (the two families are
-/// one runner over two streams): one sample = one `db.write` replacing
-/// `Counter{key, prev}` with `Counter{key, next}` — delete-bearing by
-/// contract: a no-op delete (the stream's `prev` absent) refuses inside
-/// the closure and the transaction aborts whole.
-///
 /// # Errors
-///
 /// Engine errors, stringified; a stream/protocol length mismatch or a
-/// non-delete-bearing update, named.
 pub fn update_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -278,15 +211,8 @@ pub fn update_bumbledb(
     })
 }
 
-/// `crud_update` / `crud_update_hot` on `SQLite`: the native
-/// `UPDATE "Counter" SET "val" = ? WHERE "key" = ?` inside
-/// `BEGIN IMMEDIATE … COMMIT`, with `changes() == 1` asserted inside
-/// the closure — a missed update rolls back and errs.
-///
 /// # Errors
-///
 /// `SQLite` errors, stringified; a stream/protocol length mismatch or
-/// an update that changed anything but exactly one row, named.
 pub fn update_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -327,16 +253,8 @@ pub fn update_sqlite(
     })
 }
 
-/// `crud_upsert` on bumbledb — the blessed idiom (the `WriteTx::get`
-/// doc example): keyed point read inside the write, delete+insert on a
-/// hit, plain insert on a miss. The store is checked against the
-/// stream's `prev` inside the closure — drift aborts the transaction
-/// whole instead of measuring a fork the `SQLite` twin never took.
-///
 /// # Errors
-///
 /// Engine errors, stringified; a stream/protocol length mismatch or a
-/// stream-drifted upsert, named.
 pub fn upsert_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -380,14 +298,8 @@ pub fn upsert_bumbledb(
     })
 }
 
-/// `crud_upsert` on `SQLite`: the native conflict-target upsert
-/// ([`COUNTER_UPSERT`] — the UNIQUE index from the key statement is the
-/// target) inside `BEGIN IMMEDIATE … COMMIT`.
-///
 /// # Errors
-///
 /// `SQLite` errors, stringified; a stream/protocol length mismatch,
-/// named.
 pub fn upsert_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -411,15 +323,8 @@ pub fn upsert_sqlite(
     })
 }
 
-/// `crud_rmw` on bumbledb — the read-modify-write round trip: keyed
-/// point read inside the write, `val + 1` computed by the host, delete
-/// the read fact, insert the successor. A missing key refuses (the
-/// stream draws over the standing mass, which never shrinks).
-///
 /// # Errors
-///
 /// Engine errors, stringified; a stream/protocol length mismatch or a
-/// missing counter row, named.
 pub fn rmw_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -448,15 +353,8 @@ pub fn rmw_bumbledb(
     })
 }
 
-/// `crud_rmw` on `SQLite`: `BEGIN IMMEDIATE`, `SELECT "val"` by key,
-/// the host computes `val + 1`, `UPDATE` binds it back, `changes() == 1`
-/// asserted, `COMMIT` — the value genuinely round-trips through the
-/// host on both sides.
-///
 /// # Errors
-///
 /// `SQLite` errors, stringified; a stream/protocol length mismatch, a
-/// missing counter row, or a missed update, named.
 pub fn rmw_sqlite(conn: &Connection, proto: Protocol, keys: &[u64]) -> Result<Measurement, String> {
     check_stream("crud_rmw", keys.len(), proto)?;
     let mut iter = keys.iter();
@@ -500,16 +398,8 @@ pub fn rmw_sqlite(conn: &Connection, proto: Protocol, keys: &[u64]) -> Result<Me
     })
 }
 
-/// `crud_delete` on bumbledb: one pool-row delete per commit, folding a
-/// precomputed row stream ([`ops::delete_rows`] — the fold derives it,
-/// so the traced twin sample can continue the SAME stream past the
-/// timed window). Delete-bearing by contract: an absent pool row
-/// refuses inside the closure.
-///
 /// # Errors
-///
 /// Engine errors, stringified; a stream/protocol length mismatch or a
-/// non-delete-bearing sample, named.
 pub fn delete_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -537,14 +427,8 @@ pub fn delete_bumbledb(
     })
 }
 
-/// `crud_delete` on `SQLite`: the native `DELETE … WHERE "id" = ?` over
-/// the same pool id sequence (the stream's ids, in order),
-/// `changes() == 1` asserted inside the closure.
-///
 /// # Errors
-///
 /// `SQLite` errors, stringified; a stream/protocol length mismatch or a
-/// delete that changed anything but exactly one row, named.
 pub fn delete_sqlite(
     conn: &Connection,
     proto: Protocol,
@@ -587,13 +471,7 @@ pub fn delete_sqlite(
     })
 }
 
-/// `crud_mixed_90_10` on bumbledb: one sample = 9 point reads (the
-/// prepared [`read_query`] over the rotating [`ops::read_keys`] sets)
-/// plus one single-row insert commit. work = answers drained + 1.
-///
 /// # Errors
-///
-/// Engine errors, stringified; a cursor-drifted mint, named.
 pub fn mixed_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
@@ -620,14 +498,7 @@ pub fn mixed_bumbledb(
     })
 }
 
-/// `crud_mixed_90_10` on `SQLite`: 9 executions of the CANONICAL
-/// translation of [`read_query`] on one reused prepared statement
-/// (rotating the IDENTICAL key sequence), then one native single-row
-/// `INSERT` transaction. work = rows drained + 1.
-///
 /// # Errors
-///
-/// Translation and `SQLite` errors, stringified.
 pub fn mixed_sqlite(
     conn: &Connection,
     proto: Protocol,
