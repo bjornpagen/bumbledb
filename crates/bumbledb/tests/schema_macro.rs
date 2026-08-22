@@ -259,7 +259,6 @@ fn statements_land_in_source_order_with_equality_lowered() {
 
 #[test]
 fn the_equality_pair_seals_mirror_links() {
-
     let schema = declared();
     let mirrors: Vec<Option<StatementId>> = (0..8)
         .map(|id| match schema.statement(StatementId(id)) {
@@ -284,7 +283,6 @@ fn the_equality_pair_seals_mirror_links() {
 
 #[test]
 fn fact_structs_carry_host_types() {
-
     let account = Account {
         id: AccountId(1),
         holder: HolderId(2),
@@ -308,14 +306,13 @@ fn fact_structs_carry_host_types() {
 
 #[test]
 fn fact_and_key_structs_are_value_types() {
-
     // decoded fact is a value: reusable after insertion, set-member,
 
     let holder = Holder {
         id: HolderId(2),
         name: "alice",
     };
-    let copied = holder; 
+    let copied = holder;
     assert_eq!(holder, copied);
     let key = SavingsTermsByAccount {
         account: AccountId(1),
@@ -354,7 +351,6 @@ fn typed_round_trip_through_fact_bytes() {
     .unwrap();
 
     db.read(|snap| {
-
         let mut bytes = Vec::new();
         assert!(matches!(
             original.encode_probe(snap, &mut bytes).expect("encode"),
@@ -379,7 +375,6 @@ fn typed_round_trip_through_fact_bytes() {
 
 #[test]
 fn id_constants_are_declaration_order_named_data() {
-
     assert_eq!(Ledger::KIND, RelationId(0));
     assert_eq!(Ledger::HOLDER, RelationId(1));
     assert_eq!(Ledger::ACCOUNT, RelationId(2));
@@ -397,7 +392,6 @@ fn id_constants_are_declaration_order_named_data() {
 
 #[test]
 fn the_manifest_is_the_constants_runtime_twin() {
-
     use bumbledb::Theory as _;
     let manifest = Ledger.manifest();
     assert_eq!(manifest.relations.len(), 4);
@@ -434,7 +428,6 @@ mod interval_newtype {
 
     #[test]
     fn interval_as_newtype_wraps_the_interval() {
-
         let booking = Booking {
             room: RoomId(7),
             active: ActiveDuring(Interval::<i64>::new(-10, 20).expect("nonempty")),
@@ -822,7 +815,6 @@ mod closed_column_accessors {
 
     #[test]
     fn every_column_projects_as_a_const_accessor() {
-
         const RANK: u64 = Plan::Pro.rank();
         const WINDOW: PlanWindow = Plan::Basic.window();
         Fleet
@@ -858,7 +850,6 @@ mod discriminated_union {
 
     #[test]
     fn the_du_pattern_survives_the_closed_discriminator() {
-
         let dir = crate::common::TempDir::new("macro-du-closed");
         let db = Db::create(dir.path(), Graph)
             .expect("the DU theory validates")
@@ -1322,7 +1313,7 @@ mod capacity_forms {
     }
 }
 
-#[allow(non_snake_case)] 
+#[allow(non_snake_case)]
 mod duration_named_field {
 
     use bumbledb::Theory as _;
@@ -1428,7 +1419,6 @@ mod fixed_width_intervals {
 
     #[test]
     fn the_width_is_the_type_and_the_encoding_is_the_start() {
-
         let descriptor = Jukebox.descriptor();
         assert_eq!(
             descriptor.relations[0].fields[1].value_type,
@@ -1527,7 +1517,6 @@ mod fixed_width_intervals {
 
     #[test]
     fn the_key_probe_lane_finds_an_exact_fixed_tuple() {
-
         let dir = crate::common::TempDir::new("macro-fixed-key-probe");
         let db = Db::create(dir.path(), Jukebox)
             .expect("create")
@@ -1878,8 +1867,8 @@ mod element_domain_typing {
                 negated: vec![],
                 conditions: vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen { mask },
-                    lhs: Term::Var(VarId(2)), 
-                    rhs: Term::Var(VarId(1)), 
+                    lhs: Term::Var(VarId(2)),
+                    rhs: Term::Var(VarId(1)),
                 })],
             })
         };
