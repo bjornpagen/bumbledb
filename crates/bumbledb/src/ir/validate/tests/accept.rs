@@ -47,7 +47,6 @@ fn accepts_params_anchored_by_fields_and_comparisons() {
 
 #[test]
 fn param_anchoring_is_total_by_construction() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
@@ -67,7 +66,6 @@ fn param_anchoring_is_total_by_construction() {
 
 #[test]
 fn accepts_all_aggregate_finds() {
-
     let query = simple(
         vec![
             FindTerm::Aggregate {
@@ -122,17 +120,13 @@ fn accepts_min_max_over_bool_as_all_and_any() {
 fn accepts_zero_binding_atoms() {
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
-        vec![
-            atom(POSTING, vec![(0, var(0))]),
-            atom(HOLDER, vec![]), 
-        ],
+        vec![atom(POSTING, vec![(0, var(0))]), atom(HOLDER, vec![])],
     );
     validate(&schema(), &query).expect("valid");
 }
 
 #[test]
 fn accepts_repeated_variable_within_one_atom() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(POSTING, vec![(2, var(0)), (3, var(0))])],
@@ -142,7 +136,6 @@ fn accepts_repeated_variable_within_one_atom() {
 
 #[test]
 fn accepts_membership_bound_variable_with_a_scalar_binding_elsewhere() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(1))],
         vec![
@@ -156,7 +149,6 @@ fn accepts_membership_bound_variable_with_a_scalar_binding_elsewhere() {
 
 #[test]
 fn accepts_a_variable_joined_across_two_interval_fields() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![
@@ -175,7 +167,6 @@ fn accepts_a_variable_joined_across_two_interval_fields() {
 
 #[test]
 fn accepts_an_element_literal_in_an_interval_field_position() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
@@ -188,7 +179,6 @@ fn accepts_an_element_literal_in_an_interval_field_position() {
 
 #[test]
 fn accepts_a_ray_literal_and_the_last_point() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![atom(
@@ -221,7 +211,6 @@ fn accepts_a_ray_literal_and_the_last_point() {
 
 #[test]
 fn point_params_are_the_element_typed_interval_position_params() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(0))],
         vec![
@@ -251,7 +240,6 @@ fn accepts_a_zero_binding_negated_atom_as_an_emptiness_gate() {
 
 #[test]
 fn accepts_literals_params_and_sets_inside_negated_atoms() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0))])],
@@ -283,7 +271,6 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
 
 #[test]
 fn accepts_param_sets_in_bindings_and_under_eq() {
-
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
@@ -306,7 +293,6 @@ fn accepts_param_sets_in_bindings_and_under_eq() {
 
 #[test]
 fn accepts_pack_and_pins_the_interval_result_type() {
-
     let query = simple(
         vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         vec![atom(POSTING, vec![(1, var(0)), (SPAN, var(1))])],
@@ -331,7 +317,6 @@ fn accepts_pack_and_pins_the_interval_result_type() {
 
 #[test]
 fn accepts_pack_across_rules() {
-
     let rule = |atoms: Vec<crate::ir::Atom>| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
         atoms,
@@ -399,8 +384,8 @@ fn accepts_a_mixed_width_allen_pair_of_one_element_domain() {
             op: CmpOp::Allen {
                 mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
-            lhs: var(1), 
-            rhs: var(2), 
+            lhs: var(1),
+            rhs: var(2),
         })],
     });
     validate(&mixed_width_schema(), &query).expect("mixed widths of one element classify");
@@ -416,7 +401,7 @@ fn accepts_a_general_interval_literal_allen_against_a_fixed_width_var() {
             op: CmpOp::Allen {
                 mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
-            lhs: var(1), 
+            lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(
                 bumbledb_theory::Interval::<u64>::new(3, 40).expect("nonempty"),
             )),
