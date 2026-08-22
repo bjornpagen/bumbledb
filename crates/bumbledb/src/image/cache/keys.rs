@@ -1,5 +1,4 @@
 //! Test-only key-set observability over the cache map.
-
 use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
