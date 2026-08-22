@@ -1,6 +1,5 @@
 //! Statistics, the grounding, the DP planner, and Free Join plan lowering
 //! .
-
 pub mod fj;
 pub(crate) mod ground;
 pub mod planner;
