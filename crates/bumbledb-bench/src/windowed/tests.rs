@@ -20,9 +20,6 @@ fn child(id: u64, parent: u64, flag: u64) -> (bumbledb::RelationId, Vec<Value>) 
     )
 }
 
-/// The twin theories both validate, and only the windowed twin carries
-/// the two window statements — the {0} exclusion among them
-/// (`lo = hi = 0`).
 #[test]
 fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
     let windowed = world::WindowedWorld
@@ -56,12 +53,6 @@ fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
     );
 }
 
-/// Naive parity — the semantic oracle for the window judgment: the
-/// unit mass loads on both oracles (the naive model is
-/// O(parents × children) per judged delta — the unit-corpus
-/// discipline), a legal sample commits, an over-cap burst and a
-/// {0}-excluded child both abort with agreeing verdicts and citations
-/// (the differential runner compares them by strict equality).
 #[test]
 fn the_window_verdicts_agree_with_the_naive_model() {
     let dir = scratch("naive");
@@ -85,20 +76,17 @@ fn the_window_verdicts_agree_with_the_naive_model() {
         }
     }
     let base = mass.parents * mass.children_per_parent;
-    // A legal sample: one flag-0 child under parent 1 (kind 0).
+
     ops.push(Op::Write(Delta {
         deletes: vec![],
         inserts: vec![child(base, 1, 0)],
     }));
-    // The over-cap burst: 64 more children under parent 2 blows the
-    // 0..64 window (8 seeded + 1 + 64 > 64) — MUST abort on both.
+
     ops.push(Op::Write(Delta {
         deletes: vec![],
         inserts: (0..64).map(|k| child(base + 1 + k, 2, 0)).collect(),
     }));
-    // The {0} exclusion: one flag-1 child under a kind-1 parent (parent
-    // 0) — MUST abort on both; the same child under a kind-0 parent
-    // commits (the exclusion selects parents by kind).
+
     assert_eq!(parent_kind(0), 1);
     ops.push(Op::Write(Delta {
         deletes: vec![],
@@ -115,9 +103,6 @@ fn the_window_verdicts_agree_with_the_naive_model() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The three timed rows run their full protocols on seeded twins and
-/// every measured commit is legal (the runners measure the judge, not
-/// refusals).
 #[test]
 fn the_window_rows_run_their_protocols() {
     let dir = scratch("rows");
@@ -148,9 +133,6 @@ fn the_window_rows_run_their_protocols() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The traced windowed path (`bench --trace`): the window-judgment
-/// lane lands its traced solo sample with the judgment spans readable
-/// — the capacity twin's smoke test, on the window roster.
 #[cfg(feature = "obs")]
 #[test]
 fn traced_windowed_lands_the_judgment_spans() {
