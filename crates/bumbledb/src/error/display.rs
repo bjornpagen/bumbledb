@@ -1,11 +1,9 @@
 //! `Display` rendering for every error type — formatting runs lazily, only
 //! when the host actually prints.
-//!
-//! Statements are anonymous (`docs/architecture/30-dependencies.md`), so
+//! Statements are anonymous, so
 //! the plain `Display` impls cite them by id; the [`Error::display_with`]
 //! and [`SchemaError::display_with`] adapters pair the error with the
 //! schema it speaks about and render the statement back in the `schema!`
-//! algebra notation (`crate::schema::render`).
 
 use std::fmt;
 
@@ -42,10 +40,8 @@ impl fmt::Display for LmdbFailure {
     }
 }
 
-/// A field set with the names beside the ids — `{name (id), …}`, sorted
-/// by id so the set spelling stays order-free exactly as the id-only
-/// rendering was. `names` pairs `projection` positionwise (the variants'
-/// construction invariant).
+/// `names` pairs `projection` positionwise (the variants' construction
+/// invariant).
 fn field_set(
     f: &mut fmt::Formatter<'_>,
     projection: &[bumbledb_theory::schema::FieldId],
@@ -99,13 +95,8 @@ fn target_key_rejection(
     Ok(())
 }
 
-/// The violation message's shared parts — their ONE home: both
-/// renderers — the plain `Display` below, which cites the statement by
-/// id, and [`Error::display_with`], which cites the rendered `schema!`
-/// notation — compose these three accessors, so no message body exists
-/// twice (the former tandem-edit coupling between the two renderers).
 impl Violation {
-    /// The violated law's name.
+
     fn law(&self) -> &'static str {
         match self {
             Self::Functionality { .. } => "functionality",
@@ -114,9 +105,6 @@ impl Violation {
         }
     }
 
-    /// The side parenthetical `display_with` cites (empty for the
-    /// undirected laws; the plain renderer's tail already names the
-    /// side's meaning).
     fn side(&self) -> &'static str {
         match self {
             Self::Containment {
@@ -435,9 +423,9 @@ impl fmt::Display for SchemaError {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // a rendering table: one arm per variant
+    )] 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Short bindings: r = relation, fd = field.
+
         match self {
             Self::DuplicateRelationName { name } => write!(f, "duplicate relation name `{name}`"),
             Self::DuplicateFieldName { relation: r, name } => {
@@ -550,10 +538,9 @@ impl fmt::Display for StatementErrorKind {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // a rendering table: one arm per roster line
+    )] 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Short bindings: r = relation, fd = field. The carrier
-        // (`SchemaError::Statement`) prints the `statement N:` prefix.
+
         match self {
             Self::UnknownRelation { relation: r } => write!(f, "unknown relation {}", r.0),
             Self::UnknownField {
@@ -783,7 +770,7 @@ impl fmt::Display for ValidationError {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // a rendering table: one arm per variant
+    )] 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
@@ -1012,7 +999,7 @@ impl fmt::Display for Error {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // a rendering table: one arm per variant
+    )] 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FormatMismatch { mismatch } => {
@@ -1158,10 +1145,7 @@ impl fmt::Display for Error {
 }
 
 impl Violations {
-    /// Pairs the rejection with the schema it speaks about: every cited
-    /// statement renders back in the `schema!` algebra notation, in
-    /// materialized statement order. Formatting allocates — `Display` is
-    /// never the hot path; the payload itself stays ids and fact bytes.
+
     #[must_use]
     pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
         ViolationsDisplayWith {
@@ -1171,7 +1155,6 @@ impl Violations {
     }
 }
 
-/// [`Violations::display_with`]'s adapter.
 struct ViolationsDisplayWith<'a> {
     violations: &'a Violations,
     schema: &'a Schema,
@@ -1198,9 +1181,7 @@ impl fmt::Display for ViolationsDisplayWith<'_> {
 }
 
 impl Error {
-    /// Pairs the error with the schema it speaks about. Theory rejection
-    /// is [`Violations::display_with`]; every `Error` variant renders as
-    /// its plain `Display`.
+
     #[must_use]
     pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
         let _ = schema;
@@ -1208,7 +1189,6 @@ impl Error {
     }
 }
 
-/// [`Error::display_with`]'s adapter.
 struct DisplayWith<'a> {
     error: &'a Error,
 }
@@ -1220,9 +1200,7 @@ impl fmt::Display for DisplayWith<'_> {
 }
 
 impl SchemaError {
-    /// The offending statement, for the roster arm that carries one —
-    /// a field read off the typed partition, not a hand-sorted variant
-    /// roster: a statement-scoped kind cannot exist without its id.
+
     fn statement(&self) -> Option<StatementId> {
         match self {
             Self::Statement { statement, .. } => Some(*statement),
@@ -1230,10 +1208,6 @@ impl SchemaError {
         }
     }
 
-    /// Pairs the rejection with the declaration it judged: statement
-    /// variants `Display` with the offending statement rendered back in
-    /// the `schema!` algebra notation (a rejected declaration never seals
-    /// a [`Schema`], so diagnostics render from the descriptor).
     #[must_use]
     pub fn display_with<'a>(&'a self, descriptor: &'a SchemaDescriptor) -> impl fmt::Display + 'a {
         SchemaDisplayWith {
@@ -1243,7 +1217,6 @@ impl SchemaError {
     }
 }
 
-/// [`SchemaError::display_with`]'s adapter.
 struct SchemaDisplayWith<'a> {
     error: &'a SchemaError,
     descriptor: &'a SchemaDescriptor,
