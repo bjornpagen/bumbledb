@@ -256,7 +256,6 @@ fn all_handlers(schema: &Schema) -> Vec<(RelationId, Vec<u8>)> {
 fn deleting_the_last_handler_for_a_severity_aborts() {
     let schema = schema();
     let severity_high = {
-
         let rows = schema
             .relation(SEVERITY)
             .body()
