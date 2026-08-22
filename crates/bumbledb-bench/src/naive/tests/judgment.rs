@@ -1304,7 +1304,6 @@ mod marks {
     /// `lean/Bumbledb/Capacity.lean: CapacityLaw` at its
 
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-
     #[test]
     fn capacity_exactness_exclusion_and_reinsert_seams() {
         run(
