@@ -1,22 +1,3 @@
-/**
- * PRD-07 runtime pins against a REAL durable store in a temp dir, on the
- * zero-closable surface: create with the Ledger schema; the per-process
- * store cache (same path + identical theory = the SAME `Db` value, a
- * different theory = a typed fingerprint error, create on a cached path
- * refused); fresh-mint insert with the bare bigint id returned and usable;
- * delete + resupplied reinsert preserving identity (scan proves); scoped
- * snapshot reads through `read(fn)` with the scope invalidated after `fn`
- * returns; the `db.X` sugar obeying the symmetry rule; violations arriving
- * as typed VALUES `===`-matched to their SDK statement constants with
- * canonical spellings equal to `renderStatement` output (containment +
- * capacity together in one commit; the FD alone in another — the engine's
- * key phase preempts the statement phase, so no single commit can cite all
- * three forms); `writeFrom` one-shot witnessed writes (retry is host
- * policy), surfacing rejections as data, and aborting without any commit on
- * `abandon`; and a second in-process open of a live path is
- * `EnvironmentLocked` (the host holds the `Db`).
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -76,7 +57,7 @@ const Audit = relation("Audit", {
 
 const savingsKey = key(SavingsTerms, ["account"])
 const holderContainment = contained(on(Account, "holder"), on(Holder, "id"))
-/** The closed-reference companion the `kind == Savings` handle spelling resolves through. */
+
 const kindContainment = contained(on(Account, "kind"), on(Kind, "id"))
 const savingsMirror = mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 const holderCapacity = capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
@@ -89,13 +70,11 @@ const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms, Audit }, 
 	holderCapacity
 ])
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
 }
 
-/** The minted ids the sequential tests hand forward — bare bigints (structural values). */
 const ids: {
 	ada?: bigint
 	adaAccount?: bigint
@@ -114,14 +93,7 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("a non-key containment target refuses at schema() assembly, in names — the value-tier target-key wall", function targetKeyWall() {
-		/**
-		 * Formerly the two-boundary split's gap: domains pair structurally
-		 * (rate and score are both unlabeled i64, so this containment
-		 * COMPILES), and the old boundary let it through to the ENGINE's
-		 * refusal at create, in id-speak. The target-key wall
-		 * (60-containment-parity) now judges the same rule at schema()
-		 * assembly — Audit(score) keys nothing, and the refusal names it.
-		 */
+
 		assert.throws(function badSchema() {
 			// @ts-expect-error — the TargetKeyWall verdict: Audit(score) resolves no key of Audit (the type tier of the same wall)
 			schema("Broken", { SavingsTerms, Audit }, [contained(on(SavingsTerms, "rate"), on(Audit, "score"))])
@@ -130,12 +102,12 @@ describe("the Db runtime against a real store", function suite() {
 
 	test("create surfaces the engine's schemaError with the message intact", async function schemaError() {
 		/**
-		 * The engine stays the final authority for the laws the SDK does not
-		 * judge (the target-key rule moved to schema(); key-INTERNAL legality
-		 * did not): eight bytes<64> positions make a 512-byte determinant,
-		 * past the engine's 496-byte key ceiling — accepted by every SDK
-		 * wall, refused by the engine's typed SchemaError at create.
-		 */
+ * The engine stays the final authority for the laws the SDK does not
+ * judge (the target-key rule moved to schema; key-INTERNAL legality
+ * did not): eight bytes<64> positions make a 512-byte determinant,
+ * past the engine's 496-byte key ceiling — accepted by every SDK
+ * wall, refused by the engine's typed SchemaError at create.
+ */
 		const Wide = relation("Wide", {
 			b0: bytes(64),
 			b1: bytes(64),
