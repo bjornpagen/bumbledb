@@ -17,7 +17,6 @@ fn in_delta(name: &str, a: &[u8], b: &[u8]) -> Result<Admission<()>> {
     drop(view);
     let result = commit(delta, &env).map(|admission| admission.map(|_| ()));
     if matches!(&result, Ok(Admission::Rejected(_)) | Err(_)) {
-
         assert!(committed_data(&env).is_empty());
     }
     result
@@ -140,7 +139,6 @@ fn containment_cross_delta_aborts() {
 
 #[test]
 fn exact_duplicate_interval_in_delta_aborts() {
-
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 10, 20, 1);
@@ -157,7 +155,6 @@ fn exact_duplicate_interval_cross_delta_aborts() {
 
 #[test]
 fn adjacent_left_in_delta_passes() {
-
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 5, 10, 1);
@@ -178,7 +175,6 @@ fn adjacent_left_cross_delta_passes() {
 
 #[test]
 fn adjacent_right_in_delta_passes() {
-
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 1, 20, 25, 1);
@@ -219,7 +215,6 @@ fn disjoint_cross_delta_passes() {
 
 #[test]
 fn same_interval_different_prefix_in_delta_passes() {
-
     let schema = schema();
     let a = booking_fact(&schema, 1, 10, 20, 0);
     let b = booking_fact(&schema, 2, 10, 20, 1);
@@ -240,7 +235,6 @@ fn same_interval_different_prefix_cross_delta_passes() {
 
 #[test]
 fn delete_then_reinsert_overlapping_in_one_delta_passes() {
-
     // the overlapping replacement lands — deletes apply before inserts.
     let dir = TempDir::new("fd-delete-reinsert");
     let schema = schema();
@@ -267,7 +261,6 @@ fn delete_then_reinsert_overlapping_in_one_delta_passes() {
 
 #[test]
 fn two_rays_in_one_group_abort() {
-
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, u64::MAX, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
@@ -276,7 +269,6 @@ fn two_rays_in_one_group_abort() {
 
 #[test]
 fn bounded_interval_adjacent_to_ray_passes() {
-
     let schema = schema();
     let a = booking_fact(&schema, 1, 5, 9, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
@@ -381,7 +373,6 @@ fn duplicate_fresh_id_across_deltas_aborts_with_the_auto_key() {
 
 #[test]
 fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
-
     let dir = TempDir::new("fresh-row-reinsert");
     let schema = doc_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -407,7 +398,6 @@ fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
 
 #[test]
 fn scan_order_is_fresh_order_not_insertion_order() {
-
     let dir = TempDir::new("fresh-row-scan-order");
     let schema = doc_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -536,7 +526,6 @@ fn a_short_cited_f_value_is_typed_corruption_not_a_panic() {
 
 #[test]
 fn a_decode_failure_on_decoration_keeps_commit_rejected() {
-
     let dir = TempDir::new("decoration-keeps-rejected");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
