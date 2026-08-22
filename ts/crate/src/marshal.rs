@@ -393,7 +393,10 @@ pub(crate) fn fact_row(
 /// `cells.len() / arity` derivation is dead: it could not represent N
 /// nullary rows (N × 0 cells decoded as rows = 0, silently dropping the
 /// write — nullary relations are LEGAL, `schema/tests/valid.rs`), and
-/// arity-0 rows are representable here (`rows = N`, cells empty). A
+/// arity-0 rows are representable here (`rows = N`, cells empty) AND
+/// O(1): a fieldless collection IS its row count (set semantics), so the
+/// builder's arity-0 seal takes the count directly — a stated count is
+/// data and never buys per-row work the payload did not marshal. A
 /// stated count disagreeing with the cells is refused in the row lane's
 /// exact error shape, naming the relation. Every cell feeds the engine's
 /// one positional judgment ([`CollectionBuilder`]'s typed pushes) in a
@@ -432,23 +435,28 @@ pub(crate) fn accepted_collection(
             "bumbledb marshal: relation `{name}`: expected {expected} values, got {len}"
         )));
     }
-    let mut builder = CollectionBuilder::new(rel, &roster.fields);
     if arity == 0 {
-        // A nullary row has no cells; each still counts (`submitted` is
-        // exact — set semantics collapse the store to the one empty
-        // tuple, which is the engine's `changed` to report).
-        for _ in 0..rows {
-            builder
-                .push_value_row(&[])
-                .map_err(|error| throw_engine(env, &error))?;
-        }
-    } else {
-        for index in 0..cells.len() {
-            let field = &roster.fields[(index as usize) % arity];
-            let value =
-                req_at::<Unknown>(cells, index, format_args!("relation `{name}` collection"))?;
-            push_cell(env, &mut builder, name, field, &value)?;
-        }
+        // An arity-0 collection IS its row count plus at most one
+        // distinct fact (set semantics — every row is the empty tuple),
+        // so the builder's arity-0 seal takes the stated count directly:
+        // O(1), no per-row loop. `rows` is caller DATA on the raw addon
+        // surface and the cells wall above is vacuous here (`0 == rows ×
+        // 0` for EVERY count — any count is shape-lawful, N empty
+        // tuples), so a stated 2^63 must never buy 2^63 bridge pushes
+        // from a 16-byte payload; the engine's apply collapses the same
+        // way (`apply_accepted`'s arity-0 arm: one judged apply,
+        // `submitted = rows` exact, `changed` the one effect).
+        let collection = CollectionBuilder::new(rel, &roster.fields)
+            .seal_nullary(rows)
+            .map_err(|error| throw_engine(env, &error))?;
+        span.set_count(collection.rows());
+        return Ok(collection);
+    }
+    let mut builder = CollectionBuilder::new(rel, &roster.fields);
+    for index in 0..cells.len() {
+        let field = &roster.fields[(index as usize) % arity];
+        let value = req_at::<Unknown>(cells, index, format_args!("relation `{name}` collection"))?;
+        push_cell(env, &mut builder, name, field, &value)?;
     }
     let collection = builder.seal().map_err(|error| throw_engine(env, &error))?;
     span.set_count(collection.rows());

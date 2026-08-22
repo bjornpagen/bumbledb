@@ -1607,6 +1607,88 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
     );
 }
 
+/// `Marker()` — a fieldless relation (nullary relations are LEGAL;
+/// `schema/tests/valid.rs`).
+fn nullary_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Marker".into(),
+            fields: vec![],
+        }],
+        statements: vec![],
+    }
+}
+
+/// The arity-0 collapse law (20, set semantics): a fieldless collection
+/// IS its row count, so an accepted collection STATING `u64::MAX` rows —
+/// the arity-0 seal takes the count directly; the cells wall `0 == rows ×
+/// 0` is vacuous, so any stated count is shape-lawful — applies as ONE
+/// judged empty-tuple apply and returns promptly: `submitted` echoes the
+/// stated count exactly, `changed` is the one effect (`<= 1`), and the
+/// delete twin is symmetric (one delete op). Pre-collapse, this test
+/// would push and apply 2^64 − 1 rows from a 16-byte payload — the
+/// unbounded amplification the representation now cannot state.
+#[test]
+fn a_nullary_accepted_collection_applies_in_constant_time() {
+    let dir = TempDir::new("db-accepted-nullary");
+    let db = Db::create(dir.path(), nullary_schema())
+        .expect("create")
+        .expect("accepted");
+    let marker = RelationId(0);
+    let fields = db.schema().relation(marker).fields();
+    let huge = CollectionBuilder::new(marker, fields)
+        .seal_nullary(u64::MAX)
+        .expect("a fieldless collection seals from the stated count");
+    assert_eq!(huge.rows(), u64::MAX);
+    db.write(|tx| {
+        let report = tx.insert_accepted(&huge)?;
+        assert_eq!(report.submitted(), u64::MAX, "submitted is exact");
+        assert_eq!(report.changed(), 1, "the one empty tuple entered once");
+        Ok(())
+    })
+    .expect("insert lane")
+    .unwrap();
+    db.write(|tx| {
+        let report = tx.delete_accepted(&huge)?;
+        assert_eq!(report.submitted(), u64::MAX, "submitted is exact");
+        assert_eq!(report.changed(), 1, "the delete twin: one op, changed <= 1");
+        Ok(())
+    })
+    .expect("delete lane")
+    .unwrap();
+    // The arity-0 seal refuses a widthful roster typed: a zero-width row
+    // against a two-column roster is the arity mismatch it is.
+    let entry_fields = [
+        FieldDescriptor {
+            name: "name".into(),
+            value_type: ValueType::String,
+            generation: Generation::None,
+        },
+        FieldDescriptor {
+            name: "amount".into(),
+            value_type: ValueType::I64,
+            generation: Generation::None,
+        },
+    ];
+    let err = CollectionBuilder::new(marker, &entry_fields)
+        .seal_nullary(1)
+        .expect_err("widthful roster");
+    assert!(
+        matches!(
+            err,
+            Error::FactShape(FactShapeError::ArityMismatch {
+                relation,
+                mismatch: Mismatch {
+                    witnessed: 0,
+                    required: 2,
+                },
+            }) if relation == marker
+        ),
+        "{err:?}"
+    );
+}
+
 /// The one cell judgment, all feeding surfaces: every typed push checks
 /// its positional roster arm and answers the same `TypeMismatch` (naming
 /// relation and field) the `Value` feed does; the `bytes<N>` width and

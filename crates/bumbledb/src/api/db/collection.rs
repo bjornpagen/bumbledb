@@ -459,6 +459,38 @@ impl<'s> CollectionBuilder<'s> {
         })
     }
 
+    /// The arity-0 seal (`proposals/one-representation/20`): a fieldless
+    /// collection IS its row count — every row is the empty tuple (set
+    /// semantics), so the count is the whole representation and the proof
+    /// seals O(1) from the stated count, never through O(rows) empty
+    /// pushes. On the bridge crossing the count is caller DATA (`rows` is
+    /// a raw u64 the addon caller states; the `cells.len() == rows ×
+    /// arity` wall is vacuously true at arity 0 for EVERY count — any
+    /// count IS shape-lawful, N empty tuples), so a stated 2^63 must
+    /// never buy 2^63 pushes from a 16-byte payload; the apply side
+    /// collapses the same way (`apply_accepted`'s arity-0 arm: one judged
+    /// apply, `submitted = rows` exact, `changed` the one effect).
+    ///
+    /// # Errors
+    ///
+    /// `FactShape` (`ArityMismatch`, witnessed 0) when the roster is not
+    /// fieldless — a zero-width row against a widthful roster.
+    pub fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
+        if !self.fields.is_empty() {
+            return Err(FactShapeError::ArityMismatch {
+                relation: self.relation,
+                mismatch: Mismatch {
+                    witnessed: 0,
+                    required: self.fields.len(),
+                },
+            }
+            .into());
+        }
+        debug_assert!(self.rows == 0, "the stated count IS the collection");
+        self.rows = rows;
+        self.seal()
+    }
+
     /// Seals the proof: complete rows only (`cells == rows · arity`) —
     /// a dangling partial row is the arity mismatch it is. Zero rows
     /// seal lawfully.

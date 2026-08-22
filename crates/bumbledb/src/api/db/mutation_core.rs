@@ -588,6 +588,36 @@ impl<M: MutationBackend, S> MutationCore<M, S> {
             }
         }
         let layout = relation.layout();
+        // The arity-0 collapse law (set semantics; `proposals/
+        // one-representation/20`): every row of a fieldless relation IS
+        // the one empty tuple, so a collection of N rows is ONE judged
+        // apply — the empty tuple, applied once (rows > 0 here; empty
+        // short-circuited above) — with `submitted = rows` echoed exactly
+        // and `changed` the one effect (0 or 1), insert and delete twins
+        // symmetric (one op each, `changed <= 1`). The count is DATA on
+        // the bridge crossing (the cells wall `0 == rows × 0` is vacuous,
+        // so any stated count is shape-lawful), and the cost of an apply
+        // must be bounded by the payload the caller marshaled, never by a
+        // stated count: the collapse is O(1) where the general loop would
+        // be O(rows). The one apply rides the SAME parse-all-first
+        // machinery (spans, poison-on-failure discipline included), so a
+        // failure of the one judged apply poisons exactly as the general
+        // loop's first row would.
+        if relation.fields().is_empty() {
+            let one = match want {
+                Disposition::Insert => {
+                    self.apply_collection(rel, want, std::iter::once(0u64), |core, row, bytes| {
+                        core.encode_accepted_mint(coll, row, layout, bytes)
+                    })?
+                }
+                Disposition::Delete => {
+                    self.apply_collection(rel, want, std::iter::once(0u64), |core, row, bytes| {
+                        core.encode_accepted_resolve(coll, row, layout, bytes)
+                    })?
+                }
+            };
+            return Ok(MutationReport::from_counts(coll.rows(), one.changed()));
+        }
         match want {
             Disposition::Insert => {
                 self.apply_collection(rel, want, 0..coll.rows(), |core, row, bytes| {
