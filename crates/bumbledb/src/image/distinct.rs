@@ -1,34 +1,21 @@
 //! Exact per-column distinct-value counts, persisted WITH the image:
 //! computed once while the build's rows are still warm and extended
-//! incrementally on the append path — the planner reads a stored
 //! number, never walks a column. The former shape — a lazy exact
 //! O(rows) open-addressed walk plus a 2×rows scratch allocation per
-//! column at first planner demand — made every cold prepare pay the
-//! whole count pass per demanded column and every re-prepare after a
 //! commit pay it again; persisting the counting state makes the append
 //! path O(tail) exact (the image oracle's served-vs-rebuilt equality
-//! holds by construction, not by re-walking).
+//! whole count pass per demanded column and every re-prepare after a
 
 use super::{Column, RelationImage};
 
 impl RelationImage {
-    /// The exact distinct-value count of one column
-    /// (docs/architecture/40-execution.md): a stored read — the counting
-    /// pass ran at build/append/synthesis. Intern ids are injective, so
-    /// a String/Bytes column's word distincts are its value distincts.
-    /// Column indices come from
-    /// [`ColumnSpan`](crate::image::ColumnSpan)s — an interval field has
-    /// two counts, one per word column.
+
     #[must_use]
     pub fn distinct_count(&self, column: usize) -> u64 {
         self.distincts[column].count()
     }
 }
 
-/// One column's persistent distinct-counting state — the image carries
-/// it so the append path extends instead of re-walking. Word columns
-/// hold a growable open-addressed word set; byte columns a 256-bit
-/// mask.
 #[derive(Debug, Clone)]
 pub(super) enum DistinctState {
     Words(WordSet),
@@ -44,25 +31,19 @@ impl DistinctState {
     }
 }
 
-/// A power-of-two open-addressed word set in one array. Zero is the
-/// in-band empty sentinel; the zero word (a legal value) counts through
-/// its own flag instead of a slot, so no second occupancy array exists.
-/// Sized to the DISTINCTS (grown by doubling at 0.5 load), never to the
-/// rows — a low-cardinality column's set stays tiny for the image's
-/// whole lifetime.
 #[derive(Debug, Clone, Default)]
 pub(super) struct WordSet {
     slots: Vec<u64>,
-    /// Distinct nonzero words inserted.
+
     len: u64,
     zero_seen: bool,
 }
 
 impl WordSet {
     fn with_hint(rows: usize) -> Self {
-        // The colt force's deterministic guess: distincts are unknown
+
         // before the pass, so start at rows/8 (min 16) and double when
-        // short — amortized O(rows) inserts either way.
+
         let capacity = (rows / 8).max(16).next_power_of_two();
         Self {
             slots: vec![0; capacity],
@@ -87,14 +68,12 @@ impl WordSet {
             return;
         }
         // Grow before the probe at the 0.5 max load, so probe chains
-        // stay short and the loop below always finds an empty slot.
+
         if (usize::try_from(self.len).expect("64-bit usize") + 1) * 2 > self.slots.len() {
             self.grow();
         }
         let mask = self.slots.len() - 1;
-        // The shared probe hash (`exec::swar`) — one avalanche, linear
-        // probe; a byte-identical private copy is the drift that module
-        // exists to prevent.
+
         let h = crate::exec::swar::hash_words(std::slice::from_ref(&word));
         let mut idx = usize::try_from(h).expect("64-bit usize") & mask;
         loop {
@@ -111,8 +90,6 @@ impl WordSet {
         }
     }
 
-    /// Doubles the slot array and reinserts (zero rides its flag, so
-    /// every occupied slot is a real word).
     fn grow(&mut self) {
         let doubled = (self.slots.len() * 2).max(16);
         let old = std::mem::replace(&mut self.slots, vec![0; doubled]);
@@ -131,7 +108,6 @@ impl WordSet {
     }
 }
 
-/// The byte-column twin: 256 possible values, one 256-bit mask.
 #[derive(Debug, Clone, Default)]
 pub(super) struct ByteSet {
     mask: [u64; 4],
@@ -149,9 +125,6 @@ impl ByteSet {
     }
 }
 
-/// The build-path counting pass: every column of a freshly filled frame,
-/// while its slabs are still warm — one state per column, sized to the
-/// distincts, persisted by `seal`.
 pub(super) fn count_columns(
     columns: &[Column],
     row_count: usize,
@@ -169,9 +142,6 @@ pub(super) fn count_columns(
     states
 }
 
-/// The append-path extension: rows `[from, row_count)` insert into the
-/// (cloned) base states — O(tail) exact, the whole reason the state
-/// persists with the image.
 pub(super) fn extend_columns(
     states: &mut [DistinctState],
     columns: &[Column],
@@ -193,10 +163,6 @@ pub(super) fn extend_columns(
     }
 }
 
-/// Uncounted states for images the planner never costs — the fixpoint
-/// driver's transient images (`Interior` occurrences pin no row counts: the
-/// selectivity guard costs recursion on the ladder's floors, so
-/// `distinct_count` is unreachable there).
 pub(super) fn uncounted_columns(columns: &[Column]) -> Box<[DistinctState]> {
     columns
         .iter()
@@ -211,8 +177,6 @@ pub(super) fn uncounted_columns(columns: &[Column]) -> Box<[DistinctState]> {
 mod tests {
     use super::{ByteSet, WordSet};
 
-    /// The growable set agrees with a naive distinct count — zero words
-    /// (the in-band sentinel's legal twin) included, growth crossed.
     #[test]
     fn distinct_counts_match_the_naive_set() {
         let mut rng = 0x2026_0723_u64;
@@ -229,7 +193,7 @@ mod tests {
             set.insert_all(&words);
             assert_eq!(set.count(), naive, "len {len}");
         }
-        // High cardinality from a tiny hint: the doubling growth path.
+
         let many: Vec<u64> = (0..10_000u64).map(|i| i * 2_654_435_761 + 1).collect();
         let naive = many.iter().collect::<std::collections::HashSet<_>>().len() as u64;
         let mut set = WordSet::with_hint(16);
@@ -248,8 +212,6 @@ mod tests {
         assert_eq!(bytes.count(), 3);
     }
 
-    /// Incremental extension equals the one-shot count — the append
-    /// path's exactness, at the unit level.
     #[test]
     fn incremental_extension_matches_the_one_shot_count() {
         let words: Vec<u64> = (0..300u64).map(|i| i % 37).collect();
