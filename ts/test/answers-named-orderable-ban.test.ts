@@ -1,30 +1,3 @@
-/**
- * PRD-H4 probes: answer rows arrive NAMED, and closed fields exit the
- * orderable/foldable set. A SELECT column bound at a closed-referencing
- * field decodes its u64 row ids back to handle NAMES through the marshal's
- * ONE bijection (`handleOf` — the same read half every fact decode rides),
- * so `db.execute` rows agree with scans, gets, and violation records: the
- * string IS the value at the TS surface, the engine keeps ids. Pinned
- * here: the runtime rows (strict-equality against the roster, and
- * value-for-value the 0.3.0 bigint twin modulo the translation — the raw
- * positional rows re-decoded by hand); the rec-head plumb (an output rule's
- * interior-joined closed column decodes named — every interior var is EDB-bound in
- * its own rule, so the descriptor always survives the head); the
- * out-of-roster pointed throw
- * (shared with H2's fact decode — one bijection, two call sites); COUNTING
- * IS NOT ORDERING (`count` over closed-atom-filtered rules
- * stay legal, and a closed vocabulary's ordinary payload column still
- * folds); and THE ORDERABLE BAN, two tiers at every position — `lt` (and
- * the order roster), the `pointIn` point side, `sum`/`max` folds, and an order-comparison param anchored at a closed field —
- * each `@ts-expect-error` real, each construction refusal pinned by the
- * data-model ruling's fragment ("declaration order is an accident, not
- * semantics: vocabularies do not order",
- * `docs/architecture/10-data-model.md` § orderability; the param tier's
- * refusal is the registry's one-domain wall — an order use anchors its
- * sibling's domain, so the closed anchor collides), plus the head
- * agreement wall: one answer column decodes through one roster.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -45,10 +18,8 @@ import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
-/** Pins a probe to `true` at compile time. */
 type Expect<T extends true> = T extends true ? true : never
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-named-answers-"))
@@ -68,7 +39,7 @@ const Sev = closed(
 		Fatal: { rank: 4n }
 	}
 )
-/** A second vocabulary sharing a handle name — the one-column-one-roster wall's witness. */
+
 const Priority = closed("Priority", ["Crit", "Low"])
 const Incident = relation("Incident", { id: u64.fresh, sev: Sev.id, pri: Priority.id })
 const Edge = relation("Edge", { src: u64, dst: u64 })
@@ -82,14 +53,12 @@ const Oncall = schema("Oncall", { Sev, Priority, Incident, Edge }, [
 
 type Rels = (typeof Oncall)["relations"]
 
-/** Relation ids = record declaration order (the law `lowerQuery` rides). */
 const INCIDENT_ID = 2
 const EDGE_ID = 3
 
 /** The ban's pinned message fragment — the data-model ruling, cited verbatim at every refusal point. */
 const BAN = /declaration order is an accident, not semantics: vocabularies do not order/
 
-/** Sorts answer rows (incident id, severity handle NAME) for a set-equality comparison (answers are sets; the host sorts). */
 function sortedPairs(rows: ReadonlyArray<{ readonly n: bigint; readonly s: string }>): Array<[bigint, string]> {
 	return rows
 		.map(function pair(row): [bigint, string] {
@@ -113,9 +82,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		const created = await native.dbCreate(storeDir, lower(Oncall))
 		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
-		// The native seam is RAW: closed cells are declaration-order row ids
-		// (Sev: Info 0, Warn 1, Crit 2, Fatal 3; Priority: Crit 0, Low 1) —
-		// the name↔id bijection is the SDK marshal's, above this seam.
+
 		const committed = native.dbWrite(db, function write(tx) {
 			native.txInsert(tx, INCIDENT_ID, 1n, [1n, 0n, 1n])
 			native.txInsert(tx, INCIDENT_ID, 1n, [2n, 1n, 1n])
@@ -128,7 +95,6 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		assert.equal(committed.tag, "accepted", "the seed commit lands")
 	})
 
-	/** The typed execute seam — exactly the shape the `Db` runtime consumes. */
 	function run<Row, P extends ParamsRecord>(q: Query<Rels, Row, P>, params: P): Row[] {
 		const prepared = native.dbPrepare(db, lowerQuery(q))
 		if (!prepared.ok) {
@@ -141,7 +107,6 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		return decodeAnswers<Row>(q.data.finds, rows)
 	}
 
-	/** The RAW positional rows of a query — the 0.3.0 twin's view (bigint ids, undecoded). */
 	function runRaw<Row, P extends ParamsRecord>(q: Query<Rels, Row, P>, params: P): readonly (readonly unknown[])[] {
 		const prepared = native.dbPrepare(db, lowerQuery(q))
 		if (!prepared.ok) {
@@ -159,7 +124,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 			const { id, sev } = v(Incident)
 			return r.match(Incident, { id, sev }).find({ n: id, s: sev })
 		})
-		// H1's claim (the precise union) now carries H4's runtime twin: the VALUE is the string.
+
 		type RowPin = Expect<
 			Equal<QueryRow<typeof all>, { readonly n: bigint; readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>
 		>
@@ -179,9 +144,9 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 			[3n, "Crit"],
 			[4n, "Fatal"]
 		])
-		// The SAME query's raw positional rows (the 0.3.0 bigint view) match
+
 		// the decoded rows modulo exactly the id → name translation — the
-		// wire IR never moved, only the read seam speaks names now.
+
 		const twin = runRaw(all, {}).map(function translate(raw): [bigint, string] {
 			const [n, s] = raw
 			if (typeof n !== "bigint" || typeof s !== "bigint") {
@@ -204,10 +169,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	})
 
 	test("the rec-head plumb: a main rule's interior-joined closed column decodes named (the descriptor survives the head)", function recHead() {
-		// Every interior-bound var is EDB-bound in its OWN rule (an interior atom is a join
-		// position, the boundness law), so the main rule's `varFields`
-		// always carries the closed descriptor — the plumb succeeds through
-		// rec outputs by construction, no bigint limitation remains.
+
 		const reach = query(Oncall)
 			.reach("seen", {
 				base: [
@@ -252,8 +214,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 			return r.match(Incident, { id, sev: ["Crit", "Fatal"] }).find({ count: r.count() })
 		})
 		assert.deepEqual(run(paged, {}), [{ count: 2n }])
-		// A closed vocabulary's ORDINARY payload column still folds — the ban
-		// covers the reference id, never the payload's own structural type.
+
 		const totalRank = query(Oncall).rule((r) => {
 			const { id, rank } = v(Sev)
 			return r.match(Sev, { id, rank }).find({ k: r.sum(rank) })
@@ -335,14 +296,11 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 					.find({ n: id })
 			})
 		}
-		// The compile-FAIL is the params object itself: the closed anchor
-		// claims the handle union, the order use (against the u64 id
-		// sibling — a param-vs-literal spelling is a constant comparison,
+
 		// refused at the comparison constructor) claims bigint, and the
-		// intersection is never — no value can be supplied for p. The
+
 		// runtime refusal is the registry's one-domain wall: an order use
-		// always anchors its sibling's domain, so the closed anchor and
-		// the order anchor collide — the ban needs no order-specific arm.
+
 		type OrderedParams = QueryParams<ReturnType<typeof buildOrderedParam>>
 		type ParamNeverPin = Expect<Equal<OrderedParams["p"], never>>
 		assert.throws(
@@ -379,9 +337,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	})
 
 	test("an out-of-roster id on answer decode throws pointed through the marshal's ONE bijection (shared with fact decode)", function outsideRoster() {
-		// The FindColumn is hand-built: decode reads only `name` and `closed`,
-		// but the entry's `over` is now a variable REFERENCE (identity edition),
-		// so we mint one over the closed column to satisfy the type.
+
 		const svar = v(Incident).sev
 		assert.throws(function nineIsOutside() {
 			decodeAnswers([{ name: "s", entry: { kind: "var", over: svar }, closed: Sev.id.closed, slot: undefined }], [[9n]])
