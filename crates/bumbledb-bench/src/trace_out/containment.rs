@@ -1,7 +1,6 @@
 use bumbledb::obs::{Category, TraceEvent};
 
 pub(super) struct Sweep<'a> {
-
     pub(super) spans: Vec<&'a TraceEvent>,
 
     pub(super) parent: Vec<Option<usize>>,
