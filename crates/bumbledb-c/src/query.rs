@@ -1,9 +1,6 @@
 //! The query IR crossing and the prepared-query handle.
-//!
 //! The C view structs mirror `bumbledb::ir` 1:1 — relations, fields, and
-//! interiors by numeric id (the host resolves names and sends ids; the
-//! bridge never sees names here) — exactly the shape the Node bridge's
-//! `marshal::query_in` reads off JS objects. The engine's IR validator
+//! interiors by numeric id. The engine's IR validator
 //! remains the trust boundary at `bdb_db_prepare`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,10 +18,6 @@ use crate::{
     BridgeResult, Fail, bdb_status, box_in, box_out_to, c_tag, guard, ref_in, require_out,
     slice_in, tag_in,
 };
-
-// ---------------------------------------------------------------------------
-// IR views
-// ---------------------------------------------------------------------------
 
 /// A term's tag (`bumbledb::ir::Term`).
 #[repr(C)]
@@ -315,10 +308,6 @@ pub struct bdb_query {
     pub payload: bdb_query_payload,
 }
 
-// ---------------------------------------------------------------------------
-// IR marshal (the ts bridge's query_in, off C views)
-// ---------------------------------------------------------------------------
-
 fn term_in(view: &bdb_term) -> BridgeResult<Term> {
     Ok(match tag_in::<bdb_term_kind>(view.kind)? {
         bdb_term_kind::Var => Term::Var(VarId(view.var)),
@@ -340,8 +329,6 @@ fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
     Ok(Atom { source, bindings })
 }
 
-/// The tag-to-op lift, exhaustive over [`bdb_head_op`]: a new engine
-/// `HeadOp` variant grows the C enum and breaks THIS match at compile.
 fn fold_op_in(view: bdb_agg_op) -> BridgeResult<FoldOp> {
     Ok(match tag_in::<bdb_head_op>(view.kind)? {
         bdb_head_op::Sum => FoldOp::Sum,
@@ -421,12 +408,6 @@ fn comparison_in(view: &bdb_comparison) -> BridgeResult<Comparison> {
     })
 }
 
-/// One condition tree, marshaled with the engine's own depth ceiling
-/// (`bumbledb::MAX_CONDITION_DEPTH`): the roster rejects deeper trees
-/// anyway, and refusing at marshal keeps this recursion stack-safe on
-/// hostile input — the ts bridge's rule, verbatim. Parse by kind: Leaf
-/// reads `cmp` only; And/Or read `children` only. Leftover payloads of
-/// the other arm are never read.
 fn condition_in(view: &bdb_condition, depth: usize) -> BridgeResult<ConditionTree> {
     if depth > bumbledb::MAX_CONDITION_DEPTH {
         return Err(fail_shape(&format!(
@@ -614,13 +595,11 @@ fn query_from_reach(
     })
 }
 
-/// The whole inbound query, copied into the engine's owned `Query`
-/// before `prepare`. Reads only the live arm named by `kind`.
 pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
     match tag_in::<bdb_query_kind>(view.kind)? {
         bdb_query_kind::Cq => {
             // SAFETY: `kind` selected the CQ arm; the header contract
-            // keeps that payload initialized for the call.
+
             #[expect(
                 unsafe_code,
                 reason = "union arm: CQ kind names payload.cq (header contract)"
@@ -637,7 +616,7 @@ pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
         }
         bdb_query_kind::Reach => {
             // SAFETY: `kind` selected the Reach arm; the header contract
-            // keeps that payload initialized for the call.
+
             #[expect(
                 unsafe_code,
                 reason = "union arm: Reach kind names payload.reach (header contract)"
@@ -656,13 +635,9 @@ pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Prepared queries
-// ---------------------------------------------------------------------------
-
 /// The opaque prepared-query handle. Field order is load-bearing: the
-/// prepared value drops before the optional store `Arc`. Heap-prepared
 /// queries hold `None`.
+/// prepared value drops before the optional store `Arc`. Heap-prepared
 pub struct bdb_prepared {
     pub(crate) prepared: PreparedQuery<SchemaDescriptor>,
     pub(crate) _keep: Option<std::sync::Arc<Engine>>,
@@ -701,10 +676,7 @@ pub(crate) fn prepared_execute_flag<'a>(
                   the flag is AtomicBool and destroy checks it before from_raw"
     )]
     // SAFETY: non-null was just checked; we only touch `in_execute`
-    // (an AtomicBool) until we win exclusive. Concurrent destroy
-    // loads the same flag before `from_raw` (best-effort, analogous
-    // to enter_write). The returned borrow is the handle's field; the
-    // caller holds the handle for the enclosing `bdb_instance_execute`.
+
     unsafe {
         Ok(&(*prepared).in_execute)
     }
