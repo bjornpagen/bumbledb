@@ -7,10 +7,6 @@ use bumbledb_theory::schema::RelationId;
 
 use super::check_width::check_width;
 
-/// The two scan sources behind one iterator type: the `F` cursor for an
-/// ordinary relation, the sealed extension for a closed one — virtual
-/// storage, the store holds zero closed-relation bytes
-/// (`docs/architecture/50-storage.md` § virtual relations).
 enum Scan<S, C> {
     Store(S),
     Closed(C),
@@ -28,28 +24,15 @@ impl<T, S: Iterator<Item = T>, C: Iterator<Item = T>> Iterator for Scan<S, C> {
 }
 
 /// One `F`-prefix cursor over a relation's live facts in `row_id` order.
-/// Holes from deletes are absent keys, not tombstones — they simply do not
 /// appear. A wrong-width fact yields `Err(Corruption)`; the caller is
 /// expected to stop at the first error (hard error, never a skip).
-///
 /// A **closed** relation never touches the cursor: its facts are the
 /// sealed extension's canonical bytes, yielded in declaration order (row
 /// id = declaration index) straight from the theory.
-///
 /// NOT delegated to [`scan_from`]`(rel, 0)` (the cleanup-0.5.0 kill-6
 /// sketch, aborted-with-reason at this site): the prefix cursor and the
-/// range cursor differ observably on corrupt keys — a bare `F | rel`
-/// prefix key sorts before `fact_key(rel, 0)`, so the range cursor
-/// would silently skip what the audit pin requires this cursor to
-/// convict (`read/tests.rs: a_short_f_key_is_typed_corruption_from_scan`).
-/// The shared meaning — the per-entry parse, width check, and fuse — is
-/// already one body ([`parse_facts`]); the two cursor-opens encode
-/// different corruption envelopes. The row-level agreement over
-/// well-formed keys is pinned
-/// (`scan_from_zero_yields_exactly_scan_over_live_facts`).
-///
+/// Holes from deletes are absent keys, not tombstones — they simply do not
 /// # Errors
-///
 /// `Lmdb` on cursor-open failure; per-item `Corruption` on an `F` key
 /// that is not the codec's fixed 13-byte shape — a corrupt key is data,
 /// never a panic.
@@ -75,23 +58,15 @@ pub fn scan<'txn>(
 
 /// [`scan`]'s suffix sibling: the same `F` cursor, opened at
 /// `fact_key(rel, from_row_id)` instead of the prefix start — the image
-/// append path's tail scan (`docs/architecture/50-storage.md` § the
-/// image cache). Row ids are the monotone high-water allocator's, so a
+/// append path's tail scan. Row ids are the monotone high-water allocator's, so a
 /// scan from a base image's build-time high-water
 /// ([`crate::storage::catalog::CatalogRead::row_id_high_water`], read in
 /// this same transaction) yields
-/// exactly the rows committed after that base. The range's upper bound
 /// is `fact_key(rel, u64::MAX)` inclusive — every 13-byte key in between
 /// shares the `F | rel` prefix by byte order, and any longer key inside
-/// the bounds is a mis-shaped `F` key, typed corruption exactly as in
-/// [`scan`].
-///
-/// Ordinary relations only: a closed relation's image synthesizes from
+/// exactly the rows committed after that base. The range's upper bound
 /// the theory and is never appended to (the cache branches before either
-/// scan).
-///
 /// # Errors
-///
 /// As [`scan`]: `Lmdb` on cursor-open failure; per-item `Corruption` on
 /// a mis-shaped key or wrong-width fact, fused on the first error.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -118,11 +93,9 @@ pub fn scan_from<'txn>(
     Ok(parse_facts(schema, rel, iter))
 }
 
-/// The shared per-entry parse behind [`scan`] and [`scan_from`]: the
-/// fixed 13-byte `F` key shape, the fact-width check, and the fuse.
-/// Fused on error: after the first corruption the iterator yields
-/// nothing more — "never a skip" is structural, not a caller
-/// obligation (a caller ignoring an Err cannot resume past it).
+/// Fused on error: after the first corruption the iterator yields nothing more
+/// — "never a skip" is structural, not a caller obligation (a caller ignoring
+/// an Err cannot resume past it).
 fn parse_facts<'txn>(
     schema: &'txn Schema,
     rel: RelationId,
@@ -135,9 +108,7 @@ fn parse_facts<'txn>(
         }
         let item: Result<(u64, FactView<'txn, 'txn>)> = try {
             let (raw_key, bytes) = entry.map_err(Error::from)?;
-            // F | relation(4) | row_id(8): fixed 13-byte shape — the
-            // parser's split chain is the length check, and a
-            // mis-shaped key is corruption, typed.
+
             let (_, row_id) = keys::parse_fact_key(raw_key).ok_or(Error::Corruption(
                 CorruptionError::MalformedValue("F key length"),
             ))?;
