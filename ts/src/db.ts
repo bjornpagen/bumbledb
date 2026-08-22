@@ -967,38 +967,6 @@ function catalogMethods<Rels extends SchemaRelations>(
 	assertLive: () => void,
 	ops: CatalogNative
 ): Pick<ReadInstance<Rels>, "scan" | "count" | "get" | "contains" | "execute" | "prepare"> {
-	function resolveOrdinary(relation: AnyRelation): RelationEntry {
-		const entry = tables.relations.get(relation.name)
-		if (entry === undefined || entry.member !== relation) {
-			throw errors.new(`relation ${relation.name} is not a member of schema ${theory.name}`)
-		}
-		if (isClosedMember(relation)) {
-			throw errors.new(
-				`relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
-			)
-		}
-		return entry
-	}
-	function declaredKeyOf(relation: AnyRelation, statement: Statement): PrimaryKey {
-		const statementId = tables.statements.findIndex(function byIdentity(candidate) {
-			return "statement" in candidate && candidate.statement === statement
-		})
-		const entry = tables.statements[statementId]
-		if (entry === undefined) {
-			throw errors.new(
-				`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
-			)
-		}
-		if (entry.kind !== "functionality") {
-			throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
-		}
-		if (entry.owner !== relation.name) {
-			throw errors.new(
-				`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
-			)
-		}
-		return Object.freeze({ statementId, projection: entry.projection })
-	}
 	function planOf(prepared: object): PreparedPlan {
 		const plan = preparedPlans.get(prepared)
 		if (plan === undefined) {
@@ -1014,7 +982,7 @@ function catalogMethods<Rels extends SchemaRelations>(
 	}
 	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
 		assertLive()
-		const entry = resolveOrdinary(relation)
+		const entry = ordinaryEntry(tables, theory, relation)
 		return bridged("bumbledb instance contains", function readContains() {
 			return ops.contains(entry.id, rowOf(relation.data, recordOf(fact)))
 		})
@@ -1025,12 +993,12 @@ function catalogMethods<Rels extends SchemaRelations>(
 		declaredKey?: DeclaredKeyFact<R, P>
 	): Fact<R> | undefined {
 		assertLive()
-		const entry = resolveOrdinary(relation)
+		const entry = ordinaryEntry(tables, theory, relation)
 		return selectKeyRead(
 			keyOrStatement,
 			declaredKey,
 			function byStatement(statement, key) {
-				const selected = declaredKeyOf(relation, statement)
+				const selected = declaredKeyOf(tables, theory, relation, statement)
 				const row = bridged("bumbledb instance get", function readGet() {
 					return ops.get(entry.id, selected.statementId, keyRowOf(relation.data, selected.projection, recordOf(key)))
 				})
@@ -1056,7 +1024,7 @@ function catalogMethods<Rels extends SchemaRelations>(
 	}
 	function scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[] {
 		assertLive()
-		const entry = resolveOrdinary(relation)
+		const entry = ordinaryEntry(tables, theory, relation)
 		const rows = bridged("bumbledb instance scan", function readScan() {
 			return ops.scan(entry.id)
 		})
@@ -1066,7 +1034,7 @@ function catalogMethods<Rels extends SchemaRelations>(
 	}
 	function count<R extends MemberRelation<Rels>>(relation: R): bigint {
 		assertLive()
-		const entry = resolveOrdinary(relation)
+		const entry = ordinaryEntry(tables, theory, relation)
 		return bridged("bumbledb instance count", function readCount() {
 			return ops.count(entry.id)
 		})
@@ -1123,32 +1091,34 @@ function ordinaryEntry(tables: Tables, theory: AnySchema, relation: AnyRelation)
 	return entry
 }
 
+/** Resolves a key-statement-selected read: identity is the membership rule. */
+function declaredKeyOf(tables: Tables, theory: AnySchema, relation: AnyRelation, statement: Statement): PrimaryKey {
+	const statementId = tables.statements.findIndex(function byIdentity(candidate) {
+		return "statement" in candidate && candidate.statement === statement
+	})
+	const entry = tables.statements[statementId]
+	if (entry === undefined) {
+		throw errors.new(
+			`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
+		)
+	}
+	if (entry.kind !== "functionality") {
+		throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
+	}
+	if (entry.owner !== relation.name) {
+		throw errors.new(
+			`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
+		)
+	}
+	return Object.freeze({ statementId, projection: entry.projection })
+}
+
 function overlayMethods<Rels extends SchemaRelations>(
 	theory: Schema<Rels>,
 	tables: Tables,
 	assertLive: () => void,
 	reads: PointReads
 ): Pick<WriteTx<Rels>, "contains" | "get"> {
-	function declaredKeyOf(relation: AnyRelation, statement: Statement): PrimaryKey {
-		const statementId = tables.statements.findIndex(function byIdentity(candidate) {
-			return "statement" in candidate && candidate.statement === statement
-		})
-		const entry = tables.statements[statementId]
-		if (entry === undefined) {
-			throw errors.new(
-				`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
-			)
-		}
-		if (entry.kind !== "functionality") {
-			throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
-		}
-		if (entry.owner !== relation.name) {
-			throw errors.new(
-				`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
-			)
-		}
-		return Object.freeze({ statementId, projection: entry.projection })
-	}
 	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
 		assertLive()
 		const entry = ordinaryEntry(tables, theory, relation)
@@ -1183,7 +1153,7 @@ function overlayMethods<Rels extends SchemaRelations>(
 			keyOrStatement,
 			declaredKey,
 			function byStatement(statement, key) {
-				return readThroughKey(relation, entry, declaredKeyOf(relation, statement), recordOf(key))
+				return readThroughKey(relation, entry, declaredKeyOf(tables, theory, relation, statement), recordOf(key))
 			},
 			function byPrimary(key) {
 				const primaryKey = entry.primaryKey
@@ -1262,19 +1232,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		return tables.relations.has(name)
 	}
 
-	function resolveOrdinary(relation: AnyRelation): RelationEntry {
-		const entry = tables.relations.get(relation.name)
-		if (entry === undefined || entry.member !== relation) {
-			throw errors.new(`relation ${relation.name} is not a member of schema ${theory.name}`)
-		}
-		if (isClosedMember(relation)) {
-			throw errors.new(
-				`relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
-			)
-		}
-		return entry
-	}
-
 	function offendingFactOf(fact: WireViolationFact): OffendingFact<Rels> {
 		const entry = tables.relations.get(fact.relation)
 		if (entry === undefined || !isMemberName(fact.relation)) {
@@ -1342,38 +1299,10 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		})
 	}
 
-	/**
-	 * Resolves a key-statement-selected read: the statement must be the
-	 * IDENTICAL `key()` value this schema declared (identity is the
-	 * membership rule) and must key `relation` — its materialized statement
-	 * id comes from the positional mirror, so the engine point-reads through
-	 * exactly the declared projection.
-	 */
-	function declaredKeyOf(relation: AnyRelation, statement: Statement): PrimaryKey {
-		const statementId = tables.statements.findIndex(function byIdentity(candidate) {
-			return "statement" in candidate && candidate.statement === statement
-		})
-		const entry = tables.statements[statementId]
-		if (entry === undefined) {
-			throw errors.new(
-				`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
-			)
-		}
-		if (entry.kind !== "functionality") {
-			throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
-		}
-		if (entry.owner !== relation.name) {
-			throw errors.new(
-				`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
-			)
-		}
-		return Object.freeze({ statementId, projection: entry.projection })
-	}
-
 	function pointReadsOf(assertLive: () => void, reads: PointReads) {
 		function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
 			assertLive()
-			const entry = resolveOrdinary(relation)
+			const entry = ordinaryEntry(tables, theory, relation)
 			return reads.contains(entry.id, rowOf(relation.data, recordOf(fact)))
 		}
 		/** One keyed point read through an already-resolved key, decoded to a fact (`undefined` on a miss). */
@@ -1401,12 +1330,12 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			declaredKey?: DeclaredKeyFact<R, P>
 		): Fact<R> | undefined {
 			assertLive()
-			const entry = resolveOrdinary(relation)
+			const entry = ordinaryEntry(tables, theory, relation)
 			return selectKeyRead(
 				keyOrStatement,
 				declaredKey,
 				function byStatement(statement, key) {
-					return readThroughKey(relation, entry, declaredKeyOf(relation, statement), recordOf(key))
+					return readThroughKey(relation, entry, declaredKeyOf(tables, theory, relation, statement), recordOf(key))
 				},
 				function byPrimary(key) {
 					const primaryKey = entry.primaryKey
@@ -1506,7 +1435,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		})
 		function insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
 			assertLive()
-			const entry = resolveOrdinary(relation)
+			const entry = ordinaryEntry(tables, theory, relation)
 			const txHandle = resolveTx()
 			return mutateCollection(relation, facts, function applyCells(rows, cells) {
 				return bridged("bumbledb tx insert", function record() {
@@ -1516,7 +1445,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		}
 		function remove<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
 			assertLive()
-			const entry = resolveOrdinary(relation)
+			const entry = ordinaryEntry(tables, theory, relation)
 			const txHandle = resolveTx()
 			const flat = rowsOf(relation, facts)
 			const report = bridged("bumbledb tx delete", function record() {
@@ -1530,7 +1459,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			count: bigint
 		): FreshRange {
 			assertLive()
-			const entry = resolveOrdinary(relation)
+			const entry = ordinaryEntry(tables, theory, relation)
 			const declared = relation.data.fields.find(function byName(candidate) {
 				return candidate.name === field
 			})
