@@ -29,7 +29,6 @@ enum Landing {
 struct FreeRow(u64);
 
 impl<C: CatalogWrite> Applier<'_, '_, C> {
-
     /// net-disposition invariant the plan was derived from — a missing
 
     pub(super) fn delete_fact(&mut self, op: &DeleteOp<'_>) -> Result<()> {
@@ -267,7 +266,6 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
         if let Some(pred) = self.catalog.lower(CatalogMap::Data, inserted)?
             && pred.key.starts_with(prefix)
         {
-
             if pred.key.len() != u_len {
                 return Err(Error::Corruption(CorruptionError::MalformedValue(
                     "U determinant key length",
