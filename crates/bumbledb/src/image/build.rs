@@ -430,7 +430,6 @@ impl TransientImage {
     /// # Panics
 
     /// Only on programmer-invariant violations: a row narrower than the
-
     pub fn refill<'r>(
         &mut self,
         field_types: &[ValueType],
