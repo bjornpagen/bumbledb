@@ -34,7 +34,6 @@ pub struct CalSizes {
 }
 
 impl CalSizes {
-
     #[must_use]
     pub fn of(scale: Scale) -> Self {
         let (persons, max_segments, min_segments) = match scale {
@@ -277,7 +276,7 @@ fn event_row(seed: u64, row: &SegmentRow) -> Vec<Value> {
     let event = row.event.expect("busy segments carry the event id");
     vec![
         Value::U64(event),
-        Value::U64(row.person), 
+        Value::U64(row.person),
         Value::IntervalI64(
             bumbledb::Interval::<i64>::new(row.segment.start, row.segment.end)
                 .expect("nonempty interval"),
