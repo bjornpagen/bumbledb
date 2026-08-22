@@ -1,11 +1,9 @@
-//! Prepare-time row-count estimation (docs/architecture/40-execution.md): per-occurrence
+//! Prepare-time row-count estimation: per-occurrence
 //! input estimates for the join-order DP and the introspection/report
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
 //! (the cache is peeked); a cold prepare degrades to bounds and floors,
-//! and runtime cover choice (docs/architecture/40-execution.md) carries the load-bearing
-//! decisions either way.
 
 use crate::image::ColumnWidth;
 use crate::image::ImageBind;
@@ -25,16 +23,11 @@ use crate::storage::catalog::CatalogRead;
 use crate::storage::env::ReadTxn;
 use bumbledb_theory::schema::FieldId;
 
-/// A relation's row count for planning. A closed relation's rows ARE
-/// its sealed extension — the option is the kind (`schema/relation.rs`)
-/// — and its stored `S` counter never exists (closed relations are
-/// storage-virtual and write-refused), so a raw counter read prices it
-/// at 0. Every planner row-count read routes here, never
-/// `read::row_count` directly.
-///
+/// A closed relation's rows ARE its sealed extension — the option is the kind
+/// (`schema/relation.rs`) — and its stored `S` counter never exists (closed
+/// relations are storage-virtual and write-refused), so a raw counter read
+/// prices it at 0.
 /// # Errors
-///
-/// `Lmdb` from the counter read (ordinary relations only).
 pub(crate) fn relation_rows_on<C: CatalogRead>(
     catalog: &C,
     schema: &Schema,
@@ -51,74 +44,23 @@ pub(crate) fn relation_rows_on<C: CatalogRead>(
     Ok(rows)
 }
 
-/// The distinct-count floor for an Eq selection on a field nothing else
-/// describes (a plain string/int column with no resident image): keep
-/// `rows / 64`. Chosen small enough that a selection always looks
-/// selective to the DP, large enough that a genuinely low-distinct
-/// column (resident images tell the truth) still dominates it.
 pub(crate) const DEFAULT_EQ_DISTINCT: u64 = 64;
 
-/// A range residual (`Lt/Le/Gt/Ge` against a constant) keeps 1/4 of its
-/// input — the classic textbook fraction; ranges are scans by design and
-/// the estimate only orders joins. Membership conditions are fixed
-/// word-range compositions over the start/end column pair
-/// (docs/architecture/40-execution.md), so they take the same class.
 pub(crate) const RANGE_KEEP_DEN: u64 = 4;
 
-/// The Allen basics partition every interval pair (JEPD), so a mask
-/// condition's honest keep fraction is `popcount/13` — the mask's measure
-/// in the coordinate system, no workload assumption needed — clamped to
-/// the existing floor ladder exactly like every residual: never below one
-/// row here, never outside `[1, rows]` at the end of the estimate. A
-/// *param* mask is unmeasurable at prepare (the ladder's carve-out) and
-/// takes the range class ([`RANGE_KEEP_DEN`]), like every other param.
 fn allen_keep(estimate: u64, mask: crate::image::view::MaskConst) -> u64 {
     (estimate.saturating_mul(u64::from(mask.popcount())) / 13).max(1)
 }
 
-/// A same-fact field equality (`FieldsCompare` under `Eq`, the repeated
-/// in-atom variable) keeps `1/64` — same floor class as an Eq selection.
 pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 
-/// The assumed distinct-match count of a set-bound position. Params are
-/// unmeasurable at prepare (the ladder's carve-out extends to sets), and
-/// the prepared plan pins the documented **small-set assumption** —
-/// |set| ≤ a few hundred, re-prepare or restructure beyond it
-/// (`docs/architecture/20-query-ir.md`, § prepared queries). 16 is a
-/// floor-style constant like the ladder's: small enough that a set-bound
-/// selection still reads selective to the DP, large enough to price it
-/// above a scalar equality.
 pub(crate) const PARAM_SET_PLANNING_ROWS: u64 = 16;
 
-/// The delta occurrence's planning row count (40-execution.md § the linear reach driver):
-/// a rec arm's marked delta occurrence binds to one round's
-/// frontier, which the semi-naive rewrite exists to keep small — the
-/// floor prices it as the most selective thing in the rule, so the DP
-/// orders delta-first. Prepare-unknowable like param survivorship (the
-/// param-plan precedent); pinned at prepare, never re-planned.
 pub(crate) const DELTA_PLANNING_ROWS: u64 = 1;
 
-/// The accumulated/finished derived-table occurrence's planning row count
-/// (40-execution.md § the linear reach driver): a rec-arm non-delta occurrence binds to
-/// the rec's whole accumulated set, and a finished-interior
-/// occurrence to its eval-once table — larger than a frontier, still
-/// prepare-unknowable. A floor-style constant like
-/// [`PARAM_SET_PLANNING_ROWS`]: big enough to price the
-/// accumulated read above the delta, small enough that a recursive rule
-/// still plans join-order around its stored atoms' real statistics.
 pub(crate) const ACCUMULATED_PLANNING_ROWS: u64 = 16;
 
-/// One occurrence's planner statistics: the row-count estimate —
-/// `rows` divided by each Eq selection's distinct count (times the
-/// set-size assumption for set-bound positions) and each
-/// residual's keep fraction, clamped to `[1, rows]` (`Ne` keeps
-/// everything) — plus every bound variable's base-relation distinct
-/// count for the join-step fanout model.
-///
 /// # Errors
-///
-/// `Lmdb` from counter reads (containment target row counts, the cache
-/// peek).
 #[cfg(test)]
 pub(crate) fn occurrence_stats(
     txn: &ReadTxn<'_>,
@@ -143,15 +85,7 @@ pub(crate) fn occurrence_stats_on<C: CatalogRead, I: ImageBind>(
     occurrence: &Occurrence,
     rows: u64,
 ) -> crate::error::Result<OccStats> {
-    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): a
-    // derived occurrence's row count is prepare-unknowable — exactly
-    // like param-bound filter survivorship — so it pins no row counts
-    // and costs on the ladder's floors. The occurrence's bind role
-    // picks the floor ([`DELTA_PLANNING_ROWS`] for a rec arm's marked
-    // delta occurrence, [`ACCUMULATED_PLANNING_ROWS`] for finished
-    // interiors, rec-accumulated reads, and main's finished-rec reads);
-    // each bound variable's distinct count is the floor itself (a table
-    // of N rows has at most N distinct words per column).
+
     match OccBind::of_occurrence(occurrence) {
         OccBind::RecDelta(_) => {
             let floor = DELTA_PLANNING_ROWS.max(1);
@@ -202,9 +136,6 @@ pub(crate) fn occurrence_stats_on<C: CatalogRead, I: ImageBind>(
     }
 }
 
-/// The assumed distinct-match count of one selection: 1 for every scalar
-/// constant; the documented small-set assumption for a set-bound
-/// position (a bound `WordSet` carries its real, deduplicated size).
 fn selection_matches(value: &Const) -> u64 {
     match value {
         Const::ParamSet(_) => PARAM_SET_PLANNING_ROWS,
@@ -213,7 +144,6 @@ fn selection_matches(value: &Const) -> u64 {
     }
 }
 
-/// The estimate half of [`occurrence_stats`].
 fn occurrence_estimate<C: CatalogRead>(
     catalog: &C,
     schema: &Schema,
@@ -229,29 +159,17 @@ fn occurrence_estimate<C: CatalogRead>(
         estimate =
             (estimate.saturating_mul(selection_matches(&selection.value)) / distinct.max(1)).max(1);
     }
-    // Fields already charged for a folded constant range: the fold
-    // (`ir/normalize/fold.rs`) collapsed each slot's constant order
-    // filters into ONE `[lo, hi]` summary, emitted back as at most two
-    // bounds — one summary is one range condition, so its keep fraction
-    // applies once per field, never per constituent. This is the
-    // double-counted-range selectivity fix (PRD 10): pre-fold, `x > a ∧
-    // x < b` priced as 1/16 instead of 1/4. Param bounds never fold
-    // (params are stage-3) and keep the per-filter fraction below.
+
     let mut folded_range_fields: Vec<FieldId> = Vec::new();
     for residual in &residuals {
-        // The Allen kinds carry their own honest fraction ([`allen_keep`]:
-        // popcount/13); everything else takes a constant denominator.
+
         if let FilterPredicate::FieldsAllen { mask, .. }
         | FilterPredicate::FieldAllen { mask, .. } = residual
         {
             estimate = allen_keep(estimate, *mask);
             continue;
         }
-        // An Eq-constant riding the residual list (a measure predicate
-        // pinned the whole list residual — `split_filters`): priced
-        // exactly as the selection it would otherwise have been, so a
-        // measured atom's estimate never drifts from its unmeasured
-        // twin's.
+
         if let FilterPredicate::Compare {
             field,
             op: WordCmp::Eq,
@@ -286,12 +204,7 @@ fn occurrence_estimate<C: CatalogRead>(
                 WordCmp::Lt | WordCmp::Le | WordCmp::Gt | WordCmp::Ge => RANGE_KEEP_DEN,
                 WordCmp::Ne => 1,
             },
-            // The fixed membership compositions (word ranges over the
-            // start/end pair), and the measure comparisons — a range
-            // condition over the derived duration word, riding the
-            // existing range keep-fraction floor unmodified (20-query-ir § the measure;
-            // validation admits order operators only, so the range class
-            // is exact, not a default).
+
             FilterPredicate::PointIn { .. }
             | FilterPredicate::AnyPointIn { .. }
             | FilterPredicate::FieldsPointIn { .. }
@@ -301,9 +214,7 @@ fn occurrence_estimate<C: CatalogRead>(
             }
         };
         estimate = (estimate / keep_den).max(1);
-        // A set-bound membership matches any of the set's elements —
-        // the range fraction per element, the documented small-set
-        // count of elements (unmeasurable at prepare, like every param).
+
         if matches!(residual, FilterPredicate::AnyPointIn { .. }) {
             estimate = estimate.saturating_mul(PARAM_SET_PLANNING_ROWS);
         }
@@ -311,20 +222,6 @@ fn occurrence_estimate<C: CatalogRead>(
     Ok(estimate.clamp(1, rows.max(1)))
 }
 
-/// The distinct-count ladder for one field, strongest source first:
-/// 1. a single-field key (a `Functionality` statement whose whole
-///    projection is this field) ⇒ exactly `rows` — sound for a pointwise
-///    single-field key too: equal interval values overlap, so the
-///    statement forces value-distinctness exactly like a scalar key;
-/// 2. a resident image ⇒ the exact build-time count, through the
-///    field→column span map (an interval field lower-bounds its pair
-///    distincts by the larger of its two word columns — underestimating
-///    distincts overestimates rows, the safe direction);
-/// 3. schema bounds — a `Containment` whose unselected source projection
-///    is exactly this field is bounded by its target relation's row
-///    count (the containment domain), an enum by its variant list, a
-///    bool by 2;
-/// 4. the documented floor.
 fn distinct_of<C: CatalogRead>(
     catalog: &C,
     schema: &Schema,
@@ -348,10 +245,7 @@ fn distinct_of<C: CatalogRead>(
         let first = usize::from(span.first_column);
         let distinct = match span.width {
             ColumnWidth::Byte | ColumnWidth::Word => image.distinct_count(first),
-            // Multi-word fields: each column's distinct count lower-
-            // bounds the tuple's, so the max is the tightest sound
-            // estimate one-column counters give (exact tuple distincts
-            // stay the sinks' k-word map job, not the planner's).
+
             ColumnWidth::WordPair | ColumnWidth::Words { .. } => (first
                 ..first + usize::from(span.width.column_count()))
                 .map(|column| image.distinct_count(column))
@@ -362,9 +256,7 @@ fn distinct_of<C: CatalogRead>(
         ladder_event(1, distinct);
         return Ok(distinct);
     }
-    // A field under several unconditional containments is bounded by
-    // each target's row count — fold to the tightest (the min), never
-    // the first statement's.
+
     let mut containment_bound: Option<u64> = None;
     for id in descriptor.outgoing() {
         let statement = schema.containment(*id);
@@ -388,10 +280,6 @@ fn distinct_of<C: CatalogRead>(
     Ok(distinct)
 }
 
-/// Records one [`DISTINCT_LADDER`](crate::obs::names::DISTINCT_LADDER)
-/// point event: `a0` the rung that fired (0 key, 1 image, 2 containment,
-/// 3 floor), `a1` the distinct count it resolved. Inert when the `trace`
-/// feature is off (the ZST-off obs seam).
 #[inline]
 fn ladder_event(rung: u64, distinct: u64) {
     crate::obs::event(
@@ -416,8 +304,6 @@ mod tests {
         StatementDescriptor, ValueType,
     };
 
-    /// R(id u64 fresh — auto-key, memo str, kind u64 over 4 values);
-    /// S(id u64 fresh, r u64) with the containment S(r) <= R(id).
     fn schema() -> Schema {
         SchemaDescriptor {
             relations: vec![
@@ -526,9 +412,6 @@ mod tests {
         }
     }
 
-    /// The ladder, rung by rung: key ⇒ rows; resident image ⇒ exact;
-    /// containment schema bounds when cold; the floor for plain
-    /// strings and u64s.
     #[test]
     fn the_distinct_ladder_resolves_strongest_first() {
         let dir = TempDir::new("selectivity-ladder");
@@ -538,14 +421,11 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         let cache = ImageCache::new(&schema);
 
-        // Keyed (fresh id): estimate = rows / rows = 1, cold or warm.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, R), 64)
             .expect("estimate")
             .rows;
         assert_eq!(est, 1, "keyed fields select one row");
 
-        // Plain string, cold cache: the floor (64 / 64 = 1)… use more
-        // rows to see it: pretend 6400 rows.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, R), 6400)
             .expect("estimate")
             .rows;
@@ -555,20 +435,16 @@ mod tests {
             "cold string hits the floor"
         );
 
-        // Plain u64, cold: the same floor — no schema bound applies.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(2, R), 6400)
             .expect("estimate")
             .rows;
         assert_eq!(est, 6400 / DEFAULT_EQ_DISTINCT, "cold u64 hits the floor");
 
-        // Containment source field, cold: bounded by the target's row
-        // count (R has 64).
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, S), 1600)
             .expect("estimate")
             .rows;
         assert_eq!(est, 1600 / 64, "cold containment uses the target bound");
 
-        // Warm the cache: exact image distincts displace bounds/floors.
         cache.get_or_build(&txn, &schema, R).expect("build");
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, R), 6400)
             .expect("estimate")
@@ -580,8 +456,6 @@ mod tests {
         assert_eq!(est, 1600, "resident image: 4 distinct kinds, exact");
     }
 
-    /// Residual fractions and clamping: ranges keep 1/4 each, Ne keeps
-    /// all, the repeated in-atom variable keeps 1/64, floor at 1.
     #[test]
     fn residual_fractions_compose_and_clamp() {
         let dir = TempDir::new("selectivity-residuals");
@@ -624,20 +498,12 @@ mod tests {
             .rows;
         assert_eq!(est, 2, "the repeated in-atom variable keeps 1/64");
 
-        // Clamp: estimates never reach zero.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, R), 3)
             .expect("estimate")
             .rows;
         assert_eq!(est, 1);
     }
 
-    /// A folded constant range counts ONCE: the fold
-    /// (`ir/normalize/fold.rs`) collapsed the slot's constant bounds
-    /// into one `[lo, hi]` summary, so the two emitted bounds are one
-    /// range condition — 1/4, never 1/16 (the double-counted-range fix,
-    /// PRD 10). Constant ranges on distinct fields still compose, and
-    /// param bounds (which never fold) keep the per-filter fraction —
-    /// `residual_fractions_compose_and_clamp` above pins that side.
     #[test]
     fn a_folded_constant_range_takes_the_keep_fraction_once() {
         let dir = TempDir::new("selectivity-folded-range");
@@ -665,7 +531,6 @@ mod tests {
             .rows;
         assert_eq!(est, 400, "one summary, one 1/4 — not 1/16");
 
-        // Distinct fields are distinct summaries and still compose.
         occ.filters.push(FilterPredicate::Compare {
             field: FieldId(2).into(),
             op: WordCmp::Lt,
@@ -677,10 +542,6 @@ mod tests {
         assert_eq!(est, 100, "two fields, two fractions");
     }
 
-    /// A field under TWO unconditional containments takes the tightest
-    /// target bound — the min over target row counts, never the first
-    /// statement's. Big (64 rows) is declared first; Small (16 rows)
-    /// must still win.
     #[test]
     fn the_containment_rung_takes_the_tightest_target_bound() {
         const BIG: RelationId = RelationId(0);
@@ -768,11 +629,6 @@ mod tests {
         );
     }
 
-    /// The containment rung with a CLOSED target, cold cache: a closed
-    /// relation's rows ARE its sealed extension (`relation_rows`) — the
-    /// stored `S` counter never exists for it, and the raw read priced
-    /// the vocabulary bound at 0 → distinct 1, zero selectivity credit.
-    /// The bound must be the variant-list length.
     #[test]
     fn the_containment_rung_reads_a_closed_targets_sealed_extension() {
         let dir = TempDir::new("selectivity-closed-target");
@@ -781,18 +637,12 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         let cache = ImageCache::new(&schema);
 
-        // Cold (no images, no rows anywhere): A.x <= X.id with X closed
-        // at 3 handles bounds the distinct at 3 — estimate = rows / 3.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, CYCLE_A), 1500)
             .expect("estimate")
             .rows;
         assert_eq!(est, 500, "the sealed extension is the containment bound");
     }
 
-    /// A set-bound position plans as `PARAM_SET_PLANNING_ROWS`
-    /// distinct matches instead of one — the small-set assumption
-    /// (`docs/architecture/20-query-ir.md`, § prepared queries): a set-Eq
-    /// on a keyed field prices at the assumed element count, not 1.
     #[test]
     fn a_set_bound_selection_plans_on_the_small_set_assumption() {
         let dir = TempDir::new("selectivity-paramset");
@@ -816,7 +666,6 @@ mod tests {
             "keyed set-Eq: one row per assumed element"
         );
 
-        // Scalar control: the same position with a scalar param is 1.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, R), 6400)
             .expect("estimate")
             .rows;
