@@ -3,7 +3,6 @@ use crate::error::Result;
 use super::Environment;
 
 impl Environment {
-
     /// # Errors
 
     pub(crate) fn disk_size(&self) -> Result<u64> {
