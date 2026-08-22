@@ -8,36 +8,6 @@ import * as errors from "@superbuilders/errors"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORM } from "./platform.ts"
 
-/**
- * The package build, end to end, so `pnpm run build` owns both publishable
- * trees with zero steps outside it (PRD-03): the pure-JS MAIN package
- * (`dist/*.js` + declarations, no binary) and the per-platform BINARY package
- * (`npm/<platform>-<arch>/bumbledb.node` under its `os`/`cpu`-gated manifest).
- *
- * Two platform concepts, never conflated: the PUBLISH platform (the one
- * package this release ships to the registry — darwin-arm64, a deliberate
- * list) owns the version-lockstep gate; the LOCAL platform (this host,
- * derived from `process.platform`/`process.arch` in `platform.ts`) owns
- * artifact placement, the by-name link, the smoke-load, and the platform
- * tarball proof — so a linux host builds, links, and verifies its own `.so`
- * under its own name instead of misfiling it under the darwin one.
- *
- * Order: assert version lockstep (one source of truth — npm main, platform
- * package, napi crate, engine crate, C ABI crate, workspace members) →
- * clean dist → cargo-compile the napi bridge against the in-repo engine →
- * place the `.node` in the LOCAL platform package dir → link that package
- * into `node_modules` so it resolves by name exactly as the published
- * optional dep would → smoke-load THROUGH the loader's by-name resolution
- * path (a build whose artifact cannot load or link fails here) → emit JS +
- * declarations with tsc → rewrite `#` specifiers out of `.d.ts` so the
- * published type graph is a closed relative tree → prove both tarballs carry exactly the intended
- * files and the packed main manifest carries the exact-version platform pin
- * (injected at prepack by `scripts/pin.ts`; the repo manifest stays
- * pin-free). All spawns are raw argv arrays — no shell strings, no
- * shell-in-JS libraries.
- */
-
-/** This host's platform target — where placement, link, and smoke-load go. */
 const LOCAL_PLATFORM = localPlatformTarget(process.platform, process.arch)
 
 function build(): void {
@@ -94,7 +64,7 @@ function build(): void {
  * source. The PUBLISH platform manifest, the napi crate, the engine crate,
  * `bumbledb-c`, and the other workspace members must equal it EXACTLY.
  * The FFI ABI is not semver-stable — a main package may only ever resolve
- * its own-version binary; `engineVersion()` and `bdb_version()` bake
+ * its own-version binary; `engineVersion` and `bdb_version` bake
  * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
  * repo field: the repo manifest must carry NO `optionalDependencies` (a
  * committed exact pin of the current unpublished version made every
@@ -245,18 +215,8 @@ function linkPlatformPackage(packageRoot: string, localPackageDir: string): void
 	fs.symlinkSync(target, link, "dir")
 }
 
-/**
- * The build's self-assertion (PRD-03 item 4): resolve the LOCAL platform
- * package BY NAME through the same `createRequire` path the loader uses,
- * require its `bumbledb.node`, and assert `engineVersion()` carries the
- * release version — so a build whose artifact cannot load, whose path
- * dependency did not link, whose platform package is not resolvable, or
- * whose binary self-reports a foreign version fails here instead of at
- * first runtime use. The smoke check witnesses identity, not mere life.
- */
 function smokeLoad(packageRoot: string, release: string): void {
-	// createRequire anchored inside the package so its node_modules (with the
-	// just-linked platform package) is on the resolution path.
+
 	const requireNative = createRequire(path.join(packageRoot, "scripts", "build.ts"))
 	const platformPackage = `@bjornpagen/bumbledb-${LOCAL_PLATFORM}`
 	const loaded = errors.trySync(() => requireNative(platformPackage))
@@ -275,23 +235,6 @@ function smokeLoad(packageRoot: string, release: string): void {
 	}
 }
 
-/**
- * Tarball proof (PRD-08 item 4): run `pnpm pack --dry-run --json` (the pnpm
- * equivalent of `npm pack --dry-run`) on both package dirs and assert their
- * file manifests, so a wrong `files`/`.npmignore` fails the build rather than
- * shipping a mispacked tarball. The MAIN tarball
- * must carry NO `.node` (the binary lives only in the platform package); the
- * LOCAL platform tarball (identical to the publish tarball on the publish
- * host, the synthesized dev twin elsewhere) must carry EXACTLY
- * `bumbledb.node` + `package.json` + `LICENSE` and nothing else. The PIN
- * proof then packs the main package FOR REAL (the prepack/postpack pair
- * runs, exactly as `pnpm publish` runs it), extracts the tarball's
- * `package.json`, and asserts the injected pin equals the release version
- * exactly — and that the repo manifest came back PIN-FREE (the restore
- * held). A tarball without the pin would install with no platform binary
- * anywhere; a repo manifest left with the pin would re-open the sdk lane's
- * frozen-lockfile window.
- */
 function verifyPack(packageRoot: string, localPackageDir: string, version: string): void {
 	const mainFiles = packDryRun(packageRoot)
 	const binary = mainFiles.find((file) => file.endsWith(".node"))
@@ -320,13 +263,6 @@ function verifyPack(packageRoot: string, localPackageDir: string, version: strin
 	)
 }
 
-/**
- * The injected-pin proof: a REAL `pnpm pack` of the main package (into a
- * scratch dir, so the lifecycle pair runs as publish would run it), the
- * packed `package.json` read straight out of the tarball, the
- * `optionalDependencies` pin asserted EXACTLY the release version — then
- * the repo manifest asserted pin-free (postpack restored it).
- */
 function verifyInjectedPin(packageRoot: string, version: string): void {
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-pack-"))
 	try {
@@ -372,7 +308,6 @@ function verifyInjectedPin(packageRoot: string, version: string): void {
 	}
 }
 
-/** Runs `pnpm pack --dry-run --json` in `dir` and returns its packed file paths. */
 function packDryRun(dir: string): string[] {
 	const result = spawnSync("pnpm", ["pack", "--dry-run", "--json"], { cwd: dir })
 	if (result.error) {
