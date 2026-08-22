@@ -1,9 +1,3 @@
-//! The crud artifacts, rendered from [`CrudRow`]s. The lane config
-//! prose renders VERBATIM from [`DurabilityLane::describe`] — the SAME
-//! value that configured the store — so documentation and configuration
-//! share one representation and cannot drift. Both artifacts carry
-//! every row; nothing here is a gate.
-
 use std::fmt::Write as _;
 
 use crate::duralane::{self, DurabilityLane};
@@ -20,9 +14,6 @@ fn us(ns: u64) -> f64 {
     ns as f64 / 1000.0
 }
 
-/// The human artifact: one `## lane` section per durability lane,
-/// opening with the lane's parity-config prose (constructor + every
-/// `SQLite` pragma) and closing on the post-state footer.
 #[must_use]
 pub fn markdown(rows: &[CrudRow], seed: u64) -> String {
     let mut out = String::new();
@@ -67,9 +58,6 @@ pub fn markdown(rows: &[CrudRow], seed: u64) -> String {
          crud number."
     );
 
-    // The trace pass (--trace): the traced twin sample's flame top-10
-    // per family, exactly as the ledger read families embed it; the
-    // artifacts sit under <out>/trace/crud/<lane>/.
     if rows.iter().any(|row| row.flame.is_some()) {
         let _ = writeln!(out, "\n## Flame summaries (per family, --trace)\n");
         for row in rows {
@@ -82,13 +70,6 @@ pub fn markdown(rows: &[CrudRow], seed: u64) -> String {
     out
 }
 
-/// The machine artifact, hand-rolled through [`crate::json`] (the
-/// dependency quarantine forbids serde): the provenance stamp (the one
-/// shared emitter — `report.json`, the metric lanes, and churn all
-/// spell the block in [`crate::report`], shared-machine stamp
-/// included, built here at render time = lane end), then lanes in
-/// report order, each carrying its verbatim config prose and its rows;
-/// stats objects byte-shaped like `report.json`'s.
 #[must_use]
 pub fn json(rows: &[CrudRow], seed: u64) -> String {
     let mut out = String::new();
