@@ -1,6 +1,5 @@
 //! This lane sweeps the touched-parent count over ephemeral
 //! probe-order-invariant; the witness choice is explicitly
-
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
