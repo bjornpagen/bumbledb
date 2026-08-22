@@ -1,5 +1,4 @@
 //! No CTE after the rec —
-
 use bumbledb::ir::{FindTerm, ProjectionRule, Rec, RecRule, RecStep};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
 
