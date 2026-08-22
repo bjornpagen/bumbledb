@@ -76,7 +76,6 @@ fn in_family_equals_the_union_of_per_element_executions() {
         prepare(&txn, &cache, &schema, &by_account_scalar_query()).expect("prepare");
 
     for size in [0usize, 1, 2, 200] {
-
         let elements: Vec<Value> = (0..size)
             .map(|k| Value::U64(u64::try_from(k).expect("small") * 7))
             .collect();
@@ -314,7 +313,7 @@ fn membership_point_var_join_end_to_end() {
                 source: crate::ir::AtomSource::Edb(PAYROLL),
                 bindings: vec![
                     (FieldId(0), Term::Var(VarId(0))),
-                    (FieldId(1), Term::Var(VarId(1))), 
+                    (FieldId(1), Term::Var(VarId(1))),
                 ],
             },
             Atom {
