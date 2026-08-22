@@ -1,11 +1,4 @@
-//! The copy-on-append differential referee, run through the REAL write
 //! plumbing (`write_witnessed` → `dirty_relations` → `ImageCache::advance`):
-//! an appended image must be indistinguishable from a from-scratch
-//! rebuild at the column granularity — `row_count`, every field's span,
-//! every column's full slice byte-for-byte, every forced distinct count —
-//! across every field shape, over a chain of insert-only commits with
-//! interleaved untouched relations, ending in the delete that forces the
-//! rebuild fallback (the retired I1 copy-on-append packet (git history)).
 
 use std::sync::Arc;
 
@@ -19,10 +12,6 @@ use bumbledb_theory::schema::{
     ValueType,
 };
 
-/// W spans every field shape the image layer decodes — u64, i64, str,
-/// bool, bytes<3> (one padded word), bytes<20> (three word columns),
-/// interval<i64> (two stored words), interval<u64, 5> (one stored word,
-/// derived end) — and OTHER is the interleaved untouched relation.
 fn wide_schema() -> SchemaDescriptor {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -69,8 +58,6 @@ fn wide_schema() -> SchemaDescriptor {
 const W: RelationId = RelationId(0);
 const OTHER: RelationId = RelationId(1);
 
-/// One deterministic W row per index — every shape carries the index so
-/// a misplaced tail row diverges in every column.
 fn wide_row(r: u64) -> Vec<Value> {
     let signed = i64::try_from(r).expect("small fixture index") - 5;
     let byte = u8::try_from(r % 251).expect("mod 251 fits");
@@ -86,8 +73,6 @@ fn wide_row(r: u64) -> Vec<Value> {
     ])
 }
 
-/// Total image columns of `rel`, derived exactly as the build derives
-/// them (the field→column map).
 fn column_count(db: &Db<SchemaDescriptor>, rel: RelationId) -> usize {
     let types: Vec<bumbledb_theory::schema::ValueType> = db
         .schema
@@ -102,11 +87,6 @@ fn column_count(db: &Db<SchemaDescriptor>, rel: RelationId) -> usize {
         .map_or(0, |s| usize::from(s.first_column + s.width.column_count()))
 }
 
-/// The referee clause: the engine's image of `rel` at this snapshot
-/// (whatever arm produced it) against a from-scratch [`crate::image::build`]
-/// in the SAME read transaction — `row_count`, per-field spans, every
-/// column slice byte-for-byte, every forced distinct. Returns the
-/// engine's image so callers can also assert Arc identity.
 fn assert_matches_rebuild(db: &Db<SchemaDescriptor>, rel: RelationId) -> Arc<RelationImage> {
     let txn = db.env.read_txn().expect("txn");
     let engine = db
@@ -136,11 +116,6 @@ fn assert_matches_rebuild(db: &Db<SchemaDescriptor>, rel: RelationId) -> Arc<Rel
     engine
 }
 
-/// The differential referee over a generated commit chain: full build,
-/// k insert-only appends with reads between, untouched-relation
-/// carry-forward (Arc identity), chained commits without reads, and the
-/// delete that forces the rebuild fallback — the appended image matches
-/// a from-scratch rebuild at every generation.
 #[test]
 fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
     let dir = TempDir::new("db-append-differential");
@@ -161,7 +136,6 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
         .unwrap();
     };
 
-    // Generation 1: the from-scratch build (no base exists yet).
     insert_wide(4);
     db.write(|tx| tx.insert_dyn(OTHER, [&[Value::U64(0)]]).map(drop))
         .expect("seed OTHER")
@@ -169,10 +143,6 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
     assert_matches_rebuild(&db, W);
     assert_matches_rebuild(&db, OTHER);
 
-    // The chain: insert-only commits into W with reads between, and an
-    // untouched-W commit interleaved every other round — every
-    // generation's image must match its rebuild (append arms), and the
-    // untouched relation must carry the same Arc forward.
     for round in 0..4u64 {
         insert_wide(2 + round % 3);
         let w = assert_matches_rebuild(&db, W);
@@ -187,31 +157,20 @@ fn append_path_images_match_from_scratch_rebuilds_at_every_generation() {
         assert_matches_rebuild(&db, OTHER);
     }
 
-    // Chained insert-only commits with NO reads between: the surviving
-    // base absorbs the whole chain in one append.
     insert_wide(1);
     insert_wide(3);
     insert_wide(2);
     assert_matches_rebuild(&db, W);
 
-    // The delete fork: a commit that deletes from W forces the rebuild
-    // fallback for W — and the rebuilt image still matches the referee.
     let victim = wide_row(1);
     db.write(|tx| tx.delete_dyn(W, [&victim]).map(drop))
         .expect("delete from W")
         .unwrap();
     assert_matches_rebuild(&db, W);
-    // OTHER was delete-free throughout: still carried, still identical.
+
     assert_matches_rebuild(&db, OTHER);
 }
 
-/// The delete-fallback pin through the REAL plumbing (feature `trace`):
-/// `write_witnessed` classifies the delta per relation and `advance`
-/// takes the right arm for each — a delta with one delete for W
-/// increments `builds` (never `appends`) on W's next read; the same
-/// commit's insert into OTHER leaves OTHER appendable; an insert-only
-/// commit lands in `appends`/`carries`. An appended-across-a-delete bug
-/// cannot exist silently.
 #[cfg(feature = "trace")]
 #[test]
 fn the_write_path_classifies_deletes_per_relation() {
@@ -240,8 +199,6 @@ fn the_write_path_classifies_deletes_per_relation() {
         "cold reads build from scratch"
     );
 
-    // One mixed delta: delete from W, insert into OTHER. Per-relation
-    // arms: W rebuilds, OTHER appends.
     let victim = wide_row(0);
     db.write(|tx| {
         tx.delete_dyn(W, [&victim])?;
@@ -264,7 +221,6 @@ fn the_write_path_classifies_deletes_per_relation() {
         "the same commit's delete-free relation appends"
     );
 
-    // An insert-only commit into W: W appends, OTHER carries.
     db.write(|tx| tx.insert_dyn(W, [&wide_row(9)]).map(drop))
         .expect("insert-only commit")
         .unwrap();
