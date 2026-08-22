@@ -5,7 +5,6 @@
 //! ordered-neighbor probe) and its reverse-edge key bytes per containment
 //! `R` put/delete and the insert's source probe. Aggregated: the
 //! function of (delta, schema)** before a single LMDB page is touched —
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
