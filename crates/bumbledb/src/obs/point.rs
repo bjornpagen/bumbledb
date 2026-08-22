@@ -259,9 +259,12 @@ trace_points! {
     /// One heap-stage collection load on the builder path. (rows)
     /// (10-measurement.md; wired by the accepted-collection lane.)
     BUILDER_LOAD => "builder_load", Commit,
-    /// Aggregate dictionary probing of one collection — an event, never
-    /// per-string spans (a per-string span would cost more than the
-    /// probe). (probes, hits)
+    /// Aggregate dictionary probing of one COMMIT — emitted once at
+    /// commit entry (`storage/commit/write.rs`), where the delta's probe
+    /// totals are final: a transaction's collections accumulate into the
+    /// ONE delta, so the aggregate is per commit, not per collection
+    /// (deliberate); an event, never per-string spans (a per-string span
+    /// would cost more than the probe). (probes, hits)
     /// (10-measurement.md; wired by the string-ownership lane.)
     INTERN_PROBE => "intern_probe", Commit,
     /// One state-changing commit.

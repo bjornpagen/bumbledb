@@ -40,7 +40,7 @@ existing `point.rs` vocabulary and category scheme:
 | `DYN_ENCODE` | Write | the intern+encode loop of one collection (`apply_collection`'s encode phase) | rows |
 | `DELTA_APPLY` | Write | `apply_prepared`'s backend-apply loop | rows |
 | `BUILDER_LOAD` | Write | one `HeapStage` collection load | rows |
-| `INTERN_PROBE` | Write | aggregate per collection: dictionary probes issued / memo hits (two-arg event, not per-string spans — a per-string span would cost more than the probe) | probes, hits |
+| `INTERN_PROBE` | Write | aggregate per COMMIT — emitted once at commit entry, where the delta's probe totals are final (a transaction's collections accumulate into the one delta, so the aggregate is per commit, not per collection; deliberate): dictionary probes issued / memo hits (two-arg event, not per-string spans — a per-string span would cost more than the probe) | probes, hits |
 | `PUBLISH_COPY` | Storage | `Environment::publish` data copy | bytes |
 | `PUBLISH_SYNC` | Storage | publish's durability boundary | — |
 

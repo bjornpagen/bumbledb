@@ -74,6 +74,12 @@ bdb_tx_delete(...)               same rectangular layout
 
 Writes are `bdb_tx_insert` / `bdb_tx_delete` with `row_count` (empty is
 lawful; `row_count == 1` is the singleton) and `bdb_tx_reserve` with `count`.
+Nullary facts are a DELIBERATE lockstep asymmetry, not drift: the C `rows_in`
+refuses a nonzero `row_count` with `value_count == 0` typed ("zero-width rows
+are not a collection" — the rectangular layout has no zero-width
+representation), so a fieldless relation's facts are writable through the
+TypeScript crossing (which carries the row count explicitly) and typed-refused
+here.
 There is no `bdb_tx_alloc` and no `bdb_db_bulk_load`. ETL is a host loop of
 `bdb_db_write`. Poison is `BDB_ERROR_KIND_TRANSACTION_POISONED` — the engine
 nests the original apply `Error`; this surface carries the kind.

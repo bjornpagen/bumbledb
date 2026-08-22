@@ -295,6 +295,26 @@ both upstream reports closed with numbers, digests verified identical.
       FIX 3 — the arena span bound is the typed
       `FactShapeError::PayloadBound` refusal, never a panic on the
       import path.
+- [x] Hunt round 2 (2026-08-21, six lenses over the one-representation
+      build): Miri lane green (native + cross-interpreted), 200-iteration
+      store differential green, parity fuzz green. Four defects fixed —
+      the TargetKeyWall false wall on undecidable key elements (bare
+      `Statement`/union key bindings escaped `HasWidenedKeyOwner`; now the
+      total `HasUndecidableKey`, the type tier judges only a statically
+      COMPLETE roster) and the full-binding `VarsOf` overload admitting
+      aliased extra-key records (now `ExactVars`, the generic law intact),
+      both in 2c40ab2e; the unbounded arity-0 rows amplification (a stated
+      2^63 bought O(rows) bridge pushes and engine applies from a 16-byte
+      payload; now `seal_nullary` + the `apply_accepted` collapse — a
+      fieldless collection IS its row count, set semantics) in 2a4fae37;
+      the primerlane component fold double-counting nested spans (the
+      delta-apply row summed leaf + `BUILDER_LOAD` container; now
+      containment-honest non-overlapping leaves) in 63e2cc97. Two doc
+      truths recorded: the TS/C nullary asymmetry is deliberate lockstep
+      (76-c-abi.md — C's `rows_in` refuses zero-width rows typed, the TS
+      crossing carries the count), and `INTERN_PROBE` is a per-COMMIT
+      aggregate (delta totals final at commit entry), not per collection
+      (point.rs + the 10-measurement row).
 - [ ] Acceptance tables in [80-acceptance.md](80-acceptance.md):
       persistence/verifier/RSS numbers come from the owner's Primer run
       post-adoption (the full bench was waived — "no rebench"); count
