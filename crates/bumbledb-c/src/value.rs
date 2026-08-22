@@ -1,14 +1,7 @@
 //! The value crossing: one `#[repr(C)]` tagged POD,
 //! [`bdb_value`], carries every `bumbledb::Value` variant in BOTH
 //! directions. Inbound, the bridge copies the view into Rust-owned data
-//! before any engine call (no borrowed caller memory survives the entry);
-//! outbound, variable-width payloads BORROW from the Rust-owned carrier
-//! (`bdb_row_set`, `bdb_answers`, `bdb_error`) named at each accessor.
-//!
-//! Intervals are CHECKED at the boundary exactly as the engine checks
-//! them (`start < end`); an empty interval, an invalid Allen mask, or
-//! non-UTF-8 string bytes are `BDB_ERROR_KIND_FACT_SHAPE` marshal refusals,
-//! never a silent repair.
+//! outbound, variable-width payloads BORROW from the Rust-owned carrier.
 
 use bumbledb::{AnswerValue, BindValue, Interval, Value};
 
@@ -34,14 +27,12 @@ impl bdb_string_view {
         }
     }
 
-    /// The view's text, UTF-8-checked and borrowed (copied by every
     /// caller before the engine sees it).
     pub(crate) fn as_str<'a>(&self, what: &str) -> BridgeResult<&'a str> {
         let bytes = slice_in(self.data, self.len)?;
         std::str::from_utf8(bytes).map_err(|_| fail_shape(&format!("non-UTF-8 {what}")))
     }
 
-    /// An optional-position view: null `data` is `None`.
     pub(crate) fn as_opt_str<'a>(&self, what: &str) -> BridgeResult<Option<&'a str>> {
         if self.data.is_null() && self.len == 0 {
             return Ok(None);
@@ -101,28 +92,26 @@ c_tag!(bdb_value_kind {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_value {
-    /// Integer tag; valid values are [`bdb_value_kind`]. Unknown tags are
-    /// `BDB_STATUS_MISUSE` (the field is `u32` so an out-of-range C enum
-    /// is not UB).
+
     pub kind: u32,
-    /// 0 or 1 when `kind` is Bool; any other byte is misuse.
+
     pub bool_value: u8,
     pub u64_value: u64,
     pub i64_value: i64,
-    /// `String`: UTF-8 text (checked at the boundary).
+
     pub string_value: bdb_string_view,
-    /// `FixedBytes`: exactly the field's N bytes (the engine checks N).
+
     pub bytes_value: bdb_bytes_view,
-    /// `IntervalU64`: half-open `[start, end)`, `start < end` checked.
+
     pub interval_u64_start: u64,
     pub interval_u64_end: u64,
-    /// `IntervalI64`: half-open `[start, end)`, `start < end` checked.
+
     pub interval_i64_start: i64,
     pub interval_i64_end: i64,
 }
 
 impl bdb_value {
-    /// The zeroed skeleton every outbound constructor fills.
+
     pub(crate) fn blank(kind: bdb_value_kind) -> Self {
         Self {
             kind: u32::from(kind),
@@ -145,7 +134,6 @@ impl bdb_value {
     }
 }
 
-/// One inbound tagged value, copied into the engine's owned [`Value`].
 pub(crate) fn value_in(view: &bdb_value) -> BridgeResult<Value> {
     match tag_in::<bdb_value_kind>(view.kind)? {
         bdb_value_kind::Bool => Ok(Value::Bool(bool_in(view.bool_value)?)),
@@ -174,15 +162,10 @@ pub(crate) fn value_in(view: &bdb_value) -> BridgeResult<Value> {
     }
 }
 
-/// One inbound `(values, count)` row, copied whole.
 pub(crate) fn row_in(values: *const bdb_value, count: usize) -> BridgeResult<Vec<Value>> {
     slice_in(values, count)?.iter().map(value_in).collect()
 }
 
-/// One inbound collection of rows: `row_count` rows of `value_count`
-/// cells each, row-major. Empty (`row_count == 0`) is lawful and does
-/// not read `values`. Nonzero rows with `value_count == 0` is a shape
-/// error — `chunks_exact(0)` is not a representation of zero-width.
 pub(crate) fn rows_in(
     values: *const bdb_value,
     value_count: usize,
@@ -205,8 +188,6 @@ pub(crate) fn rows_in(
     Ok(rows)
 }
 
-/// One outbound engine value, viewed — variable-width payloads borrow
-/// `value` (the accessor names the owning carrier and its lifetime).
 pub(crate) fn value_out(value: &Value) -> bdb_value {
     match value {
         Value::Bool(v) => {
@@ -249,8 +230,6 @@ pub(crate) fn value_out(value: &Value) -> bdb_value {
     }
 }
 
-/// One outbound answer cell, viewed — string/bytes payloads borrow the
-/// `bdb_answers` carrier.
 pub(crate) fn answer_out(value: AnswerValue<'_>) -> bdb_value {
     match value {
         AnswerValue::Bool(v) => {
@@ -310,21 +289,20 @@ c_tag!(bdb_param_kind { Scalar, Set });
 #[derive(Clone, Copy)]
 pub struct bdb_param {
     pub kind: u32,
-    /// `Scalar`: the value.
+
     pub scalar: bdb_value,
-    /// `Set`: `set_len` tagged values.
+
     pub set: *const bdb_value,
     pub set_len: usize,
 }
 
-/// One positional argument, owned (the ts bridge's `OwnedParam`): params
-/// are copied off the C views before binding.
+/// One positional argument, owned (the ts bridge's `OwnedParam`): params are
+/// copied off the C views before binding.
 pub(crate) enum OwnedParam {
     Scalar(Value),
     Set(Vec<Value>),
 }
 
-/// The inbound params array, copied whole.
 pub(crate) fn params_in(params: *const bdb_param, count: usize) -> BridgeResult<Vec<OwnedParam>> {
     slice_in(params, count)?
         .iter()
@@ -335,9 +313,6 @@ pub(crate) fn params_in(params: *const bdb_param, count: usize) -> BridgeResult<
         .collect()
 }
 
-/// One owned scalar to the engine's bind value (the ts bridge's
-/// `bind_value`, verbatim): string payloads re-borrow as `&str` —
-/// marshaling admitted only UTF-8, so the payload is `&str` by type.
 pub(crate) fn bind_value(value: &Value) -> BindValue<'_> {
     match value {
         Value::Bool(v) => BindValue::Bool(*v),
@@ -350,7 +325,6 @@ pub(crate) fn bind_value(value: &Value) -> BindValue<'_> {
     }
 }
 
-/// Owned params to the engine's positional bind arguments.
 pub(crate) fn param_args(params: &[OwnedParam]) -> BridgeResult<Vec<bumbledb::ParamArg<'_>>> {
     params
         .iter()
