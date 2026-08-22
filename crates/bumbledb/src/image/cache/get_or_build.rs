@@ -1,7 +1,6 @@
 //! The read/build path: return the reader's image, building outside the
 //! no append base survives, by column copy plus tail decode when one
 //! does, and at zero copy when the relation was untouched.
-
 use std::sync::{Arc, OnceLock};
 
 use crate::error::{CorruptionError, Error, Result};
@@ -24,9 +23,7 @@ struct Base {
 
 impl ImageCache {
     /// LMDB read, no eviction. First touch builds into the relation's
-
     /// # Errors
-
     /// # Panics
     #[cfg(test)]
     pub fn get_or_build(
