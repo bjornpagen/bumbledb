@@ -1,70 +1,70 @@
 import Bumbledb.Query.Syntax
 
 /-!
-# Query denotation — the matching equation (Level 0, PRD 04)
+# Query denotation — the matching equation (Level 0, 
 
 What a query means: THE matching equation, unification, positive range
 restriction (`Safe`), the anti-join, condition lowering (DNF
 preservation), rule union, answer identity — the normative denotation
-the executor, the naive model, and the conformance lane (PRD 13) are
+the executor, the naive model, and the conformance lane ( are
 all measured against. Plus the EXECUTABLE half: `evalList`, a
 `List`-backed evaluator over concrete finite instances, with
-`eval_sound` — the refinement theorem PRD 13 stands on.
+`eval_sound` — the refinement theorem stands on.
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Allen `classify` is an opaque parameter** (`Classify`): the
-  denotation is parametric in the classification function — PRD 05
-  refines it; nothing here inspects it, so every theorem holds for
-  the real one by instantiation.
+ denotation is parametric in the classification function — 
+ refines it; nothing here inspects it, so every theorem holds for
+ the real one by instantiation.
 * **A ray's measure comparison is FALSE, not an error.** The model's
-  `Value.measure?` is `none` on rays (`measure_ray_none`), so a
-  measure term SELECTS nothing and any comparison over it fails. The
-  engine instead raises the typed execution error
-  `crate::Error::MeasureOfRay` — an effect this level does not carry;
-  the conformance lane (PRD 13) compares answer sets on error-free
-  executions only.
+ `Value.measure?` is `none` on rays (`measure_ray_none`), so a
+ measure term SELECTS nothing and any comparison over it fails. The
+ engine instead raises the typed execution error
+ `crate::Error::MeasureOfRay` — an effect this level does not carry;
+ the conformance lane ( compares answer sets on error-free
+ executions only.
 * **`Value.measure?` carries a domain-ceiling guard** (`measureOfNat`):
-  the gap of an in-domain interval is always below `2^64`, but the
-  `PointDomain.gap` payload is a bare `Nat`, so the embedding into a
-  `U64` value checks the bound it cannot see — the `none` arm is
-  unreachable on real intervals and exists for totality alone.
+ the gap of an in-domain interval is always below `2^64`, but the
+ `PointDomain.gap` payload is a bare `Nat`, so the embedding into a
+ `U64` value checks the bound it cannot see — the `none` arm is
+ unreachable on real intervals and exists for totality alone.
 * **Ill-typed comparisons are total, and the validator makes them
-  unreachable.** Order operators on non-scalars, mismatched element
-  domains, and `pointIn` on non-intervals fall through to the empty
-  reading (`False`); `ne` does NOT — `cmpDen .ne a b` is plain value
-  disequality, TRUE on a type-mismatched pair (a `u64` and a `bool`
-  differ as `Value`s). The model does not arbitrate ill-typed pairs:
-  the validator REJECTS every such shape (`ir/validate/context.rs`,
-  the typed pass — `ValidationError::IllegalComparison`), so no
-  accepted rule reaches these arms; totality is for the model's own
-  sake, not a semantic claim.
+ unreachable.** Order operators on non-scalars, mismatched element
+ domains, and `pointIn` on non-intervals fall through to the empty
+ reading (`False`); `ne` does NOT — `cmpDen.ne a b` is plain value
+ disequality, TRUE on a type-mismatched pair (a `u64` and a `bool`
+ differ as `Value`s). The model does not arbitrate ill-typed pairs:
+ the validator REJECTS every such shape (`ir/validate/context.rs`,
+ the typed pass — `ValidationError::IllegalComparison`), so no
+ accepted rule reaches these arms; totality is for the model's own
+ sake, not a semantic claim.
 * **`eval_sound` / `evalList` anti-join is `Matches` (value equality).**
-  The engine's negated membership is `AntiProbe`
-  (`normalize.rs::lower_atom`, role-blind): domain bindings plus
-  point-membership filters inside the probe. That reading is
-  `surface_antiprobe_filters` /
-  `membership_lowering_preserves_negated` (`Query/Membership.lean`).
-  `eval_sound` does not licence the engine's negated-membership
-  answers; the `membership_lowering_preserves` hypothesis
-  `Atom.membershipFree` on negated atoms is exactly this split.
+ The engine's negated membership is `AntiProbe`
+ (`normalize.rs::lower_atom`, role-blind): domain bindings plus
+ point-membership filters inside the probe. That reading is
+ `surface_antiprobe_filters` /
+ `membership_lowering_preserves_negated` (`Query/Membership.lean`).
+ `eval_sound` does not licence the engine's negated-membership
+ answers; the `membership_lowering_preserves` hypothesis
+ `Atom.membershipFree` on negated atoms is exactly this split.
 * **Finite instances are association lists** (`ListInstance`) for the
-  executable half; the `Set`-valued denotation stays over arbitrary
-  `Instance`s.
+ executable half; the `Set`-valued denotation stays over arbitrary
+ `Instance`s.
 * **`PendingIntern` string literals are outside the modeled
-  fragment.** Model literals carry `StrId`; the engine's raw-bytes
-  string literal resolves per execution
-  (`ir/normalize/lower_literal.rs::lower_literal`), a dictionary miss
-  becoming the never-minted sentinel so `Eq` fails and `Ne` passes
-  (`exec/dispatch/key_probe_fact.rs::const_bytes`). That coincides
-  with this model's exclusion reading — an absent string equals no
-  stored value — but no theorem covers the resolution step itself.
+ fragment.** Model literals carry `StrId`; the engine's raw-bytes
+ string literal resolves per execution
+ (`ir/normalize/lower_literal.rs::lower_literal`), a dictionary miss
+ becoming the never-minted sentinel so `Eq` fails and `Ne` passes
+ (`exec/dispatch/key_probe_fact.rs::const_bytes`). That coincides
+ with this model's exclusion reading — an absent string equals no
+ stored value — but no theorem covers the resolution step itself.
 
 ## The decidable instances
 
 `DecidableEq Value` and the comparison deciders live here, not in
-`Values.lean`: PRD 04's executable half is what spends them (the
-technical direction: decidable instances added only where PRD 13
+`Values.lean`: executable half is what spends them (the
+technical direction: decidable instances added only where 
 needs them).
 -/
 
@@ -74,7 +74,7 @@ namespace Bumbledb
 
 /-- The point a scalar value denotes at an interval position — the
 predicate form of the membership typing rule reads the point side
-through this (`Point` is PRD 03's tagged sum). Scalars of the two
+through this (`Point` is tagged sum). Scalars of the two
 element domains carry a point; everything else carries none. -/
 def Value.point : Value → Option Point
   | { type := .u64, val := x } => some (.u64 x)
@@ -154,10 +154,7 @@ two-slot read + subtraction; the ray raises
 def Value.measure? : Value → Option Value
   | { type := .interval .u64, val := iv } => iv.measure.bind measureOfNat
   | { type := .interval .i64, val := iv } => iv.measure.bind measureOfNat
-  -- A fixed-width value measures through its derived interval —
-  -- always `some w` (`fixed_measure_const_u64`/`_i64`): never a ray,
-  -- so the measure position accepts it trivially (the recorded
-  -- choice, `Values.lean`).
+
   | { type := .intervalFixed .u64 _, val := v } =>
     v.toInterval.measure.bind measureOfNat
   | { type := .intervalFixed .i64 _, val := v } =>
@@ -406,8 +403,8 @@ theorem safety_perm_invariant {r r' : Rule}
 
 /-- The Allen classification, ABSTRACT at this level (the recorded
 narrowing): one classifier per element domain, mapping an interval
-pair to its Allen relation. PRD 05 refines it to the concrete
-thirteen-way case split (`crate::allen::classify`); nothing in PRD 04
+pair to its Allen relation. refines it to the concrete
+thirteen-way case split (`crate::allen::classify`); nothing in 
 inspects it, so every theorem holds for the refinement by
 instantiation. -/
 structure Classify where
@@ -437,7 +434,7 @@ plain value identity/disequality (`ne` holds on a mismatched pair) —
 the validator's `IllegalComparison` makes every ill-typed pair
 unreachable on accepted rules (module doc). Note interval `eq` here
 is plain value identity, whereas the engine canonicalizes it to
-`Allen(EQUALS)` — PRD 05's `classify` refinement makes the two
+`Allen(EQUALS)` — `classify` refinement makes the two
 readings provably equal. -/
 def cmpDen (C : Classify) (ρ : ParamEnv) : CmpOp → Value → Value → Prop
   | .eq, a, b => a = b
@@ -461,9 +458,9 @@ def Comparison.holds (C : Classify) (ρ : ParamEnv) (σ : Assignment)
 
 mutual
   /-- A condition tree's denotation: leaves are comparisons, `and` is
-  conjunction over the children, `or` is disjunction — the empty
-  combinations keep their algebraic readings (`and []` true, `or []`
-  false), exactly as `crate::ir::ConditionTree` documents them. -/
+ conjunction over the children, `or` is disjunction — the empty
+ combinations keep their algebraic readings (`and []` true, `or []`
+ false), exactly as `crate::ir::ConditionTree` documents them. -/
   def Condition.holds (C : Classify) (ρ : ParamEnv) (σ : Assignment) :
       Condition → Prop
     | .leaf c => c.holds C ρ σ
@@ -535,7 +532,7 @@ theorem pointIn_unfold_i64 (C : Classify) (ρ : ParamEnv)
 
 /-- **Theorem 8b (port shape).** The Allen comparison denotes mask
 membership of the classification: `Allen iv mask jv ↔ classify iv jv ∈
-mask`, with `classify` abstract here (PRD 05 refines it). Stated over
+mask`, with `classify` abstract here ( refines it). Stated over
 the `u64` element domain; `allen_mask_denotation_i64` is the
 companion. Bridge: `crate::allen::AllenMask::contains(classify(lhs,
 rhs))` — the mask-carrying filter shapes of `ir/normalize`. -/
@@ -566,17 +563,17 @@ theorem allen_mask_denotation_i64 (C : Classify) (ρ : ParamEnv)
 
 mutual
   /-- The DNF of one condition tree: a list of disjuncts, each a flat
-  comparison conjunction — a leaf is one one-leaf disjunct, `and`
-  distributes (the cross product), `or` unions (concatenation).
-  Mirror of `ir/normalize/dnf.rs::tree_terms`. -/
+ comparison conjunction — a leaf is one one-leaf disjunct, `and`
+ distributes (the cross product), `or` unions (concatenation).
+ Mirror of `ir/normalize/dnf.rs::tree_terms`. -/
   def Condition.lower : Condition → List (List Comparison)
     | .leaf c => [[c]]
     | .and cs => Condition.lowerAll cs
     | .or cs => Condition.lowerAny cs
 
   /-- DNF of a conjunction of trees: the cross product of the
-  children's disjunct sets — one empty disjunct for the empty
-  conjunction (mirror of `conjunction_terms`). -/
+ children's disjunct sets — one empty disjunct for the empty
+ conjunction (mirror of `conjunction_terms`). -/
   def Condition.lowerAll : List Condition → List (List Comparison)
     | [] => [[]]
     | t :: ts =>
@@ -584,7 +581,7 @@ mutual
         (Condition.lowerAll ts).map (d ++ ·)
 
   /-- DNF of a disjunction of trees: concatenation — the empty
-  disjunction has NO disjuncts (`or []` lowers to zero rules). -/
+ disjunction has NO disjuncts (`or []` lowers to zero rules). -/
   def Condition.lowerAny : List Condition → List (List Comparison)
     | [] => []
     | t :: ts => Condition.lower t ++ Condition.lowerAny ts
@@ -598,8 +595,8 @@ def disjunctHolds (C : Classify) (ρ : ParamEnv) (σ : Assignment)
 
 mutual
   /-- The tree-level DNF preservation: a tree holds iff some lowered
-  disjunct holds entirely — lowering-then-evaluating equals evaluating
-  the tree naively, at one assignment. -/
+ disjunct holds entirely — lowering-then-evaluating equals evaluating
+ the tree naively, at one assignment. -/
   theorem Condition.lower_holds (C : Classify) (ρ : ParamEnv)
       (σ : Assignment) :
       ∀ t : Condition,
@@ -615,7 +612,7 @@ mutual
       exact Condition.lowerAny_holds C ρ σ cs
 
   /-- The conjunction-list half: the cross product's disjuncts are
-  exactly the pointwise concatenations. -/
+ exactly the pointwise concatenations. -/
   theorem Condition.lowerAll_holds (C : Classify) (ρ : ParamEnv)
       (σ : Assignment) :
       ∀ cs : List Condition,
@@ -642,7 +639,7 @@ mutual
           ⟨d₂, hd₂, fun c hc => hall c (List.mem_append.mpr (.inr hc))⟩⟩
 
   /-- The disjunction-list half: concatenation unions the disjunct
-  sets. -/
+ sets. -/
   theorem Condition.lowerAny_holds (C : Classify) (ρ : ParamEnv)
       (σ : Assignment) :
       ∀ cs : List Condition,
@@ -1067,7 +1064,7 @@ theorem rulesAnswers_instance_env {C : Classify} {rules : List Rule}
 
 /-! ## Decidable instances — the executable half's toolkit
 
-Added HERE, not in `Values.lean`: PRD 13's conformance lane is what
+Added HERE, not in `Values.lean`: conformance lane is what
 spends them (the technical direction's rule). -/
 
 instance {α : Type} [LT α] [DecidableEq α] : DecidableEq (Interval α) :=
@@ -1185,7 +1182,7 @@ instance (ρ : ParamEnv) (σ : Assignment) :
   | .lit c, w => inferInstanceAs (Decidable (c = w))
   | .measure v, w => inferInstanceAs (Decidable ((σ v).measure? = some w))
 
-/-! ## The executable half — `evalList` (PRD 13's foundation)
+/-! ## The executable half — `evalList` ( foundation)
 
 The compositional pipeline: per-atom extension of partial assignments
 (the join), the negation filter, the condition filter, the projection
@@ -1416,7 +1413,7 @@ def evalRule (C : Classify) (W : ListInstance) (T : InteriorTables)
 /-- **`evalList`** — the executable denotation over a rule list plus
 derived-table map `T`. Plain callers pass `InteriorTables.empty`.
 List-level union; `eval_sound` says membership agrees with
-`rulesAnswers`. PRD 13 runs THIS against the engine and the naive
+`rulesAnswers`. runs THIS against the engine and the naive
 model as the third differential oracle. -/
 def evalList (C : Classify) (W : ListInstance) (T : InteriorTables)
     (ρ : ParamEnv) (rules : List Rule) : List AnswerTuple :=
@@ -1854,7 +1851,7 @@ theorem evalRule_complete {C : Classify} {W : ListInstance}
   · refine List.map_congr_left fun v hv => ?_
     exact hagree v (hsafe v (mem_allVars.mpr (Or.inl hv)))
 
-/-- **`eval_sound` — the refinement theorem (PRD 13's foundation).**
+/-- **`eval_sound` — the refinement theorem ( foundation).**
 List-backed evaluation over a concrete finite world agrees with the
 `Set` denotation, membership for membership: `evalRule`'s stages are
 sound unconditionally, and complete under `Safe` (positive range
@@ -1864,7 +1861,7 @@ plus the binding shape discipline the validator enforces
 exactly the acceptance rules — the theorem names the premises the
 engine's validator discharges, which is the covenant's Level-1
 pattern.
-Bridge: PRD 13 runs `evalList` on Tiny worlds as the third
+Bridge: runs `evalList` on Tiny worlds as the third
 differential oracle against `crate::exec` and the naive model, on the
 membership-free-negation fragment `eval_sound` names. Negated
 membership is `antiProbeRuleAnswers` /
