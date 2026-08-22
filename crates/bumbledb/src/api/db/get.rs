@@ -130,7 +130,6 @@ pub(super) fn closed_fact_by_determinant<'rel>(
 }
 
 impl<S> WriteTx<'_, S> {
-
     /// otherwise. Before commit it answers exactly what a post-commit
 
     /// # Errors
