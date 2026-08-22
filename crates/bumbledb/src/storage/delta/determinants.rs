@@ -44,8 +44,6 @@ impl TupleOwners {
         }
     }
 
-    /// Remove `slice`. `None` means no owners remain — the overlay entry
-    /// drops so the committed state answers (never `Absent` on cancel).
     fn cancel(self, slice: ArenaSlice) -> Option<Self> {
         match self {
             Self::Insert {
@@ -99,18 +97,7 @@ impl TupleOwners {
 }
 
 impl WriteDelta<'_> {
-    /// Records one changed fact into the point-read overlay under every
-    /// key statement of its relation. At most one live insert per tuple:
-    /// a second insert replaces and stashes the previous so cancel can
-    /// restore it (the earlier fact stays in the fact map until its own
-    /// cancel). Deletes of other facts on the same tuple stay beside that
-    /// insert so `delete(old); insert(new)` in either order still reads
-    /// `new`, and cancelling the live insert reverts to the replaced
-    /// insert, those deletes, or the committed state if none remain.
-    ///
-    /// Determinant bytes come from the one shared slicer ([`keys::determinant_image`])
-    /// — the same derivation commit applies, so a point read and the
-    /// judgment phase can never disagree on a tuple's identity.
+
     pub(super) fn record_determinants(
         &mut self,
         rel: RelationId,
@@ -142,16 +129,6 @@ impl WriteDelta<'_> {
         }
     }
 
-    /// Removes one CANCELLED op's own overlay entries (delete-cancels-
-    /// insert and insert-cancels-delete alike): each of the cancelled
-    /// fact's tuples drops exactly the cancelled slice and reverts to
-    /// what remains — the owners still pending, or no overlay at all
-    /// (the committed state answers unshadowed), exactly as if the
-    /// cancelled pair never happened. Recording `Absent` instead would
-    /// shadow a committed owner of the same tuple, breaking the
-    /// point-read contract (`docs/architecture/70-api.md` § `WriteTx`
-    /// point reads). O(log |delta|) — the revert target is data, never
-    /// a rescan of the pending set (finding 097).
     pub(super) fn cancel_determinants(
         &mut self,
         rel: RelationId,
@@ -178,16 +155,6 @@ impl WriteDelta<'_> {
         }
     }
 
-    /// The delta's net overlay for one key statement's determinant tuple, if any
-    /// — the delta-first leg of a point read (`docs/architecture/50-storage.md`
-    /// § `WriteTx` point reads). `None` = the tuple is untouched by this
-    /// transaction and the committed state answers. A hit resolves by the
-    /// insert-wins rule: the live pending `Insert` owns the tuple; owners
-    /// that are all deletes record its absence.
-    ///
-    /// The probe borrows: determinant bytes look up as `&[u8]` through the
-    /// nested map, so a typed point read touches no allocator (the
-    /// borrowed-struct gate pins this).
     #[must_use]
     pub fn determinant_overlay(
         &self,
