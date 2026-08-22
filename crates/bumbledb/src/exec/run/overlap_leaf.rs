@@ -4,7 +4,6 @@
 //! every admitted configuration shares a point or abuts) and whose one
 //! side is an outer-binding constant licenses enumerating, per key
 //! group, only the cover positions whose interval pair lies in the
-
 use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
 use crate::image::ColumnView;
