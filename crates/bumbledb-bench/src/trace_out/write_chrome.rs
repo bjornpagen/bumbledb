@@ -5,8 +5,7 @@ use bumbledb::obs::TraceEvent;
 
 fn write_event(out: &mut impl Write, event: &TraceEvent, tid: u32) -> std::io::Result<()> {
     use std::fmt::Write as _;
-    // Names and labels are `&'static str` registry constants (ASCII,
-    // asserted in tests); the shared json helpers escape regardless.
+
     let mut line = String::new();
     line.push_str("{\"name\":");
     crate::json::push_str_lit(&mut line, event.name());
@@ -36,16 +35,8 @@ fn write_event(out: &mut impl Write, event: &TraceEvent, tid: u32) -> std::io::R
     out.write_all(line.as_bytes())
 }
 
-/// Emits the Chrome Trace Event Format: one JSON array of complete
-/// events (`ph: "X"`, timestamps and durations in microseconds with
-/// three decimals) and instant events (`ph: "i"`) for point
-/// events. Engine events carry `tid` 1, harness events `tid` 2; file
 /// order is start-time order (spans record at drop, so the capture
-/// arrives in end order and is re-sorted here).
-///
 /// # Errors
-///
-/// Writer errors verbatim.
 pub fn write_chrome(
     events: &[TraceEvent],
     harness: &[TraceEvent],
@@ -67,13 +58,7 @@ pub fn write_chrome(
     out.write_all(b"\n]\n")
 }
 
-/// Writes one capture to `<trace_dir>/<stem>.json`, creating the
-/// directory (the bench integration: `<family>.warm.json`,
-/// `<family>.cold.json`, one per traced sample).
-///
 /// # Errors
-///
-/// I/O errors verbatim.
 pub fn write_trace_file(
     trace_dir: &Path,
     stem: &str,
@@ -88,17 +73,7 @@ pub fn write_trace_file(
     Ok(path)
 }
 
-/// Writes one capture as BOTH artifacts beside each other: the Chrome
-/// `<stem>.json` (for Perfetto / `chrome://tracing`) and the collapsed
-/// `<stem>.folded` (the engine span tree, for `flamegraph.pl` / inferno —
-/// [`super::fold_stacks`]). Every traced path lands the pair; the
-/// returned path is the `.json` (the `.folded` sits beside it). The fold
-/// charges the ENGINE tree only, matching the embedded flame summary
-/// (harness spans stay a separate tid in the `.json`, out of the fold).
-///
 /// # Errors
-///
-/// I/O errors verbatim.
 pub fn write_trace_pair(
     trace_dir: &Path,
     stem: &str,
