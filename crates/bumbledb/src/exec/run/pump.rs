@@ -6,11 +6,10 @@ use super::{
 };
 
 impl Executor {
-
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
@@ -107,7 +106,6 @@ impl Executor {
             let entry_origin = scratch.pending_origins[entry];
             let mut token = BatchToken::default();
             loop {
-
                 if !matches!(self.drive_state, super::DriveState::Running) {
                     break;
                 }
@@ -153,11 +151,11 @@ impl Executor {
                     counters.phase_start(node_idx, JoinPhase::Gather);
                     fill = 0;
                     if !gate_cover && yielded == want {
-                        continue; 
+                        continue;
                     }
                 }
                 if gate_cover || yielded < want {
-                    break; 
+                    break;
                 }
             }
         }
@@ -186,6 +184,5 @@ impl Executor {
         scratch.parents.clear();
         scratch.element_origins.clear();
         self.scratch[node_idx] = scratch;
-
     }
 }
