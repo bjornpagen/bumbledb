@@ -18,7 +18,6 @@ use bumbledb_theory::Value;
 /// can cite any statement id — a rejection's, a diagnostic's — without a
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
-
     pub relations: Vec<RelationManifest>,
 
     pub statements: Vec<StatementManifest>,
@@ -67,7 +66,6 @@ pub struct FieldManifest {
 /// theory data (hosted in `bumbledb-theory`), and the manifest needs the
 /// engine-side renderer, so the method hangs off it here.
 pub trait ManifestDescriptor {
-
     fn manifest(&self) -> Manifest;
 }
 
@@ -75,7 +73,6 @@ impl ManifestDescriptor for SchemaDescriptor {
     /// # Panics
 
     fn manifest(&self) -> Manifest {
-
         let materialized = self.materialized_statements();
         let mirrors = super::validate::mirror_links(&materialized);
         Manifest {
@@ -101,7 +98,6 @@ impl ManifestDescriptor for SchemaDescriptor {
                 .iter()
                 .enumerate()
                 .map(|(rel_idx, relation)| {
-
                     let extension = relation.extension.as_ref().map(|rows| {
                         rows.iter()
                             .enumerate()
