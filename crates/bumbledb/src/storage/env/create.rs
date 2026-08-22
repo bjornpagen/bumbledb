@@ -6,7 +6,6 @@ use crate::schema::Schema;
 use super::Environment;
 
 impl Environment {
-
     /// # Errors
 
     /// exists (including as an empty directory), `Lmdb` on any LMDB
