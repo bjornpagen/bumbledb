@@ -50,7 +50,7 @@ fn a_thousand_queries_validate_and_translate() {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn the_coverage_contract_holds_at_a_thousand() {
     let cov = coverage(N, SEED, CFG);
     let total: u64 = SHAPE_WEIGHTS.iter().map(|(_, w)| w).sum();
@@ -103,12 +103,10 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("point_in_i64", cov.point_in_i64),
         ("adjacent_left", cov.adjacent_left),
         ("adjacent_right", cov.adjacent_right),
-
         ("ladder_equal", cov.ladder[0]),
         ("ladder_adjacent", cov.ladder[1]),
         ("ladder_nested", cov.ladder[2]),
         ("ladder_ray", cov.ladder[3]),
-
         ("rules_two_arms", cov.rules_arms[0]),
         ("rules_three_arms", cov.rules_arms[1]),
         ("rules_four_arms", cov.rules_arms[2]),
@@ -127,20 +125,15 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("cross_residuals", cov.cross_residuals),
         ("bytes_hits", cov.bytes_hits),
         ("bytes_misses", cov.bytes_misses),
-
         // paths must never cap): all-scalar width and the
-
         ("wide_scalar", cov.wide_scalar),
         ("wide_interval", cov.wide_interval),
-
         // (existence walks and both DU `==` directions) and a refused
-
         ("ground_eliminable", cov.ground_eliminable),
         ("ground_extra_field", cov.ground_extra_field),
         ("ground_missing_phi", cov.ground_missing_phi),
         ("du_header_falls", cov.du_header_falls),
         ("du_child_falls", cov.du_child_falls),
-
         ("closed_join_plain", cov.closed_join_plain),
         ("closed_join_selected", cov.closed_join_selected),
         ("closed_handle_literal", cov.closed_handle_literal),
