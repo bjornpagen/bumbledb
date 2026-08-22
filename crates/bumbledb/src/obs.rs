@@ -25,7 +25,6 @@ pub enum Category {
 }
 
 impl Category {
-
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -156,7 +155,6 @@ mod imp {
 
     pub(super) fn start_capture() {
         BUFFER.with(|b| {
-
             b.borrow_mut()
                 .get_or_insert_with(|| Vec::with_capacity(4096));
         });
@@ -201,7 +199,6 @@ mod imp {
     }
 
     impl SpanGuard {
-
         pub fn set_args(&mut self, args: super::TraceArgs) {
             if let Some(live) = &mut self.live {
                 live.args = args;
@@ -228,7 +225,6 @@ mod imp {
     impl Drop for SpanGuard {
         fn drop(&mut self) {
             if let Some(live) = self.live.take() {
-
                 record(TraceEvent::Span {
                     point: live.point,
                     start_ns: live.start_ticks,
@@ -294,7 +290,6 @@ pub fn span_args(point: TracePoint, args: TraceArgs) -> SpanGuard {
 #[cfg(feature = "trace")]
 pub fn event(point: TracePoint, args: TraceArgs) {
     if imp::capturing() {
-
         let now = imp::now_ticks();
         imp::record(TraceEvent::Point {
             point,
@@ -310,7 +305,6 @@ pub struct SpanGuard;
 
 #[cfg(not(feature = "trace"))]
 impl SpanGuard {
-
     #[inline]
     pub fn set_args(&mut self, _: TraceArgs) {}
 
