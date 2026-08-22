@@ -130,7 +130,6 @@ impl Env<'_> {
 
 impl NaiveDb {
     /// # Errors
-
     /// # Panics
     pub fn query(
         &self,
