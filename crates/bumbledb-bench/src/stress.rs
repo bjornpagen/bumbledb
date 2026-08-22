@@ -1,33 +1,3 @@
-//! The PRD-22 stress harness (test-only): loops one collection insert
-//! against throwaway stores under synthetic CPU/IO contention, hunting the
-//! commit-boundary EINVAL observed once on 2026-07-10
-//! (`driver::tests::bench_refuses_without_a_stamp`, failing inside
-//! `ensure_corpus` with `Lmdb(Io(EINVAL))` alongside a concurrent cargo
-//! build).
-//!
-//! Mechanism under test: LMDB's commit durability boundary. On macOS,
-//! `mdb_txn_commit` issues `fcntl(fd, F_FULLFSYNC)` (`lmdb-master-sys`
-//! `mdb.c:171`, `MDB_FDATASYNC`) and surfaces the errno raw — no
-//! `fsync(2)` fallback (`mdb_env_sync0`, `mdb.c:2915`), unlike `SQLite`'s
-//! `unixSync`. The contention threads replicate the observed conditions:
-//! concurrent flush-to-media traffic on the same volume plus CPU
-//! saturation.
-//!
-//! Iterations come from `BUMBLEDB_STRESS_ITERS` (default 100 — the
-//! PRD's floor). The reproduction budget the PRD names (500 iterations
-//! under worst-case contention) is this harness run with
-//! `BUMBLEDB_STRESS_ITERS=500` next to a live `cargo build`.
-//!
-//! Repro outcome, recorded honestly: the 500-iteration budget (one
-//! collection insert per iteration under three sync-storm writers, three CPU spinners,
-//! and a live release rebuild loop, 2026-07-10, pre-fix) did **not**
-//! reproduce the EINVAL. The fix — the typed `CommitSync` boundary plus
-//! the bounded observable retry in `storage/commit/write.rs` — stands
-//! on the prime suspect's documented semantics per the PRD's direction:
-//! the corpus volume is APFS (supports `F_FULLFSYNC`; the same test
-//! passed on rerun there, eliminating the capability branch), leaving
-//! the transient-under-pressure class.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -35,8 +5,6 @@ use bumbledb::{Db, Value};
 
 use crate::schema::{Ledger, ids};
 
-/// Facts per iteration: one collection insert under contention
-/// (`2 * 4096 + 512` — a large write, not engine chunking).
 const FACTS: u64 = 2 * 4096 + 512;
 
 fn iterations() -> u64 {
@@ -46,15 +14,10 @@ fn iterations() -> u64 {
         .unwrap_or(100)
 }
 
-/// `Holder` rows synthesized directly: the one dependency-free relation,
-/// so a prefix of any length commits cleanly (no containment sources).
 fn rows() -> impl Iterator<Item = Vec<Value>> {
     (0..FACTS).map(|i| vec![Value::U64(i), Value::String(format!("holder-{i}").into())])
 }
 
-/// Flush-to-media contention: write a few MiB and `sync_all` (which is
-/// `fcntl(F_FULLFSYNC)` on macOS — the same drive-cache flush the LMDB
-/// commit competes with), in the same temp volume the stores live on.
 fn io_pressure(dir: std::path::PathBuf, stop: &Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
     let stop = Arc::clone(stop);
     std::thread::spawn(move || {
@@ -72,8 +35,6 @@ fn io_pressure(dir: std::path::PathBuf, stop: &Arc<AtomicBool>) -> std::thread::
     })
 }
 
-/// CPU contention: saturate cores so the fsync path also fights for
-/// scheduling, as it did next to the observed concurrent build.
 fn cpu_pressure(stop: &Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
     let stop = Arc::clone(stop);
     std::thread::spawn(move || {
@@ -86,9 +47,6 @@ fn cpu_pressure(stop: &Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
     })
 }
 
-/// N collection inserts against fresh temp stores under synthetic contention:
-/// every commit must land (transient durability faults absorbed by
-/// the bounded commit-boundary retry), never a `Lmdb(Io(...))` escape.
 #[test]
 fn collection_insert_survives_commit_pressure() {
     let iters = iterations();
