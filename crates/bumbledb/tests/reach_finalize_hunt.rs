@@ -137,8 +137,8 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
         .expect("accepted");
     let mut edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     edges.insert((10, 3)); // a back edge: a cycle inside the chain
-    edges.insert((7, 7)); 
-    edges.insert((5, 30)); 
+    edges.insert((7, 7));
+    edges.insert((5, 30));
     db.write(|tx| {
         for &(src, dst) in &edges {
             tx.insert([&Edge { src, dst }])?;
@@ -169,7 +169,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     for n in CHAIN..(CHAIN + 16) {
         more.insert((n, n + 1));
     }
-    more.insert((CHAIN + 16, 0)); 
+    more.insert((CHAIN + 16, 0));
     db.write(|tx| {
         for &(src, dst) in more.difference(&edges) {
             tx.insert([&Edge { src, dst }])?;
@@ -382,10 +382,10 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
                 atoms: vec![Atom {
                     source: AtomSource::Edb(Item::RELATION),
                     bindings: vec![
-                        (FieldId(0), v(0)), 
-                        (FieldId(3), v(1)), 
-                        (FieldId(2), v(2)), 
-                        (FieldId(5), v(3)), 
+                        (FieldId(0), v(0)),
+                        (FieldId(3), v(1)),
+                        (FieldId(2), v(2)),
+                        (FieldId(5), v(3)),
                     ],
                 }],
                 conditions: vec![],
@@ -655,7 +655,7 @@ fn item_rows() -> Vec<Item<'static>> {
             score: 0,
             flag: false,
             name: "beta",
-            tag: "alpha", 
+            tag: "alpha",
             span: Interval::<u64>::new(0, 9).expect("nonempty"),
             payload: pad(b"two-two-two!"),
         },
@@ -663,7 +663,7 @@ fn item_rows() -> Vec<Item<'static>> {
             id: 3,
             score: 42,
             flag: true,
-            name: "alpha", 
+            name: "alpha",
             tag: "y",
             span: Interval::<u64>::new(100, 101).expect("nonempty"),
             payload: pad(b""),
@@ -673,7 +673,7 @@ fn item_rows() -> Vec<Item<'static>> {
             score: i64::MIN,
             flag: false,
             name: "delta",
-            tag: "delta", 
+            tag: "delta",
             span: Interval::<u64>::new(7, u64::MAX >> 2).expect("nonempty"),
             payload: pad(b"\xff\x00\xfe123"),
         },
@@ -700,13 +700,13 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
 
     let query = Query::single(Rule {
         finds: vec![
-            FindTerm::Var(VarId(3)), 
-            FindTerm::Var(VarId(5)), 
-            FindTerm::Var(VarId(1)), 
-            FindTerm::Var(VarId(4)), 
-            FindTerm::Var(VarId(2)), 
-            FindTerm::Var(VarId(6)), 
-            FindTerm::Var(VarId(0)), 
+            FindTerm::Var(VarId(3)),
+            FindTerm::Var(VarId(5)),
+            FindTerm::Var(VarId(1)),
+            FindTerm::Var(VarId(4)),
+            FindTerm::Var(VarId(2)),
+            FindTerm::Var(VarId(6)),
+            FindTerm::Var(VarId(0)),
         ],
         atoms: vec![Atom {
             source: AtomSource::Edb(Item::RELATION),
