@@ -10,16 +10,6 @@ use crate::storage::dict;
 use crate::storage::read;
 use crate::storage::read::check_width;
 
-/// Resolves a constant to its canonical key-segment bytes AT ITS FIELD'S
-/// ENCODING — per field, the same canonical encoding
-/// [`crate::storage::keys::determinant_image`] slices out of a stored fact
-/// (`U` determinants and `M` fact bytes share it): an interval constant
-/// contributes its whole 16-byte `start ‖ end` piece at a general
-/// position and its 8-byte START at a fixed-width one (`interval<E, w>` —
-/// the width is the type's, so the stored segment carries no end).
-/// A `PendingIntern` that missed the dictionary resolves to the
-/// never-minted sentinel id — the ensuing `U`/`M` probe then misses (empty
-/// result), never an insert, never an error.
 fn const_bytes<Cat: CatalogRead>(
     catalog: &Cat,
     desc: bumbledb_theory::schema::ValueType,
@@ -30,8 +20,7 @@ fn const_bytes<Cat: CatalogRead>(
     match value {
         Const::Word(w) => out.extend_from_slice(&w.to_be_bytes()),
         Const::Byte(b) => out.push(*b),
-        // A bytes<N> constant's padded words ARE its canonical key
-        // bytes — the same encoding `determinant_image` slices out of a fact.
+
         Const::Words(words) => {
             for word in words {
                 out.extend_from_slice(&word.to_be_bytes());
@@ -129,18 +118,7 @@ fn fetch_checked<'c, Cat: CatalogRead>(
     Ok(stored)
 }
 
-/// The probe half of the key-probe path: key bytes from constants, one `U` get
-/// through the matched key statement (or the full-fact `M` get), one `F`
-/// fetch, remaining filters on the fact bytes. `None` = miss or a failed
-/// filter — an empty result, never an error.
-///
-/// Returns the stored fact bytes. The caller width-proves them against
-/// the relation layout (this function already did, so
-/// [`crate::encoding::FactLayout::encoded`] is legal).
-///
 /// # Errors
-///
-/// `Lmdb`/`Corruption` from the storage reads.
 pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     plan: &KeyProbePlan,
     catalog: &'c Cat,
@@ -148,12 +126,7 @@ pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     params: &[Const],
     key_scratch: &mut Vec<u8>,
 ) -> Result<Option<Cat::Value<'c>>> {
-    // Build the key bytes in the caller's reused scratch — the whole
-    // composed `U` key (header + statement-projection-ordered
-    // determinant) for a key_probe, full canonical fact bytes for `M` —
-    // so no per-probe key buffer is zeroed (post-mortem §25). A
-    // dictionary miss lands the sentinel id in the key, and the probe
-    // below misses.
+
     key_scratch.clear();
     if let super::KeyProbeKind::Uniqueness { statement, .. } = &plan.kind {
         read::begin_determinant_key(key_scratch, plan.relation, *statement);
@@ -165,9 +138,9 @@ pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     }
 
     let mut probe_span = obs::span(obs::names::KEY_PROBE);
-    // The fresh-row auto-key maintains no `U` tree (the one id allocator,
+
     // ruled 2026-07-23, R16): its determinant IS the row id, so the probe
-    // reads `F` directly — an honest miss, one descent.
+
     let stored = match &plan.kind {
         super::KeyProbeKind::Uniqueness { statement, .. }
             if let Some(crate::schema::StatementView::Key(_, key)) =
@@ -200,10 +173,9 @@ pub(crate) fn key_probe_fact<'c, Cat: CatalogRead>(
     };
     probe_span.set_flag(stored.is_some());
     let Some(stored) = stored else {
-        return Ok(None); // miss: empty result
+        return Ok(None); 
     };
 
-    // Remaining filters run on the fact bytes — one entry, this provider.
     let fact = layout.encoded(stored.as_ref());
     let ops = FactRow { fact, catalog };
     for filter in &plan.remaining_filters {
