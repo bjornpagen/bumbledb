@@ -13,7 +13,7 @@ use bumbledb_theory::schema::{
 #[test]
 fn twelve_column_bases_are_aligned_and_stride_padded() {
     let dir = TempDir::new("image-stride-small");
-    // 12 columns, mixed widths.
+
     let fields: Vec<FieldDescriptor> = (0..12)
         .map(|i| FieldDescriptor {
             name: format!("f{i}").into(),
@@ -38,7 +38,7 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
     .validate()
     .expect("valid fixture");
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // A few rows so columns have nonzero extent.
+
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     for row in 0..100i64 {
@@ -70,13 +70,7 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
     for (i, addr) in word_addrs.iter().chain(&byte_addrs).enumerate() {
         assert_eq!(addr % LINE, 0, "column {i} base must be 128-byte aligned");
     }
-    // The stride rule (measured): no big SAME-SLAB stride lands within
-    // the tracker-aliasing tolerance of a 16 KiB multiple — lockstep
-    // scans stride within a slab, so cross-slab distances (allocator
-    // luck) are outside the padder's contract. (At 100 rows every
-    // same-slab stride is far below PAD_MIN_STRIDE — assert the rule
-    // vacuously holds here and structurally in
-    // `big_column_strides_avoid_the_tracker_band`.)
+
     for slab in [&word_addrs, &byte_addrs] {
         for window in slab.windows(2) {
             let stride = window[1].abs_diff(window[0]);
@@ -92,14 +86,9 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
     }
 }
 
-/// The stride rule under DRAM-scale spans (measured): a
-/// power-of-two row span — the exact shape the old stagger rule
-/// turned into a 4–6× DRAM-scan pathology — lays out with every
-/// same-slab stride clear of the 16 KiB tracker band.
 #[test]
 fn big_column_strides_avoid_the_tracker_band() {
-    // 4 u64 columns × 16384 rows: span = 128 KiB exactly (pow-2,
-    // 16 KiB-multiple) — unpadded strides would land at residue 0.
+
     let fields: Vec<FieldDescriptor> = (0..4)
         .map(|i| FieldDescriptor {
             name: format!("c{i}").into(),
