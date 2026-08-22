@@ -18,8 +18,6 @@ use bumbledb_theory::schema::{
     SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
 
-/// Account(id fresh u64, holder u64, name string): statement 0 is the
-/// fresh auto-key on `id`.
 fn account_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -49,9 +47,6 @@ fn account_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Booking(room u64, span interval<u64>, label u64) with the declared
-/// pointwise key `Booking(room, span) -> Booking` — statement 0 (no
-/// fresh ids exist).
 fn booking_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -86,8 +81,6 @@ fn booking_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Stay(owner u64, span interval<u64>) with no statements: no key exists,
-/// so only the full-fact `M` path can serve a point lookup.
 fn stay_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -114,8 +107,6 @@ fn stay_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Shift(id fresh u64, span interval<u64>): the fresh auto-key plus an
-/// interval field to decode as a two-slot variable.
 fn shift_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -163,7 +154,6 @@ fn eq_filter(field: u16, value: Const) -> FilterPredicate {
     }
 }
 
-/// Wraps one occurrence with the given per-var slot widths (`(var, two)`).
 fn single_with_widths(occurrence: Occurrence, wide_vars: &[u16]) -> NormalizedQuery {
     let slot_widths = occurrence
         .vars
@@ -192,7 +182,6 @@ fn single(occurrence: Occurrence) -> NormalizedQuery {
     single_with_widths(occurrence, &[])
 }
 
-/// Commits accounts (id, holder, name) and returns the environment.
 fn populated_accounts(dir: &TempDir, schema: &Schema, rows: &[(u64, u64, &str)]) -> Environment {
     let env = Environment::create(dir.path(), schema).expect("create");
     let view = env.read_txn().expect("txn");
@@ -216,7 +205,6 @@ fn populated_accounts(dir: &TempDir, schema: &Schema, rows: &[(u64, u64, &str)])
     env
 }
 
-/// Commits facts of pre-encoded values and returns the environment.
 fn populated(dir: &TempDir, schema: &Schema, rows: &[Vec<ValueRef>]) -> Environment {
     let env = Environment::create(dir.path(), schema).expect("create");
     let view = env.read_txn().expect("txn");
@@ -231,14 +219,12 @@ fn populated(dir: &TempDir, schema: &Schema, rows: &[Vec<ValueRef>]) -> Environm
     env
 }
 
-// ---------- classification ----------
-
 #[test]
 fn fully_key_bound_single_atom_classifies_as_key_probe() {
     let schema = account_schema();
     let normalized = single(occurrence(
         &[(1, 0), (2, 1)],
-        vec![eq_filter(0, Const::Word(5))], // id = 5, the fresh auto-key
+        vec![eq_filter(0, Const::Word(5))], 
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
     assert!(matches!(
@@ -282,8 +268,6 @@ fn a_second_atom_or_a_residual_stays_free_join() {
     assert!(classify(&with_residual, &schema).is_none());
 }
 
-/// The closed Currency { `minor_units` } = { Usd(2), Eur(0) }: statement 0
-/// is the closed auto-key on the synthetic `id`.
 fn currency_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -310,14 +294,10 @@ fn currency_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// A closed relation never takes the key-probe path: no `U` determinants and no `M`
-/// entries exist — its storage is the theory — so even a single atom
-/// fully binding the auto-key (or every field) classifies as Free Join
-/// and hits the virtual image.
 #[test]
 fn a_closed_relation_stays_free_join_even_fully_bound() {
     let schema = currency_schema();
-    // id = 1 covers the closed auto-key's whole projection.
+
     let key_bound = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(1))]));
     assert!(classify(&key_bound, &schema).is_none());
     // Every field bound by value: the full-fact `M` path is refused too.
@@ -331,7 +311,7 @@ fn a_closed_relation_stays_free_join_even_fully_bound() {
 #[test]
 fn a_partially_bound_key_stays_free_join() {
     let schema = account_schema();
-    // Only a non-key field is constant: no key coverage, not full-fact.
+
     let normalized = single(occurrence(
         &[(0, 0), (2, 1)],
         vec![eq_filter(1, Const::Word(9))],
@@ -346,7 +326,7 @@ fn extra_filters_survive_as_remaining() {
         &[(2, 0)],
         vec![
             eq_filter(0, Const::Word(5)),
-            eq_filter(1, Const::Word(7)), // outside the key's projection
+            eq_filter(1, Const::Word(7)), 
         ],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
@@ -356,8 +336,7 @@ fn extra_filters_survive_as_remaining() {
 #[test]
 fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
     let schema = booking_schema();
-    // room = 1, span = [5, 10) — the interval bound by an interval-typed
-    // term (an Eq Compare against an Interval constant).
+
     let normalized = single(occurrence(
         &[(2, 0)],
         vec![
@@ -373,7 +352,7 @@ fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
             ..
         }
     ));
-    // Key constants in statement projection order.
+
     assert_eq!(
         plan.kind.key(),
         &[
@@ -387,9 +366,7 @@ fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
 #[test]
 fn a_membership_binding_is_not_a_key_cover() {
     let schema = booking_schema();
-    // room = 1, span ∋ 7: lowering typed the span binding as membership
-    // (`PointIn`), so the pointwise key is NOT covered — the dispatch
-    // reads the filter kind and never re-infers membership vs equality.
+
     let normalized = single(occurrence(
         &[(2, 0)],
         vec![
@@ -406,14 +383,13 @@ fn a_membership_binding_is_not_a_key_cover() {
 #[test]
 fn a_param_set_bound_field_disqualifies_the_fast_path() {
     let schema = account_schema();
-    // The key itself is set-bound: k gets would serve it, but v0 routes
-    // sets to the selection-level path (the classify decision comment).
+
     let on_key = single(occurrence(
         &[(1, 0)],
         vec![eq_filter(0, Const::ParamSet(ParamId(0)))],
     ));
     assert!(classify(&on_key, &schema).is_none());
-    // A set beside a covered key disqualifies too.
+
     let beside_key = single(occurrence(
         &[(2, 0)],
         vec![
@@ -440,7 +416,6 @@ fn full_fact_binding_takes_the_membership_path() {
     assert_eq!(plan.kind.key().len(), 2, "every field, declaration order");
     assert!(plan.remaining_filters.is_empty());
 
-    // A membership binding does not bind the interval field's value:
     // not full-fact either → Free Join.
     let membership = single(occurrence(
         &[],
@@ -454,8 +429,6 @@ fn full_fact_binding_takes_the_membership_path() {
     ));
     assert!(classify(&membership, &schema).is_none());
 }
-
-// ---------- execution ----------
 
 fn run_key_probe(
     plan: &KeyProbePlan,
@@ -490,17 +463,15 @@ fn hit_miss_and_filter_rejection() {
     let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![7]]);
 
-    // Miss: no such id.
     let missing = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(99))]));
     let plan = classify(&missing, &schema).expect("key probe");
     assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
 
-    // Hit, but a remaining filter rejects the fetched fact.
     let rejected = single(occurrence(
         &[(1, 0)],
         vec![
             eq_filter(0, Const::Word(5)),
-            eq_filter(1, Const::Word(999)), // holder is 7, not 999
+            eq_filter(1, Const::Word(999)), 
         ],
     ));
     let plan = classify(&rejected, &schema).expect("key probe");
@@ -529,7 +500,7 @@ fn pending_intern_miss_is_empty_and_never_interns() {
     let dir = TempDir::new("key_probe-intern-miss");
     let schema = account_schema();
     let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
-    // Probe by id, filter on a never-interned name.
+
     let normalized = single(occurrence(
         &[(1, 0)],
         vec![
@@ -544,14 +515,11 @@ fn pending_intern_miss_is_empty_and_never_interns() {
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
     assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
-    // The read path never interned the ghost string.
+
     let txn = env.read_txn().expect("txn");
     assert_eq!(dict::lookup_str(&txn, "ghost").expect("lookup"), None);
 }
 
-/// The pointwise `U` hit: the determinant key carries the interval's exact
-/// 16-byte encoding — byte-identical to what the write-side slicer
-/// ([`crate::storage::keys::determinant_image`]) derived from the stored fact.
 #[test]
 fn pointwise_key_probe_hit_is_byte_exact() {
     let dir = TempDir::new("key_probe-pointwise");
@@ -598,8 +566,7 @@ fn pointwise_key_probe_hit_is_byte_exact() {
     let stored = key_probe_fact(&plan, &catalog, &schema, &[], &mut key)
         .expect("probe")
         .expect("hit");
-    // The probe scratch holds the whole composed `U` key (post-mortem
-    // §25): the header, then the shared slicer's determinant bytes.
+
     let mut expected = Vec::new();
     crate::storage::read::begin_determinant_key(&mut expected, REL, StatementId(0));
     let mut image = crate::storage::keys::DeterminantImage::scratch();
@@ -617,7 +584,6 @@ fn pointwise_key_probe_hit_is_byte_exact() {
     );
     assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![100]]);
 
-    // The 16 bytes are exact: a one-off end misses.
     let near = single(occurrence(
         &[(2, 0)],
         vec![
@@ -663,7 +629,6 @@ fn full_fact_membership_lookup_with_an_interval_field() {
             .is_some()
     );
 
-    // A different interval value is a different fact: miss.
     let other = single(occurrence(
         &[],
         vec![
@@ -694,7 +659,7 @@ fn an_interval_variable_decodes_into_its_two_slot_span() {
             ),
         ]],
     );
-    // Q(span) :- Shift(id = 1, span) — span is a two-word variable.
+
     let normalized = single_with_widths(
         occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(1))]),
         &[0],
@@ -733,6 +698,3 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     assert_eq!(sink.into_answers().expect("rows"), vec![vec![1]]);
 }
 
-// No image build can occur on the key-probe path: `execute_key_probe` takes no
-// image, view, or cache argument — the property holds by API shape, on
-// a cold database in every test above.
