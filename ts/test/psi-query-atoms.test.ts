@@ -1,28 +1,3 @@
-/**
- * PRD-K2 probes: ψ query atoms — `.match`/`not` over CLOSED relations,
- * against a real durable store. A closed vocabulary is matchable exactly
- * like an ordinary relation (`const sev = v(Sev)`, then `r.match(Sev, { id:
- * sev.id, pages: true })`), negatable (`r.not(Sev, {...})` — the engine
- * folds the complement, domain-witness guarded), and the SDK stays oblivious
- * to WHETHER the engine folds a plan-constant member set or joins the
- * L1-resident virtual image — transparency is the contract, pass-through
- * lowering the whole mechanism. Pinned here: the compile-PASS shapes (payload
- * literal, payload var joining a same-CLASS field of another atom per K4's law
- * map, the negated closed atom, a handle literal in the id position); the
- * compile-FAIL walls, each `@ts-expect-error` real (an unknown payload
- * column, a payload var joining a different-CLASS field, a closed atom's
- * id var reused cross-class — the two-tier join wall holds identically,
- * with the runtime twin throwing the same verdict); the LOWERING GOLDEN
- * (the sealed ordinal shift as literal IR: `id` → ordinal 0, payload
- * columns → declared index + 1, for positive AND negated atoms — the
- * runtime twin of the type tier's `MatchFields`, never trusted); the
- * roster refusal at the id position (an out-of-roster bigint is a typed
- * lowering error); and RUNTIME EQUIVALENCE — the prepared closed-atom
- * query returns row-for-row the same answer set as the old rule-union
- * inversion over the same store, positive and negated alike (recipe 7/8's
- * forced spelling dies).
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -42,10 +17,8 @@ import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained, key } from "#statements.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
-/** Pins a probe to `true` at compile time. */
 type Expect<T extends true> = T extends true ? true : never
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-psi-atoms-"))
@@ -68,13 +41,6 @@ const Sev = closed(
 const Incident = relation("Incident", { id: u64.fresh, sev: Sev.id })
 const Escalation = relation("Escalation", { incident: u64, sev: Sev.id })
 
-/**
- * THE LAWS TYPE THE COLUMNS: `Incident.sev` and `Escalation.sev` land in
- * the `"Sev.id"` generator class, `Escalation.incident` in `"Incident.id"`
- * — the closed atom's id position joins the referencing side through the
- * SAME class map every ordinary atom rides. The payload columns are in no
- * law here: bare.
- */
 const Oncall = schema("Oncall", { Sev, Incident, Escalation }, [
 	contained(on(Incident, "sev"), on(Sev, "id")),
 	contained(on(Escalation, "incident"), on(Incident, "id")),
@@ -83,12 +49,10 @@ const Oncall = schema("Oncall", { Sev, Incident, Escalation }, [
 
 type Rels = (typeof Oncall)["relations"]
 
-/** Relation ids = record declaration order (the law `lowerQuery` rides; the closed member occupies its slot). */
 const SEV_ID = 0
 const INCIDENT_ID = 1
 const ESCALATION_ID = 2
 
-/** Sorts answer rows (incident id, severity handle NAME) for a set-equality comparison (answers are sets; the host sorts). */
 function sortedPairs(rows: ReadonlyArray<{ readonly i: bigint; readonly s: string }>): Array<[bigint, string]> {
 	return rows
 		.map(function pair(row): [bigint, string] {
@@ -112,9 +76,7 @@ describe("ψ query atoms over closed relations", function suite() {
 		const created = await native.dbCreate(storeDir, lower(Oncall))
 		assert.equal(created.tag, "accepted", "the store admits")
 		db = created.db
-		// The native seam is RAW: closed cells are declaration-order row ids
-		// (Info 0, Warn 1, Crit 2, Fatal 3) — the name↔id bijection is the
-		// SDK marshal's, above this seam.
+
 		const committed = native.dbWrite(db, function write(tx) {
 			native.txInsert(tx, INCIDENT_ID, 1n, [1n, 0n])
 			native.txInsert(tx, INCIDENT_ID, 1n, [2n, 1n])
@@ -132,7 +94,6 @@ describe("ψ query atoms over closed relations", function suite() {
 		assert.equal(committed.tag, "accepted", "the seed commit lands")
 	})
 
-	/** The typed execute seam — exactly the shape the `Db` runtime consumes. */
 	function run<Row, P extends ParamsRecord>(q: Query<Rels, Row, P>, params: P): Row[] {
 		const prepared = native.dbPrepare(db, lowerQuery(q))
 		if (!prepared.ok) {
@@ -153,12 +114,7 @@ describe("ψ query atoms over closed relations", function suite() {
 				.match(Sev, { id: esc.sev, pages: true })
 				.find({ i: esc.incident, s: esc.sev })
 		})
-		// esc.sev is minted at Escalation.sev (the PRECISE roster) and REUSED at
-		// the ψ atom's own id — the sealed shape's id carries the value's OWN
-		// descriptor at its precise type (H1: stop widening the roster), so
-		// the joined slot claims the handle union, and H4's decode makes the
-		// claim TRUE: the runtime value is the handle NAME, lifted through
-		// the marshal's one bijection.
+
 		type RowPin = Expect<
 			Equal<QueryRow<typeof paged>, { readonly i: bigint; readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>
 		>
@@ -228,11 +184,9 @@ describe("ψ query atoms over closed relations", function suite() {
 		})
 		type RankPin = Expect<Equal<QueryRow<typeof critRank>, { readonly k: bigint }>>
 		assert.deepEqual(run(critRank, {}), [{ k: 3n }])
-		// The roster judges the id position at lowering — an unknown handle
+
 		// name is a typed refusal, never a silent empty answer. The ψ atom's
-		// OWN id types at the PRECISE union too (the sealed shape carries the
-		// value's own descriptor), so the compile tier refuses first and this
-		// belt holds the same wall for untyped callers.
+
 		assert.throws(function offRoster() {
 			lowerQuery(
 				query(Oncall).rule(function rule(r) {
@@ -246,7 +200,7 @@ describe("ψ query atoms over closed relations", function suite() {
 				})
 			)
 		}, /"Panic" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
-		// The bigint spelling is GONE from the closed surface — a raw id is a
+
 		// shape refusal at lowering and a compile error at the surface.
 		assert.throws(function rawIdSpelling() {
 			lowerQuery(
@@ -310,7 +264,7 @@ describe("ψ query atoms over closed relations", function suite() {
 				}
 			]
 		})
-		// The golden shape is also the engine's: paging incidents minus rank-4 severities = the Crit incidents.
+
 		const answers = run(golden, {}).map(function id(row) {
 			return row.i
 		})
@@ -329,7 +283,7 @@ describe("ψ query atoms over closed relations", function suite() {
 	})
 
 	test("the join walls hold over closed atoms at both tiers (each @ts-expect-error real; the runtime twin throws the same verdict)", function joinWalls() {
-		// A closed atom's id var reused cross-class: sev.id is in "Sev.id", Escalation.incident in "Incident.id".
+
 		assert.throws(function crossClassIdReuse() {
 			query(Oncall).rule(function rule(r) {
 				const sev = v(Sev)
@@ -343,7 +297,6 @@ describe("ψ query atoms over closed relations", function suite() {
 			})
 		}, /joins domain-unequal fields/)
 
-		// An unknown payload column is unwritable — the sealed shape is id + the declared columns, nothing else.
 		assert.throws(function unknownColumn() {
 			query(Oncall).rule(function rule(r) {
 				const sev = v(Sev)
@@ -358,13 +311,7 @@ describe("ψ query atoms over closed relations", function suite() {
 	})
 
 	test("a payload column joins a same-CLASS field of another atom; a different-CLASS reuse is the same wall", function payloadClassJoins() {
-		// A construction-only theory (never opened): the containment puts
-		// Course.level and Grade.rank in ONE generator-less class — a
-		// payload column of a closed vocabulary is class-typed by the laws
-		// exactly like an ordinary column (the option-2 dividend). The
-		// closed side is the SOURCE (a closed target is addressed by its
-		// synthetic id only — the target-key wall), and the keyed ordinary
-		// face is the target the containment resolves.
+
 		const Grade = closed("Grade", { rank: u64 }, { Failed: { rank: 1n }, Passed: { rank: 2n } })
 		const Course = relation("Course", { id: u64.fresh, level: u64 })
 		const Rubric = schema("Rubric", { Grade, Course }, [
@@ -382,15 +329,12 @@ describe("ψ query atoms over closed relations", function suite() {
 				.match(Course, { id: c.id, level: g.rank })
 				.find({ c: c.id, g: g.id, k: g.rank })
 		})
-		// g.id is bound at the ψ atom's own id — the sealed shape carries the
-		// value's OWN descriptor at its precise type, so the claim is the
-		// handle union (H1: stop widening the roster).
+
 		type LevelledPin = Expect<
 			Equal<QueryRow<typeof levelled>, { readonly c: bigint; readonly g: "Failed" | "Passed"; readonly k: bigint }>
 		>
 		assert.equal(levelled.data.rules.length, 1)
 
-		// The payload var landing on a DIFFERENT class is the identical wall.
 		assert.throws(function crossClassPayloadReuse() {
 			query(Rubric).rule(function rule(r) {
 				const g = v(Grade)
