@@ -16,8 +16,7 @@ use bumbledb_theory::schema::ValueType;
 use super::complete::judge_complete;
 use super::decorate::decorate_violations;
 
-/// Readable packed catalog after the key merge, before the statement
-/// roster. Freeze to [`FrozenCatalog`] is a field move.
+/// Readable packed catalog after the key merge, before the statement roster.
 pub(crate) struct CandidateCatalog {
     inner: FrozenCatalog,
 }
@@ -32,8 +31,8 @@ impl CandidateCatalog {
     }
 }
 
-/// Assigned fact after the sort-and-number pass. Bytes live in the run
-/// arena so the stage's fact arena can drop.
+/// Assigned fact after the sort-and-number pass. Bytes live in the run arena so
+/// the stage's fact arena can drop.
 struct AssignedFact {
     relation: RelationId,
     row: u64,
@@ -41,11 +40,6 @@ struct AssignedFact {
     bytes: ArenaSlice,
 }
 
-/// Consumes a heap stage, packs a catalog, and runs the complete roster.
-///
-/// Peak-memory: the identity index drops first. Facts copy into the run
-/// arena; the stage's fact arena then drops. No `BTreeMap` catalog, no
-/// `WriteDelta`, no `CommitPlan`.
 pub(crate) fn admit_catalog(
     schema: &Schema,
     mut stage: HeapStage,
