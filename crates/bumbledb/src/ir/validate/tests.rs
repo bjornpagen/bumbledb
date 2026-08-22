@@ -69,8 +69,8 @@ const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const POSTING: RelationId = RelationId(2);
 
-const VALIDITY: u16 = 3; 
-const SPAN: u16 = 6; 
+const VALIDITY: u16 = 3;
+const SPAN: u16 = 6;
 
 fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     crate::ir::Atom {
