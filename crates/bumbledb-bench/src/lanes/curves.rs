@@ -719,7 +719,6 @@ struct WorldStores<S> {
 }
 
 impl<S> WorldStores<S> {
-
     /// reopen rounds need the store CLOSED first (one LMDB environment
 
     fn into_paths(self) -> (PathBuf, PathBuf) {
@@ -880,7 +879,6 @@ fn run_scale(
         let calendar = calendar.map(WorldStores::into_paths);
         let closure_paths = closure_world.map(WorldStores::into_paths);
         for ((family, bundle), curve) in ctx.selected.iter().zip(&bundles).zip(curves.iter_mut()) {
-
             if curve.rows.last().is_none_or(|point| point.ours.is_none()) {
                 continue;
             }
