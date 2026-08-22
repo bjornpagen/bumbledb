@@ -120,7 +120,6 @@ pub enum LaneCase<'a> {
 /// Trigger emulation is refused by decision, not deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Inexpressible {
-
     FunctionalityJudgment,
 
     ContainmentJudgment,
@@ -128,7 +127,6 @@ pub enum Inexpressible {
     PackAggregate,
 
     /// (a `SUM` is a query, not a typed refusal citing a statement).
-
     CapacityJudgment,
 
     IntervalDerivedColumn,
