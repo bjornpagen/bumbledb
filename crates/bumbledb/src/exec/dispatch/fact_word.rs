@@ -2,41 +2,24 @@ use crate::encoding::{FactView, ValueType};
 use crate::error::CorruptionError;
 use bumbledb_theory::schema::FieldId;
 
-/// One field's value sliced straight out of canonical fact bytes, in
-/// column-word form: a scalar's byte-order-normalized word (1-byte columns
-/// widen — bool/enum ordinals compare faithfully as words), an interval
-/// field's `(start, end)` word pair, or a `bytes<N > 8>` field's padded
-/// word block (a bytes<N ≤ 8> field is one word, like every scalar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FactOperand {
     Word(u64),
     Pair(u64, u64),
-    /// A multi-word `bytes<N>` value: `count` padded words in byte order.
+
     Block {
         words: [u64; 8],
         count: u8,
     },
 }
 
-/// Reads a field's [`FactOperand`] from canonical fact bytes. Dispatch is
-/// on the field's *type*, never its byte width — a bytes<16> field and an
-/// interval field are both 16 bytes with different shapes.
-///
 /// # Errors
-///
-/// [`CorruptionError::InvalidFixedIntervalStart`] on a fixed-width
-/// interval field whose stored start sits at or past the Q2 bound — the
-/// derived end would reach the ceiling (the ray sentinel, unconstructible
-/// in the fixed family) or overflow. Hard error, never a skip, never a
-/// classification: the same conviction the image lane's
-/// [`crate::encoding::decode_fixed_interval_start`] routing delivers.
 pub(crate) fn fact_operand(
     fact: FactView<'_, '_>,
     field: FieldId,
 ) -> Result<FactOperand, CorruptionError> {
     let bytes = crate::encoding::field_bytes(fact, usize::from(field.0));
-    // The field's whole words, width carried by `as_chunks`'s type — a
-    // scalar's one chunk, an interval two, a `bytes<N>` block `⌈N/8⌉`.
+
     let (word_bytes, _) = bytes.as_chunks::<8>();
     let word_at = |i: usize| u64::from_be_bytes(word_bytes[i]);
     Ok(match fact.layout().field_type(usize::from(field.0)) {
@@ -58,10 +41,7 @@ pub(crate) fn fact_operand(
             }
         }
         ValueType::Interval { .. } => FactOperand::Pair(word_at(0), word_at(1)),
-        // A fixed-width field stores one word; the end re-derives from the
-        // TYPE's width through the one shared decoder, which convicts the
-        // at-bound AND overflow starts as corruption (Q2's bound holds at
-        // rest too — corrupt stored bytes never reach classification).
+
         ValueType::FixedInterval { width: w, .. } => {
             let (start, end) = crate::encoding::decode_fixed_interval_start(word_bytes[0], w)
                 .map_err(CorruptionError::from)?;
@@ -70,15 +50,8 @@ pub(crate) fn fact_operand(
     })
 }
 
-/// A scalar field's column word (the direct decode lane's reader).
-///
 /// # Errors
-///
-/// [`CorruptionError`] as [`fact_operand`] (unreachable for the scalar
-/// fields this reader serves, but the conviction stays in the type).
-///
 /// # Panics
-///
 /// On a programmer-invariant violation: a multi-word field (its readers go
 /// through [`fact_operand`]).
 pub(crate) fn fact_word(fact: FactView<'_, '_>, field: FieldId) -> Result<u64, CorruptionError> {
