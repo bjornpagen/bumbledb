@@ -34,7 +34,6 @@ pub const DEFAULT_RANDOM_CASES: u32 = 500;
 
 #[derive(Debug, Clone)]
 pub struct VerifyReport {
-
     pub cases: u64,
 
     pub stamp: String,
