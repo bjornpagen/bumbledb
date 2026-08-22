@@ -25,7 +25,6 @@ struct EscapedIdBurn<'a, S> {
 }
 
 impl<'a, S> EscapedIdBurn<'a, S> {
-
     fn arm(env: &'a Environment, tx: WriteTx<'a, S>) -> Self {
         Self { env, tx: Some(tx) }
     }
@@ -42,7 +41,6 @@ impl<'a, S> EscapedIdBurn<'a, S> {
 impl<S> Drop for EscapedIdBurn<'_, S> {
     fn drop(&mut self) {
         let Some(tx) = self.tx.take() else {
-
             return;
         };
         let (view, delta) = tx.into_store();
@@ -82,7 +80,6 @@ pub struct Witness<S> {
 }
 
 impl<S> ReadInstance<'_, S> {
-
     /// # Errors
 
     pub fn witness(&self) -> Result<Witness<S>> {
@@ -95,7 +92,6 @@ impl<S> ReadInstance<'_, S> {
 }
 
 impl<S> Db<S> {
-
     /// delta — LMDB never saw a fact — but fresh ids the closure already
     /// minted burn either way: the `EscapedIdBurn` drop guard flushes the
 
@@ -227,7 +223,6 @@ impl<S> Db<S> {
         txn_span.set_flag(true);
         txn_span.end();
         if let crate::storage::commit::CommitReport::Changed { new_generation } = report {
-
             self.cache.advance(new_generation, &dirty, &floors);
 
             self.generation
