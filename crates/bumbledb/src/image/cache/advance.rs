@@ -12,7 +12,6 @@ impl ImageCache {
     /// map drop only releases the map's reference — pinned readers keep
 
     /// # Panics
-
     pub fn advance(
         &self,
         generation: GenerationId,
