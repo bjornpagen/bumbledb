@@ -87,7 +87,6 @@ const spec: SchemaSpec = {
 		{
 			name: "Edge",
 			fields: [
-
 				{ name: "from", valueType: { kind: "u64" }, newtype: "PersonId", fresh: false },
 				{ name: "to", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
 				{ name: "weight", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
