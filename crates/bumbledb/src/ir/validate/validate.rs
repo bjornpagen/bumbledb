@@ -14,23 +14,18 @@ use bumbledb_theory::schema::ValueType;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Validates a query against the schema, yielding the sealed witness.
-///
-/// The roster, in order (`docs/architecture/20-query-ir.md`): derived-table
+/// The roster, in order: derived-table
 /// id-width; then each interior, the rec pool, and main independently
 /// through the query-shape checks (empty, [`MAX_RULES`], nesting, DNF,
 /// head alignment) and the per-rule roster, sealing interiors in
 /// declaration order and the rec from base then rec arms; then the rec
 /// structural roster; then query-global param unification. First
 /// failure wins.
-///
 /// # Errors
-///
 /// A distinct [`ValidationError`] per roster item; see the module docs.
 /// Rule-local payloads name positions inside the first failing
 /// **lowered** rule of the first failing rule-list.
-///
 /// # Panics
-///
 /// Never: interior ids are `u32`-checked above before the `expect`.
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
     match &query.rec {
@@ -157,8 +152,6 @@ fn validate_reach(
     finish_reach(params, interiors_out, rec_out, main, rule_count)
 }
 
-/// Seals interiors in declaration order. `sigs` builds the typing
-/// surface for interior *id* against already-sealed signatures.
 fn seal_interiors(
     schema: &Schema,
     interiors: &[crate::ir::Interior],
@@ -271,9 +264,6 @@ fn set_params_of(params: &ParamTables) -> BTreeSet<ParamId> {
         .collect()
 }
 
-/// Head-alignment, per-rule roster, and head-type agreement for one
-/// already-lowered rule-list. Params unify into `params` as each rule
-/// types — query-global, one pass.
 fn type_rules(
     schema: &Schema,
     sigs: &InteriorSignatures<'_>,
@@ -302,11 +292,6 @@ fn type_rules(
     Ok(rules)
 }
 
-/// Bound-var law is in the type: interior/rec finds are [`VarId`].
-/// A `RecRule` atom that names the rec is still a positional coincidence
-/// ([`InteriorId`] is `interiors.len()`), parsed here once. A `RecStep`'s
-/// `self_bindings` is the unique self-atom; a leftover Interior(rec)
-/// among `atoms` is a second self-read.
 fn refuse_self_in_base(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
     let is_self = |atom: &crate::ir::Atom| atom.source.interior() == Some(rec_id);
     if rec.base.iter().any(|rule| rule.atoms.iter().any(is_self)) {
@@ -318,9 +303,6 @@ fn refuse_self_in_base(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationEr
     Ok(())
 }
 
-/// Rec pool lowering: one [`MAX_RULES`] on `base.len() + rec.len()` and
-/// on DNF width of both lists together — not 16+16. Step arms reconstruct
-/// the unique self-atom as the first positive atom, so `self_occ` is 0.
 fn lower_rec_pool(
     rec: &Rec,
     rec_id: InteriorId,
@@ -366,9 +348,7 @@ fn lower_rec_pool(
     }
     let base = distribute_list(&base_rules);
     let rec_low = distribute_list(&rec_rules);
-    // Written-empty arms are unrepresentable (`NonEmpty`). A nonempty
-    // written arm can still DNF to nothing — `Or([])` is false — and
-    // that is a distinct fact, observed here.
+
     if base.is_empty() {
         return Err(ValidationError::EmptyRecursiveBase);
     }
@@ -394,10 +374,10 @@ fn distribute_list(rules: &[crate::ir::Rule]) -> Vec<LoweredRule> {
     collapse(distributed)
 }
 
-/// The query-shape half of the roster, per rule-list: empty (the
-/// provided error), the rule cap, empty head, the nesting boundary
-/// check, DNF distribution under its structural cap, and — on main
-/// only — the Count-across-rules refusal.
+/// The query-shape half of the roster, per rule-list: empty (the provided
+/// error), the rule cap, empty head, the nesting boundary check, DNF
+/// distribution under its structural cap, and — on main only — the
+/// Count-across-rules refusal.
 fn lower_rules(
     head: &[crate::ir::HeadTerm],
     rules: &[crate::ir::Rule],
@@ -469,11 +449,6 @@ fn lower_rules(
     Ok(lowered)
 }
 
-/// The provenance judgment (ruled 2026-07-23, R2): `Some(written)` iff
-/// every lowered rule carries the ONE shared written-rule index — the
-/// set is DNF-derived from that rule and the union dedup re-keys on
-/// the shared slot arrays. `None` is a hand-written rule set (or a
-/// cross-written collapse), which keys the head projection.
 pub(crate) fn dnf_derived(lowered: &[LoweredRule]) -> Option<u16> {
     let first = lowered.first()?.written?;
     lowered
@@ -483,8 +458,8 @@ pub(crate) fn dnf_derived(lowered: &[LoweredRule]) -> Option<u16> {
 }
 
 /// Head alignment, the shape half: arity, then var-vs-aggregate-op kind
-/// position by position (types are checked against the pinned row after
-/// the rule's own typing fixpoint resolves them).
+/// position by position (types are checked against the pinned row after the
+/// rule's own typing fixpoint resolves them).
 fn check_head_alignment(
     head: &[crate::ir::HeadTerm],
     rule: &LoweredRule,
@@ -510,10 +485,6 @@ fn check_head_alignment(
     Ok(())
 }
 
-/// The per-rule roster — exactly the conjunctive query's checks, over one
-/// rule's own variable scope and its own bivalent-anchor typing fixpoint;
-/// `interiors` is the target-signature surface `Interior` anchors resolve
-/// against.
 fn validate_rule(
     schema: &Schema,
     interiors: &InteriorSignatures<'_>,
@@ -565,10 +536,6 @@ fn validate_rule(
     ))
 }
 
-/// One rule's positional INPUT contribution to the alignment check: a
-/// variable position carries the variable's type; an aggregate position
-/// its fold input type (the nullary `Count` is `U64`).
-/// Alignment-only — the signature is [`super::Signature::derive`].
 fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
     rule.finds
@@ -581,10 +548,6 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
         .collect()
 }
 
-/// The query-global param tables, unified across the rules' independent
-/// typing fixpoints: one binding surface, so every rule's resolution of a
-/// param must agree — in type, in scalar-vs-set role, and in
-/// value-vs-mask role.
 #[derive(Default)]
 struct ParamTables {
     param_types: BTreeMap<ParamId, ValueType>,
@@ -593,8 +556,7 @@ struct ParamTables {
 }
 
 impl ParamTables {
-    /// Absorbs one rule's resolved param state, diagnosing cross-rule
-    /// disagreements with the same errors the per-rule checks use.
+
     fn unify(&mut self, ctx: Context) -> Result<(), ValidationError> {
         for param in &ctx.interval_position_params {
             if matches!(
@@ -633,9 +595,6 @@ impl ParamTables {
         Ok(())
     }
 
-    /// Param id density — jointly across all rules (a gap would be a
-    /// positional slot at execution whose supplied value is never
-    /// type-checked).
     fn check_masks_and_density(&self) -> Result<(), ValidationError> {
         for (position, param) in self.param_kinds.keys().enumerate() {
             if usize::from(param.0) != position {
