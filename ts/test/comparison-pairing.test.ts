@@ -38,7 +38,6 @@ const World = schema("World", { Reading }, [])
 /** The constant-comparison refusal (the engine's `ConstantComparison` twin). */
 const CONSTANT = /a comparison without a variable side is constant-valued/
 
-/** Captures the rule scope's TermOps. */
 function capturedOps(): TermOps {
 	let ops: TermOps | undefined
 	query(World).rule((r) => {
