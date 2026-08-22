@@ -5,7 +5,6 @@ use crate::schema::Schema;
 use super::{ImageCache, RelationSlot, stats};
 
 impl ImageCache {
-
     #[must_use]
     pub fn new(schema: &Schema) -> Self {
         Self {
