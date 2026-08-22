@@ -7,7 +7,6 @@ use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> ReadInstance<'_, S> {
-
     /// # Errors
 
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
@@ -87,7 +86,6 @@ impl<S> ReadInstance<'_, S> {
 }
 
 impl<S> ReadInstance<'_, S> {
-
     /// # Errors
 
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
