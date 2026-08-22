@@ -4,10 +4,6 @@ use crate::ir::normalize::{NormalizedQuery, Occurrence};
 use crate::plan::fj::OccBind;
 use crate::schema::Schema;
 
-/// Densifies the participating occurrences into bitset form, resolving stats
-/// and translating key (`Functionality` statement) projections to
-/// variable sets — plus the query's cross-atom `Allen` residuals as
-/// [`AllenKeep`] fractions (the one residual class the DP prices, R19).
 pub(super) fn densify(
     normalized: &NormalizedQuery,
     occurrences: &[&Occurrence],
@@ -25,9 +21,7 @@ pub(super) fn densify(
         var_index.len() <= MAX_DISTINCT_VARS,
         "validation rejects over-cap queries at the boundary"
     );
-    // A literal mask's measure is popcount/13 (the JEPD partition); a
-    // param mask is unmeasurable at prepare and takes the range class —
-    // the ladder's exact constants (`plan/selectivity.rs::allen_keep`).
+
     let allen: Vec<AllenKeep> = normalized
         .allen_residuals
         .iter()
@@ -60,25 +54,7 @@ pub(super) fn densify(
                 .iter()
                 .map(|(var, distinct)| (1u128 << var_index[var], *distinct))
                 .collect();
-            // Translate each key's projection to a var bitset. A
-            // projection field Eq-pinned to one scalar constant is
-            // covered with no variable bit — the shared pinned-field
-            // vocabulary ([`crate::plan::pinned_fields`], the
-            // distinctness witness's roster): sets pin nothing, and a
-            // pointwise key's interval field counts only under a
-            // value-typed Eq. Keys with an unbound, un-pinned field are
-            // skipped. **The pointwise-key determinant**
-            // (docs/architecture/40-execution.md): `occurrence.vars`
-            // carries value bindings only — a membership-bound interval
-            // field lowered to a filter and never appears here — so a
-            // pointwise key contributes its set only when the interval
-            // field is bound **by value**. A join binding just the
-            // scalar prefix then fails full-set coverage in `estimate`:
-            // two facts may share the prefix with disjoint intervals,
-            // so prefix agreement certifies no fanout bound.
-            // An `Interior` occurrence has no keyed store — no fanout bound
-            // flows from key coverage; its rows already sit on the
-            // ladder's delta/accumulated floors (`plan/selectivity.rs`).
+
             let pinned: std::collections::BTreeSet<bumbledb_theory::schema::FieldId> =
                 crate::plan::pinned_fields(occurrence)
                     .map(|(field, _)| field)
