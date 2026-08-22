@@ -3,7 +3,6 @@
 //! site. No GAT-bearing trait is converted to `dyn` (E0038 on this
 //! nightly). Broad HRTBs on lending items are refused (E0597). Every
 //! range GAT requires `Self: 'catalog`.
-
 use std::marker::PhantomData;
 use std::ops::Bound;
 
