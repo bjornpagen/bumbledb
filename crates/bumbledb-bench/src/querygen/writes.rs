@@ -6,7 +6,6 @@ use crate::querygen::target::{self, ids};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosedWriteKind {
-
     ClosedInsert,
 
     ClosedDelete,
@@ -46,7 +45,6 @@ pub fn closed_write_cases(rng: &mut Rng, n: usize) -> Vec<ClosedWriteCase> {
 }
 
 fn case(kind: ClosedWriteKind, rng: &mut Rng, index: usize) -> ClosedWriteCase {
-
     let fresh = 1_000 + index as u64;
     match kind {
         ClosedWriteKind::ClosedInsert => ClosedWriteCase {
@@ -74,9 +72,9 @@ fn case(kind: ClosedWriteKind, rng: &mut Rng, index: usize) -> ClosedWriteCase {
         }
         ClosedWriteKind::DanglingHandle | ClosedWriteKind::BeyondRosterCap => {
             let source = if kind == ClosedWriteKind::DanglingHandle {
-                3 + rng.range(253) 
+                3 + rng.range(253)
             } else {
-                256 + rng.range(1 << 20) 
+                256 + rng.range(1 << 20)
             };
             ClosedWriteCase {
                 kind,
@@ -95,7 +93,7 @@ fn case(kind: ClosedWriteKind, rng: &mut Rng, index: usize) -> ClosedWriteCase {
         }
         ClosedWriteKind::PsiExcluded | ClosedWriteKind::PsiOutOfRange => {
             let currency = if kind == ClosedWriteKind::PsiExcluded {
-                rng.range(target::ZERO_DECIMAL_CURRENCY) 
+                rng.range(target::ZERO_DECIMAL_CURRENCY)
             } else if rng.chance(1, 2) {
                 3 + rng.range(253)
             } else {
