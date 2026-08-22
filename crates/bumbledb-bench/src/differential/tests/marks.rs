@@ -1,10 +1,3 @@
-//! The extension-form differential: engine and model replay one fixed
-//! delta stream over a capacity theory and must
-//! agree on every verdict INCLUDING the violating statement AND the
-//! witnessed measure (C14: both twins carry the group total) — the
-//! conformance face of the enforcement stage (verdict parity is the
-//! typed identity, exactly the containment differential's law).
-
 use bumbledb::schema::{
     FieldId, LiteralSet, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor,
@@ -18,8 +11,6 @@ use crate::naive::{Delta, NaiveDb};
 const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 
-/// The naive marks fixture's schema, verbatim (`naive/tests/judgment.rs`
-/// § marks): one selected capacity law over Holder/Account.
 fn schema() -> SchemaDescriptor {
     let u64_field = |name: &str| field(name, bumbledb::schema::ValueType::U64);
     SchemaDescriptor {
@@ -70,10 +61,6 @@ fn write(deletes: Vec<(RelationId, Vec<Value>)>, inserts: Vec<(RelationId, Vec<V
     Op::Write(Delta { deletes, inserts })
 }
 
-/// The capacity-boundary schema, verbatim from the naive marks fixture
-/// (`naive/tests/judgment.rs` § capacity exactness): the `{2}`
-/// exactness law (statement 1) and the `{0}` exclusion law
-/// (statement 2) over Holder/Account.
 fn exact_schema() -> SchemaDescriptor {
     let u64_field = |name: &str| field(name, bumbledb::schema::ValueType::U64);
     SchemaDescriptor {
@@ -120,11 +107,6 @@ fn exact_schema() -> SchemaDescriptor {
     }
 }
 
-/// A fixed stream over both oracles: green commits, the capacity
-/// law's violation families (floor, ceiling, and a key preemption over
-/// a would-be capacity violation),
-/// then the repairs — verdicts, complete citation sets, and witnessed
-/// measures compared whole.
 #[test]
 fn capacity_verdicts_agree_with_the_model() {
     let dir = TempDir::new("differential-marks");
@@ -134,13 +116,13 @@ fn capacity_verdicts_agree_with_the_model() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
-        // Green base: one holder with one selected child.
+
         write(vec![], vec![holder(7), account(7, 1, 0)]),
-        // Floor: a childless parent.
+
         write(vec![], vec![holder(8)]),
-        // Ceiling: a third selected child.
+
         write(vec![], vec![account(7, 1, 1), account(7, 1, 2)]),
-        // Key preemption: two facts, one holder key — and childless too.
+
         write(
             vec![],
             vec![
@@ -148,8 +130,7 @@ fn capacity_verdicts_agree_with_the_model() {
                 (HOLDER, vec![Value::U64(9), Value::U64(1)]),
             ],
         ),
-        // Repairs commit: the second child (inside the ceiling), the
-        // demolished group.
+
         write(vec![], vec![account(7, 1, 1)]),
         write(vec![holder(7), account(7, 1, 0), account(7, 1, 1)], vec![]),
     ];
@@ -163,12 +144,6 @@ fn capacity_verdicts_agree_with_the_model() {
     );
 }
 
-/// The empty-store pass for the capacity form (60-validation.md's
-/// zero-fact duty, the marks family's share): every violating delta
-/// here is judged against a store holding NOTHING — an abort applies
-/// no facts, so each conviction lands on the same pristine store —
-/// the capacity floor (childless parent);
-/// then one green commit proves the stream non-vacuous.
 #[test]
 fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
     let dir = TempDir::new("differential-marks-empty");
@@ -178,9 +153,9 @@ fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
-        // Window floor: a childless parent into the void.
+
         write(vec![], vec![holder(7)]),
-        // The store is still empty; a green base commits.
+
         write(vec![], vec![holder(7), account(7, 1, 0)]),
     ];
     let summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
@@ -193,15 +168,13 @@ fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
     );
 }
 
-/// The capacity-boundary subfamilies over both oracles: `{n}`
-/// exactness (one under by deletion, one over by insertion), the `{0}`
-/// exclusion (its first member convicts; out-of-σ children never
-/// count), the law over an absent parent, and the
-/// delete-then-reinsert seams — a net-nothing delta re-judges its
-/// touched group (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-/// delta_restricted_commit_sound`) and a net-nothing reinsert beside a
-/// real deletion still convicts. Verdicts and complete citation sets
-/// compared whole.
+/// The capacity-boundary subfamilies over both oracles: `{n}` exactness (one
+/// under by deletion, one over by insertion), the `{0}` exclusion (its first
+/// member convicts; out-of-σ children never count), the law over an absent
+/// parent, and the delete-then-reinsert seams — a net-nothing delta re-judges
+/// its touched group (`lean/Bumbledb/Txn/DeltaRestriction.lean:
+/// delta_restricted_commit_sound`) and a net-nothing reinsert beside a real
+/// deletion still convicts.
 #[test]
 fn capacity_boundary_and_reinsert_verdicts_agree_with_the_model() {
     let dir = TempDir::new("differential-marks-exact");
@@ -211,22 +184,21 @@ fn capacity_boundary_and_reinsert_verdicts_agree_with_the_model() {
         .expect("accepted");
     let mut naive = NaiveDb::new(&decl);
     let ops = vec![
-        // Exactly n commits at n..n.
+
         write(vec![], vec![holder(1), account(1, 1, 0), account(1, 1, 1)]),
-        // One under: a deletion hits the floor.
+
         write(vec![account(1, 1, 1)], vec![]),
-        // One over: an insertion hits the ceiling.
+
         write(vec![], vec![account(1, 1, 2)]),
-        // The {0} exclusion convicts its first member.
+
         write(vec![], vec![account(1, 9, 0)]),
-        // The {0} exclusion admits everything outside sigma.
+
         write(vec![], vec![account(1, 5, 0), account(1, 6, 1)]),
-        // A capacity law over an absent parent constrains nothing.
+
         write(vec![], vec![account(3, 1, 0)]),
-        // The net-nothing delete-reinsert: the touched group re-judged,
-        // green.
+
         write(vec![account(1, 1, 1)], vec![account(1, 1, 1)]),
-        // A net-nothing reinsert beside a real deletion still convicts.
+
         write(
             vec![account(1, 1, 0), account(1, 1, 1)],
             vec![account(1, 1, 0)],
