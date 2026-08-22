@@ -7,7 +7,6 @@
 //! allowlist, boundary category): this module holds the sanctioned `unsafe` of the storage
 //! layer — `heed 0.22` marks environment opening unsafe (double-opening
 //! one path in a process is LMDB UB) and marks env-flag setting unsafe
-
 use std::path::Path;
 
 use heed::{EnvFlags, EnvOpenOptions, WithoutTls};
