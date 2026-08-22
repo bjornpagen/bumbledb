@@ -132,7 +132,6 @@ impl NaiveDb {
     /// # Errors
 
     /// # Panics
-
     pub fn query(
         &self,
         query: &Query,
