@@ -1,10 +1,6 @@
-//! The `docs/architecture/70-api.md` integration tests: the usage shapes
 //! end to end through the public surface — create → write{reserve+insert} →
 //! read{point lookup, join, aggregate} → mutate via delete+insert → read
-//! again; the write-closure abort contracts; the threading contract; the
-//! commit-time statement judgments with their rendered diagnostics; and
 //! the export → collection-insert ETL round trip on both lanes (`insert`
-//! typed, `insert_dyn` dynamic).
 
 use bumbledb::ir::{
     Atom, AtomSource, FindTerm, FoldOp, HeadTerm, InteriorId, NonEmpty, ParamId, Query, Rec,
@@ -18,8 +14,6 @@ use bumbledb::{
 
 mod common;
 
-/// The validated ledger schema, for diagnostics rendering
-/// (`display_with`) — the engine itself takes [`Ledger`].
 fn ledger_schema() -> bumbledb::Schema {
     Ledger
         .descriptor()
@@ -43,7 +37,6 @@ bumbledb::schema! {
     Account(holder) <= Holder(id);
 }
 
-/// Q(name, balance) :- Account(holder = h, balance), Holder(id = h, name).
 fn join_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -68,8 +61,6 @@ fn join_query() -> Query {
     })
 }
 
-/// Q(name, Sum(balance)) :- Account(holder = h, balance), Holder(id = h,
-/// name).
 fn aggregate_query() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -100,7 +91,6 @@ fn aggregate_query() -> Query {
     })
 }
 
-/// Q(balance) :- Account(id = ?0, balance) — the point-lookup (key probe) shape.
 fn point_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -116,8 +106,6 @@ fn point_query() -> Query {
     })
 }
 
-/// Collects a two-column (String, I64) result buffer into a sorted vec —
-/// results are sets; the host sorts.
 fn name_amount_answers(out: &Answers) -> Vec<(String, i64)> {
     let mut answers: Vec<(String, i64)> = (0..out.len())
         .map(|answer| {
@@ -141,7 +129,6 @@ fn usage_shapes_end_to_end() {
         .expect("create")
         .expect("accepted");
 
-    // Write: fresh minting + typed inserts.
     let accounts = db
         .write(|tx| {
             let alice: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -174,7 +161,6 @@ fn usage_shapes_end_to_end() {
         .unwrap()
         .value;
 
-    // Read: point lookup (key probe), join, aggregate.
     let mut point = db.prepare(&point_query()).expect("prepare point");
     let mut join = db.prepare(&join_query()).expect("prepare join");
     let mut aggregate = db.prepare(&aggregate_query()).expect("prepare agg");
@@ -202,8 +188,6 @@ fn usage_shapes_end_to_end() {
     })
     .expect("read");
 
-    // Mutate: delete(old) + insert(new) — here in the *other* order, which
-    // is equally blessed (the delta is set arithmetic).
     let old = accounts[0];
     db.write(|tx| {
         tx.insert([&Account { balance: 90, ..old }])?;
@@ -257,7 +241,6 @@ fn aborted_writes_leave_prior_state_intact() {
     }));
     assert!(panicked.is_err());
 
-    // An `Err` closure aborts the same way.
     let failed = db.write(|tx| -> bumbledb::Result<()> {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder {
@@ -272,7 +255,6 @@ fn aborted_writes_leave_prior_state_intact() {
     });
     assert!(failed.is_err());
 
-    // The writer mutex is released and prior state intact.
     db.write(|tx| {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder { id, name: "after" }])
@@ -306,7 +288,7 @@ fn concurrent_readers_while_writing() {
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
         .expect("accepted");
-    // Seed one pair so readers always see data.
+
     db.write(|tx| {
         let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder {
@@ -323,8 +305,6 @@ fn concurrent_readers_while_writing() {
     .expect("seed")
     .unwrap();
 
-    // The writer commits (Holder, Account) pairs; every reader snapshot
-    // must observe them atomically: equal counts, always.
     std::thread::scope(|scope| {
         let writer = scope.spawn(|| {
             for round in 0..20 {
@@ -393,7 +373,6 @@ fn export_scan_inserts_into_a_fresh_database() {
         .unwrap()
         .value;
 
-    // Export: full-relation scans in row_id order, decoded dynamic facts.
     let (holders, accounts) = old
         .read(|snap| {
             let holders: Vec<Vec<Value>> =
@@ -404,8 +383,6 @@ fn export_scan_inserts_into_a_fresh_database() {
         })
         .expect("export");
 
-    // Import: containment targets first; explicit fresh values preserve
-    // identity.
     let new = Db::create(dir_new.path(), Ledger)
         .expect("create new")
         .expect("accepted");
@@ -428,7 +405,6 @@ fn export_scan_inserts_into_a_fresh_database() {
         .value;
     assert_eq!(loaded, 3);
 
-    // Identity: both databases answer the join identically.
     let mut join_old = old.prepare(&join_query()).expect("prepare");
     let answers_old = old
         .read(|snap| snap.execute_collect(&mut join_old, &[] as &[bumbledb::BindValue]))
@@ -442,7 +418,6 @@ fn export_scan_inserts_into_a_fresh_database() {
         name_amount_answers(&answers_new)
     );
 
-    // The fresh high-water advanced past the explicit imports.
     new.write(|tx| {
         let next: HolderId = tx.reserve(1)?.start().expect("nonempty");
         assert!(
@@ -473,9 +448,6 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         .unwrap()
         .value;
 
-    // Functionality violation: two live accounts claiming one fresh id.
-    // The error carries the statement id and the offending fact bytes,
-    // and the WHOLE transaction aborts (the good insert too).
     let violations = common::expect_rejected(db.write(|tx| {
         tx.insert([&Account {
             id: AccountId(7),
@@ -500,11 +472,10 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     else {
         panic!("expected one key citation, got {violations:?}");
     };
-    // Materialized order: Holder.id's fresh auto-key, Account.id's
-    // fresh auto-key, then the declared containment.
+
     assert_eq!(ledger_schema().id_of(*statement), StatementId(1));
     assert!(!fact.is_empty());
-    // The rendered diagnostic cites the statement in the algebra.
+
     let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(rendered.contains("Account(id) -> Account"), "{rendered}");
     let count = db
@@ -512,9 +483,6 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         .expect("scan");
     assert_eq!(count, 0, "the aborted transaction left nothing");
 
-    // Containment, source side: an inserted account whose holder does
-    // not exist. `Display` through the schema cites the statement
-    // rendered back in the algebra, and the judgment direction.
     let violations = common::expect_rejected(db.write(|tx| {
         tx.insert([&Account {
             id: AccountId(1),
@@ -545,8 +513,6 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     );
     assert!(rendered.contains("source"), "{rendered}");
 
-    // Containment, target side: deleting a holder a surviving account
-    // still requires — the requiring source is named by its fact.
     db.write(|tx| {
         tx.insert([&Account {
             id: AccountId(1),
@@ -595,7 +561,6 @@ fn open_mismatches_and_snapshot_usability() {
             .expect("accepted"),
     );
 
-    // Db-level mismatch: a different schema refuses to open.
     let other = bumbledb::schema::SchemaDescriptor {
         relations: vec![bumbledb::schema::RelationDescriptor {
             extension: None,
@@ -613,14 +578,11 @@ fn open_mismatches_and_snapshot_usability() {
     };
     assert!(matches!(err, bumbledb::Error::SchemaMismatch { .. }));
 
-    // Create-over-existing refuses at the Db level too.
     let Err(err) = Db::create(dir.path(), Ledger).map(|_| ()) else {
         panic!("create over an existing environment must refuse");
     };
     assert!(matches!(err, bumbledb::Error::DestinationExists { .. }));
 
-    // A failed execute leaves the snapshot usable, and the caller-buffer
-    // path works through the public surface.
     let db = Db::open(dir.path(), Ledger).expect("open");
     db.write(|tx| {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -631,12 +593,12 @@ fn open_mismatches_and_snapshot_usability() {
     let mut join = db.prepare(&join_query()).expect("prepare");
     db.read(|snap| {
         let mut out = Answers::new();
-        // Wrong param count: a typed error...
+
         let err = snap
             .execute(&mut join, &[BindValue::U64(1)], &mut out)
             .unwrap_err();
         assert!(matches!(err, bumbledb::Error::ParamCountMismatch { .. }));
-        // ...and the same snapshot executes fine afterwards.
+
         snap.execute(&mut join, &[] as &[bumbledb::BindValue], &mut out)?;
         assert_eq!(out.len(), 0, "no accounts yet");
         Ok(())
@@ -662,7 +624,7 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
         let before = snap.scan_facts::<Holder>()?.count();
         assert_eq!(before, 1);
         // Two commits land while this snapshot stays open (LMDB readers
-        // never block the writer; MDB_NOTLS reader slots).
+
         for round in 0..2 {
             db.write(|tx| {
                 let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -673,7 +635,7 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
             })?
             .unwrap();
         }
-        // The pinned snapshot still answers at its own generation.
+
         assert_eq!(snap.scan_facts::<Holder>()?.count(), 1);
         let answers = snap.execute_collect(&mut join, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 0);
@@ -681,7 +643,6 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     })
     .expect("pinned read");
 
-    // A fresh snapshot sees all three.
     let after = db
         .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("fresh read");
@@ -718,7 +679,6 @@ fn collection_insert_equals_sequential_inserts() {
             .unwrap();
     }
 
-    // Set equality of the full export: an ETL bug is a data-loss bug.
     let by_id = |mut rows: Vec<Vec<Value>>| {
         rows.sort_by_key(|f| match f[0] {
             Value::U64(id) => id,
@@ -737,8 +697,6 @@ fn collection_insert_equals_sequential_inserts() {
     assert_eq!(a, b);
     assert_eq!(a.len(), usize::try_from(n).expect("64-bit"));
 
-    // Shape failure of a collection that never entered: the write
-    // persists nothing.
     let dir_fail = common::TempDir::new("api-insert-fail");
     let fail = Db::create(dir_fail.path(), Ledger)
         .expect("create")
@@ -758,8 +716,6 @@ fn collection_insert_equals_sequential_inserts() {
     assert_eq!(persisted, 0);
 }
 
-/// The typed collection is the same insert as the dynamic lane: one
-/// write, changed-state count, whole-write judgment.
 #[test]
 fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     use bumbledb::Fresh as _;
@@ -792,8 +748,6 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
         .expect("scan");
     assert_eq!(persisted, usize::try_from(n).expect("64-bit"));
 
-    // Judgment failure: `Account(holder) <= Holder(id)` — the whole
-    // write is rejected, nothing from this insert persists.
     let account = |i: u64| Account {
         id: AccountId::from_fresh(i),
         holder: HolderId::from_fresh(if i == 4_099 { n + 7 } else { i % 3 }),
@@ -834,10 +788,6 @@ fn disk_size_and_generation_report_store_state() {
     assert_eq!(db.generation().expect("gen").value(), 1);
 }
 
-/// The magnitude-first cover choice (docs/architecture/40-execution.md), end to end: the
-/// balance shape — a big relation joined to a param-selected small side
-/// — must iterate the selected side (7 keys) and probe the big one,
-/// never the reverse. Work is pinned by counters, not wall clock.
 #[test]
 fn cover_choice_iterates_the_selected_side() {
     use bumbledb::ir::{Atom, FindTerm, FoldOp, ParamId, Query, Term, VarId};
@@ -846,7 +796,7 @@ fn cover_choice_iterates_the_selected_side() {
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
         .expect("accepted");
-    // 500 holders (ids 0..7 share the name "target"), 20 accounts each.
+
     db.write(|tx| {
         let mut holders = Vec::new();
         for i in 0..500u64 {
@@ -872,8 +822,6 @@ fn cover_choice_iterates_the_selected_side() {
     .expect("populate")
     .unwrap();
 
-    // Q(h, Sum(balance)) :- Account(holder = h, balance),
-    //                       Holder(id = h, name = ?0).
     let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
@@ -909,9 +857,6 @@ fn cover_choice_iterates_the_selected_side() {
     assert_eq!(out.len(), 7, "one group per target holder");
 }
 
-/// Compaction (docs/architecture/50-storage.md): a chunk-churned store copies to a
-/// substantially smaller, byte-identical, fully writable sibling — and
-/// never clobbers an existing destination.
 #[test]
 fn compaction_drops_the_freelist_and_preserves_content() {
     use bumbledb::ir::Value;
@@ -921,7 +866,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     let db = Db::create(&source_dir, Ledger)
         .expect("create")
         .expect("accepted");
-    // Many small commits grow a real freelist through CoW churn.
+
     for round in 0..40u64 {
         db.write(|tx| {
             for i in 0..250u64 {
@@ -949,7 +894,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 
     let compact_dir = dir.path().join("compacted");
     db.compact(&compact_dir).expect("compact");
-    // Never clobbers.
+
     let err = db.compact(&compact_dir).expect_err("must refuse");
     assert!(
         matches!(err, bumbledb::Error::DestinationExists { .. }),
@@ -966,7 +911,6 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     assert_eq!(compacted.generation().expect("generation"), generation);
     assert_eq!(scan_digest(&compacted), source_rows, "byte-identical facts");
 
-    // A first-class store: writes commit and read back.
     compacted
         .write(|tx| {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -984,10 +928,8 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     );
 }
 
-/// A prepared query executes only against snapshots of the database that
-/// prepared it. Before the environment-instance check, executing A's
-/// prepared query against B (same schema, same generation) returned B's
-/// data through A's memo keys.
+/// Before the environment-instance check, executing A's prepared query against
+/// B (same schema, same generation) returned B's data through A's memo keys.
 #[test]
 fn a_prepared_query_refuses_a_foreign_snapshot() {
     let dir_a = common::TempDir::new("api-foreign-prepared-a");
@@ -1027,8 +969,6 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     })
     .expect("execute on the preparing db");
 
-    // Step 4 of the audit repro: execute against B. Every execution entry
-    // refuses — never B-as-A's-data.
     db_b.read(|snap| {
         let err = snap
             .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
@@ -1054,7 +994,6 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     })
     .expect("read on b");
 
-    // The preparing db still executes fine afterward.
     db_a.read(|snap| {
         let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
@@ -1063,8 +1002,6 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     .expect("A unaffected");
 }
 
-/// The advisory lock — a second live handle on the same path is
-/// a loud open-time error; dropping the first releases it.
 #[test]
 fn a_second_handle_on_a_live_path_is_locked_out() {
     let dir = common::TempDir::new("api-env-lock");
@@ -1083,9 +1020,6 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
     drop(reopened);
 }
 
-/// `create` refuses any existing destination, including a directory
-/// holding someone else's LMDB environment or a half-created empty
-/// root. Healing a half-created store is deleted with `NotInitialized`.
 #[test]
 #[expect(
     unsafe_code,
@@ -1115,7 +1049,6 @@ fn create_refuses_a_foreign_lmdb_environment() {
         "{err:?}"
     );
 
-    // A leftover empty root is an existing path — not a healable store.
     let dir = common::TempDir::new("api-env-half-created");
     std::fs::create_dir_all(dir.path()).expect("mkdir");
     {
@@ -1141,9 +1074,6 @@ fn create_refuses_a_foreign_lmdb_environment() {
     );
 }
 
-/// `Db::write` is non-reentrant — a nested call on the same
-/// thread panics with the named message instead of deadlocking forever,
-/// and the write lock clears for the next (sequential) write.
 #[test]
 fn nested_write_panics_instead_of_deadlocking() {
     let dir = common::TempDir::new("api-nested-write");
@@ -1161,7 +1091,6 @@ fn nested_write_panics_instead_of_deadlocking() {
         .expect("string panic payload");
     assert!(message.contains("nested Db::write"), "{message}");
 
-    // Sequential writes on the same thread still work: the write lock cleared.
     db.write(|tx| {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&Holder {
@@ -1173,10 +1102,6 @@ fn nested_write_panics_instead_of_deadlocking() {
     .unwrap();
 }
 
-/// The concurrency family: prepared queries on
-/// reader threads race a writer that moves two facts together every
-/// commit. Every execution must observe both answers at one generation —
-/// equal balances, always — never a torn mix of two generations.
 #[test]
 fn prepared_executions_observe_exactly_one_generation() {
     let dir = common::TempDir::new("api-gen-atomic");
@@ -1260,12 +1185,8 @@ fn prepared_executions_observe_exactly_one_generation() {
     });
 }
 
-/// A *successful* commit persists every fresh
-/// value it issued, even when no facts changed — an id the closure
-/// returned to the host is never re-issued. Both no-op shapes: the
-/// empty delta (`reserve`, nothing else) and the nets-to-nothing delta
-/// (insert then delete of the same absent fact). The generation must
-/// not move for either — `Q` marks are not query-visible state.
+/// The generation must not move for either — `Q` marks are not query-visible
+/// state.
 #[test]
 fn escaped_fresh_ids_survive_noop_commits() {
     let dir = common::TempDir::new("api-fresh-escape");
@@ -1273,7 +1194,6 @@ fn escaped_fresh_ids_survive_noop_commits() {
         .expect("create")
         .expect("accepted");
 
-    // The empty-delta path.
     let a: HolderId = db
         .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
         .expect("bare reserve")
@@ -1294,7 +1214,6 @@ fn escaped_fresh_ids_survive_noop_commits() {
         .value;
     assert!(b.0 > a.0, "escaped id {a:?} re-issued as {b:?}");
 
-    // The nets-to-nothing path (`changed: false`, non-empty delta).
     let c: HolderId = db
         .write(|tx| {
             let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
@@ -1321,8 +1240,6 @@ fn escaped_fresh_ids_survive_noop_commits() {
         .value;
     assert!(d.0 > c.0, "escaped id {c:?} re-issued as {d:?}");
 
-    // Neither no-op moved the generation: Q marks are write-path
-    // bookkeeping, not query-visible state.
     assert_eq!(
         generation_after_a.value(),
         0,
@@ -1335,10 +1252,6 @@ fn escaped_fresh_ids_survive_noop_commits() {
     );
 }
 
-/// Deleting a fact whose string was never interned is a proven
-/// no-op — the fact's bytes would embed an id that was never minted —
-/// and the dictionary does not grow. A later insert of that value must
-/// still treat it as novel (both engine-visible effects of not minting).
 #[test]
 fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     let dir = common::TempDir::new("api-mint-free-delete");
@@ -1355,8 +1268,6 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
         .unwrap()
         .value;
 
-    // Typed delete of a never-interned name: changed = false, and the
-    // whole write is a no-op commit (generation unmoved).
     let generation = db.generation().expect("generation");
     db.write(|tx| {
         let changed = tx.delete([&Holder {
@@ -1372,7 +1283,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     })
     .expect("typed delete")
     .unwrap();
-    // Dynamic delete, same contract.
+
     db.write(|tx| {
         let changed = tx.delete_dyn(
             Holder::RELATION,
@@ -1388,9 +1299,6 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     .unwrap();
     assert_eq!(db.generation().expect("generation"), generation);
 
-    // The real fact is untouched, and insert-then-delete in one
-    // transaction still cancels exactly (the pending map serves the
-    // delete path).
     db.write(|tx| {
         let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
         let transient = Holder {
@@ -1413,11 +1321,6 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     assert_eq!(names, vec!["real".to_owned()]);
 }
 
-/// An out-of-range relation id at the dynamic
-/// (ETL) surface is a typed `FactShape` error at every public boundary —
-/// `insert_dyn`, `delete_dyn`, and `scan` — never a panic. The typed
-/// `insert` lane takes no `RelationId`, so an out-of-range relation is
-/// unrepresentable there — the fact type names its relation.
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
     let dir = common::TempDir::new("api-unknown-relation");
@@ -1461,8 +1364,6 @@ fn out_of_range_relation_ids_are_typed_errors() {
     .expect("read closes cleanly");
 }
 
-/// A plain Query (empty interiors, no rec) prepares and executes as it
-/// always has.
 #[test]
 fn a_plain_query_executes_as_today() {
     let dir = common::TempDir::new("api-degenerate-query");
@@ -1517,12 +1418,12 @@ fn identity_main(arity: u16) -> Rule {
     }
 }
 
-/// Recursion at the public surface: a roster-clean linear rec prepares
-/// and executes under the reach driver, and the self-loop
-/// `interior 0(x) | Account(id: x); interior 0(x) | interior 0(x)` denotes exactly the base
-/// rule's set — the rec arm re-derives, the seen-set absorbs, the
-/// fixpoint closes in one growing round
-/// (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
+/// Recursion at the public surface: a roster-clean linear rec prepares and
+/// executes under the reach driver, and the self-loop `interior 0(x) |
+/// Account(id: x); interior 0(x) | interior 0(x)` denotes exactly the base
+/// rule's set — the rec arm re-derives, the seen-set absorbs, the fixpoint
+/// closes in one growing round (`lean/Bumbledb/Exec/Reach.lean:
+/// evalLinearReach_eq_lfp`).
 #[test]
 fn prepare_executes_recursion_under_the_driver() {
     let dir = common::TempDir::new("api-reach-driver");
@@ -1610,9 +1511,6 @@ bumbledb::schema! {
     }
 }
 
-/// The transitive-closure query over [`Graph`]:
-/// `rec(x, z) | GraphEdge(x, z); rec(x, z) | GraphEdge(x, y), interior 0(y, z)`
-/// with identity main.
 fn closure_query() -> Query {
     let edge = |a: u16, b: u16| Atom {
         source: AtomSource::Edb(GraphEdge::RELATION),
@@ -1644,8 +1542,6 @@ fn closure_query() -> Query {
     }
 }
 
-/// Primer-shaped cycle detector: linear `reach(from, to)` with extra EDB
-/// on the step arm, then main `reach(x, x)`. Empty answers = DAG.
 fn primer_reach_xx() -> Query {
     let edge = |a: u16, b: u16| Atom {
         source: AtomSource::Edb(GraphEdge::RELATION),
@@ -1688,11 +1584,6 @@ fn primer_reach_xx() -> Query {
     }
 }
 
-/// Scalar/vectorized equality on a recursive fixture: the closure over
-/// a chain-with-branches graph answers identically at batch size 1 (the
-/// scalar regime) and the default vectorized batch — the driver rides
-/// the ordinary executor, so the batch-size affordance covers the delta
-/// variants exactly as it covers plain rules.
 #[test]
 fn recursive_answers_agree_scalar_and_vectorized() {
     let dir = common::TempDir::new("api-recursive-batch");
@@ -1728,7 +1619,7 @@ fn recursive_answers_agree_scalar_and_vectorized() {
             pairs(&snap.execute_collect(&mut vectorized, &[] as &[bumbledb::BindValue])?);
         let scalar = pairs(&snap.execute_collect(&mut scalar, &[] as &[bumbledb::BindValue])?);
         assert_eq!(scalar, vectorized, "one denotation, two batch regimes");
-        // The hand answer: reachability over the fixed graph.
+
         let expected: std::collections::BTreeSet<(u64, u64)> = [
             (0, 1),
             (0, 2),
@@ -1755,8 +1646,6 @@ fn recursive_answers_agree_scalar_and_vectorized() {
     .expect("read");
 }
 
-/// Primer-shaped `reach(x, x)`: empty on a DAG, nonempty once a cycle
-/// exists. Main is the diagonal of the finished rec, not a named interior.
 #[test]
 fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     let dir = common::TempDir::new("api-primer-reach-xx");
@@ -1793,8 +1682,6 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     .expect("read after cycle");
 }
 
-/// Reach still answers through execute; introspect keeps the rendered
-/// query header (K10's door). Per-round profile stats died with K23.
 #[test]
 fn reach_execute_answers_the_closure() {
     let dir = common::TempDir::new("api-reach-execute");
@@ -1820,8 +1707,6 @@ fn reach_execute_answers_the_closure() {
     .expect("read");
 }
 
-/// A 66k-edge chain exceeds the default 2^16-round budget with a
-/// trivial tuple count (one new node per round). Typed error, constructed.
 #[test]
 fn a_tight_derived_budget_trips_under_reach() {
     const CHAIN: u64 = 66_000;
@@ -1855,7 +1740,6 @@ fn a_tight_derived_budget_trips_under_reach() {
     );
 }
 
-/// Single-source reach from node 0: one new node per round, linear tuples.
 fn single_source_chain_query() -> Query {
     Query {
         interiors: vec![],
