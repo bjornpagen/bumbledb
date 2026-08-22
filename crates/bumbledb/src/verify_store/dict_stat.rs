@@ -4,8 +4,6 @@
 //! (`Corruption(DanglingInternId)`) or silently suffer (a rebound
 //! forward entry, a regressed next-id arming reverse-map reuse) is a
 //! finding here. Entries no live fact references stay the accepted leak
-//! (`docs/architecture/50-storage.md`: dictionary entries are never
-//! removed) — an informational statistic, never a finding.
 
 use std::ops::Bound;
 
@@ -38,21 +36,14 @@ pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u6
                     s.malformed(key, "dict reverse sentinel");
                     continue;
                 }
-                // The counter bound (078): a reverse id at or beyond the
-                // `_meta` next-id is the regressed-counter state that
-                // arms silent reuse — `RowIdHighWaterLow`'s dictionary
-                // sibling.
+
                 if id >= s.dict_next_id {
                     s.corrupt(CorruptionError::DictNextIdLow {
                         stored: s.dict_next_id,
                         reverse_id: id,
                     });
                 }
-                // Forward/reverse coherence (004): the stored raw bytes
-                // must hash to a forward entry mapping back to this id —
-                // one blake3 per entry, the price the M pass already
-                // pays per entry. A rebound forward entry silently
-                // redirects every selection literal on the string.
+
                 let forward = s.catalog.dict_lookup(raw)?;
                 if forward != Some(id) {
                     s.corrupt(CorruptionError::DictForwardDesync {
@@ -67,10 +58,7 @@ pub(super) fn dangling<C: CatalogRead + Copy>(s: &mut Sweep<'_, C>) -> Result<u6
             _ => s.malformed(key, "dict reverse id"),
         }
     }
-    // The liveness direction (004): every id a live fact references must
-    // resolve — the exact corruption the runtime types as
-    // `DanglingInternId`, convicted offline instead of at the next
-    // export. The F pass built the set; this is its second consumer.
+
     let referenced: Vec<InternId> = s.referenced_interns.iter().copied().collect();
     for id in referenced {
         if s.catalog
