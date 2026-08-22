@@ -8,9 +8,6 @@ use crate::families::{self, Draw, scalar_draw};
 use crate::naive::{Delta, NaiveDb, ParamValue};
 use crate::schema::{Ledger, ids};
 
-/// The unit-scale corpus of the naive lane: small enough for the
-/// brute-force model's nested loops, large enough that every family's
-/// joins have witnesses.
 fn unit_sizes() -> Sizes {
     Sizes {
         postings: 120,
@@ -25,10 +22,6 @@ fn unit_sizes() -> Sizes {
     }
 }
 
-/// The closed-vocabulary read: accounts joined to `Currency` on the
-/// handle — the closed atom is an ordinary atom on the naive side too
-/// (the model reads its seeded extension), so engine and model compare
-/// closed-relation reads exactly like any other join.
 fn closed_join_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -50,12 +43,10 @@ fn closed_join_query() -> Query {
     })
 }
 
-/// The insert stream as write deltas, chunked — every chunk judged over
-/// the full final state on both sides.
 fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let cfg = corpus_gen::GenConfig {
         seed,
-        scale: corpus_gen::Scale::S, // unused: rows take explicit unit sizes
+        scale: corpus_gen::Scale::S, 
     };
     let mut ops = Vec::new();
     for rel in 0..ids::RELATIONS {
@@ -76,15 +67,6 @@ fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     ops
 }
 
-/// Deltas that must ABORT, verdict and violating statement agreeing on
-/// both sides: a dangling containment source, a pointwise-key overlap,
-/// a scalar-key duplicate, a target-required delete, the
-/// net-disposition pattern class (a redundant insert alongside a delete
-/// of its containment target — the Direction-divergence shape), a write
-/// naming a closed relation (`ClosedRelationWrite`, typed on both
-/// oracles), and an out-of-range closed-vocabulary reference (the
-/// compiled-subset miss — the same containment violation as any
-/// dangling reference).
 fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let cfg = corpus_gen::GenConfig {
         seed,
@@ -93,7 +75,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     let segment = mandate_segments(seed, sizes, 0)[0];
     let overlap = Interval::<i64>::new(segment.start, segment.start + 1).expect("nonempty");
     vec![
-        // Posting -> Account containment, source side.
+
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -108,8 +90,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 ],
             )],
         }),
-        // The pointwise Mandate key: a one-point overlap on account 0
-        // under a different org (the identical fact would be a no-op).
+
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -121,7 +102,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 ],
             )],
         }),
-        // The Holder fresh key: a second fact under id 0.
+
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -129,17 +110,12 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 vec![Value::U64(0), Value::String("holder-duplicate".into())],
             )],
         }),
-        // Deleting account 0 strands its postings and mandates: the
-        // target-required direction.
+
         Op::Write(Delta {
             deletes: vec![(ids::ACCOUNT, corpus_gen::row(&cfg, sizes, ids::ACCOUNT, 0))],
             inserts: vec![],
         }),
-        // The net-disposition pattern class: a committed posting
-        // deleted and re-inserted (netting to nothing) alongside the
-        // delete of its containment target — the posting was not
-        // genuinely added, so the verdict classifies target-side on both
-        // oracles, Direction included.
+
         Op::Write({
             let posting = (0..sizes.postings)
                 .map(|i| corpus_gen::row(&cfg, sizes, ids::POSTING, i))
@@ -155,14 +131,12 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
         }),
         // A write naming the closed vocabulary: refused before the
         // delta on the engine, before applying on the model — the same
-        // typed `ClosedRelationWrite` verdict on both.
+
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(ids::CURRENCY, vec![Value::U64(5)])],
         }),
-        // An out-of-range vocabulary reference: currency 9 is beyond the
-        // three-row extension, so `Account(currency) <= Currency(id)`
-        // misses — source-unsatisfied, exactly like any dangling id.
+
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(
@@ -177,8 +151,6 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
     ]
 }
 
-/// One in-domain draw per family at unit scale (the S-scale rotations
-/// are mostly misses here; these make the joins produce witnesses).
 fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
     let cfg = corpus_gen::GenConfig {
         seed,
@@ -193,7 +165,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
             Value::I64(corpus_gen::AT_BASE + span / 4),
             Value::I64(corpus_gen::AT_BASE + span / 2),
         ]),
-        // orgs and holders both have >1 unit-scale id 1.
+
         "balance" | "mandate_overlap" => scalar_draw(vec![Value::U64(1)]),
         "stats" | "spread" | "latest_posting_per_account" => scalar_draw(vec![]),
         "string" => scalar_draw(vec![Value::String("SYM0003".into())]),
@@ -214,21 +186,17 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
     }
 }
 
-/// The naive-model differential slice (docs/architecture/60-validation.md
-/// § the two oracles): a fresh
-/// unit-scale store replays the corpus stream, seven judgment-violating
-/// deltas (the closed-relation write refusal and the out-of-range
-/// vocabulary reference included), the closed-vocabulary join read,
-/// every family query (its unit draw plus its seeded S
-/// rotation), and the algebra oracle rows (`run_algebra`: rules, DNF
-/// trees, `Pack` — naive-only by decision, counted and reported — and
-/// the measure's ray verdicts) against [`NaiveDb`]; any verdict,
-/// violator, or result-set disagreement is an arbitration bundle. The
-/// error-parity cases (cap-exceeding DNF, vacuous masks) run after the
-/// differential, against the same store.
-///
+/// The naive-model differential slice: a fresh unit-scale store replays the
+/// corpus stream, seven judgment-violating deltas (the closed-relation write
+/// refusal and the out-of-range vocabulary reference included), the
+/// closed-vocabulary join read, every family query (its unit draw plus its
+/// seeded S rotation), and the algebra oracle rows (`run_algebra`: rules, DNF
+/// trees, `Pack` — naive-only by decision, counted and reported — and the
+/// measure's ray verdicts) against [`NaiveDb`]; any verdict, violator, or
+/// result-set disagreement is an arbitration bundle. The error-parity cases
+/// (cap-exceeding DNF, vacuous masks) run after the differential, against the
+/// same store.
 /// # Panics
-///
 /// On tool-level invariant violations — never on a disagreement.
 pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let sizes = unit_sizes();
@@ -263,8 +231,7 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let db = Db::create(&naive_dir, Ledger)
         .expect("create naive-slice store")
         .expect("accepted");
-    // The declared descriptor, extensions included — the model seeds the
-    // closed vocabularies from the ground axioms at construction.
+
     let mut naive = NaiveDb::new(&bumbledb::Theory::descriptor(Ledger));
     eprintln!("verify: naive differential slice ({} ops)", ops.len());
     match differential::run(&db, &mut naive, &ops) {
