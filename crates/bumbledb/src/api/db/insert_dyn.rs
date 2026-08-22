@@ -10,7 +10,6 @@ impl<S> WriteTx<'_, S> {
     /// refusal, and the field roster run once.
 
     /// # Errors
-
     pub fn insert_dyn(
         &mut self,
         rel: RelationId,
