@@ -4,7 +4,7 @@ use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
-use crate::storage::env::{Environment, GenerationId, ReadTxn};
+use crate::storage::env::{Environment, GenerationId};
 use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
     FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
@@ -65,60 +65,6 @@ fn sequential_readers_share_one_image_instance() {
     let second = cache.get_or_build(&txn2, &schema, R).expect("build");
     // The v5 regression detector: no intervening write, identical Arc.
     assert!(Arc::ptr_eq(&first, &second));
-}
-
-#[test]
-fn eviction_after_commit_leaves_only_the_new_generation() {
-    let dir = TempDir::new("cache-evict");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_one(&env, &schema, 1);
-    let cache = ImageCache::new(&schema);
-
-    let old_txn = env.read_txn().expect("txn");
-    let old_image = cache.get_or_build(&old_txn, &schema, R).expect("build");
-    assert_eq!(old_image.row_count(), 1);
-    assert_eq!(cache.keys(), vec![(R, gid(1))]);
-
-    // A state-changing commit, then the writer evicts.
-    insert_one(&env, &schema, 2);
-    cache.evict_older_than(gid(2));
-    assert_eq!(cache.keys(), vec![]);
-
-    // A new reader builds and caches the new generation.
-    let new_txn = env.read_txn().expect("txn");
-    let new_image = cache.get_or_build(&new_txn, &schema, R).expect("build");
-    assert_eq!(new_image.row_count(), 2);
-    assert_eq!(cache.keys(), vec![(R, gid(2))]);
-    assert!(!Arc::ptr_eq(&old_image, &new_image));
-
-    // The pinned old reader still reads its old image (its Arc lives on
-    // past eviction), and its snapshot still answers at generation 1.
-    assert_eq!(old_image.row_count(), 1);
-    assert_eq!(
-        ReadTxn::generation(&old_txn).expect("generation").value(),
-        1
-    );
-}
-
-#[test]
-fn old_generation_miss_builds_without_populating_the_map() {
-    let dir = TempDir::new("cache-old-miss");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_one(&env, &schema, 1);
-    let cache = ImageCache::new(&schema);
-
-    // Pin a reader at generation 1, then advance the world.
-    let old_txn = env.read_txn().expect("txn");
-    insert_one(&env, &schema, 2);
-    cache.evict_older_than(gid(2));
-
-    // The old reader misses and builds query-locally: correct data for
-    // its snapshot, and the map stays empty.
-    let image = cache.get_or_build(&old_txn, &schema, R).expect("build");
-    assert_eq!(image.row_count(), 1);
-    assert_eq!(cache.keys(), vec![]);
 }
 
 #[test]
@@ -236,7 +182,7 @@ fn closed_images_synthesize_once_and_survive_eviction() {
     // A state-changing commit + eviction: the slot is untouched by
     // construction — it is not in the generation-keyed map at all.
     assert!(insert_one(&env, &schema, 1));
-    cache.evict_older_than(gid(u64::MAX));
+    cache.advance(gid(u64::MAX), &[R], &[]);
     let txn = env.read_txn().expect("txn");
     let third = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
     assert!(Arc::ptr_eq(&first, &third), "warm across every generation");
@@ -271,7 +217,7 @@ fn counters_track_hit_miss_build_evict_exactly() {
     assert_eq!(images, 1);
     assert!(bytes > 0);
 
-    cache.evict_older_than(gid(u64::MAX));
+    cache.advance(gid(u64::MAX), &[R], &[]);
     let evicted = cache.stats();
     assert_eq!(evicted.evicted - after.evicted, 1);
     assert_eq!(cache.resident(), (0, 0));

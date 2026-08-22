@@ -30,12 +30,6 @@ use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
 mod advance;
-/// Production commits go through [`ImageCache::advance`]; the
-/// retain-newest form survives as the tests' one-call commit simulation
-/// (the `lineage-off` A/B knob that once also reached it is dead — its
-/// 2.54x number is banked in the manifest's ruling-4 gravestone).
-#[cfg(test)]
-mod evict_older_than;
 mod get_or_build;
 mod new;
 mod peek;
@@ -157,8 +151,7 @@ impl GenerationCache {
 /// builds, decodes, and anything else that can panic stay outside the
 /// lock. Closed (and, on a heap source, frozen) slots are
 /// [`OnceLock`]s — first touch builds, never evicted, never rebuilt —
-/// and [`ImageCache::advance`] (and its lineage-disabled twin
-/// [`ImageCache::evict_older_than`]) skips them by matching
+/// and [`ImageCache::advance`] skips them by matching
 /// [`RelationSlot::Ordinary`] only.
 pub struct ImageCache {
     slots: Box<[RelationSlot]>,

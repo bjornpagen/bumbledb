@@ -30,7 +30,7 @@ ground-off = []
 # precedent above). The PR #10 merge DID carry the feature — the
 # reconciliation executed this gravestone: the feature, the knob, the
 # twin, and the twin's feature dep died in the same commit;
-# `evict_older_than` itself stays reachable via `cfg(test)`.
+# `evict_older_than` died with purge K7.
 
 [dependencies]
 blake3 = "1"

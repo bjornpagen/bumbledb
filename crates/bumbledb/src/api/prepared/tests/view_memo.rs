@@ -434,7 +434,7 @@ fn closed_relation_views_stay_warm_across_generations() {
     drop(view);
     let report = commit(delta, &env).expect("commit").expect("admitted");
     assert!(report.changed());
-    cache.evict_older_than(report.generation());
+    cache.advance(report.generation(), &[RelationId(0)], &[]);
 
     // Second execution at the new generation: zero rebuilds — the memo
     // binding hits at the sentinel and the image Arc never moved.
