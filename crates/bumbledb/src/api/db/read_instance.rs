@@ -8,7 +8,6 @@ use bumbledb_theory::schema::RelationId;
 
 impl<S> ReadInstance<'_, S> {
     /// # Errors
-
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<S>> {
         let catalog = self.core.source.catalog();
         crate::api::prepared::prepare_on(
@@ -23,7 +22,6 @@ impl<S> ReadInstance<'_, S> {
     /// # Errors
 
     /// # Panics
-
     pub fn count(&self, relation: RelationId) -> Result<u64> {
         let Some(rel) = self.core.schema.relation_checked(relation) else {
             return Err(DynIdError::UnknownRelation { relation }.into());
@@ -35,7 +33,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn execute<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -46,7 +43,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn execute_collect<'p, P: crate::api::prepared::BindArgs<'p>>(
         &self,
         prepared: &mut PreparedQuery<S>,
@@ -56,7 +52,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     #[doc(hidden)]
     pub fn introspect(
         &self,
@@ -67,7 +62,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
         let Some(_relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
@@ -87,7 +81,6 @@ impl<S> ReadInstance<'_, S> {
 
 impl<S> ReadInstance<'_, S> {
     /// # Errors
-
     pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
         self.with_scratch(|scratch| {
             if matches!(
@@ -111,7 +104,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
         let Some(relation) = self.core.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
@@ -142,7 +134,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn get_dyn(
         &self,
         relation: RelationId,
@@ -156,7 +147,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn get_dyn_into(
         &self,
         relation: RelationId,
@@ -231,7 +221,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     #[expect(
         clippy::needless_pass_by_value,
         reason = "a key value is the read's input, spelled `instance.get(id)`: fresh \
@@ -296,7 +285,6 @@ impl<S> ReadInstance<'_, S> {
     }
 
     /// # Errors
-
     pub fn scan_facts<'lease, F: Fact<'lease, Schema = S>>(
         &'lease self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'lease> {
