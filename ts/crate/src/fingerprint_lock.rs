@@ -1,5 +1,4 @@
 //! Cross-host fingerprint lock: one theory, one pinned digest.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::{Db, Theory as _};
