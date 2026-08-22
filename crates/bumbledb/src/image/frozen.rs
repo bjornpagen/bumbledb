@@ -12,10 +12,6 @@ use crate::schema::Schema;
 use crate::storage::catalog::FrozenCatalog;
 use bumbledb_theory::schema::RelationId;
 
-/// Per-relation slots for an admitted heap catalog. Same
-/// [`RelationSlot`] vocabulary as the store cache;
-/// [`RelationSlot::Ordinary`] is unrepresentable here — construction
-/// never builds that arm.
 pub(crate) struct FrozenImages {
     slots: Box<[RelationSlot]>,
 }
@@ -80,7 +76,6 @@ impl FrozenImages {
     }
 }
 
-/// Admitted heap catalog plus its lazy image slots.
 pub(crate) struct FrozenSource {
     pub(crate) catalog: FrozenCatalog,
     images: FrozenImages,
