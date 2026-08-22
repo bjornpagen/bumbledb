@@ -29,7 +29,6 @@ pub fn run_with_sql_override(
     cfg: &VerifyConfig,
     override_sql: impl Fn(&str) -> Option<String>,
 ) -> Result<VerifyReport, VerifyFailure> {
-
     let _ = std::fs::remove_dir_all(&cfg.out_dir);
     std::fs::create_dir_all(&cfg.out_dir).expect("out_dir");
 
@@ -58,7 +57,6 @@ pub fn run_with_sql_override(
 }
 
 impl<S> Run<'_, S> {
-
     pub(super) fn lane<T>(
         &mut self,
         db: &Db<T>,
@@ -201,7 +199,6 @@ pub(super) fn load_target_stores(
         conn.execute(&statement, []).expect("target extension");
     }
     for relation in target::schema().relations() {
-
         let skip_id = usize::from(relation.body().closed_rows().is_some());
         for field in relation.fields().iter().skip(skip_id) {
             let columns = if field.value_type.is_interval() {
@@ -224,9 +221,8 @@ pub(super) fn load_target_stores(
     for rel in 0..target::TARGET_RELATIONS {
         let rel = bumbledb::RelationId(rel);
         match rel {
-
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
-            target::ids::IMPORT_BATCH => {} 
+            target::ids::IMPORT_BATCH => {}
             _ => {
                 db.write(|tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
