@@ -3,7 +3,7 @@ import Bumbledb.Query.Denotation
 /-!
 # Membership lowering — the bivalent surface binding (Level 0)
 
-The surface rule (`docs/architecture/20-query-ir.md`, § membership is
+The surface rule, § membership is
 a typing rule): an element-typed term at an interval-typed field
 position means POINT MEMBERSHIP (half-open — `points_halfopen` carries
 the reading); an interval-typed term at the same position is value
@@ -32,73 +32,73 @@ nothing (`normalize.rs` pass 1) — is answer-invisible, and
 ## Narrowings recorded (law 5: narrow and record)
 
 * **The typing witness is a parameter** (`Typing`): the resolved
-  var/param types the membership rule consults are taken as given —
-  the validator's typed pass computes them
-  (`ir/validate/context.rs::resolve_bivalents`); nothing here
-  re-derives resolution order. On accepted rules the witness is
-  exactly that resolution.
+ var/param types the membership rule consults are taken as given —
+ the validator's typed pass computes them
+ (`ir/validate/context.rs::resolve_bivalents`); nothing here
+ re-derives resolution order. On accepted rules the witness is
+ exactly that resolution.
 * **The measure arm is parked on the equality reading**
-  (`Typing.termInterval` answers `true` for a measure): a measure
-  never appears in a binding (`ValidationError::DurationInBinding`),
-  so the arm is unreachable on accepted rules and the parking only
-  keeps the definition total.
+ (`Typing.termInterval` answers `true` for a measure): a measure
+ never appears in a binding (`ValidationError::DurationInBinding`),
+ so the arm is unreachable on accepted rules and the parking only
+ keeps the definition total.
 * **Negated membership atoms have no pre-lowered RULE form.** The
-  positive lowering names the interval field's value with a fresh
-  variable; a fresh variable under negation is unsafe by construction
-  (`NegatedVariableUnbound` — `Safe` forbids it), so no rule of the
-  modeled syntax expresses a negated membership binding after
-  lowering. Its lowered home is therefore NOT a rule but the
-  anti-probe OCCURRENCE the engine actually executes
-  (`ir/normalize/normalize.rs::lower_atom`, "positive or negated —
-  the rules are identical"; the `AntiProbe` descriptor carries the
-  membership filters, evaluated inside the probe). **The formerly
-  recorded remaining gap, closed (2026-07-14, the admission-calculus
-  docket):** `AntiOccurrence` is the filter-carrying negated
-  judgment, `Atom.lowerNegated` the role-blind lowering onto it, and
-  `membership_lowering_preserves_negated` states answer preservation
-  for the FULL roster — negated membership bindings included — with
-  no membership-free hypothesis: the lowered rule's positive atoms
-  read the pre-lowered `Matches`/`PointIn` form and its negated atoms
-  reject by anti-probe (`antiProbeRuleAnswers`).
-  `antiprobe_eq_antijoin_of_negFree` composes the anti-probe
-  denotation back to the plain anti-join on membership-free negated
-  atoms, so `membership_lowering_preserves` — the pre-lowered-rule
-  fragment, which keeps its hypothesis because it speaks the rule
-  syntax — is the composition of the two. No safety subtlety
-  appeared: assignments are total at this level and `Safe` pins every
-  negated-atom variable positively, so the anti-probe's `PointIn`
-  filters only ever read bound values — exactly the engine's
-  point-membership scan.
+ positive lowering names the interval field's value with a fresh
+ variable; a fresh variable under negation is unsafe by construction
+ (`NegatedVariableUnbound` — `Safe` forbids it), so no rule of the
+ modeled syntax expresses a negated membership binding after
+ lowering. Its lowered home is therefore NOT a rule but the
+ anti-probe OCCURRENCE the engine actually executes
+ (`ir/normalize/normalize.rs::lower_atom`, "positive or negated —
+ the rules are identical"; the `AntiProbe` descriptor carries the
+ membership filters, evaluated inside the probe). **The 
+ recorded remaining gap, closed (2026-07-14, the admission-calculus
+ docket):** `AntiOccurrence` is the filter-carrying negated
+ judgment, `Atom.lowerNegated` the role-blind lowering onto it, and
+ `membership_lowering_preserves_negated` states answer preservation
+ for the FULL roster — negated membership bindings included — with
+ no membership-free hypothesis: the lowered rule's positive atoms
+ read the pre-lowered `Matches`/`PointIn` form and its negated atoms
+ reject by anti-probe (`antiProbeRuleAnswers`).
+ `antiprobe_eq_antijoin_of_negFree` composes the anti-probe
+ denotation back to the plain anti-join on membership-free negated
+ atoms, so `membership_lowering_preserves` — the pre-lowered-rule
+ fragment, which keeps its hypothesis because it speaks the rule
+ syntax — is the composition of the two. No safety subtlety
+ appeared: assignments are total at this level and `Safe` pins every
+ negated-atom variable positively, so the anti-probe's `PointIn`
+ filters only ever read bound values — exactly the engine's
+ point-membership scan.
 * **The fresh mint is the canonical ceiling supply**
-  (`Rule.freshVar`). Answers are projection-determined, so the
-  variable names the lowering introduces are answer-invisible; the
-  engine introduces none at all (its filters read fields in place),
-  which is exactly why the modeled IR must mint one — a condition can
-  only read the assignment.
+ (`Rule.freshVar`). Answers are projection-determined, so the
+ variable names the lowering introduces are answer-invisible; the
+ engine introduces none at all (its filters read fields in place),
+ which is exactly why the modeled IR must mint one — a condition can
+ only read the assignment.
 * **The lowering is per-rule.** `VarId`s are rule-scoped, so the
-  typing witness and the mint are too; `rulesAnswers` is the rules'
-  union (`mem_rulesAnswers`), and the query-level statement is the
-  pointwise lift of the rule-level theorem.
+ typing witness and the mint are too; `rulesAnswers` is the rules'
+ union (`mem_rulesAnswers`), and the query-level statement is the
+ pointwise lift of the rule-level theorem.
 * **The fold-level companion, DISCHARGED (2026-07-23 audit, finding
-  087; the R2 fold-domain docket).** A membership term SELECTS, it
-  never binds: the aggregate fold domain of a lowered membership rule
-  is the SURFACE rule's distinct binding set — the minted interval
-  variable is no fold slot (the aggregation contract,
-  `20-query-ir.md`: every aggregate folds the query's distinct full
-  bindings; the mint is answer-invisible, and it is fold-invisible on
-  the same ground). The lowering is now proved at the BINDING level
-  (`stepLower_derives_forward` / `stepLower_derives_backward`,
-  iterated by `lowerFuel_derives_forward` /
-  `lowerFuel_derives_backward` — forward extends at the mints alone,
-  agreeing on every written variable; backward reuses the assignment
-  unchanged), and `membership_lowering_preserves_fold`
-  (`Exec/Dedup.lean` — where the fold domains live) composes them:
-  aggregates over the lowered rule with the mint projected away equal
-  aggregates over the surface reading, fiber for fiber, uniformly in
-  the fold. The conformance glue folds the surface width (the
-  serializer's `"width"` key, `Conformance.lean`) and the corpus
-  fence (`Exclusion::AggregateMembership`) lifts, so the third oracle
-  adjudicates membership-under-additive-fold instead of excluding it.
+ 087; the R2 fold-domain docket).** A membership term SELECTS, it
+ never binds: the aggregate fold domain of a lowered membership rule
+ is the SURFACE rule's distinct binding set — the minted interval
+ variable is no fold slot (the aggregation contract,
+ `20-query-ir.md`: every aggregate folds the query's distinct full
+ bindings; the mint is answer-invisible, and it is fold-invisible on
+ the same ground). The lowering is now proved at the BINDING level
+ (`stepLower_derives_forward` / `stepLower_derives_backward`,
+ iterated by `lowerFuel_derives_forward` /
+ `lowerFuel_derives_backward` — forward extends at the mints alone,
+ agreeing on every written variable; backward reuses the assignment
+ unchanged), and `membership_lowering_preserves_fold`
+ (`Exec/Dedup.lean` — where the fold domains live) composes them:
+ aggregates over the lowered rule with the mint projected away equal
+ aggregates over the surface reading, fiber for fiber, uniformly in
+ the fold. The conformance glue folds the surface width (the
+ serializer's `"width"` key, `Conformance.lean`) and the corpus
+ fence (`Exclusion::AggregateMembership`) lifts, so the third oracle
+ adjudicates membership-under-additive-fold instead of excluding it.
 -/
 
 namespace Bumbledb
@@ -266,7 +266,7 @@ a membership position (interval field, element-typed term) selects
 point membership of the term's value — any selected value whose point
 lies in the fact's interval — and every other position selects exactly
 `Term.selects` (value reading). This is the binding rule of
-`docs/architecture/20-query-ir.md` § membership, as a judgment.
+ § membership, as a judgment.
 Bridge: `crate::ir::Atom::bindings` under the resolved types;
 `ir/normalize/normalize.rs::lower_atom` pass 2. -/
 def Term.selectsAt (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
@@ -907,7 +907,7 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
   obtain ⟨f, hf, hSM⟩ := hpos a haMem
   refine ⟨fun v => if v = u then f i else σ v, ⟨?_, ?_, ?_⟩,
     fun v hv => by simp [hv]⟩
-  · -- positive atoms of the lowered rule
+  · 
     intro a'' ha''
     rcases List.mem_append.mp ha'' with hpre | hmid
     · obtain ⟨g, hg, hSMg⟩ := hpos a'' (by
@@ -919,7 +919,7 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
             (by rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre))
             v hv]) ).mp hSMg⟩
     · rcases List.mem_cons.mp hmid with rfl | hpost
-      · -- the lowered atom, matched by the SAME fact
+      · 
         refine ⟨f, hf, ?_⟩
         intro b hb
         rcases List.mem_append.mp hb with hbpre | hbmid
@@ -931,7 +931,7 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
               simp [hneA a haMem v (binding_vars_sub_atom hbOrig hv)]))
             |>.mp (hSM b hbOrig)
         · rcases List.mem_cons.mp hbmid with rfl | hbpost
-          · -- the minted binding pins the field value
+          · 
             refine (selectsAtSrc_of_not_membership hNewFalse).mpr ?_
             show (if u = u then f i else σ u) = f i
             simp
@@ -952,17 +952,17 @@ theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
           exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost))
         exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
           (fun v hv => by simp [hneA a'' ha''r v hv])).mp hSMg⟩
-  · -- negated atoms: unchanged, transported
+  · 
     rintro a'' ha'' ⟨g, hg, hSMg⟩
     exact hneg a'' ha'' ⟨g, hg, (surfaceMatches_stable (hneN a'' ha'')
       (fun v hv => by simp [hneN a'' ha'' v hv])).mpr hSMg⟩
-  · -- conditions: the old ones transported, the new one discharged
+  · 
     intro c hc
     rcases List.mem_append.mp hc with hold | hnew
     · exact (condHolds_congr C ρ σ _ c
         (fun v hv => by simp [hneC c hold v hv])).mp (hcond c hold)
     · rcases List.mem_cons.mp hnew with rfl | hemp
-      · -- the appended pointIn condition
+      · 
         have hsel := (selectsAtSrc_of_membership hmem).mp (hSM _ hbMem)
         obtain ⟨x, hx, hpm⟩ := hsel
         refine ⟨f i, x, ?_, ?_, hpm⟩
@@ -1010,9 +1010,8 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
       exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
         (fun v hv => rfl)).mpr hSMg⟩
     · rcases List.mem_cons.mp hmid with heq | hpost
-      · -- the original membership atom, matched by the lowered
-        -- atom's fact: the mint pins the field, the condition says
-        -- the membership
+      · 
+
         rw [heq]
         refine ⟨A, hAMem, ?_⟩
         have hAu : σ u = A i := by
@@ -1032,7 +1031,7 @@ theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
             (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
             (fun v hv => rfl)).mpr (hSMA b hbLow)
         · rcases List.mem_cons.mp hbmid with rfl | hbpost
-          · -- the membership binding itself, from the condition
+          · 
             refine (selectsAtSrc_of_membership hmem).mpr ?_
             obtain ⟨x, y, hx, hy, hden⟩ := hcNew
             have hxu : σ u = x := hx
@@ -1200,7 +1199,7 @@ theorem stepLower_decrement {Γ : Typing} {u : VarId} {r : Rule}
   have haMem : a ∈ r.atoms := by
     rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
   obtain ⟨_, hNewFalse⟩ := membershipSrc_mint (u := u) hmem
-  -- statuses are stable off the mint
+
   have hstable : ∀ a'' ∈ r.atoms, ∀ b ∈ a''.bindings,
       (Γ.updateVar u (Γ.header.fieldTypeSrc a.source i)).membershipSrc
         a''.source b.1 b.2 =
@@ -1352,8 +1351,8 @@ theorem stepLower_allVars_sub {Γ : Typing} {u : VarId} {r : Rule}
     · exact mem_allVars.mpr (Or.inr (Or.inl
         ⟨x, List.mem_append.mpr (Or.inl hxpre), hvx⟩))
     · rcases List.mem_cons.mp hxmid with rfl | hxpost
-      · -- the lowered atom: the binding either survives in place or
-        -- its displaced term's variables live in the new condition
+      · 
+
         obtain ⟨b, hb, hvb⟩ := List.mem_flatMap.mp hvx
         rw [hbind] at hb
         rcases List.mem_append.mp hb with hbpre | hbmid
@@ -1519,7 +1518,7 @@ that form, proves the role-blind lowering onto it answer-preserving
 for the full roster (`membership_lowering_preserves_negated`, no
 membership-free hypothesis), and composes it back to the plain
 anti-join on membership-free negated atoms
-(`antiprobe_eq_antijoin_of_negFree`) — closing the formerly recorded
+(`antiprobe_eq_antijoin_of_negFree`) — closing the recorded
 remaining gap. -/
 
 /-- A negated occurrence in the engine's lowered form: the domain
@@ -1532,12 +1531,12 @@ filters) and the `AntiProbe` descriptor (`probe_bindings` are the
 occurrence's vars; its filters evaluate inside the probe). -/
 structure AntiOccurrence where
   /-- The probed source — stored relation or interior; interiors carry
-  no membership filters. -/
+ no membership filters. -/
   source : AtomSource
   /-- The value-read bindings — the probe keys. -/
   domain : List (FieldId × Term)
   /-- The membership positions — `PointIn` filters over the probed
-  fact's interval fields. Empty on interior sources. -/
+ fact's interval fields. Empty on interior sources. -/
   filters : List (FieldId × Term)
 
 /-- The role-blind lowering of one negated atom: partition its
