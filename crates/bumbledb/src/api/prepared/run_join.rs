@@ -13,7 +13,7 @@ use crate::obs;
 #[expect(
     clippy::too_many_lines,
     reason = "the bind-then-probe-then-join protocol reads as one pass"
-)] 
+)]
 
 pub(super) fn run_join<S, C, I>(
     plan: &crate::plan::fj::ValidatedPlan,
@@ -57,7 +57,6 @@ where
         "an Eq-constant does not reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-
         if occurrence.role.discharged() {
             continue;
         }
@@ -72,7 +71,6 @@ where
             if buffer.capacity() == 0
                 && let Some(pooled) = derived_retired.pop()
             {
-
                 buffer = pooled;
             }
             let view = apply(image, &resolved_filters[occ_idx], &[], buffer);
