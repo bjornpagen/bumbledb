@@ -195,8 +195,8 @@ fn counters_track_hit_miss_build_evict_exactly() {
     let txn = env.read_txn().expect("txn");
 
     let base = cache.stats();
-    cache.get_or_build(&txn, &schema, R).expect("build"); 
-    cache.get_or_build(&txn, &schema, R).expect("hit"); 
+    cache.get_or_build(&txn, &schema, R).expect("build");
+    cache.get_or_build(&txn, &schema, R).expect("hit");
     let after = cache.stats();
     assert_eq!(after.misses - base.misses, 1);
     assert_eq!(after.builds - base.builds, 1);
@@ -420,7 +420,6 @@ fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
     let cache = ImageCache::new(&schema);
     insert_one(&env, &schema, 1);
     {
-
         let txn = env.read_txn().expect("txn");
         let base = cache.get_or_build(&txn, &schema, R).expect("base build");
         assert_eq!(base.row_count(), 1);
