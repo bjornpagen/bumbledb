@@ -1,7 +1,6 @@
 //! The device-honesty instrument: a RAM-backed-path detector and the refusal
 //! corpus `--dir` (`driver::bench`), the write families their scratch
 //! (`driver::write_families`).
-
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
