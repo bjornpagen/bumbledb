@@ -145,7 +145,6 @@ fn word(rng: &mut Rng, rel: RelationId, index: u64, slot: usize) -> Box<str> {
     if rng.chance(1, NOVEL_DEN) {
         format!("novel-{}-{index}-{slot}", rel.0).into()
     } else {
-
         let bucket = u64::from(rng.u64().trailing_zeros()).min(u64::from(VOCABULARY.ilog2()) - 1);
         let lo = (1u64 << bucket) - 1;
         let hi = ((1u64 << (bucket + 1)) - 1).min(VOCABULARY);
