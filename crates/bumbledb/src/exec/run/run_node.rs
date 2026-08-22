@@ -10,7 +10,7 @@ impl Executor {
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] 
+    )]
 
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
@@ -21,7 +21,6 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) -> Flow {
-
         assert!(
             node_idx + 1 == plan.nodes().len(),
             "run_node is the leaf pass; middle nodes pump"
@@ -123,7 +122,6 @@ impl Executor {
         'outer: loop {
             counters.phase_start(node_idx, JoinPhase::Iter);
             let (yielded, next_token) = if overlap {
-
                 let take = (self.overlap_hits.len() - overlap_drained).min(self.batch);
                 super::overlap_leaf::overlap_gather(
                     &colts[cover_occ],
@@ -250,7 +248,6 @@ impl Executor {
                         Some(mask.converse())
                     }
                     (Source::Slot(ls), Source::Slot(rs)) => {
-
                         let code = crate::allen::classify_bounds(
                             &bindings.get(ls),
                             &bindings.get(ls + 1),
@@ -442,7 +439,7 @@ impl Executor {
 
             if scratch.survivors.is_empty() {
                 if gate_cover {
-                    break; 
+                    break;
                 }
                 continue;
             }
@@ -476,7 +473,7 @@ impl Executor {
                 break 'outer;
             }
             if gate_cover {
-                break; 
+                break;
             }
         }
 
