@@ -38,7 +38,6 @@ pub(super) fn closed_join(b: &mut Builder, rng: &mut Rng) {
     let (source, reference, closed, _, payload) = if variant == 1 { &PAIRS[0] } else { pair(rng) };
     let atom = b.add_atom(*source);
     match variant {
-
         0 => {
             let handle = b.bind_var(atom, *reference);
             b.find_var(handle);
@@ -95,7 +94,6 @@ pub(super) fn ground_fold(b: &mut Builder, rng: &mut Rng) {
     let vocabulary = b.add_atom(*closed);
     b.bind(vocabulary, FieldId(0), Term::Var(handle));
     if *closed == ids::CURRENCY && rng.chance(1, 2) {
-
         let _dead = b.bind_var(vocabulary, ids::currency::MINOR_UNITS);
     }
     b.find_var(handle);
