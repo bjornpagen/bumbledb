@@ -1,5 +1,4 @@
 //! No CTE after the rec.
-
 use std::collections::BTreeMap;
 
 use bumbledb::schema::{KeyStatement, StatementDescriptor};
