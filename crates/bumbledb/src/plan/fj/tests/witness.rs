@@ -1,7 +1,3 @@
-//! Witness-construction goldens (PRD 15): real IR through validation,
-//! normalization, the DP planner, `binary2fj` + `factor`, and plan
-//! validation — asserting the exact node/residual/anti-probe shapes.
-
 use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
 use crate::ir::normalize::normalize_rules;
@@ -11,8 +7,6 @@ use crate::plan::planner::{OccStats, plan};
 use bumbledb_theory::schema::IntervalElement;
 use std::collections::BTreeSet;
 
-/// A(id u64 fresh, v i64); B(id u64 fresh, a u64, at i64) — the
-/// outer-join-idiom fixture (`docs/architecture/20-query-ir.md`).
 fn idiom_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
@@ -47,8 +41,6 @@ fn idiom_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// P(emp u64, during interval<i64>, review interval<i64>) — the interval
-/// fixture.
 fn interval_schema() -> Schema {
     let interval = ValueType::Interval {
         element: IntervalElement::I64,
@@ -93,8 +85,6 @@ fn stats(rows_and_distincts: &[(u64, &[(u16, u64)])]) -> Vec<OccStats> {
         .collect()
 }
 
-/// The full pipeline: validate the IR, normalize, plan over the given
-/// stats, lower, factor, validate into the witness.
 fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedPlan {
     let validated = validate_ir(schema, query).expect("valid query");
     let normalized = normalize_rules(schema, &[], validated.rules()).remove(0);
@@ -112,8 +102,6 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
     validate(&fj_plan, &normalized, schema, &sink_vars).expect("valid plan")
 }
 
-/// The outer-join idiom's join half: `A ⋈ B` — golden node shapes, no
-/// anti-probes anywhere.
 #[test]
 fn outer_join_idiom_join_half_validates_into_the_witness() {
     let schema = idiom_schema();
@@ -134,9 +122,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
         negated: vec![],
         conditions: vec![],
     });
-    // 100 A-rows into 1000 B-rows on a non-key field of B: the walk
-    // iterates A (its fresh key makes the reverse direction fanout 1,
-    // but iterating the small side first still wins on cost).
+
     let witness = witness(
         &schema,
         &query,
@@ -157,13 +143,10 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
         vec![vec![x], vec![y]]
     );
     assert_eq!(witness.slots(), &[(x, SlotWidth::ONE), (y, SlotWidth::ONE)]);
-    // B's bound fields (a, at) cover no key of B — no elision proof.
+
     assert!(witness.distinct_witness().is_none());
 }
 
-/// The outer-join idiom's absence half: `A` with a negated `B` atom —
-/// the anti-probe attaches to the root with B's trie schema in probe
-/// order.
 #[test]
 fn outer_join_idiom_absence_half_validates_into_the_witness() {
     let schema = idiom_schema();
@@ -182,25 +165,19 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
     });
     let witness = witness(&schema, &query, &stats(&[(100, &[(0, 100)])]));
 
-    // One node — the negated occurrence joined nothing.
     assert_eq!(witness.nodes().len(), 1);
     assert_eq!(witness.nodes()[0].subatoms, vec![subatom(0, &[x])]);
     assert_eq!(witness.nodes()[0].anti_probes.len(), 1);
     let probe = &witness.nodes()[0].anti_probes[0];
     assert_eq!(probe.occurrence, OccId(1));
     assert_eq!(probe.probe_bindings, vec![(FieldId(1), x)]);
-    // The negated occurrence's probe-order trie schema and key width.
+
     assert_eq!(witness.occurrence(OccId(1)).trie_schema, vec![vec![x]]);
     assert_eq!(witness.occurrence(OccId(1)).key_widths, vec![1]);
-    // A alone binds its fresh key: the elision proof holds (the
-    // negated occurrence binds nothing and cannot break it).
+
     assert!(witness.distinct_witness().is_some());
 }
 
-/// An `Allen` residual query: two P occurrences with no shared variable,
-/// `Allen(d1, d2, INTERSECTS)` carried whole (four endpoint slots + mask)
-/// and attached to the node binding the second interval — plus the
-/// two-slot interval layout and `ColumnSpan` field maps.
 #[test]
 fn allen_residual_query_validates_into_the_witness() {
     let schema = interval_schema();
@@ -229,25 +206,19 @@ fn allen_residual_query_validates_into_the_witness() {
             rhs: Term::Var(d2),
         })],
     });
-    // Asymmetric rows force the order: the 5-row side iterates first
-    // (a disconnected pair is a cross product either way; cost counts
-    // the root iteration).
+
     let witness = witness(
         &schema,
         &query,
         &stats(&[(5, &[(0, 5), (1, 5)]), (10, &[(2, 10), (3, 10)])]),
     );
 
-    // Disconnected pair: node 0 iterates occ 0 (occ 1 rides along as an
-    // empty probe), node 1 opens occ 1.
     assert_eq!(
         witness.nodes()[0].subatoms,
         vec![subatom(0, &[e1, d1]), subatom(1, &[])]
     );
     assert_eq!(witness.nodes()[1].subatoms, vec![subatom(1, &[e2, d2])]);
 
-    // The mask residual lands on the node binding d2, whole — never a
-    // whole-value or word residual.
     assert!(witness.nodes().iter().all(|n| n.residuals.is_empty()));
     assert!(witness.nodes().iter().all(|n| n.word_residuals.is_empty()));
     assert!(witness.nodes()[0].allen_residuals.is_empty());
@@ -260,7 +231,6 @@ fn allen_residual_query_validates_into_the_witness() {
         }]
     );
 
-    // The two-slot interval layout: d1 and d2 hold two slots each.
     assert_eq!(
         witness.slots(),
         &[
@@ -275,13 +245,10 @@ fn allen_residual_query_validates_into_the_witness() {
     assert_eq!(witness.slot_of(d2), 4);
     assert_eq!(witness.slot_count(), 6);
 
-    // Trie levels count interval variables at two words.
     assert_eq!(witness.occurrence(OccId(0)).trie_schema, vec![vec![e1, d1]]);
     assert_eq!(witness.occurrence(OccId(0)).key_widths, vec![3]);
     assert_eq!(witness.occurrence(OccId(1)).key_widths, vec![0, 3]);
 
-    // The ColumnSpan field map: emp one word column, during/review two
-    // word columns each.
     assert_eq!(
         witness.occurrence(OccId(0)).spans.as_ref(),
         &[
@@ -301,8 +268,6 @@ fn allen_residual_query_validates_into_the_witness() {
     );
 }
 
-/// An interval-typed variable joining two atoms by value is one plan
-/// variable with a two-word probe key (docs/architecture/40-execution.md).
 #[test]
 fn interval_value_equality_joins_with_a_two_word_key() {
     let schema = interval_schema();
@@ -329,7 +294,6 @@ fn interval_value_equality_joins_with_a_two_word_key() {
         &stats(&[(10, &[(0, 10), (1, 10)]), (1000, &[(1, 1000)])]),
     );
 
-    // Occ 1 is probed on d alone: one level, two words.
     assert_eq!(
         witness.occurrence(OccId(1)).trie_schema,
         vec![vec![d], vec![]]
