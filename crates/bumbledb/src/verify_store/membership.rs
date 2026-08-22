@@ -1,7 +1,6 @@
 //! The `M` pass: one cursor over `M | relation | fact_hash`. Every entry's
 //! row id must resolve to a live `F` fact whose blake3 matches the key —
 //! the reverse direction of the `F` pass's membership check.
-
 use crate::encoding::fact_hash;
 use crate::error::{CorruptionError, Result};
 use crate::storage::catalog::CatalogRead;
