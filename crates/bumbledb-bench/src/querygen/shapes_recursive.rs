@@ -8,7 +8,6 @@ use crate::querygen::target::{Domains, ids};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecursiveVariant {
-
     Linear,
 
     Negation,
@@ -310,7 +309,6 @@ pub struct RecursiveCoverage {
 }
 
 impl RecursiveVariant {
-
     #[must_use]
     pub fn coverage_class(self) -> &'static str {
         match self {
