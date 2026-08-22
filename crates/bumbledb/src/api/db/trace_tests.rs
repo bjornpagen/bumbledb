@@ -91,7 +91,7 @@ fn write_path_traces_phases_with_counts() {
 
     obs::start_capture();
     db.write(|tx| {
-        tx.insert_dyn(R, [&[Value::U64(0)]])?; 
+        tx.insert_dyn(R, [&[Value::U64(0)]])?;
         Ok(())
     })
     .expect("noop write")
