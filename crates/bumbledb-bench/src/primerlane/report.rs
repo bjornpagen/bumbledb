@@ -1,6 +1,5 @@
 //! The primerlane report artifact: plain data, hand-rolled JSON + markdown (the
 //! dependency quarantine) — the before/after evidence
-
 use std::fmt::Write as _;
 
 use crate::report::Provenance;
