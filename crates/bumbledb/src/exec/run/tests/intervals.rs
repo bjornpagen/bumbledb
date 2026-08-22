@@ -1,17 +1,9 @@
-//! Interval machinery in the executor — the membership point-var join
-//! (`PlanNode::point_probes`), the Allen mask residuals over two-slot
-//! interval variables (four endpoint slots + mask, classify-then-test),
-//! and the decomposed point-membership word residuals
-//! (docs/architecture/20-query-ir.md, § the Allen operator and
-//! § normalization; 40-execution, § access paths).
-
 use super::*;
 use crate::ir::WordCmp;
 use crate::ir::normalize::{IntervalWord, OccBind, SlotWidth};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::ValueType;
 
-/// Two relations of shape R(tag u64, during Interval<u64>).
 fn tagged_interval_schema(relations: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..relations)
@@ -40,7 +32,6 @@ fn tagged_interval_schema(relations: usize) -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits (tag, [start, end)) rows per relation and builds images.
 fn tagged_interval_views(
     dir: &TempDir,
     schema: &Schema,
@@ -78,11 +69,6 @@ fn tagged_interval_views(
         .collect()
 }
 
-/// A hand-assembled two-occurrence interval query:
-/// `A(ta, i), B(tb, j)` with the given residuals — exactly the shapes
-/// normalization emits for a cross-atom `Allen` (the mask residual) and
-/// `PointIn` point form (word comparisons), both pinned in
-/// `ir/normalize/tests.rs`.
 fn interval_pair_query(
     word_residuals: Vec<FilterPredicate>,
     allen_residuals: Vec<FilterPredicate>,
@@ -124,25 +110,22 @@ fn interval_pair_query(
     }
 }
 
-/// The thirteen Allen configurations of A's interval against B's fixed
-/// `[10, 20)`, tagged 1..=13 in Allen order.
 const ALLEN: &[(u64, u64, u64)] = &[
-    (1, 1, 5),    // before
-    (2, 5, 10),   // meets (half-open: no shared point)
-    (3, 5, 15),   // overlaps
-    (4, 5, 20),   // finished-by
-    (5, 5, 25),   // contains
-    (6, 10, 15),  // starts
-    (7, 10, 20),  // equals
-    (8, 10, 25),  // started-by
-    (9, 12, 18),  // during
-    (10, 15, 20), // finishes
-    (11, 15, 25), // overlapped-by
-    (12, 20, 25), // met-by
-    (13, 25, 30), // after
+    (1, 1, 5),    
+    (2, 5, 10),   
+    (3, 5, 15),   
+    (4, 5, 20),   
+    (5, 5, 25),   
+    (6, 10, 15),  
+    (7, 10, 20),  
+    (8, 10, 25),  
+    (9, 12, 18),  
+    (10, 15, 20), 
+    (11, 15, 25), 
+    (12, 20, 25), 
+    (13, 25, 30), 
 ];
 
-/// Runs an interval-pair query and returns the surviving A tags.
 fn surviving_tags(
     name: &str,
     word_residuals: Vec<FilterPredicate>,
@@ -159,7 +142,6 @@ fn surviving_tags(
     rows.iter().map(|row| row[ta_slot]).collect()
 }
 
-/// One Allen mask residual between the two occurrences' intervals.
 fn allen_residual(mask: AllenMask) -> Vec<FilterPredicate> {
     vec![FilterPredicate::FieldsAllen {
         left: OperandAddr::from(VarId(1)),
@@ -168,11 +150,6 @@ fn allen_residual(mask: AllenMask) -> Vec<FilterPredicate> {
     }]
 }
 
-/// The point-membership word residuals (`PointIn`'s surviving point
-/// form, `docs/architecture/20-query-ir.md` § normalization):
-/// `i.start ≤ p AND p < i.end` over slot words — `p` reads B's interval
-/// start word (10), so exactly the configurations containing the point
-/// 10 survive, half-open at both boundaries.
 #[test]
 fn point_membership_word_residuals_evaluate_over_slot_words() {
     let point_in = vec![
@@ -198,9 +175,6 @@ fn point_membership_word_residuals_evaluate_over_slot_words() {
     );
 }
 
-/// `Allen(i, j, INTERSECTS)` — of the thirteen pairwise Allen
-/// configurations exactly the nine sharing ones survive (meets/met-by
-/// share no point under half-open intervals).
 #[test]
 fn intersects_mask_residual_keeps_exactly_the_nine_sharing_configurations() {
     let expected: BTreeSet<u64> = (3..=11).collect();
@@ -213,7 +187,7 @@ fn intersects_mask_residual_keeps_exactly_the_nine_sharing_configurations() {
         ),
         expected
     );
-    // Same answer with the join order flipped (placement recomputes).
+
     assert_eq!(
         surviving_tags(
             "run-intersects-10",
@@ -225,10 +199,6 @@ fn intersects_mask_residual_keeps_exactly_the_nine_sharing_configurations() {
     );
 }
 
-/// Every singleton mask keeps exactly its one configuration — the mask
-/// residual pass classifies and bit-tests per element, so the thirteen
-/// singletons partition the fixture (JEPD at the executor level). The
-/// tag map follows the [`ALLEN`] fixture's row order.
 #[test]
 fn each_singleton_mask_residual_keeps_exactly_its_configuration() {
     use bumbledb_theory::allen::Basic;
@@ -262,8 +232,6 @@ fn each_singleton_mask_residual_keeps_exactly_its_configuration() {
     }
 }
 
-/// `Allen(i, j, COVERS)` — exactly the ⊇ configurations survive:
-/// finished-by, contains, equals, started-by.
 #[test]
 fn covers_mask_residual_keeps_exactly_the_containment_configurations() {
     let expected: BTreeSet<u64> = [4, 5, 7, 8].into_iter().collect();
@@ -287,7 +255,6 @@ fn covers_mask_residual_keeps_exactly_the_containment_configurations() {
     );
 }
 
-/// Payroll(emp u64, during Interval<u64>); Event(emp u64, at u64).
 fn membership_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -332,12 +299,6 @@ fn membership_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// The membership point-var join fixture
-/// (`Payroll(emp, during ∋ t), Event(emp, at = t)`): the membership
-/// lowers to a var-sourced `PointIn`, routed to a `point_probes` entry
-/// at plan validation and evaluated as the point-membership scan inside
-/// the join. Returns exactly the events whose time falls in the payroll
-/// interval — both boundaries asserted (start in, end out).
 #[test]
 fn membership_point_var_join_keeps_exactly_the_contained_events() {
     let dir = TempDir::new("run-membership");
@@ -361,14 +322,14 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
     }
     for (emp, at) in [
         (1u64, 9u64),
-        (1, 10), // == start: IN (half-open)
+        (1, 10), 
         (1, 15),
         (1, 19),
-        (1, 20), // == end: OUT (half-open)
+        (1, 20), 
         (2, 30),
         (2, 39),
         (2, 40),
-        (3, 35), // no payroll at all
+        (3, 35), 
     ] {
         let mut bytes = Vec::new();
         encode_fact(
@@ -385,9 +346,6 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
         .collect();
 
-    // Exactly `normalize`'s lowering for the fixture (pinned in
-    // ir/normalize/tests.rs): the membership binding binds no variable —
-    // it is a var-sourced PointIn filter on the payroll occurrence.
     let x = VarId(0);
     let t = VarId(1);
     let occurrences = vec![
@@ -426,8 +384,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         .collect();
     for order in [[0u16, 1u16], [1, 0]] {
         let plan = planned_with_sinks(&query, &schema, &order, &all_vars(&query));
-        // The var-sourced filter left the view filters for a placed
-        // membership probe.
+
         assert!(plan.occurrences()[0].filters.is_empty());
         assert_eq!(plan.occurrences()[0].point_filters, vec![(FieldId(1), t)]);
         assert_eq!(
@@ -447,21 +404,14 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
     }
 }
 
-/// The carried-cursor path: with a third atom between the payroll scan
-/// and the point variable's binding node, the membership probe attaches
-/// two nodes past the occurrence's last subatom — its advanced cursor
-/// must ride the pipeline's carried set to the attachment node (the
-/// pipe tables' cursor-USES extension).
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one fixture: the full three-node pipeline, linear
+)] 
 fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     let dir = TempDir::new("run-membership-carried");
-    // Payroll(emp, during); Dept(emp, dept); Event(emp, at) — reuse the
-    // tagged-interval shape for payroll and the binary U64 shape for the
-    // scalar relations.
+
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -602,8 +552,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         anti_probes: vec![],
         slot_widths,
     };
-    // Payroll first, Dept between, Event last: T binds at the leaf, two
-    // nodes past payroll's only subatom.
+
     let plan = planned_with_sinks(&query, &schema, &[0, 1, 2], &all_vars(&query));
     assert!(
         plan.nodes().last().expect("nonempty").point_probes.len() == 1,
@@ -626,11 +575,6 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     assert_eq!(got, expected);
 }
 
-/// Negated membership (`not Payroll(emp, during ∋ t)`): the anti-probe
-/// evaluates the var-sourced membership inside the probe — a binding is
-/// rejected only if a payroll fact matches the key AND holds the point
-/// (the existential reading over the negated occurrence's facts,
-/// docs/architecture/20-query-ir.md).
 #[test]
 fn negated_membership_rejects_only_covered_events() {
     let dir = TempDir::new("run-anti-membership");
@@ -670,8 +614,7 @@ fn negated_membership_rejects_only_covered_events() {
         .collect();
 
     let (x, t) = (VarId(0), VarId(1));
-    // Positive Event first (OccId 0), negated Payroll after — the
-    // occurrence-numbering rule.
+
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
@@ -710,13 +653,11 @@ fn negated_membership_rejects_only_covered_events() {
         .iter()
         .map(|row| (row[plan.slot_of(x)], row[plan.slot_of(t)]))
         .collect();
-    // The complement of the covered events: boundaries flip — `at ==
-    // start` is covered (rejected), `at == end` is not (kept).
+
     let expected: BTreeSet<(u64, u64)> = [(1, 9), (1, 20), (3, 15)].into_iter().collect();
     assert_eq!(got, expected);
 }
 
-/// A splitmix64 step — the repo's no-dependency randomness.
 fn splitmix(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;
@@ -725,9 +666,6 @@ fn splitmix(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Random `(tag, start, end)` rows over a small point domain — boundary
-/// coincidences (equal endpoints, adjacency) occur constantly — with a
-/// ray flavor mixed in (`end == MAX`, the point-domain law).
 fn random_interval_rows(count: usize, tag_base: u64, state: &mut u64) -> Vec<(u64, u64, u64)> {
     (0..count)
         .map(|i| {
@@ -741,7 +679,6 @@ fn random_interval_rows(count: usize, tag_base: u64, state: &mut u64) -> Vec<(u6
         .collect()
 }
 
-/// The naive model: nested-loop classify-and-test over the raw rows.
 fn naive_allen_pairs(
     mask: AllenMask,
     a_rows: &[(u64, u64, u64)],
@@ -760,7 +697,6 @@ fn naive_allen_pairs(
         .collect()
 }
 
-/// The 13 singletons, the workload composites, and 32 random masks.
 fn mask_suite(state: &mut u64) -> Vec<AllenMask> {
     let mut masks: Vec<AllenMask> = bumbledb_theory::allen::Basic::ALL
         .iter()
@@ -777,12 +713,6 @@ fn mask_suite(state: &mut u64) -> Vec<AllenMask> {
     masks
 }
 
-/// The configuration kernel end-to-end against the naive model: on a
-/// randomized small corpus (rays included), each of the 13 singleton
-/// masks, `INTERSECTS`, `COVERS`, `DISJOINT`, and 32 random masks
-/// produce exactly the nested-loop classify-and-test pairs — the
-/// residual evaluates at the leaf through `run_node`'s
-/// configuration-kernel pass.
 #[test]
 fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
     let dir = TempDir::new("run-allen-naive");
@@ -808,10 +738,6 @@ fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
     }
 }
 
-// ---------- the overlap enumeration (finding 012, overlap_leaf.rs) ----------
-
-/// `relations` copies of R(id u64, key u64, during Interval<u64>) — the
-/// t2 shape (extra relations host the tally tests' outer probers).
 fn keyed_span_schema(relations: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..relations)
@@ -845,8 +771,6 @@ fn keyed_span_schema(relations: usize) -> Schema {
     .expect("valid fixture")
 }
 
-/// Commits `(id, key, [start, end))` rows per relation and builds the
-/// images.
 fn keyed_span_views(
     dir: &TempDir,
     schema: &Schema,
@@ -884,10 +808,6 @@ fn keyed_span_views(
         .collect()
 }
 
-/// The t2 query between two relations: `Rₒ(a, k, u), Rᵢ(b, k, v),
-/// a < b, Allen(u, v, mask)` per mask — the per-key pairwise join
-/// (multiple masks conjoin, the rig's answer-identical lanes; equal
-/// relation ids give the bench lane's self-join).
 fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> NormalizedQuery {
     let occurrences = vec![
         Occurrence {
@@ -945,15 +865,10 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
     }
 }
 
-/// The bench lane's self-join shape over R0.
 fn keyed_span_query(masks: &[AllenMask]) -> NormalizedQuery {
     keyed_span_query_between(masks, 0, 0)
 }
 
-/// Group sizes straddling the crossover (`OVERLAP_CROSSOVER` = 16):
-/// singletons and tiny groups keep the generic path, the 40/200 groups
-/// take the index. Random spans over a dense domain (adjacency and
-/// nesting constant), every 13th a ray.
 fn keyed_span_corpus(state: &mut u64) -> Vec<(u64, u64, u64, u64)> {
     let mut rows = Vec::new();
     let mut id = 0u64;
@@ -980,8 +895,6 @@ fn keyed_span_corpus(state: &mut u64) -> Vec<(u64, u64, u64, u64)> {
     rows
 }
 
-/// The naive t2 model: per key, nested-loop classify-and-test with the
-/// strict id order.
 fn naive_keyed_pairs(mask: AllenMask, rows: &[(u64, u64, u64, u64)]) -> BTreeSet<(u64, u64)> {
     rows.iter()
         .flat_map(|&(a_id, a_key, a_s, a_e)| {
@@ -995,7 +908,6 @@ fn naive_keyed_pairs(mask: AllenMask, rows: &[(u64, u64, u64, u64)]) -> BTreeSet
         .collect()
 }
 
-/// Per-node batched-entry tallies — the enumeration's observable.
 #[derive(Default)]
 struct BatchTally {
     per_node: Vec<u64>,
@@ -1034,14 +946,6 @@ fn run_tallied(
     (sink.rows, tally.per_node)
 }
 
-/// The t2-shaped correctness gate: across touching masks (the index
-/// path — pure-overlap, abutment-widened, and pure-abutment windows),
-/// an untouching composite (the generic path), both join orders (both
-/// residual orientations — the abutment widening is orientation-
-/// sensitive through the converse mask), and batch sizes 1/7/default,
-/// the per-key overlap self-join answers exactly the naive model —
-/// groups straddle the crossover so one run exercises index, fallback,
-/// and their seam.
 #[test]
 fn keyed_overlap_self_join_agrees_with_the_naive_model() {
     use bumbledb_theory::allen::Basic;
@@ -1054,10 +958,10 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
         AllenMask::INTERSECTS,
         AllenMask::new(Basic::During.bit()).expect("singleton"),
         AllenMask::OVERLAPS | AllenMask::DURING,
-        AllenMask::DURING | AllenMask::MEETS, // one abutment component: widened window
-        AllenMask::MEETS | AllenMask::MET_BY, // pure abutment, both boundaries
-        AllenMask::INTERSECTS | AllenMask::MEETS | AllenMask::MET_BY, // the full touching cover
-        AllenMask::BEFORE | AllenMask::DURING, // untouching: generic path
+        AllenMask::DURING | AllenMask::MEETS, 
+        AllenMask::MEETS | AllenMask::MET_BY, 
+        AllenMask::INTERSECTS | AllenMask::MEETS | AllenMask::MET_BY, 
+        AllenMask::BEFORE | AllenMask::DURING, 
     ];
     for mask in masks {
         let expected = naive_keyed_pairs(mask, &rows);
@@ -1080,28 +984,8 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
     }
 }
 
-/// A raw-word Allen window over (probe span, inner row) — the tally
-/// models' shared predicate shape.
 type SpanWindow<'a> = &'a dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool;
 
-/// The enumeration's teeth: under `INTERSECTS` the leaf batches exactly
-/// the true overlap candidates for crossover-sized groups (plus the
-/// full sub-crossover groups the fallback enumerates, plus one whole
-/// group for each group's first probe — the amortization gate builds
-/// on the second); the abutment composite `DURING ∪ MEETS` rides the
-/// same index under its ±1-widened window (the t3 mask — its tally is
-/// the widened-window candidate count, not the n²); the untouching
-/// `BEFORE ∪ DURING` composite must decline the index and enumerate
-/// every group whole; and a once-probed corpus never builds at all —
-/// the finding's exact regression case. Candidate counts are computed
-/// from the raw rows — the assertion fails both ways: an incomplete
-/// index loses answers in the model test above, a silent fall-through
-/// to all-pairs shows up here as the n² tally.
-///
-/// Image iteration is hash-ordered, so WHICH outer row probes a group
-/// first is not modelable — the outer relations make the expectation
-/// order-free instead: R0 carries two IDENTICAL prober rows per key
-/// (either may decline, the window is the same), R2 carries one.
 #[test]
 #[allow(clippy::too_many_lines)]
 fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
@@ -1110,9 +994,7 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     let mut state = 0x7A11_u64;
     let inner = keyed_span_corpus(&mut state);
     let keys: Vec<u64> = (0..7).collect();
-    // One deterministic probe span per key — distinct windows across
-    // keys, a ray on key 6 (the widening's saturation case, on the
-    // small indexed group so the pruning sanity below stays visible).
+
     let probe_span = |k: u64| -> (u64, u64) {
         if k == 6 {
             (250, u64::MAX)
@@ -1136,10 +1018,7 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
         .collect();
     let views = keyed_span_views(&dir, &schema, &[&twice, &inner, &once]);
     let group_size = |key: u64| inner.iter().filter(|r| r.1 == key).count() as u64;
-    // The expected leaf tally: per key, `probes` outer rows against
-    // the inner group — every probe of a sub-crossover group and each
-    // group's first probe enumerate the group whole; the rest
-    // enumerate the window's candidates.
+
     let tally_for = |probes: u64, window: SpanWindow<'_>| -> u64 {
         keys.iter()
             .map(|&k| {
@@ -1155,20 +1034,15 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
             })
             .sum()
     };
-    // Half-open shared point over raw words — the INTERSECTS window.
+
     let overlap_window = |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1 && b.3 > q.0;
-    // The DURING ∪ MEETS window under plan order [0, 1]: the leaf
-    // batch is the second occurrence (b), so the driver classifies
-    // (batch, constant) under the converse mask CONTAINS ∪ MET_BY —
-    // MET_BY (`b.start == q.end`) relaxes the start bound by one word.
+
     let widened_window =
         |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1.saturating_add(1) && b.3 > q.0;
     let overlaps = tally_for(2, &overlap_window);
     let widened = tally_for(2, &widened_window);
     let full: u64 = keys.iter().map(|&k| 2 * group_size(k)).sum();
-    // Pruning sanity over the part the index actually serves — the
-    // indexed groups' second probes (the first is the amortization
-    // gate's unavoidable generic pass).
+
     let indexed_part = |window: SpanWindow<'_>| -> (u64, u64) {
         keys.iter()
             .filter(|&&k| group_size(k) >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER)
@@ -1214,9 +1088,7 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
         let (_, tally) = run_tallied(&plan, &views, BATCH);
         assert_eq!(tally[leaf], expected, "{what}");
     }
-    // The regression the amortization gate closes: groups probed
-    // exactly once never pay the index — the tally is every group
-    // whole, exactly the generic cost, with no build anywhere.
+
     let query = keyed_span_query_between(&[AllenMask::INTERSECTS], 2, 1);
     let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
     let leaf = plan.nodes().len() - 1;
@@ -1228,12 +1100,6 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     );
 }
 
-/// Iter-phase windows at the leaf, balanced and counted — the overlap
-/// enumeration (driver resolution, index build, window query) runs
-/// INSIDE a phase window, so its cost lands in the leaf's Iter bucket
-/// instead of off the books (the finding: the accelerator was
-/// invisible to the entire phase table). Every leaf call records the
-/// enumerate window plus at least one drain window.
 struct PhasePairs {
     leaf: usize,
     iter_calls: usize,
@@ -1301,22 +1167,13 @@ fn the_overlap_enumeration_is_attributed_to_the_iter_phase() {
     );
 }
 
-/// The conjunction's teeth (the r2 multi-leg ring shape): two
-/// const-side touching residuals against the SAME leaf interval conjoin
-/// into one intersected window — the leaf tally is the conjoined
-/// window's candidate count per outer pair, strictly tighter than
-/// either residual's window alone, and the answers still match the
-/// naive two-residual classify. The control swaps one residual to an
-/// untouching mask: it stops qualifying, the other drives alone, and
-/// the tally relaxes to that single window.
 #[test]
 #[allow(clippy::too_many_lines)]
 fn const_side_touching_residuals_conjoin_into_one_window_query() {
     let dir = TempDir::new("run-overlap-conjoin");
     let schema = tagged_interval_schema(3);
     let mut state = 0x2026_0803_u64;
-    // Wide domain, short spans: selective windows so the conjunction's
-    // tightening is visible in the tally; C is crossover-sized.
+
     let spans = |count: usize, tag_base: u64, state: &mut u64| -> Vec<(u64, u64, u64)> {
         (0..count)
             .map(|i| {
@@ -1376,17 +1233,9 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
         anti_probes: vec![],
         slot_widths: slot_widths.clone(),
     };
-    // The engine's windows, mirrored per residual orientation: both
-    // residuals sit (Slot, Batch) at the leaf, so each drives under
-    // its converse mask. INTERSECTS is self-converse and unwidened;
-    // DURING ∪ MEETS converses to CONTAINS ∪ MET_BY, whose MET_BY
-    // component relaxes the end bound by one word.
+
     let count_in = |qs: u64, qe: u64| c_rows.iter().filter(|c| c.1 < qe && c.2 > qs).count() as u64;
-    // The group's FIRST probe runs generic (the amortization gate);
-    // every later parent queries its window. Image iteration is
-    // hash-ordered, so WHICH parent declines is not modelable — the
-    // expected tally is the full group plus every window but the
-    // declined parent's, one candidate value per possible first.
+
     let full_group = c_rows.len() as u64;
     let conjoined_windows: Vec<u64> = a_rows
         .iter()
@@ -1450,8 +1299,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
          (tally {}, candidates {conjoined:?})",
         tally[leaf]
     );
-    // The control: an untouching second mask stops qualifying — the
-    // INTERSECTS residual drives alone and the tally relaxes.
+
     let query = query_for(AllenMask::INTERSECTS, m2 | AllenMask::BEFORE);
     let plan = planned_with_sinks(&query, &schema, &[0, 1, 2], &all_vars(&query));
     let (_, tally) = run_tallied(&plan, &views, BATCH);
@@ -1463,10 +1311,10 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
     );
 }
 
-/// The pipelined twin: a third occurrence joined after the pair puts
-/// the Allen residual on a **middle** node, so it evaluates through
-/// `probe_pass`'s configuration-kernel pass (gather → codes → broadcast
-/// mask → compaction) — same answers as the naive model, mask by mask.
+/// The pipelined twin: a third occurrence joined after the pair puts the Allen
+/// residual on a **middle** node, so it evaluates through `probe_pass`'s
+/// configuration-kernel pass (gather → codes → broadcast mask → compaction) —
+/// same answers as the naive model, mask by mask.
 #[test]
 fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
     let dir = TempDir::new("run-allen-naive-pipe");
@@ -1521,8 +1369,7 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
             .iter()
             .map(|row| (row[plan.slot_of(VarId(0))], row[plan.slot_of(VarId(2))]))
             .collect();
-        // C is an unconstrained (nonempty) factor: projecting it away
-        // leaves exactly the naive pair set.
+
         assert_eq!(
             got,
             naive_allen_pairs(mask, &a_rows, &b_rows),
@@ -1532,12 +1379,6 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
     }
 }
 
-// ---------- the overlap measurement rig (manual, release) ----------
-
-/// Per-(node, phase) wall accumulation through the always-present
-/// `Counters` phase hooks — the rig behind `OVERLAP_CROSSOVER` and the
-/// finding-048 phase-fraction question. Batch-granular events, so the
-/// clock overhead stays a small, phase-uniform additive.
 #[derive(Default)]
 struct PhaseProfile {
     acc: [[u64; 7]; 8],
@@ -1585,9 +1426,6 @@ impl Counters for PhaseProfile {
     }
 }
 
-/// Uniform per-key groups: `keys × per_key` rows, spans of width 1..=15
-/// over the horizon (short spans over a long horizon — the t2 span
-/// geometry), every 13th a ray.
 fn uniform_keyed_corpus(
     keys: u64,
     per_key: u64,
@@ -1640,23 +1478,6 @@ fn timed_run(
     (samples[samples.len() / 2], answers)
 }
 
-/// The measurement rig (manual, quiet machine):
-/// `cargo test -p bumbledb --release --lib overlap_profile -- --ignored --nocapture`
-///
-/// Prints (1) the crossover sweep — index vs generic p50 per uniform
-/// group size — and (2) the t2-scale phase fractions of both shapes
-/// (the finding-048 question: how much of the leaf the Allen residual
-/// pass owns).
-///
-/// The lanes are ANSWER-IDENTICAL by construction (the abutment
-/// widening indexed the old `INTERSECTS ∪ MEETS` generic twin): both
-/// carry two Allen residuals conjoining to the same touching mask
-/// `INTERSECTS ∪ MEETS`, but the generic lane's residuals each add one
-/// untouching bit (`BEFORE` on one, `AFTER` on the other — their
-/// conjunction admits nothing extra), so neither qualifies as an index
-/// driver and the lane keeps the all-pairs classify. Same corpus, same
-/// answers, same two classify passes — the lanes differ ONLY in
-/// enumeration path.
 #[test]
 #[ignore = "manual profiling rig — run release with --nocapture"]
 #[expect(
@@ -1667,12 +1488,11 @@ fn overlap_profile() {
     let touching = AllenMask::INTERSECTS | AllenMask::MEETS;
     let index_masks = [touching, touching];
     let generic_masks = [touching | AllenMask::BEFORE, touching | AllenMask::AFTER];
-    // (1) crossover sweep: constant total rows, group size swept.
+
     for per_key in [4u64, 8, 16, 32, 64, 128] {
         let keys = 4096 / per_key;
         let mut state = 0x0C10_55E0_u64 ^ per_key;
-        // Horizon scaled to the group so per-query hits stay a small
-        // fraction (the t2 selectivity class).
+
         let rows = uniform_keyed_corpus(keys, per_key, per_key * 40, &mut state);
         let dir = TempDir::new(&format!("run-overlap-prof-{per_key}"));
         let schema = keyed_span_schema(1);
@@ -1690,7 +1510,7 @@ fn overlap_profile() {
             generic_p50.as_secs_f64() / index_p50.as_secs_f64(),
         );
     }
-    // (2) t2-scale phase fractions of both shapes.
+
     let mut state = 0x07E2_5CA1_u64;
     let rows = uniform_keyed_corpus(400, 75, 3000, &mut state);
     let dir = TempDir::new("run-overlap-prof-t2");
