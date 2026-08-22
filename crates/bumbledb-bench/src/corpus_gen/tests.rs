@@ -18,11 +18,7 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
         scale: Scale::S,
     });
     assert_ne!(a, other, "seeds diverge");
-    // The golden: changing the generator — or the storage format, now a
-    // live ingredient — re-baselines every corpus. Re-baselined by the
-    // format-8 cutover: STORAGE_FORMAT_VERSION bumped to 8 (pre-cutover
-    // stores refuse to open, so a cached corpus written under v7 must
-    // regenerate); the generator itself is unmoved.
+
     assert_eq!(
         digest_hex(&a),
         "666300aae0901a6829a5bd283aacc592a5b3995e114458ca13232ee3415bd54b",
@@ -44,8 +40,7 @@ fn hot_accounts_receive_their_share() {
         }
     }
     let share = hot_postings * 100 / sizes.postings;
-    // 50% routed + the uniform arm occasionally landing in the hot
-    // range too (hot/accounts is tiny at S) — bound generously.
+
     assert!((48..=53).contains(&share), "hot share {share}% (hot={hot})");
 }
 
@@ -94,7 +89,7 @@ fn containment_sources_resolve_by_construction() {
         assert!(*account < sizes.accounts);
         assert!(*instrument < sizes.instruments);
     }
-    // PostingTag targets even postings only, with distinct tag pairs.
+
     for pair in 0..64 {
         let a = row(&CFG, &sizes, ids::POSTING_TAG, pair * 2);
         let b = row(&CFG, &sizes, ids::POSTING_TAG, pair * 2 + 1);
@@ -105,7 +100,7 @@ fn containment_sources_resolve_by_construction() {
         };
         assert!(posting.is_multiple_of(2) && posting < sizes.postings);
     }
-    // OrgParent edges reference existing orgs, acyclically.
+
     for r in relation_rows(CFG, ids::ORG_PARENT) {
         let (Value::U64(child), Value::U64(parent)) = (&r[0], &r[1]) else {
             panic!("edge")
@@ -115,12 +110,6 @@ fn containment_sources_resolve_by_construction() {
     }
 }
 
-/// The corpus-validity criterion, structural half: every
-/// account's mandate history is sequential and non-overlapping under
-/// the pointwise key, and the three boundary shapes all exist —
-/// **abutting** (every account, segments 0→1), **gapped** (every
-/// account, segments 1→2), and the **ray end** (every even
-/// account).
 #[test]
 fn mandate_histories_carry_all_three_shapes_validly() {
     let sizes = Sizes::of(Scale::S);
@@ -151,8 +140,6 @@ fn mandate_histories_carry_all_three_shapes_validly() {
     assert_eq!(sentinel, sizes.accounts / 2, "even accounts stay active");
 }
 
-/// The mandate rows stream exactly the segment table (the row fn and
-/// the segment fn cannot drift apart).
 #[test]
 fn mandate_rows_stream_the_segment_table() {
     let sizes = Sizes::of(Scale::S);
