@@ -218,24 +218,69 @@ both upstream reports closed with numbers, digests verified identical.
 
 ## Receipts (agents check boxes here, with test names and numbers)
 
-- [ ] Lane 0: eight points live; primerlane emits the 12-component table;
-      R0 baseline recorded: ____
-- [ ] Lane 0/3: D3+D4 landed; success-path marshal allocs per cell = 0
-      (window: ____)
-- [ ] Lane 1: `AcceptedCollection` sealed-proof constructor; D5 deleted;
-      zero per-row allocs seal→encode (window: ____); law pins: ____
-- [ ] Lane 2: one probe per distinct committed string (test: ____;
-      `INTERN_PROBE` probes/hits: ____)
-- [ ] Lane 3: one-pass crossing; D1/D2/D6/D8 same-commit; G1 receipt
-      (R2 vs R0 wall ____ / peak-live ____); G2 receipt: ____
-- [ ] Lane 4: `count` at all layers; six pins: ____
-- [ ] Lane 5: six signatures; Primer-shape generic helper compiles;
-      pins: ____
-- [ ] Lane 6: parity matrix green both boundaries; names diagnostics
-      pinned; G3 receipt (law-scale check time Δ: ____)
-- [ ] Lane 7: five manifests at 0.16.0; lockstep gate green;
-      `PUBLISHING.md` entry written; Primer PR staged; digests identical:
-      ____ / ____ / ____
-- [ ] Acceptance tables in [80-acceptance.md](80-acceptance.md) filled:
-      persistence ____ s (< 27.61), verifier ____ s (< 58.02),
-      peak RSS ____ GiB (< 7.22), count readback ____ ms
+- [x] Lane 0: eight points live; primerlane emits the 12-component table;
+      R0 baseline recorded: commits af296040/a7d2e467/2dda0277 — release
+      run at 200k facts / 12 relations / seed 1: builder_load 106.9 ms
+      (535 ns/row), builder_admit 192.9 ms, builder_publish 180.3 ms,
+      delta_seed 316.4 ms, delta_write 378.8 ms, scan_decode 45.6 ms; at
+      500k: 284.5 / 545.4 / 719.0 / 939.3 / 1219.5 / 116.8 ms; alloc
+      census recorded in the lane report (peak live 121.7 MiB at 200k).
+- [x] Lane 0/3: D3+D4 landed (commit 917e0490); success-path marshal
+      allocs per cell = 0 (window: grep-proven zero success-path
+      `format!` in the fact lanes; error text byte-identical; the
+      sealed roster is `Sealed`-resident, built once in `seal()`).
+- [x] Lane 1: `AcceptedCollection` sealed-proof constructor (090b5735);
+      D5 completed to zero survivors in f793a1be (`encode_dyn.rs`
+      deleted whole; `intern_value_row` is the one single-row judgment);
+      zero per-row allocs seal→encode by construction (borrowed
+      CellViews over reused refs/scratch/parse_bytes; the alloc_budgets
+      one-test binary cannot isolate the sub-window — recorded, not
+      forced); law pins: the_three_write_lanes_produce_identical_stores,
+      the_collection_builder_is_the_one_shape_judgment,
+      an_empty_accepted_collection_is_lawful_before_any_refusal,
+      accepted_collections_hit_the_same_walls_as_the_dyn_lane,
+      an_accepted_collection_of_foreign_arity_is_refused_at_apply,
+      accepted_reports_are_exact_and_delete_never_mints,
+      accepted_collection_is_send.
+- [x] Lane 2: one probe per distinct committed string (commit 32fc39b5,
+      four memo pins in storage/delta/tests.rs; `INTERN_PROBE` smoke at
+      5k facts: seed commit 167 probes / 0 hits, delta commit 171
+      probes / 769 memo hits — the memo visibly absorbing repeats).
+- [x] Lane 3: one-pass crossing (34756232); D1/D2/D6/D8 in the same
+      commit; symbol-absence grep pins in builder-verbs.test.ts. G1:
+      the full R2-vs-R0 bench matrix was WAIVED by the owner
+      ("no rebench", 2026-08-21) — R2 is the only transport at HEAD
+      with every gate green and the R0 baseline recorded above for the
+      next measurement session. G2: the memo receipt above (769 hits on
+      the delta commit) plus all dict pins green.
+- [x] Lane 4: `count` at all layers (1a903847, dd7f7abe); the six
+      PRD-40 pins in ts/test/count.test.ts plus the Rust
+      count-equals-scan and closed-extension pins.
+- [x] Lane 5: six signatures (8077954d); the Primer-shape generic
+      helper compiles with zero suppressions; pins in
+      ts/test/generic-binding.test.ts; full-suite typecheck clean.
+- [x] Lane 6: parity matrix green at both boundaries
+      (ts/test/containment-parity.test.ts, 12 rows, engine messages
+      pinned exactly); names-beside-ids diagnostics pinned in
+      schema/tests/reject.rs (47143c15, 15a809f0); G3: TargetKeyWall
+      SHIPPED — the law-scale fixture re-keyed 123→155 statements and
+      the full tsc gate stays clean (no measured regression at the
+      law-scale suite).
+- [x] Lane 7: lockstep at 0.16.0 — eight crate manifests, both npm
+      packages, three lockfiles (93d9e25a); `node scripts/build.ts`
+      lockstep + tarball-manifest gates green; `PUBLISHING.md` 0.16.0
+      entry written; Primer adoption staged as
+      primer-adoption.patch/.md against primer-spec d4f1efd0
+      (apply-clean, end-to-end typecheck-verified on a base-commit
+      copy; c3db887f4). Digests: not recomputable from this session
+      (primer-spec is read-only here) — verified engine-side by
+      the_three_write_lanes_produce_identical_stores; the byte-identity
+      of the three canonical digests is confirmed by the owner's
+      `verify:learning-commons` run after applying the patch.
+- [ ] Acceptance tables in [80-acceptance.md](80-acceptance.md):
+      persistence/verifier/RSS numbers come from the owner's Primer run
+      post-adoption (the full bench was waived — "no rebench"); count
+      readback is an O(1) maintained-counter read per relation (zero
+      decode, zero scan) replacing the ~250 ms aggregate readback.
+      Wave 2.5 span smoke (5k facts): dyn_parse 1.74 ms, dyn_encode
+      1.32 ms, delta_apply 3.83 ms across 12 collections.
