@@ -650,7 +650,6 @@ fn a_var_binding_gate_refuses() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ITEM, &[(0, var(0))]),
-
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
         ],
         negated: vec![],
@@ -805,7 +804,6 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ITEM, &[(0, var(0)), (1, var(1))]),
-
             atom(KIND, &[(0, var(1)), (1, Term::Literal(Value::U64(20)))]),
             atom(KIND, &[(0, var(1)), (1, var(2))]),
         ],
