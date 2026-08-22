@@ -6,8 +6,7 @@ use bumbledb_theory::schema::{FieldId, Generation, RelationId};
 use super::{DeltaEffect, Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
-    /// Records an insert, netted against committed state
-    /// (docs/architecture/50-storage.md). See [`Self::apply`].
+
     #[cfg(test)]
     pub fn insert(
         &mut self,
@@ -18,23 +17,13 @@ impl WriteDelta<'_> {
         self.apply(view, rel, fact_bytes, Disposition::Insert)
     }
 
-    /// One net-disposition apply: insert and delete are `want`, not two
-    /// interpreters. Pending same → no-op; pending opposite → cancel;
-    /// absent + committed already matches `want` → no-op; otherwise record.
-    ///
     /// Fresh marks advance on insert before the no-op determination —
-    /// a no-op insert can never dirty a mark. The committed `Q` high-water
-    /// covers every committed fresh value because every path that commits
-    /// a fact ran this same advance (or `reserve`) at that fact's original
+
     /// commit — the write path and explicit resupply after a delete —
     /// and marks never retreat (`mark.max(value + 1)`; deletes do not
-    /// touch `Q`). A pure-no-op transaction never triggers the
-    /// counters-only commit (pinned by `commit/tests/commit.rs`,
-    /// `a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks`).
-    ///
+
     /// # Errors
-    ///
-    /// `Lmdb` on a failed membership probe.
+
     pub fn apply(
         &mut self,
         view: &ReadTxn<'_>,
@@ -76,8 +65,6 @@ impl WriteDelta<'_> {
         }
     }
 
-    /// Effective membership: the delta's disposition if present, else an `M`
-    /// probe against the read view (committed state).
     pub(super) fn present(
         &self,
         view: &ReadTxn<'_>,
@@ -90,8 +77,6 @@ impl WriteDelta<'_> {
         Ok(crate::storage::read::fact_row_by_hash(view, rel, hash)?.is_some())
     }
 
-    /// Advances fresh marks past any fresh-field values the fact carries
-    /// (the layout knows the offsets; fresh fields are always U64).
     fn advance_fresh_marks(
         &mut self,
         view: &ReadTxn<'_>,
@@ -106,8 +91,7 @@ impl WriteDelta<'_> {
             let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
             let value = decode_u64(field_word_bytes(relation.layout().encoded(fact_bytes), idx));
             let mark = self.fresh_mark(view, rel, field_id)?;
-            // `saturating_add`: an explicit u64::MAX is legal to insert; the
-            // sequence is then exhausted for the generator (`reserve` errors).
+
             mark.next = mark.next.max(value.saturating_add(1));
         }
         Ok(())
