@@ -10,8 +10,6 @@ fn scratch(tag: &str) -> PathBuf {
     dir
 }
 
-/// The tiny end-to-end pass: both write lanes and the scan read lane on
-/// 500 facts, the artifact parsed back and its phase roster pinned.
 #[test]
 fn tiny_run_emits_the_phase_table() {
     let dir = scratch("tiny");
@@ -63,8 +61,6 @@ fn tiny_run_emits_the_phase_table() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The generator is a pure function of the config: identical config ⇒
-/// identical rows, and the row counts respect the skew floor.
 #[test]
 fn corpus_is_deterministic_and_floored() {
     let cfg = PrimerConfig {
