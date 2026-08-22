@@ -136,7 +136,7 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn lower_atom(
     schema: &Schema,
     signatures: &[&crate::ir::validate::Signature],
@@ -177,7 +177,6 @@ fn lower_atom(
         match term {
             Term::Var(var) => {
                 if is_membership(field_type, witness.var_type(*var)) {
-
                     match vars.iter().find(|(_, v)| v == var) {
                         Some((point_field, _)) => filters.push(FilterPredicate::FieldsPointIn {
                             interval: (*field).into(),
@@ -186,7 +185,6 @@ fn lower_atom(
                         None => point_vars.push((*field, *var)),
                     }
                 } else {
-
                     let (first_field, _) = vars
                         .iter()
                         .find(|(_, v)| v == var)
@@ -216,13 +214,11 @@ fn lower_atom(
             }
             Term::ParamSet(param) => {
                 if field_type.is_interval() {
-
                     filters.push(FilterPredicate::AnyPointIn {
                         field: (*field).into(),
                         set: SetConst::ParamSet(*param),
                     });
                 } else {
-
                     filters.push(FilterPredicate::Compare {
                         field: (*field).into(),
                         op: WordCmp::Eq,
