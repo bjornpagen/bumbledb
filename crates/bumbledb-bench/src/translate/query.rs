@@ -5,30 +5,11 @@ use bumbledb::{FoldOp, InteriorId, ParamId, Query, Schema, Value, VarId};
 
 use super::{Builder, ParamSlot, Translated, VarCols, types};
 
-/// Translates one validated-shape query over the given schema. `sets`
-/// carries the bound element list of every set param: set params render
-/// as literal `IN` lists (empty ⇒ `1 = 0`), so set-bound queries are
-/// **re-rendered per execution** and prepared-statement parity is not
-/// claimed for them (`docs/architecture/60-validation.md`).
-///
-/// **Rules → `UNION`** (the systematized form): a multi-rule projection
-/// emits one `SELECT DISTINCT` per rule joined by `UNION` — `SQLite`'s
-/// `UNION` is exactly ∪ under `DISTINCT` discipline. A multi-rule
-/// aggregate head folds over the union of the rules' head-projected
-/// `SELECT DISTINCT` rows (the union-fold, mirroring the rules-IR
-/// definition); the single-rule fold domain stays the rule's distinct
-/// **full** binding set, unchanged. Params are query-global: every rule
-/// shares one positional `?N` space.
-///
 /// # Errors
-///
-/// A message naming the untranslatable construct. Total over the query
-/// grammar with two documented exceptions: a rule whose every atom is a
-/// gate (no bound columns exist to select from) — the query generator
-/// never produces one — and a `Pack` head, which is naive-only by
-/// decision ([`super::sqlite_expressible`] routes it before
-/// translation). Dependency judgments are the enumerated inexpressible
-/// set; no other *query* construct is inexpressible.
+/// Total over the query grammar with two documented exceptions: a rule whose
+/// every atom is a gate (no bound columns exist to select from) — the query
+/// generator never produces one — and a `Pack` head, which is naive-only by
+/// decision ([`super::sqlite_expressible`] routes it before translation).
 pub fn translate(
     query: &Query,
     schema: &Schema,
@@ -37,7 +18,6 @@ pub fn translate(
     super::derived::translate_query(query, schema, sets)
 }
 
-/// Translate a rule-list (plain query or WITH-main) into SQL.
 pub(super) fn translate_rules(
     rules: &[Rule],
     schema: &Schema,
@@ -70,8 +50,6 @@ pub(super) fn translate_rules(
     }
 }
 
-/// Whether the query under translation is CQ or Reach. Names the rec
-/// CTE when Reach; CQ has no rec slot.
 #[derive(Clone, Copy, Default)]
 pub(super) enum QueryShape {
     #[default]
@@ -81,10 +59,6 @@ pub(super) enum QueryShape {
     },
 }
 
-/// The query-global positional param space, threaded through the
-/// per-rule builders (a param repeated across rules keeps one `?N`).
-/// Interiors and rec share it too: every CTE arm draws from one `?N`
-/// space (`super::reach`).
 #[derive(Default)]
 pub(super) struct SharedParams {
     index: BTreeMap<ParamSlot, usize>,
@@ -92,9 +66,6 @@ pub(super) struct SharedParams {
     pub(super) shape: QueryShape,
 }
 
-/// Builds one rule's core (FROM entries, WHERE conjuncts, variable
-/// columns) — the conjunctive walk every template selects from, the
-/// reach lane's per-arm core included.
 pub(super) fn rule_core<'q>(
     rule: &'q Rule,
     schema: &'q Schema,
@@ -120,7 +91,7 @@ pub(super) fn rule_core<'q>(
     for comparison in rule.conditions.iter().map(super::leaf) {
         b.comparison(comparison)?;
     }
-    // Negation last: the NOT EXISTS subqueries append to the core's WHERE.
+
     for (index, atom) in rule.negated.iter().enumerate() {
         b.negated_atom(index, atom)?;
     }
@@ -132,9 +103,6 @@ pub(super) fn rule_core<'q>(
     Ok(b)
 }
 
-/// The FROM/WHERE tail of one rendered rule core — the reach lane's
-/// per-arm body (`super::reach` renders its own column list; the
-/// body is the shared conjunctive walk).
 pub(super) fn arm_body(b: &Builder) -> String {
     let (from, where_clause) = from_where(b);
     format!(" FROM {from}{where_clause}")
@@ -150,8 +118,6 @@ fn from_where(b: &Builder) -> (String, String) {
     (from, where_clause)
 }
 
-/// The single-rule templates — the conjunctive query's two forms
-/// (projection, fold).
 fn single_rule_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     if rule.finds.iter().any(|f| {
         matches!(
@@ -166,8 +132,6 @@ fn single_rule_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     }
 }
 
-/// One rule's `SELECT DISTINCT` over its find columns — the projection
-/// template, and the multi-rule union's per-rule arm.
 fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
     let (from, where_clause) = from_where(b);
     let mut cols: Vec<String> = Vec::new();
@@ -175,8 +139,7 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
         match find {
             FindTerm::Var(var) => match b.columns.get(var) {
                 Some(VarCols::Scalar(column)) => cols.push(column.clone()),
-                // An interval find projects both halves; the decode
-                // path reassembles the value (`crate::sqlmap`).
+
                 Some(VarCols::Interval { start, end }) => {
                     cols.push(start.clone());
                     cols.push(end.clone());
@@ -194,13 +157,6 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
     ))
 }
 
-/// One rule's head-projected `SELECT DISTINCT` — the multi-rule
-/// union-fold's per-rule arm, columns aliased positionally (`hN`;
-/// interval positions `hN_start`/`hN_end`): a variable position projects
-/// its value, a measure position projects the measure, an aggregate
-/// position projects its fold input (the nullary `Count` a constant
-/// filler — positions stay stable), exactly the naive model's
-/// union-fold domain rows.
 fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     let (from, where_clause) = from_where(b);
     let mut cols: Vec<String> = Vec::new();
@@ -225,10 +181,6 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
     ))
 }
 
-/// The multi-rule union fold: the aggregate applied over the `UNION` of
-/// the rules' head-projected distinct rows, grouped by the variable and
-/// measure positions — the SQL form of the naive model's union fold
-/// (per-rule dedup at head granularity, one set union, then the fold).
 fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String> {
     let union = arms.join(" UNION ");
     let mut group: Vec<String> = Vec::new();
@@ -236,12 +188,9 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
     for (position, find) in finds.iter().enumerate() {
         match find {
             FindTerm::Var(_) => {
-                // Interval group positions carry two columns; the pinned
-                // head answer names which (validation aligns rules).
+
                 let names = if matches!(find, FindTerm::Var(_)) {
-                    // The arm aliased scalar vars `hN` and interval vars
-                    // `hN_start`/`hN_end`; group by whichever exists —
-                    // rendered from the first arm's alias shape.
+
                     head_group_names(arms, position)
                 } else {
                     vec![format!("h{position}")]
@@ -256,16 +205,14 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
                 FoldOp::Max => format!("MAX(h{position})"),
             }),
             FindTerm::Pack { .. } => {
-                // The expressibility gate (`super::sqlite_expressible`)
+
                 // routes Pack heads to the naive lane before translation.
                 return Err("Pack is naive-only (no SQL coalesce)".to_owned());
             }
         }
     }
     let tail = if group.is_empty() {
-        // Global aggregate: SQL yields one NULL row over empty input; the
-        // engine yields the empty set. HAVING collapses them — the
-        // documented translation rule, not a comparison patch.
+
         " HAVING COUNT(*) > 0".to_owned()
     } else {
         format!(" GROUP BY {}", group.join(", "))
@@ -273,9 +220,6 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
     Ok(format!("SELECT {} FROM ({union}){tail}", outer.join(", ")))
 }
 
-/// A group position's alias name(s), read off the first arm's rendering
-/// (scalar `hN` vs the interval halves) — rules align positionally by
-/// validation, so every arm shares the shape.
 fn head_group_names(arms: &[String], position: usize) -> Vec<String> {
     if arms
         .first()
@@ -287,8 +231,6 @@ fn head_group_names(arms: &[String], position: usize) -> Vec<String> {
     }
 }
 
-/// The distinct-subquery column list — every bound variable, interval
-/// variables as their two halves (`vN_start`, `vN_end`).
 fn inner_columns(b: &Builder) -> Vec<String> {
     let mut cols = Vec::new();
     for (var, columns) in &b.columns {
@@ -303,8 +245,6 @@ fn inner_columns(b: &Builder) -> Vec<String> {
     cols
 }
 
-/// A variable's column name(s) inside the distinct subquery, prefixed
-/// (`""` inside it, `"d."` from the join-back outer).
 fn var_names(b: &Builder, var: VarId, prefix: &str) -> Result<Vec<String>, String> {
     match b.columns.get(&var) {
         Some(VarCols::Scalar(_)) => Ok(vec![format!("{prefix}v{}", var.0)]),
@@ -316,10 +256,6 @@ fn var_names(b: &Builder, var: VarId, prefix: &str) -> Result<Vec<String>, Strin
     }
 }
 
-/// The normative single-rule fold template: the aggregate applied over
-/// the `SELECT DISTINCT <all bound variables>` subquery, grouped by the
-/// non-aggregated finds — never a bare GROUP BY over the joined bag
-/// (which folds witness multiplicity).
 fn fold_sql(
     finds: &[FindTerm],
     b: &Builder,
@@ -354,9 +290,7 @@ fn fold_sql(
         }
     }
     let tail = if group.is_empty() {
-        // Global aggregate: SQL yields one NULL row over empty input; the
-        // engine yields the empty set. HAVING collapses them — the
-        // documented translation rule, not a comparison patch.
+
         " HAVING COUNT(*) > 0".to_owned()
     } else {
         format!(" GROUP BY {}", group.join(", "))
