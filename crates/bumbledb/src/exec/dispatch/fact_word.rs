@@ -7,10 +7,7 @@ pub(crate) enum FactOperand {
     Word(u64),
     Pair(u64, u64),
 
-    Block {
-        words: [u64; 8],
-        count: u8,
-    },
+    Block { words: [u64; 8], count: u8 },
 }
 
 /// # Errors
