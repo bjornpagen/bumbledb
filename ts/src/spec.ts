@@ -1,28 +1,3 @@
-/**
- * The lowered wire shapes — a 1:1 TypeScript mirror of bumbledb's
- * `SchemaSpec` bindings contract (PRD-01;
- * `bumbledb/crates/bumbledb/src/schema/spec.rs`): a schema as named plain
- * data, relations and dependency statements each in declaration order (the
- * declaration-order law that mints every id). The SDK's `lower()` emits
- * these values; the napi bridge (PRD-04) marshals them into the Rust
- * `SchemaSpec` verbatim, and the engine's own judge (`SchemaSpec::descriptor`
- * name resolution + `SchemaDescriptor::validate` at `Db.create`/`Db.open`)
- * stays the single semantic authority — the SDK lowers, it never re-judges.
- *
- * Every u64 crosses as `bigint`, never `number` (PRD-04's marshaling law: no
- * 53-bit hazards, no branch). Object keys are always written in one fixed
- * literal order per shape, so serialization of a lowered schema is
- * deterministic (byte-stable) by construction.
- */
-
-/**
- * A structural value type — the one type vocabulary of the `schema!` field
- * grammar (`ValueType` in Rust): `bool`, `u64`, `i64`, `str` (`string`
- * here), `bytes<N>` (`fixedBytes`), and the interval family (`width:
- * undefined` is the general 16-byte encoding with rays representable;
- * `width: w` is the fixed-width `interval<E, w>` whose encoding stores only
- * the start).
- */
 type ValueTypeSpec =
 	| { readonly kind: "bool" }
 	| { readonly kind: "u64" }
@@ -35,12 +10,6 @@ type ValueTypeSpec =
 			readonly width: bigint | undefined
 	  }
 
-/**
- * One plain engine value as carried by a lowered literal — the mirror of
- * `bumbledb::Value` restricted to the schema-literal vocabulary (Allen masks
- * are query-side values, never schema literals). Intervals are half-open
- * `[start, end)`.
- */
 type ValueSpec =
 	| { readonly kind: "bool"; readonly value: boolean }
 	| { readonly kind: "u64"; readonly value: bigint }
@@ -50,84 +19,35 @@ type ValueSpec =
 	| { readonly kind: "intervalU64"; readonly start: bigint; readonly end: bigint }
 	| { readonly kind: "intervalI64"; readonly start: bigint; readonly end: bigint }
 
-/**
- * One literal as spelled: a plain value, or a closed relation's handle by
- * name (the `| status == Frozen` spelling) — resolved by the engine through
- * the selected field's newtype to the handle's declaration-order row id,
- * exactly as the macro resolves it at expansion.
- */
 type LiteralSpec =
 	| { readonly kind: "value"; readonly value: ValueSpec }
 	| { readonly kind: "handle"; readonly handle: string }
 
-/**
- * One σ binding's right side: a single literal or a literal set (read
- * disjunctively). The SDK's selection resolver refuses the degenerate sets
- * (a membership array needs two members — the empty set selects nothing,
- * the one-element set is the bare literal respelled), so a lowered `many`
- * always carries ≥ 2 literals.
- */
 type LiteralSetSpec =
 	| { readonly kind: "one"; readonly literal: LiteralSpec }
 	| { readonly kind: "many"; readonly literals: readonly LiteralSpec[] }
 
-/**
- * One side of a containment or capacity statement:
- * `R(fields… | field == literal…)`, all names. `projection` is π in the
- * statement's written order (positional pairing with the other side);
- * `selection` is σ as (field, literal-or-set) pairs, read conjunctively.
- */
 interface SideSpec {
 	readonly relation: string
 	readonly projection: readonly string[]
 	readonly selection: ReadonlyArray<readonly [string, LiteralSetSpec]>
 }
 
-/**
- * One capacity bound: a non-negative literal, a u64 field of the TARGET
- * row (the dependent bound — per-group capacity read at judge time), or
- * the interval-measure of a TARGET-row field (`Duration(span)`). Names,
- * not ids — the spec is the name-level wire; the engine resolves bound
- * names against the target's FULL roster (C1), never the projection.
- */
 type CapacityBoundSpec =
 	| { readonly kind: "lit"; readonly value: bigint }
 	| { readonly kind: "field"; readonly field: string }
 	| { readonly kind: "durationField"; readonly field: string }
 
-/**
- * A capacity statement's weight — a TOTAL sum (C4: `unit` is a case, not
- * an absence): the count instance (`unit`), a u64 field of the SOURCE row
- * (`field`), or a SOURCE-row interval's measure (`durationField`). The
- * wire always carries it — a unit statement crosses as `{ kind: "unit" }`,
- * never by omission.
- */
 type WeightSpec =
 	| { readonly kind: "unit" }
 	| { readonly kind: "field"; readonly field: string }
 	| { readonly kind: "durationField"; readonly field: string }
 
-/**
- * A capacity statement's window — the canonical-utterance law's surviving
- * spellings, per-aggregate where weight-sensitive (design § 6), since the
- * SDK's `within()` mint makes every banned spelling unwritable or a
- * construction error: `exact` is `{n}` (`{0}` the exclusion on the unit
- * instance, "total is zero" on a weighted one), `range` is `{lo..hi}` with
- * lo < hi (`{0..hi}` the canonical ceiling; the hi slot admits a dependent
- * bound — C6: hi only), `floor` is `{lo..*}` (`{1..*}` legal on weighted
- * statements only).
- */
 type CapacityWindowSpec =
 	| { readonly kind: "exact"; readonly n: CapacityBoundSpec }
 	| { readonly kind: "range"; readonly lo: CapacityBoundSpec; readonly hi: CapacityBoundSpec }
 	| { readonly kind: "floor"; readonly lo: CapacityBoundSpec }
 
-/**
- * One field: name, structural type, host newtype name — the field's
- * DOMAIN (the macro's declared `as NewType`; the SDK's law-computed class
- * name), carried for handle resolution only, dropped by the engine at
- * descriptor lowering and never fingerprinted — and the `fresh` mint mark.
- */
 interface FieldSpec {
 	readonly name: string
 	readonly valueType: ValueTypeSpec
@@ -135,10 +55,6 @@ interface FieldSpec {
 	readonly fresh: boolean
 }
 
-/**
- * One ground axiom of a closed relation: the handle plus one literal per
- * declared intrinsic column, in field-declaration order (row id = index).
- */
 interface RowSpec {
 	readonly handle: string
 	readonly values: readonly LiteralSpec[]
@@ -159,27 +75,12 @@ interface ClosedSpec {
 	readonly rows: readonly RowSpec[]
 }
 
-/**
- * One relation. A present `closed` declares it closed (the option is the
- * kind, one sum — R7); a closed relation's `fields` are its declared
- * intrinsic columns only — the synthetic (`id`, u64) handle field is
- * materialized by the engine's schema validation.
- */
 interface RelationSpec {
 	readonly name: string
 	readonly fields: readonly FieldSpec[]
 	readonly closed: ClosedSpec | undefined
 }
 
-/**
- * One dependency statement, tagged by form. `==` is not a variant: a
- * bidirectional containment is `containment` with `bidirectional: true`,
- * lowered by the engine to the two adjacent containments (`source <=
- * target` first). `capacity` reads as the operator does (C2 — target,
- * weight, window, source): the target is the per-group parent, the source
- * is the weighed side, and the weight is ALWAYS present (`unit` the count
- * instance).
- */
 type StatementSpec =
 	| { readonly kind: "fd"; readonly relation: string; readonly projection: readonly string[] }
 	| {
@@ -196,38 +97,15 @@ type StatementSpec =
 			readonly source: SideSpec
 	  }
 
-/**
- * The whole theory as named plain data — what `lower()` produces and what
- * the bridge's `dbCreate`/`dbOpen` take. Both lists are in declaration
- * order. Only DECLARED statements appear: the engine materializes the
- * fresh-implied and closed auto-keys itself
- * (`SchemaDescriptor::materialized_statements` — fresh keys first, closed
- * auto-keys second, declared statements last), so re-stating them here
- * would double them and change the fingerprint.
- */
 interface SchemaSpec {
 	readonly relations: readonly RelationSpec[]
 	readonly statements: readonly StatementSpec[]
 }
 
-/**
- * The characters Rust's `char::escape_debug` (the engine renderer's string
- * formatter, `schema/render.rs` `literal`) escapes as `\u{…}`: everything
- * non-printable per rustc's generated tables — the C categories (Cc, Cf,
- * Cs, Co, Cn) and the Z separators (Zs, Zl, Zp) except U+0020 itself
- * (`library/core/src/unicode/printable.py`).
- */
 const NON_PRINTABLE = /[\p{C}\p{Z}]/u
 
-/** Grapheme-extending characters, which `char::escape_debug` always escapes even when printable. */
 const GRAPHEME_EXTEND = /\p{Grapheme_Extend}/u
 
-/**
- * One char exactly as Rust's `char::escape_debug` spells it (the engine
- * renders strings char by char through it): `\0`, `\t`, `\r`, `\n`,
- * backslash-escaped `\\`/`\'`/`\"`, `\u{hex}` (lowercase, unpadded) for
- * grapheme-extending and non-printable chars, the char itself otherwise.
- */
 function escapeDebugChar(ch: string): string {
 	if (ch === "\0") {
 		return "\\0"
@@ -254,12 +132,6 @@ function escapeDebugChar(ch: string): string {
 	return ch
 }
 
-/**
- * One byte exactly as Rust's `u8::escape_ascii` spells it (the engine
- * renders `bytes<N>` literals byte by byte through it): `\t`, `\r`, `\n`,
- * `\\`, `\'`, `\"` as two-char escapes, printable ASCII (0x20–0x7e)
- * verbatim, everything else `\xNN` lowercase.
- */
 function escapeAsciiByte(byte: number): string {
 	if (byte === 0x09) {
 		return "\\t"
@@ -285,16 +157,6 @@ function escapeAsciiByte(byte: number): string {
 	return `\\x${byte.toString(16).padStart(2, "0")}`
 }
 
-/**
- * Renders one lowered literal in the exact macro spelling the engine's own
- * renderer uses (`schema/render.rs` `literal`): handles bare by name,
- * integers as digits, `true`/`false`, intervals as `start..end`, strings
- * char-escaped through the `char::escape_debug` mirror, bytes as `b"…"`
- * byte-escaped through the `u8::escape_ascii` mirror — byte-for-byte the
- * engine's violation canonicals, so TS-side construction errors and
- * engine-side violations read identically and `renderStatement` equals the
- * violation's `canonical`.
- */
 function renderLiteral(literal: LiteralSpec): string {
 	if (literal.kind === "handle") {
 		return literal.handle
@@ -326,10 +188,6 @@ function renderLiteral(literal: LiteralSpec): string {
 	}
 }
 
-/**
- * Renders one σ binding's right side: a bare literal, or a disjunctive
- * literal set in braces (`{A, B}`).
- */
 function renderLiteralSet(set: LiteralSetSpec): string {
 	if (set.kind === "one") {
 		return renderLiteral(set.literal)
@@ -337,11 +195,6 @@ function renderLiteralSet(set: LiteralSetSpec): string {
 	return `{${set.literals.map(renderLiteral).join(", ")}}`
 }
 
-/**
- * Renders one capacity bound in its one canonical spelling: a literal as
- * digits, a dependent bound bare by field name, an interval-measure bound
- * as `Duration(field)` — the spellings the engine's renderer emits.
- */
 function renderCapacityBound(bound: CapacityBoundSpec): string {
 	switch (bound.kind) {
 		case "lit":
@@ -353,12 +206,6 @@ function renderCapacityBound(bound: CapacityBoundSpec): string {
 	}
 }
 
-/**
- * Renders a capacity window in its one canonical spelling: `{n}` exact
- * (`{0}` the exclusion), `{lo..hi}`, `{lo..*}` — the spelling set the
- * engine's renderer emits for sealed statements, bounds through
- * {@link renderCapacityBound}.
- */
 function renderCapacityWindow(window: CapacityWindowSpec): string {
 	switch (window.kind) {
 		case "exact":
@@ -370,12 +217,6 @@ function renderCapacityWindow(window: CapacityWindowSpec): string {
 	}
 }
 
-/**
- * Renders a capacity weight as the operator's bracket: the unit weight
- * renders NOTHING — the count utterance `<={lo..hi}` falls out of the one
- * printer, never a second "legacy" arm — a field weight as `[field]`, an
- * interval measure as `[Duration(field)]`.
- */
 function renderWeight(weight: WeightSpec): string {
 	switch (weight.kind) {
 		case "unit":
