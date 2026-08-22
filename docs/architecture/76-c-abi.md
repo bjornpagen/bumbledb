@@ -54,7 +54,7 @@ borrow the named carrier and die with it.
 The header is generated: pinned cbindgen 0.29.4, committed at
 `crates/bumbledb-c/include/bumbledb_c.h`. `bdb_version()` is the crate version
 string (program lifetime, NUL-terminated) — the product identity, lockstep
-with the engine and the TypeScript SDK at **0.15.0**. `bdb_abi_version()` is
+with the engine and the TypeScript SDK at **0.16.0**. `bdb_abi_version()` is
 `3` — layout generation, not the release spelling: admitted instances,
 synchronous read callbacks, tagged admissions, and the retirement of
 snapshot-named functions. Revised in place under the pre-publish rule
@@ -63,7 +63,7 @@ layout-visible change.
 
 ```text
 bdb_abi_version() == 3           layout generation (not the release spelling)
-bdb_version()                    "bumbledb-c 0.15.0"
+bdb_version()                    "bumbledb-c 0.16.0"
 
 bdb_tx_reserve(tx, rel, field, count, &range, &err)
   empty wire: tag `BDB_FRESH_RANGE_TAG_EMPTY` — `{0, 0}` is unspellable as empty

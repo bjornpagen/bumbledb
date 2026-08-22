@@ -843,6 +843,12 @@ generated fact structs — drives the FULL write-and-read surface through ids an
   order)`; closed relations answer from their sealed extensions (virtual
   storage), and an out-of-roster handle word is an honest miss, not an error.
 - **Scans:** `instance.scan(relation)` (dynamic export, § ETL).
+- **Exact cardinality:** `ReadInstance::count(relation)` /
+  `OwnedInstance::count(relation)` (by `RelationId`) — the maintained
+  per-relation counter (`StatKind::RowCount`, folded transactionally at
+  every commit, pinned equal to the scan count), read O(1) at the lease's
+  snapshot: the ONE cardinality spelling, never a scan, never an
+  aggregate query.
 - **Queries:** prepared queries already take parameter values as plain data at
   execute time (`BindValue` scalars / `ParamArg` sets of `ir::Value`) and
   answers come back as owned decoded rows (`Answers`, one-copy) — confirmed
