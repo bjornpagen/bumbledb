@@ -1,5 +1,4 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
-
 use super::{FactLayout, I64_SIGN_BIT, ValueRef, ValueType};
 use bumbledb_theory::{Interval, Value};
 
