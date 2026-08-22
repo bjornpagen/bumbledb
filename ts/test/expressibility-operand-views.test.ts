@@ -1,47 +1,3 @@
-/**
- * The expressibility experiment for the primer's prompt-operand view — the
- * consumer materializes it today with SIX `snap.scan()`→Map host-side
- * indexes and hand stitching. The toy theory below mirrors that shape
- * exactly: Grp→Prog; Member(program, capsule, pos, kind) under a closed
- * three-variant discriminator; per Taught member a "capability contract"
- * stitched from FOUR sidecar relations keyed by capsule (Teaches,
- * TransferRange, ExitCondition, NonExampleBoundary) with Capability joined
- * TWICE (taught text + near-miss text). Sidecars are 0..1 per capsule
- * (keys), REQUIRED exactly when kind == Taught (ψ-selected containments).
- * Four questions, each answered by a running pin:
- *
- * - Q1 MULTI-WAY: the single conjunctive 8-way rule (capability twice),
- *   parameterized by a bound program id, prepares, plans, and answers
- *   correctly at a few hundred rows. The planning cliff sits at `plan::planner::MAX_OCCURRENCES` = 20 — the
- *   21-atom rule refuses TYPED at prepare, so 8 atoms is deep headroom.
- * - Q2 OPTIONAL SIDECARS: conjunctive rules drop non-matching rows, so
- *   the non-Taught arm cannot ride the Taught join. The SANCTIONED idiom
- *   is one prepared query per kind-arm, host-concatenated (shaping at the
- *   host is legal — the JOINS die): the non-Taught arm binds `kind` and
- *   restricts with `ne(kind, "Taught")` (disequality is closed-legal;
- *   only ORDER comparisons refuse closed terms), and the explicit
- *   complement spellings (membership array / per-variant rule union)
- *   answer identically. Candidate B — one multi-rule program whose
- *   non-Taught rule emits a head WITHOUT the contract columns — is
- *   refused at construction: every rule of a query derives the same head.
- *   No nulls exist; absence is unrepresentable in a row, so the union
- *   sink cannot carry a half-contract row. The refusal is the proof.
- * - Q3 TOTALITY AS LAW: the primer's host-side throw ("a Taught capsule
- *   lacks its contract") is spellable as schema law TODAY —
- *   `contained(on(Member.where({ kind: "Taught" }), "capsule"),
- *   on(TransferRange, "capsule"))`, one statement per sidecar. A commit
- *   inserting a Taught member whose capsule lacks a sidecar REFUSES with
- *   the containment violation (statement identity `===`-matchable);
- *   deleting a sidecar out from under a surviving Taught member refuses
- *   (targetRequired); the compliant same-commit stitch and the non-Taught
- *   bare-capsule member both land. No wall: `.where` selections on
- *   containment SOURCE faces are ordinary surface.
- * - Q4 ORDERING: answers are sets — the engine never orders; the host
- *   sorts returned rows locally (`byPos` on `pos`, keys as data), stable
- *   and deterministic across runs under the
- *   `key(Member, ["program", "pos"])` uniqueness law.
- */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -69,7 +25,6 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-/** Unwraps a value the surrounding test just proved present. */
 function must<T>(value: T | undefined): T {
 	assert.ok(value !== undefined, "expected a present value")
 	return value
@@ -86,12 +41,6 @@ const TransferRange = relation("TransferRange", { capsule: u64, floor: str, ceil
 const ExitCondition = relation("ExitCondition", { capsule: u64, condition: str })
 const NonExampleBoundary = relation("NonExampleBoundary", { capsule: u64, nearMiss: u64 })
 
-/**
- * Q3's laws, held as VALUES: kind-conditional inclusion — a Taught
- * member's capsule HAS each sidecar fact, judged at commit. The ψ
- * selection sits on the SOURCE face; the targets resolve through the
- * sidecars' own `["capsule"]` keys (exact projected field set).
- */
 const taughtHasTeaches = contained(on(Member.where({ kind: "Taught" }), "capsule"), on(Teaches, "capsule"))
 const taughtHasTransferRange = contained(on(Member.where({ kind: "Taught" }), "capsule"), on(TransferRange, "capsule"))
 const taughtHasExitCondition = contained(on(Member.where({ kind: "Taught" }), "capsule"), on(ExitCondition, "capsule"))
@@ -108,9 +57,9 @@ const OperandViews = schema(
 		contained(on(Member, "program"), on(Prog, "id")),
 		contained(on(Member, "capsule"), on(Capsule, "id")),
 		contained(on(Member, "kind"), on(Kind, "id")),
-		// pos is unique per program — Q4's determinism is this law's:
+
 		key(Member, ["program", "pos"]),
-		// each sidecar 0..1 per capsule, and only for a real capsule:
+
 		key(Teaches, ["capsule"]),
 		contained(on(Teaches, "capsule"), on(Capsule, "id")),
 		contained(on(Teaches, "capability"), on(Capability, "id")),
@@ -121,7 +70,7 @@ const OperandViews = schema(
 		key(NonExampleBoundary, ["capsule"]),
 		contained(on(NonExampleBoundary, "capsule"), on(Capsule, "id")),
 		contained(on(NonExampleBoundary, "nearMiss"), on(Capability, "id")),
-		// totality, kind-scoped (Q3): Taught ⇒ the whole contract exists
+
 		taughtHasTeaches,
 		taughtHasTransferRange,
 		taughtHasExitCondition,
@@ -129,12 +78,6 @@ const OperandViews = schema(
 	]
 )
 
-/**
- * Q1: the Taught arm — ONE conjunctive rule, 8 EDB atoms (Capability
- * twice), parameterized by the bound program id. This rule is the whole
- * six-scan stitch: member ⋈ capsule ⋈ teaches ⋈ capability ⋈
- * transferRange ⋈ exitCondition ⋈ nonExampleBoundary ⋈ capability-again.
- */
 const taughtContract = query(OperandViews).rule(function taughtArm(r) {
 	const { id: m, capsule: c, pos } = v(Member)
 	const { title } = v(Capsule)
@@ -156,11 +99,6 @@ const taughtContract = query(OperandViews).rule(function taughtArm(r) {
 		.find({ m, c, pos, title, taught, taughtText, floor, ceiling, condition, nearMiss, nearMissText })
 })
 
-/**
- * Q2 candidate A, the other arm: plain member rows, kind ≠ Taught. The
- * disequality binds `kind` for the output AND restricts — closed refs are
- * identity-only (Eq/Ne, membership); `ne` is the legal spelling.
- */
 const restMembers = query(OperandViews).rule(function restArm(r) {
 	const { id: m, capsule: c, pos, kind } = v(Member)
 	return r
@@ -169,7 +107,6 @@ const restMembers = query(OperandViews).rule(function restArm(r) {
 		.find({ m, c, pos, kind })
 })
 
-/** The explicit-complement spelling: a membership ARRAY names the non-Taught variants (closed-only; loses the kind binding). */
 const restExplicit = query(OperandViews).rule(function restByArray(r) {
 	const { id: m, capsule: c, pos } = v(Member)
 	return r
@@ -177,7 +114,6 @@ const restExplicit = query(OperandViews).rule(function restByArray(r) {
 		.find({ m, c, pos })
 })
 
-/** The rule-union spelling: one rule per non-Taught variant, same head (R2 set union; disjoint kind literals). */
 const restUnion = query(OperandViews)
 	.rule(function reviewedArm(r) {
 		const { id: m, capsule: c, pos } = v(Member)
@@ -196,7 +132,6 @@ const CAPABILITIES = 40
 const CAPSULES = 60
 const MEMBERS_PER_PROGRAM = 150
 
-/** The seed's kind pattern: i ≡ 0 (mod 3) is Taught — 50 Taught per program. */
 function kindOf(i: number): "Taught" | "Reviewed" | "Enrichment" {
 	if (i % 3 === 0) {
 		return "Taught"
@@ -208,7 +143,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 	let db: DbValue<(typeof OperandViews)["relations"]>
 	let progA = 0n
 	let progB = 0n
-	/** Capsule ids in seed order — the first CAPABILITIES of them carry full contracts, the rest are bare. */
+
 	let capsuleIds: readonly bigint[] = []
 	let capabilityIds: readonly bigint[] = []
 
@@ -228,7 +163,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 			for (let j = 0; j < CAPSULES; j++) {
 				capsules.push(put(tx, Capsule, { title: `capsule-${j}` }).id)
 			}
-			// the first CAPABILITIES capsules carry the full four-sidecar contract:
+
 			for (let j = 0; j < CAPABILITIES; j++) {
 				const capsule = must(capsules[j])
 				put(tx, Teaches, { capsule, capability: must(caps[j]) })
@@ -242,8 +177,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 			for (const program of [a.id, b.id]) {
 				for (let i = 0; i < MEMBERS_PER_PROGRAM; i++) {
 					const kind = kindOf(i)
-					// Taught members sit on contracted capsules (the law demands it);
-					// the rest roam the full capsule set, bare capsules included.
+
 					const capsule = kind === "Taught" ? must(capsules[i % CAPABILITIES]) : must(capsules[i % CAPSULES])
 					put(tx, Member, { program, capsule, pos: BigInt(i), kind })
 				}
@@ -265,7 +199,6 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		const rows = db.read((i) => i.execute(prepared, { program: progA }))
 		assert.equal(rows.length, MEMBERS_PER_PROGRAM / 3, "one contract row per Taught member of program A")
 
-		// the stitch is correct — spot-check the pos-0 member's whole contract:
 		const first = must(
 			rows.find(function atPosZero(row) {
 				return row.pos === 0n
@@ -281,7 +214,6 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		assert.equal(first.nearMiss, must(capabilityIds[1]))
 		assert.equal(first.nearMissText, "cap-text-1", "Capability joined TWICE decodes both texts")
 
-		// program B answers independently through the same prepared value:
 		assert.equal(db.read((i) => i.execute(prepared, { program: progB })).length, MEMBERS_PER_PROGRAM / 3)
 	})
 
@@ -308,11 +240,10 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		for (const row of rest) {
 			assert.notEqual(row.kind, "Taught", "ne(kind, Taught) really excludes the Taught arm")
 		}
-		// the two arms tile the program exactly — every member, no overlap:
+
 		const ids = new Set<bigint>([...taught.map((row) => row.m), ...rest.map((row) => row.m)])
 		assert.equal(ids.size, MEMBERS_PER_PROGRAM, "concatenation covers program A member for member")
 
-		// the complement spellings agree on the shared projection:
 		const project = function project(rows: readonly { m: bigint; c: bigint; pos: bigint }[]) {
 			return rows.map((row) => ({ m: row.m, c: row.c, pos: row.pos })).sort(byPos)
 		}
@@ -344,7 +275,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 	test("Q3: a Taught member whose capsule lacks a sidecar REFUSES at commit — the law replaces the host throw", function totalityRefusal() {
 		const rejected = db.write(function missingTransferRange(tx) {
 			const capsule = put(tx, Capsule, { title: "capsule-partial" })
-			// three of the four sidecars — TransferRange deliberately absent:
+
 			put(tx, Teaches, { capsule: capsule.id, capability: must(capabilityIds[0]) })
 			put(tx, ExitCondition, { capsule: capsule.id, condition: "exit-partial" })
 			put(tx, NonExampleBoundary, { capsule: capsule.id, nearMiss: must(capabilityIds[1]) })
