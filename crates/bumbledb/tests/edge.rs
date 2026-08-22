@@ -1,10 +1,3 @@
-//! Edge-case pins from the design audits: cyclic containments, nullary
-//! relations, fresh exhaustion, cap-wide closed vocabularies, 1-byte
-//! compound determinants, and empty interned values — each a doc claim that
-//! previously rested on a code-reading argument instead of a test. Plus the PRD 20 bind matrix:
-//! precise per-position errors for every scalar/set misuse, and a valid
-//! mixed bind through the public [`bumbledb::ParamArg`] surface.
-
 use bumbledb::error::ValidationError;
 use bumbledb::ir::{Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
 use bumbledb::schema::{
@@ -50,9 +43,6 @@ bumbledb::schema! {
     Node(parent) <= Node(id);
 }
 
-/// "Cyclic references insert without any staging concept"
-/// (docs/architecture/10-data-model.md): A→B plus B→A in one delta, and a
-/// self-referencing row — judgments run against the final state.
 #[test]
 fn cyclic_containments_insert_in_one_transaction() {
     let dir = common::TempDir::new("edge-cyclic");
@@ -68,7 +58,7 @@ fn cyclic_containments_insert_in_one_transaction() {
             id: BetaId(2),
             alpha: AlphaId(1),
         }])?;
-        // The self-loop: a row referencing itself.
+
         tx.insert([&Node {
             id: NodeId(9),
             parent: NodeId(9),
@@ -82,15 +72,12 @@ fn cyclic_containments_insert_in_one_transaction() {
     let _ = common::expect_rejected(db.write(|tx| {
         tx.insert([&Alpha {
             id: AlphaId(5),
-            beta: BetaId(99), // no such Beta
+            beta: BetaId(99), 
         }])?;
         Ok(())
     }));
 }
 
-/// Empty strings intern and round-trip (the reverse dictionary entry is
-/// the empty byte string), and a bytes<16> payload rides inline beside
-/// them — no dictionary traffic for the fixed-width field.
 #[test]
 fn empty_strings_and_bytes_round_trip() {
     let dir = common::TempDir::new("edge-empty-intern");
@@ -105,8 +92,7 @@ fn empty_strings_and_bytes_round_trip() {
     db.write(|tx| tx.insert([&original]))
         .expect("write")
         .unwrap();
-    // The scanned views borrow the snapshot, so the comparison happens
-    // inside the read closure.
+
     db.read(|snap| {
         let back: Vec<Blob> = snap.scan_facts()?.collect::<Result<_, _>>()?;
         assert_eq!(back, vec![original]);
@@ -115,8 +101,6 @@ fn empty_strings_and_bytes_round_trip() {
     .expect("scan");
 }
 
-/// An explicit `u64::MAX` fresh exhausts the generator through the
-/// public surface (typed error, not wraparound).
 #[test]
 fn explicit_max_fresh_exhausts_the_generator() {
     let dir = common::TempDir::new("edge-fresh-max");
@@ -140,12 +124,6 @@ fn explicit_max_fresh_exhausts_the_generator() {
     assert!(matches!(err, Error::FreshExhausted { .. }));
 }
 
-/// A cap-wide closed vocabulary (256 rows — `MAX_EXTENSION_ROWS`)
-/// validates; references to its first and last rows commit and scan
-/// back; and a reference one past the roster is an ordinary containment
-/// violation — no range-check error class exists for row ids. (Bind-time
-/// enum range checking died with the inline enum type: a reference field
-/// is structurally a u64, and an out-of-roster bind is simply absent.)
 #[test]
 fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     let schema = SchemaDescriptor {
@@ -205,16 +183,12 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     });
     assert_eq!(facts, vec![vec![Value::U64(0)], vec![Value::U64(255)]]);
 
-    // Row 256 does not exist: past the roster is the same containment
-    // violation as any dangling reference.
     let _ = common::expect_rejected(db.write(|tx| {
         tx.insert_dyn(RelationId(1), [&[Value::U64(256)]])?;
         Ok(())
     }));
 }
 
-/// A compound key plus a containment over 1-byte fields (bool, bool):
-/// the dense 2-byte determinant shape in `U`/`R` keys, commit-judged.
 #[test]
 fn one_byte_compound_determinants() {
     let status = ValueType::Bool;
@@ -259,12 +233,12 @@ fn one_byte_compound_determinants() {
             },
         ],
         statements: vec![
-            // Switch(state, armed) -> Switch
+
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
                 projection: Box::new([FieldId(0), FieldId(1)]),
             },
-            // Watcher(state, armed) <= Switch(state, armed)
+
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(1),
@@ -296,8 +270,6 @@ fn one_byte_compound_determinants() {
     .expect("validated insert commits")
     .unwrap();
 
-    // The containment holds over the 2-byte determinant: a watcher of a
-    // missing pair aborts.
     let _ = common::expect_rejected(db.write(|tx| {
         tx.insert_dyn(
             watcher,
@@ -306,16 +278,12 @@ fn one_byte_compound_determinants() {
         Ok(())
     }));
 
-    // The target side holds too: deleting the required pair aborts.
     let _ = common::expect_rejected(db.write(|tx| {
         tx.delete_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
         Ok(())
     }));
 }
 
-/// Nullary use of a relation as a nonemptiness gate, end to end: a
-/// zero-binding atom gates a query, composed with a global Count
-/// (exercising the zero-arity group through the public surface).
 #[test]
 fn zero_binding_gate_with_global_count() {
     let dir = common::TempDir::new("edge-gate-count");
@@ -336,7 +304,6 @@ fn zero_binding_gate_with_global_count() {
     .expect("seed")
     .unwrap();
 
-    // Count(nodes) gated on Gate being nonempty.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Count],
         atoms: vec![
@@ -354,7 +321,6 @@ fn zero_binding_gate_with_global_count() {
     });
     let mut prepared = db.prepare(&query).expect("prepare");
 
-    // Gate empty: no answers at all (empty-input aggregate = empty set).
     let answers = db
         .read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
         .expect("execute");
@@ -370,8 +336,6 @@ fn zero_binding_gate_with_global_count() {
     assert_eq!(answers.get(0, 0), bumbledb::AnswerValue::U64(2));
 }
 
-/// Q(id) :- Posting(id, account = ?set1, amount = ?0, memo = ?2) — one
-/// set among two scalars, the PRD 20 bind-matrix shape.
 fn mixed_params_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -389,15 +353,11 @@ fn mixed_params_query() -> Query {
     })
 }
 
-/// The PRD 20 bind matrix through the public [`ParamArg`] surface:
-/// scalar-where-set, set-where-scalar, a mistyped set element, and
-/// non-dense param ids each raise their precise error; a valid mixed
-/// bind (two scalars, one set) executes.
 #[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // the bind matrix: one case per arm, linear
+)] 
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
     let db = Db::create(dir.path(), Ledger)
@@ -430,8 +390,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
 
     let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
     db.read(|snap| {
-        // A valid mixed bind — two scalars, one deduplicated set —
-        // executes through both the reusable-buffer and collect paths.
+
         let args = [
             ParamArg::Scalar(BindValue::I64(5)),
             ParamArg::Set(&[Value::U64(10), Value::U64(11), Value::U64(11)]),
@@ -456,7 +415,6 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
         let collected = snap.execute_collect(&mut prepared, &args)?;
         assert_eq!(collected.len(), 2);
 
-        // Scalar where the set is expected: the precise per-position error.
         let err = snap
             .execute_collect(
                 &mut prepared,
@@ -472,7 +430,6 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             "{err:?}"
         );
 
-        // Set where a scalar is expected.
         let err = snap
             .execute_collect(
                 &mut prepared,
@@ -488,7 +445,6 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
             "{err:?}"
         );
 
-        // A mistyped set element names its position.
         let err = snap
             .execute_collect(
                 &mut prepared,
@@ -514,8 +470,6 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     })
     .expect("read");
 
-    // Non-dense param ids are a prepare-time validation error: a gap is
-    // a positional slot whose supplied value is never type-checked.
     let mut gapped = mixed_params_query();
     gapped.rules_mut()[0].atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
     let Err(err) = db.prepare(&gapped).map(|_| ()) else {
