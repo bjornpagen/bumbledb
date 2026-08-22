@@ -1,51 +1,8 @@
-//! The judgment conformance lane — the WRITE-side third oracle.
-//!
-//! The query lane compares answer sets against the executable
-//! denotation; this lane compares COMMIT VERDICTS against the
-//! executable judge: `lean/Bumbledb/Decide.lean: Txn.judgeB`, proved
-//! to agree with the model's `Txn.judge` verdict and violation sets
-//! phase for phase (`Txn.judgeB_agrees`). One JSON document per case:
-//! the theory
-//! (sealed relations, ground axioms, the MATERIALIZED statement list —
-//! indices are the engine's statement ids), the committed pre-state,
-//! one delta, and the verdict both Rust oracles agreed on — accept, or
-//! the rejecting phase with its complete violation set as statement
-//! ids. Format in `lean/conformance/README.md` § judgment cases.
-//!
-//! **The verdict is compared per phase.** A key (functionality)
-//! violation preempts the statement phase on all three oracles
-//! (`lean/Bumbledb/Txn.lean: judge_key_preempts`); the statement phase
-//! cites containment and capacity violations together. The
-//! containment `Direction` is a Rust-side refinement below the Lean
-//! altitude (`Txn.lean`'s violation sets are per-statement), so the
-//! serialized set deduplicates a statement cited in both directions —
-//! recorded in the README.
-//!
-//! Every fixture is hand-authored (no seeded arm: judgment cases are
-//! theorem-shaped, not distribution-shaped), and every document is
-//! written only after the engine and the naive model agreed on the
-//! verdict — a disagreement panics as a trophy, exactly the query
-//! lane's rule.
-//!
-//! **Closed-SOURCE containments (domain quantification) are outside
-//! this incremental lane** — the recorded fence: the engine's verdict
-//! is delta-restricted (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-//! delta_restricted_commit_sound` — sound only under the holds-before
-//! premise) while `Txn.judgeB` judges the whole final state, and a
-//! closed source is exactly where the premise fails — a store whose
-//! targets have not landed violates the statement in the full-state
-//! reading while every commit that never touches the target records
-//! accept (`lean/Bumbledb/Countermodels.lean:
-//! incremental_verdict_needs_holds`; the sweeper owns the class,
-//! `docs/architecture/30-dependencies.md` § "Domain quantification,
-//! worked"). A fixture in this class is a GUARANTEED three-way
-//! mismatch on a doctrinally-correct engine verdict (demonstrated
-//! 2026-07-15: the docs' worked example rendered "accept", judgeB
-//! rejected), so no roster fixture declares a closed source —
-//! `domain_quantification_judgments_are_outside_the_lane` pins the
-//! Rust half and the reason. The complete-admission lane (L5,
-//! [`super::complete`]) lifts that fence: the complete verdict is not
-//! delta-restricted.
+//! One JSON document per case: (sealed relations, ground axioms, the
+//! MATERIALIZED statement list — indices are the engine's statement ids), the
+//! committed pre-state, executable judge: `lean/Bumbledb/Decide.lean:
+//! Txn.judgeB`, proved ids. Format in `lean/conformance/README.md` § judgment
+//! cases.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -63,9 +20,6 @@ use super::ScratchDir;
 
 type Facts = Vec<(RelationId, Vec<Value>)>;
 
-/// One hand judgment fixture: a schema, a green base state, and the
-/// judged delta. The verdict is never written down here — it is
-/// COMPUTED through both Rust oracles and recorded only on agreement.
 struct JudgmentFixture {
     name: &'static str,
     schema: SchemaDescriptor,
@@ -74,7 +28,6 @@ struct JudgmentFixture {
     inserts: Facts,
 }
 
-/// The verdict both Rust oracles agreed on, in the lane's shape.
 pub(super) enum JVerdict {
     Accept,
     Reject {
@@ -122,16 +75,10 @@ fn iv(start: u64, end: u64) -> Value {
     Value::IntervalU64(Interval::<u64>::new(start, end).expect("fixture intervals are nonempty"))
 }
 
-// ---------- the marks world: the window over set-selected children ----------
-
 const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const ITEM: RelationId = RelationId(2);
 
-/// Holder(id, tag; key id); Account(holder, kind, num) windowed
-/// `Holder(id) <={1..2} Account(holder | kind ∈ {1, 2})` — a
-/// SET selection, so the lane's σ compares disjunctively; Item is
-/// unconstrained payload data riding the same commits.
 fn marks_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -184,16 +131,13 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
-// ---------- the ledger world: containment and capacity together ----------
-
-/// Holder(id, tag; key id); Account(holder, kind, num) under BOTH
-/// statement forms at once: the reference containment
-/// `Account(holder) <= Holder(id)` (statement 1) and the window
-/// `Holder(id) <={1..2} Account(holder | kind == 1)` (statement 2)
-/// — the one roster schema whose statement phase can cite containment
-/// and capacity TOGETHER, so the ordered multi-citation verdict
-/// surface (`lean/Main.lean: RVerdict`'s list `BEq`, ascending indices
-/// via `verdictOf`) is actually exercised.
+/// Holder(id, tag; key id); Account(holder, kind, num) under BOTH statement
+/// forms at once: the reference containment `Account(holder) <= Holder(id)`
+/// (statement 1) and the window `Holder(id) <={1..2} Account(holder | kind ==
+/// 1)` (statement 2) — the one roster schema whose statement phase can cite
+/// containment and capacity TOGETHER, so the ordered multi-citation verdict
+/// surface (`lean/Main.lean: RVerdict`'s list `BEq`, ascending indices via
+/// `verdictOf`) is actually exercised.
 fn ledger_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -220,14 +164,11 @@ fn ledger_schema() -> SchemaDescriptor {
     }
 }
 
-// ---------- the exactness world: {n} and {0} windows ----------
-
 /// Holder + Account under `Holder(id) <={2} Account(holder | kind == 1)`
-/// (exactness) and a second `{0}` window on kind 9 (the exclusion —
-/// the vacuous `0..*` posture is unrepresentable, rejected at
-/// validation as `CapacityVacuousWindow`; the default says nothing
-/// by not being spelled, `lean/Bumbledb/Capacity.lean:
-/// capacity_zero_star`).
+/// (exactness) and a second `{0}` window on kind 9 (the exclusion — the vacuous
+/// `0..*` posture is unrepresentable, rejected at validation as
+/// `CapacityVacuousWindow`; the default says nothing by not being spelled,
+/// `lean/Bumbledb/Capacity.lean: capacity_zero_star`).
 fn exact_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -257,16 +198,6 @@ fn exact_schema() -> SchemaDescriptor {
     }
 }
 
-// ---------- the weighted world: the power budget over column weights ----------
-
-/// Pool(id, note; key id); Device(pool, watts, num) under BOTH
-/// weighted polarities of one budget: the ceiling
-/// `Pool(id) <=[watts]{0..10} Device(pool)` (statement 1) and the
-/// positive-total floor `Pool(id) <=[watts]{1..*} Device(pool)`
-/// (statement 2 — LEGAL on the Sum instance: the `{1..*}` ban is
-/// canonical-utterance policing on Count only, and a zero-weight row
-/// satisfies containment but not this floor — the design § 6 footgun
-/// the zero-weight fixture pins as data).
 fn weighted_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -307,14 +238,6 @@ fn device(pool: u64, watts: u64, num: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
-// ---------- the dependent-bound world: per-group capacity as data ----------
-
-/// SupplyPool(id, supply; key id); Device(pool, watts, num) under the
-/// dependent ceiling `SupplyPool(id) <=[watts]{0..supply} Device(pool)`
-/// — the bound reads the TARGET's own row (C1/C6, hi-slot only), so
-/// per-group capacity is data, and a bound-field update alone (the
-/// pool row's remove+add through `touchedParents`) re-judges the
-/// standing group.
 fn dependent_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -341,13 +264,6 @@ fn supply_pool(id: u64, supply: u64) -> (RelationId, Vec<Value>) {
     (RelationId(0), vec![Value::U64(id), Value::U64(supply)])
 }
 
-// ---------- the calendar world: Duration weights under Duration bounds ----------
-
-/// Room(id, span interval; key id); Booking(room, slot interval, num)
-/// under the calendar law
-/// `Room(id) <=[Duration(slot)]{0..Duration(span)} Booking(room)` —
-/// the interval-measure weight against the interval-measure dependent
-/// bound (R5 machinery on both slots; C18: the dimensions pair).
 fn calendar_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -406,17 +322,14 @@ fn booking(room: u64, start: u64, end: u64, num: u64) -> (RelationId, Vec<Value>
     )
 }
 
-// ---------- the permuted-interval world (the docketed lock) ----------
-
 const SLOT: RelationId = RelationId(0);
 const CLAIM: RelationId = RelationId(1);
 
-/// Slot(id, span) under the pointwise key DECLARED `(id, span)`;
-/// the containment statement WRITTEN interval-first on both sides —
-/// `Claim(span, id) <= Slot(span, id)` — accepted through the
-/// set-canonical key resolution (the `FieldSet` doctrine,
-/// `lean/Bumbledb/Schema.lean: Header.intervalSplit`) and judged as
-/// coverage.
+/// Slot(id, span) under the pointwise key DECLARED `(id, span)`; the
+/// containment statement WRITTEN interval-first on both sides — `Claim(span,
+/// id) <= Slot(span, id)` — accepted through the set-canonical key resolution
+/// (the `FieldSet` doctrine, `lean/Bumbledb/Schema.lean: Header.intervalSplit`)
+/// and judged as coverage.
 fn permuted_schema() -> SchemaDescriptor {
     let interval = ValueType::Interval {
         element: bumbledb::schema::IntervalElement::U64,
@@ -455,17 +368,11 @@ fn claim(start: u64, end: u64, id: u64) -> (RelationId, Vec<Value>) {
     (CLAIM, vec![iv(start, end), Value::U64(id)])
 }
 
-// ---------- the fixed-width playlist world (Q1 + interval<E, w>) ----------
-
 const PLAYLIST: RelationId = RelationId(0);
 const FSLOT: RelationId = RelationId(1);
 
-/// The playlist recipe, verbatim (the cookbook's ordering triple —
-/// Q1's own replacement recipe): a general `interval<u64>` span
-/// exact-partitioned (`==`, its two containments) by `interval<u64, 1>`
-/// unit slots, both sides under pointwise keys. Element-domain typing
-/// meets at the containments' interval position (widths free —
-/// `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`).
+/// Element-domain typing meets at the containments' interval position (widths
+/// free — `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`).
 fn playlist_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -523,8 +430,6 @@ fn playlist(id: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
     (PLAYLIST, vec![Value::U64(id), iv(start, end)])
 }
 
-/// A unit slot: the fixed value spells `[at, at + 1)` — the serializer
-/// re-derives the `[start, width]` spelling from the field's type.
 fn unit_slot(playlist: u64, at: u64, track: u64) -> (RelationId, Vec<Value>) {
     (
         FSLOT,
@@ -532,9 +437,6 @@ fn unit_slot(playlist: u64, at: u64, track: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
-/// LaneU(id, lane interval<u64, 5>) + LaneI(id, lane interval<i64, 5>)
-/// — both element domains, keyed pointwise; no containments (the
-/// boundary-start fixture exercises the encodings, not coverage).
 fn lanes_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -596,11 +498,6 @@ fn lane_i(id: u64, start: i64) -> (RelationId, Vec<Value>) {
     )
 }
 
-// ---------- the closed-target world ----------
-
-/// Currency closed (two handle-only axioms) referenced by
-/// Account(currency) — the ground-axioms merge and the member-set
-/// judgment through the lane.
 fn closed_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -631,15 +528,13 @@ fn cur_account(id: u64, currency: u64) -> (RelationId, Vec<Value>) {
     (RelationId(1), vec![Value::U64(id), Value::U64(currency)])
 }
 
-/// Currency closed WITH a payload column, narrowed by ψ:
-/// `Account(currency) <= Currency(id | region == 1)` — the member set
-/// compiles to the ψ sub-vocabulary {Usd, Eur}, leaving Jpy a REAL
-/// sealed member outside the statement's vocabulary (the K1 face's
-/// engine arm, `schema/validate.rs::compile_member_set`; the model's
-/// σ-over-extension twin, [`NaiveDb::target_facts`]; Lean reads the
-/// selection uniformly — `lean/Bumbledb/Schema.lean:
-/// den_closed_constant`). Sealed field space: 0 = the synthetic id,
-/// 1 = region.
+/// Currency closed WITH a payload column, narrowed by ψ: `Account(currency) <=
+/// Currency(id | region == 1)` — the member set compiles to the ψ
+/// sub-vocabulary {Usd, Eur}, leaving Jpy a REAL sealed member outside the
+/// statement's vocabulary (the K1 face's engine arm,
+/// `schema/validate.rs::compile_member_set`; the model's σ-over-extension twin,
+/// [`NaiveDb::target_facts`]; Lean reads the selection uniformly —
+/// `lean/Bumbledb/Schema.lean: den_closed_constant`).
 fn closed_psi_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -670,22 +565,13 @@ fn closed_psi_schema() -> SchemaDescriptor {
     }
 }
 
-/// The starter roster: both classical forms (scalar key, containment —
-/// pointwise key and coverage through the permuted world, the closed
-/// member set plain and ψ-narrowed), the capacity
-/// form, the two-phase preemption
-/// mix, set-selections, the exactness/vacuity/empty-parent capacity
-/// boundaries, the delete-then-reinsert touched-group seam, the
-/// permuted-interval docketed lock, and the weighted roster (column
-/// weights under both polarities, the zero-weight floor footgun,
-/// dependent bounds through the target-update seam, and the calendar
-/// Duration pair). Two dossier rows live OUTSIDE this lane by its own
-/// fences: the closed-pair sum refutation is a VALIDATION refusal
+/// Two dossier rows live OUTSIDE this lane by its own fences: the closed-pair
+/// sum refutation is a VALIDATION refusal
 /// (`rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound`,
-/// `schema/tests/reject.rs` — a refused schema never reaches a
-/// commit verdict), and the R16 fresh-keyed weight interplay needs the
-/// engine's mint (`storage/commit/tests/marks.rs` § R16 interplay —
-/// the naive twin spells no fresh generation).
+/// `schema/tests/reject.rs` — a refused schema never reaches a commit verdict),
+/// and the R16 fresh-keyed weight interplay needs the engine's mint
+/// (`storage/commit/tests/marks.rs` § R16 interplay — the naive twin spells no
+/// fresh generation).
 #[expect(
     clippy::too_many_lines,
     reason = "one flat fixture roster, data not logic"
@@ -776,8 +662,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![account(3, 1, 0)],
         },
-        // The weighted roster (the capacity cutover's new rows): the
-        // budget's sum passes under the ceiling and the positive floor…
+
         JudgmentFixture {
             name: "judgment-capacity-sum-pass",
             schema: weighted_schema(),
@@ -785,7 +670,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![pool(1), device(1, 4, 0), device(1, 5, 1)],
         },
-        // …one more device pushes the sum past the literal ceiling…
+
         JudgmentFixture {
             name: "judgment-capacity-sum-exceed-refuse",
             schema: weighted_schema(),
@@ -793,10 +678,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![device(1, 3, 2)],
         },
-        // …and zero-weight rows EXIST without lifting the sum floor —
-        // the § 6 lower-bound footgun as corpus data (two devices, total
-        // zero: containment-shaped intent and the Sum floor are
-        // different laws).
+
         JudgmentFixture {
             name: "judgment-capacity-zero-weight-under-floor",
             schema: weighted_schema(),
@@ -804,8 +686,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![pool(2), device(2, 0, 0), device(2, 0, 1)],
         },
-        // The dependent bound reads the target's own row: supply 10
-        // admits exactly 10…
+
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-pass",
             schema: dependent_schema(),
@@ -813,7 +694,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![supply_pool(1, 10), device(1, 6, 0), device(1, 4, 1)],
         },
-        // …an eleventh watt exceeds it…
+
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-exceed",
             schema: dependent_schema(),
@@ -821,10 +702,9 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![device(1, 5, 1)],
         },
-        // …and a bound-field update ALONE re-judges the standing group:
-        // the pool row's remove+add marks the touched parent
+
         // (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`),
-        // so lowering supply under the group's unchanged sum convicts.
+
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-lowered-by-target-update",
             schema: dependent_schema(),
@@ -832,8 +712,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![supply_pool(1, 10)],
             inserts: vec![supply_pool(1, 5)],
         },
-        // Calendar capacity: interval-measure weights sum against the
-        // interval-measure dependent bound — a tight exact fill accepts.
+
         JudgmentFixture {
             name: "judgment-capacity-duration-weight",
             schema: calendar_schema(),
@@ -876,9 +755,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(3, 9)],
         },
-        // The ψ-NARROWED closed member set (the K1 face's third-oracle
-        // witness — the drift audit's D2): references inside the ψ
-        // sub-vocabulary {Usd, Eur} accept...
+
         JudgmentFixture {
             name: "judgment-closed-ref-psi-valid",
             schema: closed_psi_schema(),
@@ -886,8 +763,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(1, 0), cur_account(2, 1)],
         },
-        // ...while Jpy — a REAL sealed member — still convicts: outside
-        // the ψ sub-vocabulary is outside the statement's member set.
+
         JudgmentFixture {
             name: "judgment-closed-ref-psi-invalid",
             schema: closed_psi_schema(),
@@ -895,9 +771,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![cur_account(3, 2)],
         },
-        // The playlist recipe verbatim (Q1 + interval<u64, 1>): an
-        // exact tiling COMMITS — unit slots partition the span, mixed
-        // widths meeting at the containments' interval position.
+
         JudgmentFixture {
             name: "judgment-fixed-partition-tiling",
             schema: playlist_schema(),
@@ -910,9 +784,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 unit_slot(1, 2, 300),
             ],
         },
-        // A gap in the partition ABORTS: the span's point 1 has no
-        // covering unit slot — the Playlist-side coverage containment
-        // (statement 3) convicts.
+
         JudgmentFixture {
             name: "judgment-fixed-partition-gap",
             schema: playlist_schema(),
@@ -924,9 +796,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 unit_slot(1, 2, 300),
             ],
         },
-        // An overlapping unit slot ABORTS in the KEY phase: width 1
-        // makes overlap collision, and the pointwise key's disjointness
-        // (statement 1) preempts the statement phase
+
         // (`lean/Bumbledb/Txn.lean: judge_key_preempts`).
         JudgmentFixture {
             name: "judgment-fixed-partition-overlap",
@@ -940,12 +810,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![unit_slot(1, 1, 999)],
         },
-        // Boundary starts, both element domains: the largest legal
-        // starts (`start + w = MAX_END − 1`) and the i64 floor, plus an
-        // adjacent pair — all ACCEPT (the Q2 bound's positive edge; the
-        // at-bound negatives are decoder convictions, not commit
-        // verdicts: `Conformance.lean`'s ceiling `#guard`s and
-        // `verify_store`'s at-rest fixture own them).
+
         JudgmentFixture {
             name: "judgment-fixed-boundary-starts",
             schema: lanes_schema(),
@@ -958,14 +823,9 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 lane_i(2, i64::MAX - 6),
             ],
         },
-        // The multi-citation statement phase: one delta violating the
-        // containment (statement 1 — account 8 references no holder;
-        // kind 5 sits outside the window's σ) AND the window floor
-        // (statement 2 — holder 9 lands childless) with clean keys.
-        // The recorded verdict is the ordered ASCENDING list [1, 2]
-        // mixing citation kinds — the whole-list comparison surface
+
         // (`lean/Main.lean: RVerdict` list `BEq`, `verdictOf`'s indexed
-        // filterMap) exercised beyond length 1 for the first time.
+
         JudgmentFixture {
             name: "judgment-statement-mixed-citations",
             schema: ledger_schema(),
@@ -973,13 +833,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![account(8, 5, 0), holder(9)],
         },
-        // One containment cited in BOTH directions by one delta: the
-        // deleted slot uncovers the held-before claim (target
-        // direction) while the inserted claim lands uncovered (source
-        // direction). The `Direction` refinement sits below the Lean
-        // altitude, so the serialized set must collapse the double
-        // citation to the single statement id — the `ids.dedup()` rule
-        // the README records, previously covered by no case.
+
         JudgmentFixture {
             name: "judgment-containment-both-directions",
             schema: permuted_schema(),
@@ -987,13 +841,9 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![slot(5, 10, 20)],
             inserts: vec![claim(40, 50, 5)],
         },
-        // The multi-key rejection: overlapping playlist spans collide
-        // on statement 0's pointwise key while overlapping unit slots
-        // collide on statement 1's — the key phase's COMPLETE set is
-        // the ascending pair [0, 1]
+
         // (`lean/Bumbledb/Txn.lean: judge_key_preempts` drops the
-        // simultaneous containment convictions), where every prior
-        // key-phase case cited exactly one statement.
+
         JudgmentFixture {
             name: "judgment-multi-key-collisions",
             schema: playlist_schema(),
@@ -1009,15 +859,6 @@ fn fixtures() -> Vec<JudgmentFixture> {
     ]
 }
 
-// ---------- the serializer ----------
-
-/// One value in the tagged compact form, AT ITS FIELD'S TYPE: a
-/// fixed-width position renders `[start, width]` under the family's
-/// own tag (the width is the type — `Value` spells bounds, so the
-/// field type re-derives the spelling; `Conformance.lean: decodeValue`
-/// re-checks the Q2 bound on the way back in). Judgment fixtures are
-/// hand-authored and carry no strings or masks — the two tags that
-/// would need a per-case context.
 fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
     if let Some(ValueType::FixedInterval { width: w, .. }) = ty {
         match value {
@@ -1076,9 +917,6 @@ fn push_fact(out: &mut String, fact: &[Value], types: &[ValueType]) {
     out.push(']');
 }
 
-/// One `{relation, facts}` block list from per-relation fact rows.
-/// `id_prefixed` is the ground-axiom shape: facts open with the
-/// synthetic row id, so positional types shift by one.
 pub(super) fn push_blocks(
     out: &mut String,
     blocks: &[(RelationId, Vec<Vec<Value>>)],
@@ -1119,8 +957,6 @@ pub(super) fn push_blocks(
     out.push(']');
 }
 
-/// The sealed positional type spelling (a closed relation's list opens
-/// with the synthetic id — the naive model's own sealed field space).
 pub(super) fn push_relations(out: &mut String, schema: &SchemaDescriptor) {
     out.push('[');
     for (index, relation) in schema.relations.iter().enumerate() {
@@ -1150,9 +986,6 @@ pub(super) fn push_relations(out: &mut String, schema: &SchemaDescriptor) {
     out.push(']');
 }
 
-/// The weight descriptor's corpus spelling — unit crosses EXPLICITLY
-/// (C4: `Unit` is a case, not an absence, so a missing key is a
-/// malformed document, never a default).
 fn push_weight(out: &mut String, weight: Weight) {
     match weight {
         Weight::Unit => out.push_str("\"unit\""),
@@ -1165,9 +998,6 @@ fn push_weight(out: &mut String, weight: Weight) {
     }
 }
 
-/// A capacity ceiling's corpus spelling: a bare integer for the
-/// literal, tagged objects for the dependent forms (C2's read order
-/// puts this inside the `window` key).
 fn push_bound(out: &mut String, bound: Bound) {
     match bound {
         Bound::Lit(n) => {
@@ -1206,9 +1036,7 @@ fn push_side(out: &mut String, side: &Side) {
             if position > 0 {
                 out.push(',');
             }
-            // Selection literals spell their own type (a σ over a
-            // fixed-width field is not a fixture shape this lane
-            // carries).
+
             push_value(out, literal, None);
         }
         out.push_str("]]");
@@ -1216,8 +1044,6 @@ fn push_side(out: &mut String, side: &Side) {
     out.push_str("]}");
 }
 
-/// The MATERIALIZED statement list — indices are the engine's
-/// statement ids (the naive model's own materialization rule).
 pub(super) fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
     out.push('[');
     for (index, statement) in schema.materialized_statements().iter().enumerate() {
@@ -1251,9 +1077,7 @@ pub(super) fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
                 hi,
                 source,
             } => {
-                // The C2 read order — target, weight, window, source —
-                // exactly as the operator reads; the weight crosses
-                // EXPLICITLY (C4: `Unit` is a case, not an absence).
+
                 out.push_str("{\"capacity\":{\"target\":");
                 push_side(out, target);
                 out.push_str(",\"weight\":");
@@ -1295,8 +1119,6 @@ pub(super) fn push_verdict(out: &mut String, verdict: &JVerdict) {
     }
 }
 
-/// Groups a flat fact list into per-relation blocks, relation-id
-/// ascending, facts in listed order.
 fn grouped(facts: &Facts) -> Vec<(RelationId, Vec<Vec<Value>>)> {
     let mut map: BTreeMap<RelationId, Vec<Vec<Value>>> = BTreeMap::new();
     for (relation, fact) in facts {
@@ -1305,12 +1127,11 @@ fn grouped(facts: &Facts) -> Vec<(RelationId, Vec<Vec<Value>>)> {
     map.into_iter().collect()
 }
 
-/// The agreed verdict in the lane's shape: the phase is read off the
-/// citation kinds (a rejection is one phase's complete set — keys
-/// preempt, `lean/Bumbledb/Txn.lean: judge_key_preempts`), and the
-/// statement-id set deduplicates a containment cited in both
-/// directions (the `Direction` refinement sits below the Lean
-/// altitude).
+/// The agreed verdict in the lane's shape: the phase is read off the citation
+/// kinds (a rejection is one phase's complete set — keys preempt,
+/// `lean/Bumbledb/Txn.lean: judge_key_preempts`), and the statement-id set
+/// deduplicates a containment cited in both directions (the `Direction`
+/// refinement sits below the Lean altitude).
 pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
     match verdict {
         Verdict::Committed => JVerdict::Accept,
@@ -1341,13 +1162,7 @@ pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
     }
 }
 
-/// One fixture through BOTH Rust oracles: base committed green on
-/// each, the delta judged on each, verdicts asserted equal (a
-/// disagreement is a TROPHY — this builder refuses to check in a
-/// disputed case), then the serialized document.
-///
 /// # Panics
-///
 /// On an engine-vs-naive disagreement, a refused base commit, or a
 /// closed-relation write in a fixture.
 #[expect(
@@ -1378,8 +1193,6 @@ fn render_fixture(fixture: &JudgmentFixture) -> String {
         });
     }
 
-    // The committed pre-state, from the model (canonical order), every
-    // ordinary relation listed — an empty relation is an empty block.
     let instance: Vec<(RelationId, Vec<Vec<Value>>)> = fixture
         .schema
         .relations
@@ -1398,7 +1211,7 @@ fn render_fixture(fixture: &JudgmentFixture) -> String {
             )
         })
         .collect();
-    // The ground axioms, id-prefixed — the naive model's own seeding.
+
     let axioms: Vec<(RelationId, Vec<Vec<Value>>)> = fixture
         .schema
         .relations
@@ -1478,13 +1291,7 @@ fn render_fixture(fixture: &JudgmentFixture) -> String {
     )
 }
 
-/// The whole judgment corpus, deterministically: `(file name,
-/// document)` pairs in roster order.
-///
 /// # Panics
-///
-/// On an engine-vs-naive disagreement (a trophy — see
-/// [`render_fixture`]).
 #[must_use]
 pub fn generate_judgment_corpus() -> Vec<(String, String)> {
     fixtures()
@@ -1493,13 +1300,7 @@ pub fn generate_judgment_corpus() -> Vec<(String, String)> {
         .collect()
 }
 
-/// One checked-in judgment case, fresh from its named fixture — the
-/// replay half (`conformance::replay_checked_in_corpus` dispatches
-/// `judgment-*.json` here).
-///
 /// # Panics
-///
-/// On an unknown fixture name (a stale corpus) or a trophy.
 #[must_use]
 pub fn replay_judgment_case(name: &str) -> String {
     let fixture = fixtures()
@@ -1515,14 +1316,8 @@ mod tests {
 
     use super::*;
 
-    /// The serialized violation set is a WHOLE ordered list
     /// (`lean/Main.lean: RVerdict` derives `BEq` — order-sensitive), and
-    /// `lane_verdict` owes it two invariants the corpus now also
-    /// exercises: ascending statement order survives mixed citation
-    /// kinds, and a containment cited in both directions collapses to
-    /// ONE id (the `Direction` refinement sits below the Lean
-    /// altitude). The dedup is adjacency-dependent, so this pin catches
-    /// a reorder-before-dedup regression directly.
+
     #[test]
     fn lane_verdict_orders_and_dedups_the_citation_list() {
         let both_directions = Verdict::Aborted(vec![
@@ -1587,11 +1382,6 @@ mod tests {
         }
     }
 
-    /// The both-directions fixture really cites its containment TWICE
-    /// pre-dedup — one source-direction conviction for the inserted
-    /// uncovered claim, one target-direction conviction for the claim
-    /// the deleted slot uncovers — so the corpus case exercises the
-    /// dedup path, not a single-citation lookalike.
     #[test]
     fn the_both_directions_fixture_cites_two_directions() {
         let fixture = fixtures()
@@ -1643,22 +1433,10 @@ mod tests {
         }
     }
 
-    /// The domain-quantification fence (module doc, "Closed-SOURCE
-    /// containments are outside this lane"): a closed-source
     /// containment's holds-before premise fails on a store whose
-    /// targets have not landed, so the engine's delta-restricted
-    /// verdict (accept — the commit touches nothing the statement
-    /// reads) and Lean's full-state `Txn.judgeB` (reject — the
-    /// axioms have no handlers) DISAGREE by design: the offline
-    /// sweeper owns the class (`docs/architecture/30-dependencies.md`
+
     /// § "Domain quantification, worked"). Demonstrated 2026-07-15:
-    /// rendering this exact fixture and running `lake exe conformance`
-    /// over it reports MISMATCH (recorded accept, judged reject) — a
-    /// guaranteed false trophy, which is why NO roster fixture may
-    /// declare a closed source. This pin holds the Rust half: both
-    /// oracles accept the unrelated commit under the
-    /// violated-in-full-state theory, exactly the delta-restricted
-    /// verdict the spec licenses.
+
     #[test]
     fn domain_quantification_judgments_are_outside_the_lane() {
         const SEVERITY: RelationId = RelationId(0);
