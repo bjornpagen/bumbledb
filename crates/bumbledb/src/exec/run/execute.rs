@@ -8,9 +8,6 @@ use super::{
 use crate::plan::fj::PlanNode;
 use std::num::NonZeroUsize;
 
-/// The membership-filter column/slot table shared by both probe kinds:
-/// per filter, the interval field's (start column, end column) through
-/// the occurrence's span map, plus the point variable and its slot.
 fn point_parts(
     plan: &ValidatedPlan,
     occ: usize,
@@ -143,32 +140,27 @@ impl NodePrecompute {
 }
 
 impl Executor {
-    /// An executor with the default batch size ([`BATCH`]).
+
     #[must_use]
     pub fn new(plan: &ValidatedPlan) -> Self {
         Self::with_batch_size(plan, BATCH)
     }
 
-    /// An executor with an explicit batch size — the scalar/vectorized
-    /// equality tests parameterize this; there is no mode, only the number.
-    ///
     /// # Panics
-    ///
+
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // table construction, one table at a
-    // time — splitting scatters the shapes
+    )] 
+
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,
             "a batch has at least one element (set_batch_size is the caller-facing knob)"
         );
-        // construction-time: every NodeScratch / executor Vec below is
-        // the retained-capacity pool. Warm execute clears; it does not
-        // allocate. The 26-site census (Vec::new / clone) lives here.
+
         let var_widths: Vec<(crate::ir::VarId, usize)> = plan
             .slots()
             .iter()
@@ -181,9 +173,7 @@ impl Executor {
                 .expect("plans bind every variable")
                 .1
         };
-        // Word-level slot maps: an interval variable expands to its two
-        // consecutive slots, so batch key words and binding slots stay in
-        // 1:1 correspondence everywhere downstream (the SlotWidth layout).
+
         let slot_map: Vec<Vec<Vec<usize>>> = plan
             .nodes()
             .iter()
@@ -191,7 +181,7 @@ impl Executor {
                 node.subatoms
                     .iter()
                     .map(|s| {
-                        let mut words = Vec::new(); // construction-time: slot_map words
+                        let mut words = Vec::new(); 
                         for var in &s.vars {
                             let slot = plan.slot_of(*var);
                             for offset in 0..width_of(*var) {
@@ -208,9 +198,7 @@ impl Executor {
             .iter()
             .map(|node| NodePrecompute::of(plan, node, width_of))
             .collect();
-        // Occurrences whose positions a membership probe reads: the
-        // zero-arity cover collapse must keep enumerating those (each
-        // position carries its own interval columns).
+
         let mut point_probed = vec![false; plan.occurrences().len()];
         for node in plan.nodes() {
             for probe in &node.point_probes {
@@ -223,16 +211,14 @@ impl Executor {
             .enumerate()
             .zip(&precompute)
             .map(|((node_idx, node), pre)| {
-                // Word-level arity: an interval variable is two key words.
+
                 let max_arity = slot_map[node_idx]
                     .iter()
                     .map(Vec::len)
                     .max()
                     .unwrap_or(0)
                     .max(1);
-                // Probe keys also hold anti-probe keys, whose width can
-                // exceed every subatom arity (an interval variable is two
-                // words; the negated occurrence joins no subatom).
+
                 let max_key = pre
                     .anti_probes
                     .iter()
@@ -251,7 +237,7 @@ impl Executor {
                         .iter()
                         .map(|_| vec![Cursor::Row(0); batch])
                         .collect(),
-                    // construction-time: retained-capacity scratch pools
+
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
                     word_residual_sources: Vec::new(),
@@ -300,9 +286,6 @@ impl Executor {
         }
     }
 
-    /// Resolves this execution's Allen-residual masks in place: literal
-    /// masks are re-copied (idempotent). Called by the prepared query before
-    /// every join execution; the executor itself never touches params.
     pub fn bind_allen_masks(&mut self, _params: &[crate::image::view::Const]) {
         for node in &mut self.precompute {
             for (spec, mask) in node
@@ -315,8 +298,6 @@ impl Executor {
         }
     }
 
-    /// A variable's slot width in words (the `SlotWidth` layout, exported
-    /// through the plan witness).
     pub(super) fn width_of(&self, var: crate::ir::VarId) -> usize {
         self.var_widths
             .iter()
@@ -325,21 +306,12 @@ impl Executor {
             .1
     }
 
-    /// Runs the plan over the COLT sources (one per occurrence, indexed by
-    /// occurrence id), emitting complete bindings to the sink.
-    ///
     /// # Errors
-    ///
-    /// `Overflow` (origins) when the D2 origin counter would cross u32 —
-    /// more than 2³² absorb-node survivors in one execution, beyond the
-    /// scale axiom but valid input, so it errors rather than wrapping
-    /// (a wrapped counter cancels the wrong origin: silently dropped
-    /// valid rows).
-    ///
+
     /// # Panics
-    ///
+
     /// Only on programmer-invariant violations (sources not matching the
-    /// plan's occurrences).
+
     pub fn execute<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -352,19 +324,13 @@ impl Executor {
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.drive_state = super::DriveState::Running;
-        // Overlap indexes key trie paths that this execution's forces
-        // will mint afresh (the per-execution boundary, overlap_leaf.rs).
+
         self.overlap.reset();
         self.cursors.clear();
-        // Each occurrence starts below its selection levels — the root
-        // when it has none, the post-`select` cursor otherwise
-        // (docs/architecture/40-execution.md).
+
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
-        // The one executor: multi-node plans
-        // pipeline — probes batch ACROSS parent entries, D2 skips cancel
-        // origins — and single-node plans are one leaf pass. The
-        // recursive per-survivor executor is gone.
+
         match &self.drive {
             Drive::Pipeline(_) => {
                 self.run_pipeline(plan, colts, bindings, sink, counters);
@@ -373,8 +339,7 @@ impl Executor {
                 self.run_node(plan, 0, colts, bindings, sink, counters);
             }
         }
-        // The poison drain: set-once, so the first typed stop IS the
-        // execution's one honest answer — no precedence to adjudicate.
+
         match std::mem::replace(&mut self.drive_state, super::DriveState::Running) {
             super::DriveState::Poisoned(super::Poison::OriginOverflow) => Err(
                 crate::error::Error::Overflow(crate::error::OverflowKind::OriginCapacity),
@@ -383,13 +348,6 @@ impl Executor {
         }
     }
 
-    /// The pipelined executor: pending binding rows
-    /// and carried cursor sets flow node to node; each middle node
-    /// expands pending entries into shared probe batches (flushed on
-    /// cover change), probes every sibling across parents, and appends
-    /// survivors to the next node's pending. The last node runs per
-    /// parent through the ordinary `run_node` machinery — leaf fast
-    /// paths, counters, phases and all.
     fn run_pipeline<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -409,24 +367,17 @@ impl Executor {
             scratch.pending_origins.clear();
             scratch.pending_len = 0;
         }
-        // D2 state: a fresh epoch outlives any prior execution's
-        // cancellations without clearing the high-water table — except
-        // at wrap-around, where the table IS cleared (`cancel.rs`: a
-        // stale stamp aliasing a recycled epoch would cancel a live
+
         // origin and silently drop answers).
         self.advance_cancel_epoch();
         self.next_origin = 0;
         self.drive_state = super::DriveState::Running;
-        // The virtual root entry: no bindings, no carried cursors.
+
         self.scratch[0].pending_bindings.resize(slot_count, 0);
         self.scratch[0].pending_len = 1;
         self.scratch[0].pending_origins.push(0);
         self.pump(&tables, plan, 0, colts, bindings, sink, counters);
-        // The one tail drain, in increasing node order (draining node i
-        // appends node i+1's remainder): sub-batch remainders below the
-        // full-batch flush threshold survive every pump return — deep
-        // nodes see full batches mid-stream — and flush exactly once,
-        // here, at the execution's end.
+
         for i in 1..plan.nodes().len() - 1 {
             if self.scratch[i].pending_len > 0 {
                 self.pump(&tables, plan, i, colts, bindings, sink, counters);
