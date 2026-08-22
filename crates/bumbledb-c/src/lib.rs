@@ -3,9 +3,7 @@
 //! will EVER live in this crate. This crate exists only to carry values across the C
 //! boundary.
 //! # Safety shape
-
 #![allow(non_camel_case_types)]
-
 pub mod answers;
 pub mod db;
 pub mod error;
