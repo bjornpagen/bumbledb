@@ -26,7 +26,6 @@ pub use crate::ir::FoldOp;
 pub enum AggSpec {
     Count,
     Fold {
-
         op: FoldOp,
         slot: usize,
         width: usize,
@@ -65,7 +64,6 @@ impl AggSpec {
 /// binding-slot layout (`ValidatedPlan::slots`) — never assumed 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindSpec {
-
     Var { slot: usize, width: usize },
 
     Agg(AggSpec),
@@ -76,7 +74,6 @@ pub enum FindSpec {
 /// What a sink executes after construction parsed [`FindSpec`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SinkSpec {
-
     Var { slot: usize, width: usize },
 
     Agg(AggSpec),
@@ -100,14 +97,12 @@ pub(in crate::exec::sink) enum DedupState {
         spans: Vec<(usize, usize)>,
     },
     Elided {
-
         #[allow(dead_code)]
         witness: crate::plan::fj::DistinctWitness,
     },
 }
 
 impl DedupState {
-
     pub(in crate::exec::sink) fn consider(
         &mut self,
         binding_scratch: &[u64],
@@ -201,7 +196,6 @@ fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec
 /// nothing projection-relevant (D2 — legal for this sink only).
 #[derive(Debug)]
 pub struct ProjectionSink {
-
     finds: Vec<SinkSpec>,
 
     sources: ProjectionSources,
@@ -217,11 +211,9 @@ pub struct ProjectionSink {
 
 #[derive(Debug)]
 enum GroupTable {
-
     Hashed(WordMap<usize>),
 
     Dense {
-
         radixes: Box<[u16]>,
 
         table: Box<[u32]>,
@@ -255,7 +247,6 @@ impl GroupTable {
 
 #[derive(Debug, Clone, Copy)]
 enum Acc {
-
     SumSigned(i128),
     SumUnsigned(u128),
 
@@ -291,7 +282,6 @@ pub(in crate::exec::sink) enum GroupState {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
-
     dedup: DedupState,
 
     finds: Vec<SinkSpec>,
