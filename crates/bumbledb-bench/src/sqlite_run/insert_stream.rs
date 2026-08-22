@@ -9,20 +9,9 @@ use crate::schema::schema;
 use crate::writebench::{non_posting_relations, write_protocol};
 use crate::{corpus, sqlmap};
 
-/// `insert_stream` on `SQLite`: pre-seeded throwaway files (the corpus
 /// minus postings, built before any timing), the full posting stream
-/// timed as a host loop of 4096-row transactions per sample — every
-/// throwaway session under the lane's pragmas, parity-checked (the
-/// standing config alone would pin the durable trio regardless of lane;
-/// finding 020).
-///
 /// # Errors
-///
-/// `SQLite` errors, stringified.
-///
 /// # Panics
-///
-/// On scratch I/O failures.
 pub fn insert_stream(
     cfg: GenConfig,
     scratch: &Path,
