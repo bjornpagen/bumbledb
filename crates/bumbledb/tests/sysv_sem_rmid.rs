@@ -2,7 +2,6 @@
 //! macOS — struck the primer graph-builder's production store twice on
 //! 2026-07-17 (a 3.4 h writer mid-run, and a fresh reads-only process on
 #![cfg(target_os = "macos")]
-
 mod common;
 
 use std::os::unix::fs::MetadataExt as _;
