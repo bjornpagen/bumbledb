@@ -52,9 +52,8 @@ pub enum ValueType {
         element: IntervalElement,
     },
 
-    /// construction (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
-
-    /// that merely checks is a CHECK constraint, refused
+    /// `interval<E, w>` — width is the type; encoding stores only the start.
+    /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`. A width that merely checks is refused.
     FixedInterval {
         element: IntervalElement,
         width: u64,
@@ -167,21 +166,16 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
     }
 }
 
-/// One σ binding's literal set — the disjunctive selection fragment
-/// a MEMBER of the spelled set, bindings read conjunctively. The singleton
-/// arm is today's equality by representation
-/// stays zero-cost — no per-literal indirection on the one-literal path.
-/// The `Many` arm's canonical form is sorted and duplicate-free with at
-/// least two literals; validation canonicalizes the order and rejects the
-/// degenerate spellings.
-/// (`lean/Bumbledb/Schema.lean: Selection`): the selected field's value is
-/// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`) and
+/// One σ binding's literal set. The selected field's value is a member of the spelled set.
+/// `lean/Bumbledb/Schema.lean: Selection`, `Selection.singleton_satisfies_iff`.
+/// `Many` is sorted, duplicate-free, at least two literals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiteralSet {
-    /// before the disjunctive extension, unchanged in meaning.
+    /// One literal: the equality binding.
     One(Value),
 
-    /// (`lean/Bumbledb/Countermodels.lean:
+    /// Two or more literals, read disjunctively.
+    /// `lean/Bumbledb/Countermodels.lean: disjunctive_window_not_literal_conjunction`.
     Many(Box<[Value]>),
 }
 
@@ -273,10 +267,8 @@ pub enum StatementDescriptor {
         target: Side,
     },
 
-    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`;
-    /// `lean/Bumbledb/Schema.lean: Statement.capacity`). Field order is
-
-    /// 2026-07-24, C2: the corpus JSON, the FFI marshal, the descriptor
+    /// `lean/Bumbledb/Capacity.lean: CapacityLaw`; `lean/Bumbledb/Schema.lean: Statement.capacity`.
+    /// Field order is target, weight, window, source.
     Capacity {
         target: Side,
 
@@ -370,7 +362,9 @@ pub struct SchemaDescriptor {
 
 impl SchemaDescriptor {
     /// # Panics
-
+    ///
+    /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
+    /// — impossible for a descriptor the acceptance gate admitted.
     #[must_use]
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
