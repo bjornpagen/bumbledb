@@ -3,8 +3,6 @@ use bumbledb::{RelationId, Value};
 use crate::corpus_gen::{GenConfig, relation_rows};
 use crate::schema::ids;
 
-/// Canonical bytes of one value, for the corpus digest (length-prefixed
-/// variable content; fixed-width scalars little-endian).
 fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
     match value {
         Value::Bool(v) => digest.update(&[0, u8::from(*v)]),
@@ -35,19 +33,10 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
             digest.update(&[7]);
             digest.update(&interval.start().to_le_bytes());
             digest.update(&interval.end().to_le_bytes());
-        } // Masks never appear in corpus rows (not a field type).
+        } 
     }
 }
 
-/// The corpus identity: a blake3 over the engine's storage format
-/// version and every relation's streamed rows — the ledger's, then the
-/// calendar's (the two corpora share one digest directory and one
-/// stamp, so both are identity). Stamps, cache directories, and reports
-/// key on this. The format version is a live
-/// ingredient by decision: a cached corpus is a *store*, and a store
-/// written under an older format must be regenerated, never reused —
-/// the ALG 17 dictionary cutover left a v1 cache silently mis-decoding
-/// until the two-oracle run caught it.
 #[must_use]
 pub fn corpus_digest(cfg: GenConfig) -> [u8; 32] {
     let mut digest = bumbledb::digest::Digest::new();
