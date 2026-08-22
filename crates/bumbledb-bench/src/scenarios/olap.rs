@@ -1,10 +1,3 @@
-//! The OLAP rollup scenario: a star-schema fact table with dimension
-//! rollups — group-by aggregates over wide scans, the regime where
-//! column images and the aggregate sink carry the load and `SQLite` gets
-//! its covering B-trees. Set semantics note: bumbledb folds *distinct*
-//! bindings, so every fact row carries its fresh id into the binding
-//! set (the true-rollup pattern the ledger's balance family pins).
-
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, FoldOp, ParamId, Query, Rule, Term,
@@ -60,14 +53,7 @@ bumbledb::schema! {
     Sale(customer) <= Customer(id);
 }
 
-/// Relation ids by declaration order.
-/// The validated scenario schema, memoized for the inspection surfaces
-/// (DDL rendering, typing); the store is created from [`Olap`]'s
-/// descriptor (`scenarios::load`).
-///
 /// # Panics
-///
-/// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
     use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
@@ -95,7 +81,7 @@ pub const PRODUCTS: u64 = 5_000;
 pub const CUSTOMERS: u64 = 20_000;
 pub const SALES: u64 = 500_000;
 pub const BRANDS: u64 = 400;
-/// Days span three years.
+
 pub const DAYS: u64 = 1_095;
 
 fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
@@ -114,8 +100,7 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
         ],
         ids::CUSTOMER => vec![Value::U64(i), Value::U64(rng.range(4))],
         ids::SALE => {
-            // Seasonality: sales cluster toward the recent third of the
-            // day span (range predicates over `day` select real slices).
+
             let day = if rng.chance(1, 2) {
                 (DAYS * 2 / 3) + rng.range(DAYS / 3)
             } else {
@@ -142,7 +127,6 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// o1 — revenue by region: full-fact rollup through one dimension.
 fn revenue_by_region() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -171,7 +155,6 @@ fn revenue_by_region() -> Query {
     })
 }
 
-/// o2 — category totals inside a day window: the windowed drill.
 fn category_window() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -223,7 +206,6 @@ fn day_windows(_: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// o3 — promo split: the 2-group full-scan fold.
 fn promo_split() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -246,7 +228,6 @@ fn promo_split() -> Query {
     })
 }
 
-/// o4 — segment × category: the two-dimension rollup (64 groups).
 fn segment_category() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -277,8 +258,6 @@ fn segment_category() -> Query {
     })
 }
 
-/// o5 — per-store extremes: Min/Max over the whole fact table, 200
-/// groups.
 fn store_extremes() -> Query {
     Query::single(Rule {
         finds: vec![
@@ -305,7 +284,6 @@ fn store_extremes() -> Query {
     })
 }
 
-/// o6 — brand drill: selective dimension point + day range, summed.
 fn brand_drill() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
@@ -347,7 +325,6 @@ fn brand_drill_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// The scenario registration.
 #[must_use]
 pub fn scenario() -> Scenario {
     Scenario {
