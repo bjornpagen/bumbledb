@@ -21,10 +21,8 @@ import type {
 import { contained, key, on, relation, str, u64 } from "#index.ts"
 import type { Statement } from "#statements.ts"
 
-/** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
-/** Pins a probe to `true` at compile time. */
 type Expect<T extends true> = T extends true ? true : never
 
 const Holder = relation("Holder", { id: u64.fresh, name: str })
