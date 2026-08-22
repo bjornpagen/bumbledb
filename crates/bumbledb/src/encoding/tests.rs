@@ -7,14 +7,10 @@ use crate::encoding::FieldDecodeError;
 use crate::error::CorruptionError;
 use bumbledb_theory::schema::IntervalElement;
 
-/// The byte-level fixtures' `bytes<N>` padder, spelled through the pad
-/// law's one owner ([`FixedBytesValue::padded`]) — no second
-/// implementation site survives outside it.
 fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(FixedBytesValue::new(raw).padded());
 }
 
-/// A deterministic LCG so the property sweeps are reproducible.
 struct Lcg(u64);
 
 impl Lcg {
@@ -33,7 +29,7 @@ fn bool_round_trip_and_strictness() {
     assert_eq!(encode_bool(true), 0x01);
     assert_eq!(decode_bool(0x00), Ok(false));
     assert_eq!(decode_bool(0x01), Ok(true));
-    // Any other byte is corruption, never a distinct "true".
+
     for byte in [0x02, 0x7f, 0xff] {
         assert_eq!(decode_bool(byte), Err(CorruptionError::InvalidBool(byte)));
     }
@@ -106,8 +102,6 @@ fn i64_order_preservation_across_sign_boundary() {
     }
 }
 
-/// A mixed 1/8/16-byte layout: two Bools (adjacent 1-byte fields), U64,
-/// I64, String, Bytes, and both Interval elements.
 fn mixed_layout() -> FactLayout {
     FactLayout::new(&[
         ValueType::Bool,
@@ -129,8 +123,7 @@ fn mixed_layout() -> FactLayout {
 fn layout_offsets_are_cumulative_widths_with_no_padding() {
     let layout = mixed_layout();
     assert_eq!(layout.field_count(), 8);
-    // 1 + 1 + 8 + 8 + 8 + 16 + 16 + 16 — 1-byte fields sit flush against
-    // wider ones; the bytes<12> field is word-padded to 16.
+
     assert_eq!(layout.field_offset(0), 0);
     assert_eq!(layout.field_offset(1), 1);
     assert_eq!(layout.field_offset(2), 2);
@@ -170,7 +163,7 @@ fn encode_fact_matches_independent_field_encodings() {
     expected.extend_from_slice(&encode_u64(u64::MAX));
     expected.extend_from_slice(&encode_i64(i64::MIN));
     expected.extend_from_slice(&encode_u64(7));
-    // bytes<12>: the 12 raw bytes zero-padded to the 16-byte word boundary.
+
     expected.extend_from_slice(&[0xAA; 12]);
     expected.extend_from_slice(&[0x00; 4]);
     expected.extend_from_slice(&encode_interval_u64(
@@ -210,14 +203,6 @@ fn field_bytes_slices_equal_independent_encodings() {
     );
 }
 
-/// The parity law behind the typed-key determinant path (`Key`'s
-/// `encode_determinant`): for EVERY field type — Bool, U64, I64, String,
-/// bytes<N>, both general intervals, both fixed-width intervals — the
-/// bytes [`append_field`] produces at the layout's type equal the span
-/// `storage/keys::determinant_image` slices out of the encoded fact at
-/// that field. Field writers take the layout's type, so a general
-/// interval value at a fixed-width slot cannot silently write 16 bytes
-/// into 8.
 #[test]
 fn append_field_matches_determinant_image_slices() {
     use bumbledb_theory::schema::FieldId;
@@ -297,22 +282,21 @@ fn decode_field_surfaces_corruption() {
     let layout = mixed_layout();
     let mut fact = Vec::new();
     encode_fact(&mixed_values(), &layout, &mut fact);
-    fact[0] = 0x02; // corrupt the Bool
+    fact[0] = 0x02; 
     assert_eq!(
         decode_field(layout.encoded(&fact), 0),
         Err(FieldDecodeError::InvalidBool(0x02))
     );
     fact[0] = 0x01;
-    fact[1] = 0x03; // corrupt the second Bool
+    fact[1] = 0x03; 
     assert_eq!(
         decode_field(layout.encoded(&fact), 1),
         Err(FieldDecodeError::InvalidBool(0x03))
     );
     fact[1] = 0x00;
-    // Invert the IntervalU64 field (offset 42): end half below its start.
+
     fact[50..58].copy_from_slice(&encode_u64(0));
-    // The expected error payload, rebuilt from the same primitives the
-    // fixture used: the untouched start half ‖ the zeroed end half.
+
     let mut corrupt = [0u8; 16];
     let (corrupt_start, corrupt_end) = corrupt.split_at_mut(8);
     corrupt_start.copy_from_slice(&encode_u64(3));
@@ -322,12 +306,9 @@ fn decode_field_surfaces_corruption() {
         Err(FieldDecodeError::InvalidInterval(corrupt))
     );
     fact[50..58].copy_from_slice(&encode_u64(u64::MAX));
-    // The pad-corruption fixture: a nonzero byte in the bytes<12> field's
-    // trailing pad (offsets 26 + 12 .. 26 + 16) is typed corruption —
-    // the pad is encoding, not data.
+
     fact[39] = 0x5A;
-    // The bytes<12> field's trailing word, sliced layout-first — the
-    // error payload is the field's last whole word.
+
     let &tail = field_bytes(layout.encoded(&fact), 5)
         .last_chunk()
         .expect("bytes<12> spans two whole words");
@@ -342,7 +323,6 @@ fn decode_field_surfaces_corruption() {
     );
 }
 
-/// Typed entries read the layout arm and never construct [`ValueRef`].
 #[test]
 fn typed_decode_reads_the_layout_arm() {
     let layout = mixed_layout();
@@ -362,8 +342,6 @@ fn typed_decode_reads_the_layout_arm() {
     );
 }
 
-/// Width lives on the layout: a 16-byte payload at a `bytes<8>` slot
-/// writes eight bytes, not sixteen.
 #[test]
 fn append_field_writes_layout_bytes_width() {
     let mut out = Vec::new();
@@ -377,8 +355,7 @@ fn append_field_writes_layout_bytes_width() {
 
 #[test]
 fn fixed_bytes_round_trip_at_pad_boundaries() {
-    // Widths astride the word boundaries — 1/7/8/9/63/64 — round-trip
-    // through the padded encoding, and the padded width is ⌈N/8⌉ × 8.
+
     for len in [1usize, 7, 8, 9, 63, 64] {
         let raw: Vec<u8> = (0..len)
             .map(|i| u8::try_from(i % 251).unwrap() + 1)
@@ -396,8 +373,7 @@ fn fixed_bytes_round_trip_at_pad_boundaries() {
 
 #[test]
 fn fixed_bytes_padded_order_is_byte_order() {
-    // The determinant B-tree's need: memcmp order over the padded encodings of
-    // equal-width values equals byte order over the values (sortedness
+
     // is the index's need — order *operations* stay refused).
     let mut rng = Lcg(0x0303);
     for _ in 0..500 {
@@ -410,7 +386,6 @@ fn fixed_bytes_padded_order_is_byte_order() {
     }
 }
 
-/// A random valid U64 interval: two distinct draws, ordered.
 fn rand_interval_u64(rng: &mut Lcg) -> (u64, u64) {
     loop {
         let (a, b) = (rng.next(), rng.next());
@@ -420,8 +395,6 @@ fn rand_interval_u64(rng: &mut Lcg) -> (u64, u64) {
     }
 }
 
-/// A random valid U64 interval pinned to `start` (exercises the end
-/// tiebreak, which random starts would never hit).
 fn rand_interval_u64_from(rng: &mut Lcg, start: u64) -> (u64, u64) {
     loop {
         let end = rng.next();
@@ -433,7 +406,7 @@ fn rand_interval_u64_from(rng: &mut Lcg, start: u64) -> (u64, u64) {
 
 #[test]
 fn interval_round_trip_edges_and_random_pairs() {
-    // Edges: extreme starts, MAX_END ends, and minimal width (start + 1 == end).
+
     for (start, end) in [
         (i64::MIN, i64::MAX),
         (i64::MIN, i64::MIN + 1),
@@ -458,7 +431,7 @@ fn interval_round_trip_edges_and_random_pairs() {
             Ok((start, end))
         );
     }
-    // Random pairs, ordered into valid intervals, both element types.
+
     let mut rng = Lcg(0x0101);
     for _ in 0..1_000 {
         let (start, end) = rand_interval_u64(&mut rng);
@@ -485,13 +458,11 @@ fn interval_round_trip_edges_and_random_pairs() {
 
 #[test]
 fn interval_encoding_orders_by_start_then_end() {
-    // Byte-wise comparison of encodings must equal `(start, end)` tuple
-    // comparison under the element order — the property the storage
-    // layer's neighbor probes stand on (docs/architecture/50-storage.md).
+
     let mut rng = Lcg(0x0202);
     for i in 0..1_000 {
         let x = rand_interval_u64(&mut rng);
-        // Every other pair shares a start so the end tiebreak is exercised.
+
         let y = if i % 2 == 0 {
             rand_interval_u64(&mut rng)
         } else {
@@ -511,9 +482,7 @@ fn interval_encoding_orders_by_start_then_end() {
             (x.0.cast_signed(), x.1.cast_signed()),
             (y.0.cast_signed(), y.1.cast_signed()),
         );
-        // Sign-casting both halves of a valid u64 interval keeps start < end
-        // exactly when both halves land on the same side of zero — skip the
-        // pairs it inverts.
+
         if xi.0 < xi.1 && yi.0 < yi.1 {
             assert_eq!(
                 encode_interval_i64(
@@ -531,9 +500,7 @@ fn interval_encoding_orders_by_start_then_end() {
 
 #[test]
 fn interval_decode_rejects_start_at_or_beyond_end() {
-    // Equal and inverted bounds, both element types: corruption, never a
-    // value — the encoding boundary enforces `start < end` exactly as it
-    // enforces Bool's strict 0/1.
+
     for (start, end) in [(5u64, 5u64), (9, 3), (u64::MAX, 0)] {
         let mut bytes = [0; 16];
         bytes[..8].copy_from_slice(&encode_u64(start));
@@ -554,21 +521,6 @@ fn interval_decode_rejects_start_at_or_beyond_end() {
     }
 }
 
-// ---------------------------------------------------------------------
-// The exhaustive order-preservation suite (the crucible packet (git ecec1dc3)
-// 15-exhaustive-miri.md, suite 3): for each of the six value types, the
-// canonical encoding preserves the value order over an exhaustive small
-// domain — every ordered pair checked (which pins injectivity too:
-// `cmp` equality both ways). Each test carries its domain-size
-// arithmetic; the domain is the claim.
-// ---------------------------------------------------------------------
-
-/// The i64 domain at byte granularity: the dense sign-boundary window
-/// −260..=260 (crossing 0 and the ±255/±256 first-byte boundary), plus
-/// every byte-boundary magnitude `v · 256^k` for `v ∈ {0x01, 0x7F,
-/// 0x80, 0xFF}`, `k ∈ 0..8`, with both signs and ±1 neighbors (clamped
-/// to the i64 range), plus the type extremes — so every encoded byte
-/// position is exercised at its carry and sign edges.
 fn i64_byte_granularity_domain() -> Vec<i64> {
     let mut set = std::collections::BTreeSet::new();
     set.extend(-260..=260i64);
@@ -593,8 +545,6 @@ fn i64_byte_granularity_domain() -> Vec<i64> {
     set.into_iter().collect()
 }
 
-/// Bool: the whole domain is {false, true} — all 2² = 4 ordered pairs.
-/// (false, 0x00) < (true, 0x01) is the entire order claim.
 #[test]
 fn exhaustive_bool_encoding_preserves_order() {
     for x in [false, true] {
@@ -604,11 +554,6 @@ fn exhaustive_bool_encoding_preserves_order() {
     }
 }
 
-/// I64 across the sign boundary at byte granularity: the sign-flipped
-/// big-endian encoding preserves numeric order over the whole derived
-/// domain ([`i64_byte_granularity_domain`] — 677 values, size asserted),
-/// checked on all 677² = 458,329 ordered pairs. `cmp` equality in both
-/// directions makes this order preservation AND injectivity.
 #[test]
 fn exhaustive_i64_encoding_preserves_order_across_the_sign_boundary() {
     let domain = i64_byte_granularity_domain();
@@ -620,10 +565,6 @@ fn exhaustive_i64_encoding_preserves_order_across_the_sign_boundary() {
     }
 }
 
-/// U64 at byte granularity: the dense window 0..=520, every
-/// byte-boundary magnitude with ±1 neighbors (as in the i64 domain,
-/// unsigned), and the top extremes — 605 values (size asserted), all
-/// 605² = 366,025 ordered pairs.
 #[test]
 fn exhaustive_u64_encoding_preserves_order_at_byte_boundaries() {
     let mut set = std::collections::BTreeSet::new();
@@ -648,13 +589,6 @@ fn exhaustive_u64_encoding_preserves_order_at_byte_boundaries() {
     }
 }
 
-/// String: the fact encoding is the interned id's big-endian word — the
-/// ONLY order it carries is id order (string-value order is refused by
-/// design, `docs/architecture/10-data-model.md`: intern ids are
-/// meaningless to order, and `Lt`-family operators on str are typed
-/// validation errors). Domain: ids 0..=255 exhaustively, the word
-/// boundaries 2⁸ᵏ ± 1, and the never-minted sentinel `u64::MAX` — 278
-/// values (size asserted), all 278² = 77,284 ordered pairs.
 #[test]
 fn exhaustive_string_id_word_preserves_id_order_only() {
     let mut set = std::collections::BTreeSet::new();
@@ -676,18 +610,6 @@ fn exhaustive_string_id_word_preserves_id_order_only() {
     }
 }
 
-/// bytes<N> prefix laws: ALL byte strings of length 1..=3 over the
-/// NUL-free 4-symbol alphabet {0x01, 0x55, 0xAA, 0xFF} — 4 + 4² + 4³ =
-/// 84 strings (count asserted), all 84² = 7,056 ordered pairs. Every
-/// string pads to the same single 8-byte word, and because the 0x00 pad
-/// byte sorts strictly below every alphabet symbol, padded memcmp order
-/// equals raw lexicographic order INCLUDING the prefix law (a proper
-/// prefix sorts strictly first) — and the encoding is injective over
-/// the domain. The engine only ever compares equal declared widths
-/// (`ValueType::FixedBytes { len }` is per-field), where the law holds
-/// for arbitrary bytes; the cross-length half is the mathematical
-/// boundary of the claim, and the final assert documents why it needs
-/// the NUL-free alphabet.
 #[test]
 fn exhaustive_fixed_bytes_prefix_laws_over_all_short_strings() {
     let alphabet = [0x01u8, 0x55, 0xAA, 0xFF];
@@ -720,24 +642,13 @@ fn exhaustive_fixed_bytes_prefix_laws_over_all_short_strings() {
             );
         }
     }
-    // The boundary of the claim: a NUL in the value collides with the
-    // pad, so the cross-length law requires the NUL-free alphabet (the
-    // engine never faces this — widths are fixed per field).
+
     let (mut with_nul, mut without) = (Vec::new(), Vec::new());
     encode_fixed_bytes(&[0x01, 0x00], &mut with_nul);
     encode_fixed_bytes(&[0x01], &mut without);
     assert_eq!(with_nul, without, "NUL and pad are indistinguishable");
 }
 
-/// Interval endpoint-pair ordering on a dense grid, both element types:
-/// the 16-byte `start ‖ end` encoding sorts by the `(start, end)` tuple
-/// under the element order.
-///
-/// Domain arithmetic — u64: endpoints {0..=20} ∪ {MAX−2, MAX−1, MAX}
-/// (24 values, rays included: end == MAX), so C(24,2) = 276 nonempty
-/// intervals and 276² = 76,176 ordered pairs. i64: endpoints {−10..=10}
-/// ∪ {MIN, MIN+1, MAX−1, MAX} (25 values), so C(25,2) = 300 intervals
-/// and 300² = 90,000 ordered pairs. Every pair checked.
 #[test]
 fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
     let mut u64_points: Vec<u64> = (0..=20).collect();
@@ -792,8 +703,7 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
 
 #[test]
 fn nullary_fact_layout_and_hash() {
-    // Nullary relations are legal (10-data-model): the empty fact encodes
-    // to zero bytes and still has a well-defined identity hash.
+
     let layout = FactLayout::new(&[]);
     assert_eq!(layout.fact_width(), 0);
     let mut fact = Vec::new();
@@ -811,21 +721,15 @@ fn fact_hash_is_full_32_byte_blake3() {
     assert_ne!(fact_hash(b"a"), fact_hash(b"b"));
 }
 
-// ---------------------------------------------------------------------
-// The fixed-width interval family — interval<E, w>: one stored word (the
-// start), the end derived from the TYPE's width, the Q2 bound
-// (`start + w < MAX_END`) the corruption line
 // (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
-// ---------------------------------------------------------------------
 
-/// A one-fixed-field layout per element domain, width `w`.
 fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
     FactLayout::new(&[ValueType::U64, ValueType::FixedInterval { element, width }])
 }
 
 #[test]
 fn interval_words_reads_through_the_layout_width() {
-    // One owner: 16 general, 8 fixed — `ValueType::width` plus this decoder.
+
     let general = ValueType::Interval {
         element: IntervalElement::U64,
     };
@@ -849,8 +753,7 @@ fn interval_words_reads_through_the_layout_width() {
 
 #[test]
 fn fixed_interval_round_trips_one_word() {
-    // The encoding is the start word — 8 bytes, not 16 — and decode
-    // re-derives the end from the layout's constant width.
+
     for (start, width) in [(0u64, 1u64), (3, 5), (1 << 40, 1 << 20), (u64::MAX - 3, 1)] {
         let layout = fixed_layout(IntervalElement::U64, width);
         assert_eq!(layout.fact_width(), 16, "8-byte scalar + 8-byte start");
@@ -888,13 +791,10 @@ fn fixed_interval_round_trips_one_word() {
 
 #[test]
 fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
-    // Stored starts at or past `MAX_END − w` would derive a ceiling or
-    // overflowed end — corruption, never a value; the boundary's inside
-    // edge decodes. Both element ceilings encode to the same word, so
-    // one word-domain sweep covers the u64 face...
+
     for width in [1u64, 5, 1 << 33] {
         let layout = fixed_layout(IntervalElement::U64, width);
-        let bound = u64::MAX - width; // start + w == MAX_END: barred
+        let bound = u64::MAX - width; 
         for start in [bound, bound + 1, u64::MAX] {
             let mut fact = Vec::new();
             encode_fact(
@@ -924,8 +824,7 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
             ))
         );
     }
-    // ...and the i64 face rejects at ITS ceiling (`i64::MAX` encodes to
-    // the same u64::MAX word — one bound, two domains).
+
     let layout = fixed_layout(IntervalElement::I64, 4);
     let mut fact = Vec::new();
     encode_fact(
@@ -942,17 +841,14 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
 }
 
 /// The fixed encoding is trivially the scalar embedding
-/// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`): the one stored
-/// word is `encode_u64`/`encode_i64` of the start, so the exhaustive
-/// scalar suites above ARE this family's order proof. This arm pins the
-/// residue those suites cannot see: across a dense start grid and width
-/// extremes, the stored word ordering equals start ordering AND the
-/// derived ends stay exact — dense grid, the Q2 boundary, w extremes.
+/// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`): the one stored word
+/// is `encode_u64`/`encode_i64` of the start, so the exhaustive scalar suites
+/// above ARE this family's order proof.
 #[test]
 fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     for width in [1u64, 2, 255, 1 << 32, u64::MAX - 2] {
         let layout = fixed_layout(IntervalElement::U64, width);
-        let ceiling = u64::MAX - width; // the least barred start
+        let ceiling = u64::MAX - width; 
         let mut starts = std::collections::BTreeSet::new();
         starts.extend(0..=64u64);
         starts.extend((0..=8).map(|k| ceiling.saturating_sub(k + 1)));
@@ -980,7 +876,7 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
             }
         }
     }
-    // The i64 face across the sign boundary: start order = word order.
+
     let layout = fixed_layout(IntervalElement::I64, 3);
     let starts: Vec<i64> = (-40..=40).collect();
     let encoded: Vec<Vec<u8>> = starts
@@ -1005,11 +901,6 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     }
 }
 
-/// The keyed decode substitutes the caller's supplied values for the
-/// projected fields WITHOUT invoking the string resolver — the keyed-get
-/// hit path re-derives nothing the caller handed it (the `U` probe
-/// already matched the determinant byte-for-byte). Non-projected fields
-/// decode exactly as [`decode_values`] does.
 #[test]
 fn decode_values_keyed_never_resolves_a_projected_field() {
     use bumbledb_theory::Value;
@@ -1018,7 +909,7 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     let mut fact = Vec::new();
     encode_fact(&mixed_values(), &layout, &mut fact);
     // Projection (u64 field 2, str field 4): the resolver must never see
-    // the projected string's id — a call is the failure.
+
     let supplied = [Value::U64(u64::MAX), Value::String(Box::from("supplied"))];
     let decoded = super::decode::decode_values_keyed(
         layout.encoded(&fact),
@@ -1029,7 +920,7 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     .expect("decode");
     assert_eq!(decoded[2], supplied[0]);
     assert_eq!(decoded[4], supplied[1]);
-    // The unkeyed decode of the same fact agrees everywhere else.
+
     let plain = super::decode_values(layout.encoded(&fact), |id| {
         assert_eq!(id, 7);
         Ok(Box::from("resolved"))
