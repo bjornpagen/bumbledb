@@ -1,7 +1,6 @@
 //! Find-list rules: Datalog safety and the aggregate roster
 //! query's signature derivation, the ONE place result-column types
 //! come from.
-
 use super::{AggKind, Context, RuleTyping, Signature, SignatureColumn};
 use crate::error::{FindIndex, ValidationError};
 use crate::ir::normalize::LoweredRule;
