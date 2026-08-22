@@ -9,7 +9,6 @@ impl FairnessCheck {
     /// as a checked invariant, finding 074 — LMDB maps the whole store
 
     /// # Errors
-
     pub fn run(conn: &Connection) -> Result<(), String> {
         let mut expected = sqlmap::expected_indexes(schema());
         expected.extend(crate::families::expected_indexes());
@@ -17,7 +16,6 @@ impl FairnessCheck {
     }
 
     /// # Errors
-
     pub fn run_calendar(conn: &Connection) -> Result<(), String> {
         let mut expected = sqlmap::expected_indexes(crate::calendar::schema());
         expected.extend(crate::calendar::families::expected_indexes());
