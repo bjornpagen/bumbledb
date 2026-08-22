@@ -6,7 +6,6 @@ use bumbledb::{ParamId, Value};
 use super::{Builder, ParamSlot, VarCols};
 
 fn sql_string_literal(text: &str) -> Result<String, String> {
-
     if text.contains('\0') {
         return Err("NUL byte in string literal (would truncate the SQL statement)".to_owned());
     }
@@ -99,7 +98,6 @@ fn set_side(comparison: &Comparison) -> Option<(ParamId, &Term)> {
 }
 
 impl Builder<'_> {
-
     fn source_table(&self, atom: &Atom) -> String {
         match atom.source {
             bumbledb::AtomSource::Edb(relation) => self.schema.relation(relation).name().to_owned(),
@@ -219,7 +217,6 @@ impl Builder<'_> {
     pub(super) fn render_atom(&mut self, atom: &Atom) -> Result<(), String> {
         let table = self.source_table(atom);
         if atom.bindings.is_empty() {
-
             self.conditions
                 .push(format!("EXISTS (SELECT 1 FROM \"{table}\")"));
             return Ok(());
@@ -239,7 +236,6 @@ impl Builder<'_> {
                                 start: first_start,
                                 end: first_end,
                             }) => {
-
                                 out.push(format!("{first_start} = {start}"));
                                 out.push(format!("{first_end} = {end}"));
                             }
@@ -263,7 +259,6 @@ impl Builder<'_> {
                 match term {
                     Term::Var(var) => match self.columns.get(var) {
                         Some(VarCols::Scalar(first)) => {
-
                             out.push(format!("{first} = {column}"));
                         }
                         Some(VarCols::Interval { .. }) => {
@@ -301,7 +296,6 @@ impl Builder<'_> {
     pub(super) fn negated_atom(&mut self, index: usize, atom: &Atom) -> Result<(), String> {
         let table = self.source_table(atom);
         if atom.bindings.is_empty() {
-
             self.conditions
                 .push(format!("NOT EXISTS (SELECT 1 FROM \"{table}\")"));
             return Ok(());
@@ -385,7 +379,6 @@ impl Builder<'_> {
     }
 
     pub(super) fn comparison(&mut self, comparison: &Comparison) -> Result<(), String> {
-
         if matches!(comparison.op, CmpOp::Eq)
             && let Some((param, other)) = set_side(comparison)
         {
@@ -399,7 +392,6 @@ impl Builder<'_> {
         let lhs = self.render_term(&comparison.lhs)?;
         let rhs = self.render_term(&comparison.rhs)?;
         let conjunct = match (comparison.op, lhs, rhs) {
-
             (CmpOp::Eq, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
                 format!("{ls} = {rs} AND {le} = {re}")
             }
