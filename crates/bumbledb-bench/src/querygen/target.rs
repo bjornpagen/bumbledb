@@ -27,7 +27,6 @@
 //! CurrencyBacking(currency)` targets, and `CashRounding` rides the
 //! ψ-sub-vocabulary `Currency(id | minor_units == 0)` — the three
 //! write-scenario classes and the closed query shapes draw from here.
-
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 use std::sync::OnceLock;
