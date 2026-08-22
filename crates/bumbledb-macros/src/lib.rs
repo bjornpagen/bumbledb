@@ -42,7 +42,6 @@
 //! duplicate handles, and type-mismatched literals are expansion panics
 //! naming the offender). The emission per closed relation: the **host
 //! enum** (an emission, not a type — the engine's vocabulary is
-
 use bumbledb_theory::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec,
     RelationSpec, RowSpec, SchemaSpec, SideSpec, SpecIssue, StatementSide, StatementSpec,
