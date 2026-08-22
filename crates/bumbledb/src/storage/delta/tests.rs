@@ -306,7 +306,6 @@ fn seed_committed(env: &Environment, schema: &Schema, value: &str) -> InternId {
 
 #[test]
 fn a_committed_string_interned_twice_probes_the_dict_once() {
-
     let dir = TempDir::new("delta-memo-committed");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -324,7 +323,6 @@ fn a_committed_string_interned_twice_probes_the_dict_once() {
 
 #[test]
 fn a_pending_string_answers_before_the_memo() {
-
     let dir = TempDir::new("delta-memo-pending-first");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -337,7 +335,6 @@ fn a_pending_string_answers_before_the_memo() {
 
 #[test]
 fn committed_misses_are_never_memoized() {
-
     let dir = TempDir::new("delta-memo-miss");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -350,7 +347,6 @@ fn committed_misses_are_never_memoized() {
 
 #[test]
 fn a_dropped_deltas_memo_leaves_no_trace() {
-
     let dir = TempDir::new("delta-memo-drop");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -398,7 +394,6 @@ fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
 
 #[test]
 fn determinant_map_mirrors_the_fact_dispositions() {
-
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-determinant-map");
     let schema = schema();
@@ -436,7 +431,6 @@ fn determinant_map_mirrors_the_fact_dispositions() {
 
 #[test]
 fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
-
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-determinant-order");
     let schema = schema();
@@ -472,7 +466,6 @@ fn deleting_the_old_fact_never_erases_the_new_facts_determinant_record() {
 
 #[test]
 fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
-
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-committed-owner");
     let schema = schema();
@@ -508,7 +501,6 @@ fn a_cancelled_insert_never_shadows_the_committed_owner_of_its_key_tuple() {
 
 #[test]
 fn a_cancelled_insert_restores_an_earlier_pending_owner() {
-
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-pending-owner");
     let schema = schema();
@@ -533,7 +525,6 @@ fn a_cancelled_insert_restores_an_earlier_pending_owner() {
 
 #[test]
 fn cancelling_a_replaced_insert_does_not_restore_it() {
-
     // replaced stack. Overlay stays B; cancelling B must not resurrect A.
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-replaced-insert");
@@ -568,7 +559,6 @@ fn cancelling_a_replaced_insert_does_not_restore_it() {
 
 #[test]
 fn a_cancelled_insert_keeps_a_pending_deletes_absence() {
-
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-cancel-keeps-absence");
     let schema = schema();
@@ -598,7 +588,6 @@ fn a_cancelled_insert_keeps_a_pending_deletes_absence() {
 
 #[test]
 fn determinant_overwrites_never_reclone_the_scratch() {
-
     const KEY: KeyId = KeyId(0);
     let dir = TempDir::new("delta-determinant-clone");
     let schema = schema();
@@ -615,7 +604,7 @@ fn determinant_overwrites_never_reclone_the_scratch() {
     }
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    let new = fact(&schema, 7, 999); 
+    let new = fact(&schema, 7, 999);
 
     delta.delete(&view, R, &old).expect("delete");
     assert_eq!(delta.determinant_scratch_clones, 1, "first record clones");
