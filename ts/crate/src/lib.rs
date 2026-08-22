@@ -1,6 +1,5 @@
 //! The dumb-bridge law: no logic beyond marshaling will EVER live in this
 //! crate. Anything smart belongs in the TypeScript SDK or the engine.
-
 use std::cell::{Cell, Ref, RefCell, RefMut, UnsafeCell};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
