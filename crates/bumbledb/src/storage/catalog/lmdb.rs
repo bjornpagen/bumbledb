@@ -30,7 +30,6 @@ impl<'txn, 'env> LmdbReadCatalog<'txn, 'env> {
     }
 
     /// borrow of this `Copy` handle — store `CodecRead` can drop the
-
     #[allow(
         clippy::trivially_copy_pass_by_ref,
         reason = "UFCS from CatalogRead passes &self; the handle is Copy but the trait shape is a borrow"
