@@ -3,7 +3,6 @@ use super::*;
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn const_arity_k4_insert_beats_the_dyn_arm() {
-
     const N: usize = std::hint::black_box(128) * 1024;
     let arity = std::hint::black_box(4usize);
     let flat: Vec<u64> = {
@@ -50,7 +49,7 @@ fn const_arity_k4_insert_beats_the_dyn_arm() {
     #[expect(
         clippy::cast_precision_loss,
         reason = "reporting accepts lossy integer-to-float conversion"
-    )] 
+    )]
     let ratio = dyn_ns as f64 / core_ns as f64;
     println!("const-arity K=4 fill: core {core_ns} ns, dyn {dyn_ns} ns, ratio {ratio:.2}");
     assert!(
