@@ -38,9 +38,7 @@ const Certificate = relation("Certificate", {
 const wellTyped: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: "DirectPass" }
 
 type Cases = [
-
 	Expect<Equal<Infer<typeof Kind.id>, "DirectPass" | "JudgedPass" | "Failed">>,
-
 	Expect<Equal<Fact<typeof Certificate>["kind"], "DirectPass" | "JudgedPass" | "Failed">>,
 	Expect<
 		Equal<
@@ -52,10 +50,8 @@ type Cases = [
 			}
 		>
 	>,
-
 	Expect<Equal<typeof Kind.id, ClosedIdField<"Kind", "DirectPass" | "JudgedPass" | "Failed">>>,
 	Expect<Equal<(typeof Kind.id)["closed"], ClosedRoster<"Kind", "DirectPass" | "JudgedPass" | "Failed">>>,
-
 	Expect<Equal<typeof Kind.id extends ClosedIdField ? true : false, true>>
 ]
 
@@ -74,12 +70,12 @@ function insertRefusals(): unknown[] {
 	// @ts-expect-error — H1: "DirectPas" is a typo off the roster — a wrong string is a compile error
 	const typo: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: "DirectPas" }
 
+	// @ts-expect-error — H1: a bigint no longer types a closed-referencing column — the value type is the handle union
 	const forgedId: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: 0n }
 	return [typo, forgedId]
 }
 
 test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slot carries the name literal", function probeSameShapedVocabularies() {
-
 	const Answer = closed("Answer", ["DirectPass", "JudgedPass", "Failed"])
 	const Cert = relation("Cert", { k: Kind.id })
 	assert.throws(function crossVocabularyPairing() {
@@ -89,7 +85,6 @@ test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slo
 })
 
 test("the precise type's runtime twin is the same frozen declaration-order roster", function probeRuntimeTwin() {
-
 	assert.ok(Object.isFrozen(Kind.id))
 	assert.ok(Object.isFrozen(Kind.id.closed))
 	assert.ok(Object.isFrozen(Kind.id.closed.handles))
