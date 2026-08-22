@@ -47,7 +47,7 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] 
+)]
 fn hoisted_gathers_match_the_per_position_reference() {
     let dir = TempDir::new("colt-hoisted-gather");
 
@@ -130,7 +130,6 @@ fn hoisted_gathers_match_the_per_position_reference() {
     };
 
     for &size in &[1usize, 3, 8, 64, 128] {
-
         let mut colt = Colt::new(apply(&image, &[], &[], Vec::new()), &[], vec![vec![0, 2]]);
         let got = drain_at(&mut colt, Colt::root(), 0, size);
         let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
