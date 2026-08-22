@@ -1,15 +1,3 @@
-//! The plan derivation (PRD: `CommitPlan` — compute, don't accumulate):
-//! delta in, plan out, byte-level assertions on determinant bytes, reverse-edge
-//! key bytes, probe markers, and the target-side check sets — the class
-//! of test the accumulate-during-apply shape could never have. Covers
-//! scalar keys, pointwise keys, satisfied and unsatisfied selections, the
-//! `==` pair, and the delete+insert re-establishment shapes.
-//!
-//! Own fixture: a ψ-carrying and two empty-ψ dependents on one scalar
-//! key, a pointwise key with a coverage dependent, a σ-gated source, a
-//! `==` pair, and a containment whose target projection permutes the
-//! target key's order.
-
 use crate::encoding::{ValueRef, encode_interval_u64, encode_u64};
 use crate::schema::ValidateDescriptor as _;
 use crate::schema::{ContainmentId, Enforcement, KeyId, Schema};
@@ -36,7 +24,6 @@ const CHILD: RelationId = RelationId(7);
 const COMBO: RelationId = RelationId(8);
 const LINK: RelationId = RelationId(9);
 
-/// Declared statement order (no fresh fields, so no auto-keys).
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const ROOM_KEY: StatementId = StatementId(1);
 const TRANSFER_ACCOUNT: StatementId = StatementId(5);
@@ -55,17 +42,10 @@ const fn containment_id(statement: StatementId) -> ContainmentId {
     ContainmentId(statement.0 - 5)
 }
 
-/// Account(id, active, note; key id) with three dependents — Transfer <=
-/// Account(id | active == true) (ψ-carrying), Grant <= Account(id) and
-/// Report(subject | urgent == true) <= Account(id) (empty ψ; Report's σ
-/// also gates the source side). Room(room, during, tag; key (room,
-/// during)) with the coverage dependent Stay <= Room. Parent == Child
-/// lowered to [`TOTALITY`] and [`ARM`]. Link(p, q) <= Combo(y, x) against
-/// key Combo(x, y): a non-identity key permutation.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
-)] // one fixture schema, a table
+)] 
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -241,15 +221,12 @@ fn link(schema: &Schema, p: u64, q: u64) -> Vec<u8> {
     fact(schema, LINK, &[ValueRef::U64(p), ValueRef::U64(q)])
 }
 
-/// Commits `facts` as one base delta.
 fn commit_base(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
     apply_delta(env, schema, &[], facts)
         .expect("base commit")
         .expect("admitted");
 }
 
-/// Records `deletes` then `inserts` into one delta and derives its plan,
-/// handing both back (the plan borrows the delta's arena).
 fn plan_of<'d>(
     env: &Environment,
     delta: &'d mut WriteDelta<'_>,
@@ -267,10 +244,6 @@ fn plan_of<'d>(
     plan_for(delta, env)
 }
 
-/// The op of one fact, found by relation and canonical bytes (op order is
-/// the delta's `(relation, fact_hash)` order — hash order is not
-/// meaningful to assert against, and facts of different relations may
-/// share bytes).
 fn delete_for<'a, 'd>(ops: &'a [DeleteOp<'d>], rel: RelationId, fact: &[u8]) -> &'a DeleteOp<'d> {
     ops.iter()
         .find(|op| op.relation() == rel && op.fact() == fact)
@@ -315,8 +288,6 @@ fn only_containment<'a, W>(mut keys: impl Iterator<Item = &'a RKeyOp<W>>) -> &'a
     edge
 }
 
-// ---------- per-fact ops: determinants and edges ----------
-
 #[test]
 fn scalar_and_pointwise_determinants_carry_exact_bytes() {
     let dir = TempDir::new("plan-determinants");
@@ -345,8 +316,6 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
         "Account has no outgoing"
     );
 
-    // The pointwise determinant: scalar prefix ‖ the interval's whole 16 bytes,
-    // marked for the ordered-neighbor probe.
     let room_op = insert_for(&plan.inserts, ROOM, &r);
     let mut room_determinant = Vec::new();
     room_determinant.extend_from_slice(&encode_u64(3));
@@ -361,9 +330,7 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
 
 #[test]
 fn fact_ops_carry_the_delta_computed_hash() {
-    // The plan borrows each op's blake3 hash from the delta's own map
-    // key — the applier's `M` derivations re-hash nothing. Pin: both
-    // dispositions' ops carry exactly `blake3(fact bytes)`.
+
     let dir = TempDir::new("plan-fact-hash");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -385,11 +352,7 @@ fn fact_ops_carry_the_delta_computed_hash() {
 
 #[test]
 fn plan_ops_land_in_relation_then_hash_order() {
-    // The delta's fact table is a hash map with no iteration order; the
-    // plan's ONE exact sort restores the deterministic
-    // `(relation, fact_hash)` commit order the 50-storage doc requires.
-    // Pinned over enough facts across two relations that an accidental
-    // insertion-order pass cannot succeed by luck.
+
     let dir = TempDir::new("plan-op-order");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -426,10 +389,9 @@ fn source_selection_gates_the_edges() {
         &[(REPORT, urgent.clone()), (REPORT, calm.clone())],
     );
 
-    // Inside σ: one edge, projection bytes in target key order.
     let edge = only_containment(insert_for(&plan.inserts, REPORT, &urgent).containment_r_keys());
     assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
-    // Outside σ: no edge, so no R put and no source probe — by absence.
+
     assert!(
         insert_for(&plan.inserts, REPORT, &calm)
             .containment_r_keys()
@@ -453,7 +415,6 @@ fn pair_statements_edge_their_own_directions() {
         &[(PARENT, p.clone()), (CHILD, c.clone())],
     );
 
-    // The == pair is two statements; each side owes exactly its own probe.
     let edge = only_containment(insert_for(&plan.inserts, PARENT, &p).containment_r_keys());
     assert_edge(&schema, edge, TOTALITY, &encode_u64(4));
     let edge = only_containment(insert_for(&plan.inserts, CHILD, &c).containment_r_keys());
@@ -462,9 +423,7 @@ fn pair_statements_edge_their_own_directions() {
 
 #[test]
 fn edge_key_bytes_land_in_target_key_order() {
-    // Link(p, q) <= Combo(y, x) against key Combo(x, y): projection
-    // element p maps to determinant position 1, q to 0 — the plan's key bytes
-    // are pre-permuted, byte-for-byte.
+
     let dir = TempDir::new("plan-permutation");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -473,8 +432,8 @@ fn edge_key_bytes_land_in_target_key_order() {
     let plan = plan_of(&env, &mut delta, &[], &[(LINK, l.clone())]);
 
     let mut expected = Vec::new();
-    expected.extend_from_slice(&encode_u64(2)); // q -> Combo.x
-    expected.extend_from_slice(&encode_u64(1)); // p -> Combo.y
+    expected.extend_from_slice(&encode_u64(2)); 
+    expected.extend_from_slice(&encode_u64(1)); 
     let edge = only_containment(insert_for(&plan.inserts, LINK, &l).containment_r_keys());
     assert_edge(&schema, edge, LINK_COMBO, &expected);
 }
@@ -519,11 +478,9 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
     assert!(op.determinants().is_empty(), "Report has no key statements");
     let edge = only_containment(op.containment_r_keys());
     assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
-    // Report has no keys, so nothing was disestablished.
+
     assert!(plan.target_checks.is_empty());
 }
-
-// ---------- the target-side check sets ----------
 
 #[test]
 fn disestablished_tuple_expands_per_dependent_statement() {
@@ -541,8 +498,7 @@ fn disestablished_tuple_expands_per_dependent_statement() {
     assert_eq!(check.key, key_id(ACCOUNT_KEY));
     assert_eq!(schema.key(check.key).relation, ACCOUNT);
     assert_eq!(&*check.determinant, encode_u64(9).as_slice());
-    // Not re-established: every dependent checks unconditionally, in
-    // materialized order.
+
     let statements: Vec<_> = check
         .dependents
         .iter()
@@ -571,10 +527,6 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
     let old = account(&schema, 9, true, 0);
     commit_base(&env, &schema, &[(ACCOUNT, old.clone())]);
 
-    // Delete + insert re-lands the exact determinant bytes (only the non-key
-    // `note` differs): the plain set difference discharges the empty-ψ
-    // dependents at plan time; the ψ-carrying dependent stays, marked —
-    // only the judgment phase can read the establishing fact.
     let new = account(&schema, 9, true, 1);
     let mut delta = WriteDelta::new(&schema);
     let plan = plan_of(&env, &mut delta, &[(ACCOUNT, old)], &[(ACCOUNT, new)]);
@@ -593,27 +545,17 @@ fn reestablishment_drops_empty_psi_and_marks_psi_carrying_dependents() {
     assert!(matches!(dependent.owed, Owed::IfEstablisherFails));
 }
 
-/// The byte-sorted insert index (`CommitPlan::inserts_fact`, the W10
-/// hoist that replaced the judgment's per-call `BTreeSet`): membership
-/// must be exact under the adversarial orderings the binary search can
-/// get wrong — ops arrive in `(relation, fact_hash)` order (NOT byte
-/// order), facts of different relations share identical bytes, and a
-/// probe with a byte-prefix or byte-extension of an inserted fact must
-/// miss.
 #[test]
 fn inserts_fact_is_exact_over_the_byte_sorted_index() {
     let dir = TempDir::new("plan-inserts-fact");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // Byte-descending ids so byte order disagrees with insertion order,
-    // and (relation, hash) order disagrees with both with overwhelming
-    // probability across nine facts.
+
     let parents: Vec<Vec<u8>> = [9u64, 5, 1]
         .iter()
         .map(|&v| u64_fact(&schema, PARENT, v))
         .collect();
-    // CHILD facts byte-identical to PARENT facts: the relation column
-    // must discriminate.
+
     let children: Vec<Vec<u8>> = [9u64, 5]
         .iter()
         .map(|&v| u64_fact(&schema, CHILD, v))
@@ -628,27 +570,26 @@ fn inserts_fact_is_exact_over_the_byte_sorted_index() {
     inserts.extend(combos.iter().map(|f| (COMBO, f.clone())));
     let mut delta = WriteDelta::new(&schema);
     let plan = plan_of(&env, &mut delta, &[], &inserts);
-    // Every inserted (relation, bytes) is found.
+
     for (rel, fact_bytes) in &inserts {
         assert!(
             plan.inserts_fact(*rel, fact_bytes),
             "inserted fact must be found: rel {rel:?}"
         );
     }
-    // Same bytes, wrong relation: PARENT id 1 was inserted, CHILD 1 not.
+
     assert!(plan.inserts_fact(PARENT, &u64_fact(&schema, PARENT, 1)));
     assert!(!plan.inserts_fact(CHILD, &u64_fact(&schema, PARENT, 1)));
-    // A byte-prefix and a byte-extension of an inserted fact both miss.
+
     let full = u64_fact(&schema, PARENT, 9);
     assert!(!plan.inserts_fact(PARENT, &full[..7]));
     let mut extended = full.clone();
     extended.push(0);
     assert!(!plan.inserts_fact(PARENT, &extended));
-    // A fact never inserted anywhere misses in every relation.
+
     assert!(!plan.inserts_fact(PARENT, &u64_fact(&schema, PARENT, 7)));
     assert!(!plan.inserts_fact(COMBO, &u64_fact(&schema, PARENT, 7)));
-    // Deletes never populate the insert index (the `==` pair lands and
-    // leaves whole so the base and delete commits stay judgeable).
+
     let base_parent = u64_fact(&schema, PARENT, 42);
     let base_child = u64_fact(&schema, CHILD, 42);
     commit_base(
@@ -698,9 +639,6 @@ fn pointwise_tuple_keeps_its_interval_tail_and_coverage_evidence() {
     assert!(matches!(dependent.owed, Owed::Unconditional));
 }
 
-/// An empty delta's incremental roster is empty. Complete admission
-/// walks the schema spine instead — this fixture's keys and dependents
-/// are instance-dependent, so that roster is non-empty.
 #[test]
 fn empty_delta_incremental_roster_is_empty_complete_roster_is_not() {
     let schema = schema();
