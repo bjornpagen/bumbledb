@@ -6,22 +6,13 @@ use super::{Environment, ReadTxn, WriteTxn};
 
 impl Environment {
     /// Begins a read snapshot. The underlying LMDB transaction is the
-    /// `'static` form (the heed env is `Arc`-backed and rides inside it)
-    /// so [`Db`](crate::Db)'s reader cache can hold one across calls —
-    /// the per-read `mdb_txn_begin` was the point path's last fixed
-    /// cost.
-    ///
+
     /// # Errors
-    ///
-    /// [`ReadersFull`](crate::error::Error::ReadersFull) when every slot
-    /// of the fixed [`MAX_READERS`](super::MAX_READERS) reader table
-    /// holds an open snapshot; `Lmdb` on any other transaction failure.
+
     pub fn read_txn(&self) -> Result<ReadTxn<'_>> {
         Ok(self.resume_read_txn(self.env.clone().static_read_txn()?))
     }
 
-    /// Wraps an already-open raw read transaction (the reader cache's
-    /// resume path): a fresh generation cell, same snapshot.
     pub(crate) fn resume_read_txn(&self, txn: RoTxn<'static, WithoutTls>) -> ReadTxn<'_> {
         ReadTxn {
             env: self,
@@ -31,10 +22,9 @@ impl Environment {
     }
 
     /// Begins the write transaction (LMDB admits one writer at a time).
-    ///
+
     /// # Errors
-    ///
-    /// `Lmdb` on transaction failure.
+
     pub fn write_txn(&self) -> Result<WriteTxn<'_>> {
         Ok(WriteTxn {
             env: self,
