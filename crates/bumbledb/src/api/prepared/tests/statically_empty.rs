@@ -1,19 +1,9 @@
-//! Statically empty: condition folding at normalize (docs/architecture/
-//! 20-query-ir.md § normalization, 40-execution.md § access paths). A
-//! rule whose constant conditions are mutually unsatisfiable dies at
-//! prepare; a query of only dead main rules prepares to a Cq pipeline
-//! with an empty main rule list
-//! — params bind first (errors surface), then nothing runs. The fold's
-//! set-preservation rides the folded/unfolded differential below.
-
 use super::*;
 use crate::encoding::ValueRef;
 use crate::ir::HeadTerm;
 use crate::ir::normalize::with_fold_disabled;
 use bumbledb_theory::schema::{IntervalElement, SchemaDescriptor};
 
-/// Event(id u64 fresh, kind u64, during interval<i64>, score i64) — the
-/// interval field feeds the mask-param leg; kind splits the rules.
 fn event_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -75,8 +65,6 @@ fn insert_events(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i6
     commit(delta, env).expect("commit").expect("admitted");
 }
 
-/// One rule over Event: `Event(kind == <kind>, score: v0)` plus the
-/// given extra comparisons on v0 — finds (v0).
 fn by_kind_rule(kind: u64, conditions: Vec<Comparison>) -> Rule {
     Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -100,8 +88,6 @@ fn score_cmp(op: CmpOp, value: i64) -> Comparison {
     }
 }
 
-/// `score > 5 ∧ score < 3` — the statically-empty kernel of every dead
-/// rule below.
 fn contradiction() -> Vec<Comparison> {
     vec![score_cmp(CmpOp::Gt, 5), score_cmp(CmpOp::Lt, 3)]
 }
@@ -143,7 +129,7 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
         rec: None,
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    // The dead rule was deleted at prepare — only the live plan exists.
+
     assert_eq!(
         prepared.pipeline.main_rules().len(),
         1,
@@ -163,8 +149,6 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     assert!(report.contains("query:"), "{report}");
 }
 
-/// The one-RULE-span proof: the dead rule not only emits nothing, it
-/// never enters the rule loop at all.
 #[cfg(feature = "trace")]
 #[test]
 fn a_dead_rule_opens_no_rule_span() {
@@ -201,8 +185,6 @@ fn a_dead_rule_opens_no_rule_span() {
     );
 }
 
-/// The `[shape]` leg: the empty query touches no image and binds no view
-/// — the obs counters that would record either stay silent.
 #[cfg(feature = "trace")]
 #[test]
 fn the_empty_query_builds_no_image_and_binds_no_view() {
@@ -247,11 +229,6 @@ fn the_empty_query_builds_no_image_and_binds_no_view() {
     }
 }
 
-/// Fold-preservation: randomized single-slot filter sets, folded vs
-/// unfolded (the `with_fold_disabled` switch — the ground-off precedent)
-/// over one fixture corpus, identical results. Folding is conjunction
-/// reassociation over one slot's total order — set-preserving by
-/// construction; this pins it against the executor.
 #[test]
 fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     let dir = TempDir::new("statically-empty-differential");
@@ -259,7 +236,7 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     let rows: Vec<(u64, u64, (i64, i64), i64)> = (0..40u64)
         .map(|i| {
-            let score = i64::try_from(i).expect("small") - 20; // spans [-20, 19]
+            let score = i64::try_from(i).expect("small") - 20; 
             (i + 1, i % 5, (0, 10), score)
         })
         .collect();
@@ -267,7 +244,6 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // The house xorshift — no rand dependency (the dependency law).
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
     let mut next = move || {
         state ^= state << 13;
@@ -277,9 +253,7 @@ fn folded_and_unfolded_executions_agree_on_random_single_slot_filters() {
     };
 
     for round in 0..64 {
-        // 1..=4 comparisons, all on the ONE score slot, operators and
-        // constants drawn to make merges, contradictions, and Eq pins
-        // all likely.
+
         let count = next() % 4 + 1;
         let conditions: Vec<Comparison> = (0..count)
             .map(|_| {
