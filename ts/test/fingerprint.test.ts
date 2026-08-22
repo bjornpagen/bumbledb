@@ -120,7 +120,6 @@ describe("the cross-host fingerprint lock", function suite() {
 	})
 
 	test("the store is inhabitable through the public surface", async function inhabit() {
-
 		const { Db } = await import("#db.ts")
 		const db = await Db.open(storeDir, CrossHost)
 		const result = db.write(function seed(tx) {
