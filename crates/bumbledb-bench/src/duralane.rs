@@ -1,7 +1,6 @@
 //! The pairing rationale, recorded once: - **Durable** pairs `Db::create` —
 //! LMDB on macOS issues sibling: a misconfigured twin fails before flattering
 //! anyone.
-
 use rusqlite::Connection;
 
 use crate::storemode::StoreMode;
@@ -60,9 +59,7 @@ impl DurabilityLane {
     }
 
     /// # Errors
-
     /// # Panics
-
     /// If WAL refuses to engage — the fairness protocol is
     pub fn configure(self, conn: &Connection) -> Result<(), String> {
         match self {
@@ -88,7 +85,6 @@ impl DurabilityLane {
     }
 
     /// `Nosync`. A misconfigured twin fails before flattering anyone.
-
     /// # Errors
     pub fn assert_parity(self, conn: &Connection) -> Result<(), String> {
         let journal: String = conn
