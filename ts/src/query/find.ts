@@ -1,6 +1,6 @@
 import type { Infer } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
-import type { IntervalVarOk, NumericVarOk, OrderVarOk } from "#query/atom.ts"
+import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyVar, Duration, MintSlotOf } from "#query/scope.ts"
 
 type FoldOpName = "sum" | "min" | "max" | "pack"
@@ -51,19 +51,8 @@ function pack<const V extends AnyVar>(over: V): Agg<"pack", V> {
 	return aggregate("pack", over)
 }
 
-/**
- * A `sum` input's judgment: a NUMERIC variable — Sum over bool stays
- * refused, a quantifier is not an addition (R3) — or the measure of an
- * interval variable.
- */
-type SumOverOk<O> = O extends AnyVar
-	? NumericVarOk<O>
-	: O extends Duration<infer V extends AnyVar>
-		? IntervalVarOk<V>
-		: false
-
 type FoldOverOk<O> = O extends AnyVar
-	? OrderVarOk<O>
+	? NumericVarOk<O>
 	: O extends Duration<infer V extends AnyVar>
 		? IntervalVarOk<V>
 		: false
@@ -74,13 +63,11 @@ type FindEntryOk<E> = E extends AnyVar
 		? IntervalVarOk<V>
 		: E extends CountAgg
 			? true
-			: E extends Agg<"sum", infer O>
-				? SumOverOk<O>
-				: E extends Agg<"min" | "max", infer O>
-					? FoldOverOk<O>
-					: E extends Agg<"pack", infer V extends AnyVar>
-						? IntervalVarOk<V>
-						: false
+			: E extends Agg<"sum" | "min" | "max", infer O>
+				? FoldOverOk<O>
+				: E extends Agg<"pack", infer V extends AnyVar>
+					? IntervalVarOk<V>
+					: false
 
 type CheckFind<F extends FindShape> = {
 	readonly [K in keyof F]: FindEntryOk<F[K]> extends true ? F[K] : never

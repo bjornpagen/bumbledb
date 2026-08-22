@@ -116,6 +116,31 @@ describe("the comparison pairing walls", function suite() {
 		assert.equal(numericAgainstBoolean.data.rules.length, 1)
 	})
 
+	test("the fold input: min/max over a bool var is refused (both tiers)", function boolFoldPair() {
+		assert.throws(function minBool() {
+			query(World).rule((r) => {
+				const { id, flag } = v(Reading)
+				return (
+					r
+						.match(Reading, { id, flag })
+						// @ts-expect-error
+						.find({ n: id, f: r.min(flag) })
+				)
+			})
+		}, /the min input Reading\.flag is bool, not numeric/)
+		assert.throws(function maxBool() {
+			query(World).rule((r) => {
+				const { id, flag } = v(Reading)
+				return (
+					r
+						.match(Reading, { id, flag })
+						// @ts-expect-error
+						.find({ n: id, f: r.max(flag) })
+				)
+			})
+		}, /the max input Reading\.flag is bool, not numeric/)
+	})
+
 	test("the pointIn pair: the point lives in the interval's element domain", function pointInPair() {
 		const signedPointInUnsigned = query(World).rule((r) => {
 			const { id, delta, window } = v(Reading)

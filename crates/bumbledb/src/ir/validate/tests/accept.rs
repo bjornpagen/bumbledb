@@ -1,5 +1,4 @@
 use super::*;
-use crate::error::FindIndex;
 use crate::ir::FoldOp;
 use crate::ir::{CmpOp, Comparison, Value};
 
@@ -78,42 +77,6 @@ fn accepts_all_aggregate_finds() {
     );
     let witness = validate(&schema(), &query).expect("valid");
     assert!(witness.rule(0).group_key().is_empty());
-}
-
-#[test]
-fn accepts_min_max_over_bool_as_all_and_any() {
-    // The quantifiers fall out free (ruled 2026-07-23, R3): bool orders
-
-    // stays refused: a quantifier is not an addition.
-    for op in [FoldOp::Min, FoldOp::Max] {
-        let query = Query::single(Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate { op, over: VarId(1) },
-            ],
-            atoms: vec![atom(POSTING, vec![(1, var(0)), (5, var(1))])],
-            negated: vec![],
-            conditions: vec![],
-        });
-        let witness = validate(&schema(), &query).expect("bool folds under Min/Max");
-        assert_eq!(witness.rule(0).var_type(VarId(1)), &ValueType::Bool);
-    }
-    let sum = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: FoldOp::Sum,
-                over: VarId(1),
-            },
-        ],
-        atoms: vec![atom(POSTING, vec![(1, var(0)), (5, var(1))])],
-        negated: vec![],
-        conditions: vec![],
-    });
-    assert!(matches!(
-        validate(&schema(), &sum).expect_err("Sum over bool refuses"),
-        ValidationError::AggregateInputType { find: FindIndex(1) }
-    ));
 }
 
 #[test]

@@ -592,7 +592,6 @@ export type {
 	NotInteriorAtom,
 	NumericVarOk,
 	OrderSide,
-	OrderVarOk,
 	ParamUse,
 	PointSide,
 	RecData,

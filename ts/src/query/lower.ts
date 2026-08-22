@@ -806,6 +806,12 @@ function assertNotClosed(where: string, position: string, ref: AnyVar): void {
 	}
 }
 
+function assertNumeric(where: string, position: string, ref: AnyVar): void {
+	if (ref.field.kind !== "u64" && ref.field.kind !== "i64") {
+		throw errors.new(`${where}: ${position} ${ref.label} is ${ref.field.kind}, not numeric — a fold reads u64/i64 only`)
+	}
+}
+
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
 	if (entry.kind === "var") {
@@ -838,6 +844,7 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 			}
 			assertBound(where, bound, agg.over)
 			assertNotClosed(where, `the ${agg.fold} input`, agg.over)
+			assertNumeric(where, `the ${agg.fold} input`, agg.over)
 			return
 		}
 		case "pack":

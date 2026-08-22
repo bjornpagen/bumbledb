@@ -68,7 +68,7 @@ impl Context {
                         return Err(ValidationError::MixedPackAndFold { find });
                     }
                 }
-                FindTerm::Aggregate { op, over } => {
+                FindTerm::Aggregate { over, .. } => {
                     fold_seen = true;
                     if !self.atom_vars.contains(over) {
                         return Err(ValidationError::UnboundFindVariable { var: *over });
@@ -76,16 +76,10 @@ impl Context {
                     if group_key.contains(over) {
                         return Err(ValidationError::AggregateOverGroupKey { find });
                     }
-                    let admitted = match op {
-                        FoldOp::Sum => matches!(
-                            self.resolved_var_type(*over),
-                            ValueType::U64 | ValueType::I64
-                        ),
-                        FoldOp::Min | FoldOp::Max => matches!(
-                            self.resolved_var_type(*over),
-                            ValueType::U64 | ValueType::I64 | ValueType::Bool
-                        ),
-                    };
+                    let admitted = matches!(
+                        self.resolved_var_type(*over),
+                        ValueType::U64 | ValueType::I64
+                    );
                     if !admitted {
                         return Err(ValidationError::AggregateInputType { find });
                     }

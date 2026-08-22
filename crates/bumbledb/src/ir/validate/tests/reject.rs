@@ -419,6 +419,20 @@ fn rejects_min_and_max_over_str() {
 }
 
 #[test]
+fn rejects_folds_over_bool() {
+    for op in [FoldOp::Sum, FoldOp::Min, FoldOp::Max] {
+        let query = simple(
+            vec![FindTerm::Aggregate { op, over: VarId(0) }],
+            vec![atom(POSTING, vec![(5, var(0))])],
+        );
+        assert!(matches!(
+            expect_err(&query),
+            ValidationError::AggregateInputType { find: FindIndex(0) }
+        ));
+    }
+}
+
+#[test]
 fn rejects_aggregate_over_group_key() {
     let query = simple(
         vec![
