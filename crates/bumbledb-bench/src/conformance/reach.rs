@@ -1,7 +1,6 @@
 //! `lean/Bumbledb/Exec/Reach.lean` — judges the same Query cases the
 //! `lean/conformance/README.md` § reach cases): the shared case is written only
 //! after naive and `SQLite` agree (a
-
 use std::collections::BTreeSet;
 use std::time::Instant;
 
