@@ -6,7 +6,7 @@ import Bumbledb.Query.Denotation
 The paper's plan definition (Wang–Willsey–Suciu, *Free Join*,
 arXiv:2301.10841 §3.2) mechanized at the mathematical level, with
 bumbledb's one deviation modeled as bumbledb rules it
-(`docs/architecture/40-execution.md` § the paper's core): a plan is
+ § the paper's core): a plan is
 DATA — a list of nodes, each a set of subatoms (occurrence index plus
 a subset of that occurrence's bound variables) — and execution is
 iterated indexed selection over sets. The mechanism fence holds
@@ -17,89 +17,89 @@ the docs; what is admissible here is exactly the semantic content of
 ## The shape of the model
 
 * **Validity is the doc's sentence, clause for clause** (`PlanValid`):
-  the nodes partition every positive occurrence's bound variables
-  (`coversVar` + `onceVar`), every occurrence is placed (`complete` —
-  a zero-variable occurrence enters as a zero-arity subatom, the
-  doc's nonemptiness-gate cover; without placement its constant
-  bindings would never be probed), per node no two subatoms share an
-  occurrence (`occDisjoint` — validity quantifies over OCCURRENCES,
-  self-joins are ordinary), and each node holds a cover subatom whose
-  variables are EXACTLY the node's new variables (`covered` —
-  bumbledb's deviation; the paper's looser "containing all new
-  variables" is `PaperCovered`, and `PlanValid.paper` records that
-  the deviation only shrinks the admitted plan set).
+ the nodes partition every positive occurrence's bound variables
+ (`coversVar` + `onceVar`), every occurrence is placed (`complete` —
+ a zero-variable occurrence enters as a zero-arity subatom, the
+ doc's nonemptiness-gate cover; without placement its constant
+ bindings would never be probed), per node no two subatoms share an
+ occurrence (`occDisjoint` — validity quantifies over OCCURRENCES,
+ self-joins are ordinary), and each node holds a cover subatom whose
+ variables are EXACTLY the node's new variables (`covered` —
+ bumbledb's deviation; the paper's looser "containing all new
+ variables" is `PaperCovered`, and `PlanValid.paper` records that
+ the deviation only shrinks the admitted plan set).
 * **Semantics is a fold over nodes producing a binding set**
-  (`runPlan`/`planBindings`): at each node the bindings extend on the
-  node's new variables and survive exactly when EVERY subatom is
-  consistent — some fact of its occurrence matches the occurrence's
-  checked prefix plus the subatom's own variables (`Consistent`, the
-  sibling probe and the cover iteration as one `∃`). Sets, not
-  streams: set semantics is the carrier. The totalization device:
-  binding sets are sets of TOTAL assignments closed off the bound
-  variables, seeded with every assignment — a "partial binding" is
-  the class of its total extensions, so no partial-map machinery
-  enters and projection through `Safe` finds is well-defined.
+ (`runPlan`/`planBindings`): at each node the bindings extend on the
+ node's new variables and survive exactly when EVERY subatom is
+ consistent — some fact of its occurrence matches the occurrence's
+ checked prefix plus the subatom's own variables (`Consistent`, the
+ sibling probe and the cover iteration as one `∃`). Sets, not
+ streams: set semantics is the carrier. The totalization device:
+ binding sets are sets of TOTAL assignments closed off the bound
+ variables, seeded with every assignment — a "partial binding" is
+ the class of its total extensions, so no partial-map machinery
+ enters and projection through `Safe` finds is well-defined.
 * **The cover clause is the enumerability licence, not a soundness
-  premise** (`cover_drives_extension`): under validity, every
-  surviving extension's new values are drawn from a cover subatom's
-  matching fact — the node step enumerates a finite fact set, never
-  guesses over the value universe. The set-equality theorems spend
-  `occDisjoint` (per-subatom probes compose into one per-occurrence
-  fact only when a node holds at most one subatom per occurrence),
-  `coversVar`, and `complete`; `covered` is spent by the licence and
-  `onceVar` by nothing here — it is the partition's at-most-once
-  half, stated because the doc's "partitions" says it, and the
-  executor's non-redundancy (each variable probed once) is its
-  mechanism-side face.
+ premise** (`cover_drives_extension`): under validity, every
+ surviving extension's new values are drawn from a cover subatom's
+ matching fact — the node step enumerates a finite fact set, never
+ guesses over the value universe. The set-equality theorems spend
+ `occDisjoint` (per-subatom probes compose into one per-occurrence
+ fact only when a node holds at most one subatom per occurrence),
+ `coversVar`, and `complete`; `covered` is spent by the licence and
+ `onceVar` by nothing here — it is the partition's at-most-once
+ half, stated because the doc's "partitions" says it, and the
+ executor's non-redundancy (each variable probed once) is its
+ mechanism-side face.
 * **THE soundness theorem** (`valid_plan_sound`): for any valid plan
-  of a `WellTyped` rule, the plan's answers equal `ruleAnswers` —
-  negated atoms and conditions applied as POST-FILTERS over the
-  completed binding set (`planAnswers`), which is the D2/residual-
-  placement licence at the math level: the executor attaches
-  residuals and anti-probes at the earliest node where their
-  variables are bound (mechanism, docs-side); that this equals
-  filtering the completed set equals `derives` is what makes any
-  placement sound. `WellTyped` is spent only through its
-  measure-free-bindings half (a measure binding would mention a
-  variable no subatom carries); `Safe` is NOT a premise of the
-  equality — acceptance supplies it, and it is what makes the answer
-  set finite and the projection meaningful (`antijoin_over_active_
-  domain`), but the set equality holds without it.
+ of a `WellTyped` rule, the plan's answers equal `ruleAnswers` —
+ negated atoms and conditions applied as POST-FILTERS over the
+ completed binding set (`planAnswers`), which is the D2/residual-
+ placement licence at the math level: the executor attaches
+ residuals and anti-probes at the earliest node where their
+ variables are bound (mechanism, docs-side); that this equals
+ filtering the completed set equals `derives` is what makes any
+ placement sound. `WellTyped` is spent only through its
+ measure-free-bindings half (a measure binding would mention a
+ variable no subatom carries); `Safe` is NOT a premise of the
+ equality — acceptance supplies it, and it is what makes the answer
+ set finite and the projection meaningful (`antijoin_over_active_
+ domain`), but the set equality holds without it.
 * **Plannability** (`every_rule_plannable`): EVERY rule — a fortiori
-  every safe rule — has a valid plan, constructively: the left-deep
-  one-variable-per-node plan (`leftDeepPlan`) opens every occurrence
-  with a zero-arity gate subatom (the doc's zero-arity cover), then
-  binds the rule's positive variables in first-binding order
-  (`dedupFirst r.positiveVars`), one node per variable, each node
-  carrying one single-variable subatom per occurrence binding it —
-  every such subatom's variable set is exactly the node's one new
-  variable, so GJ-style single-variable covers qualify under the
-  strict rule, exactly the doc's "loses nothing" argument. No
-  admissible rule is unexecutable.
+ every safe rule — has a valid plan, constructively: the left-deep
+ one-variable-per-node plan (`leftDeepPlan`) opens every occurrence
+ with a zero-arity gate subatom (the doc's zero-arity cover), then
+ binds the rule's positive variables in first-binding order
+ (`dedupFirst r.positiveVars`), one node per variable, each node
+ carrying one single-variable subatom per occurrence binding it —
+ every such subatom's variable set is exactly the node's one new
+ variable, so GJ-style single-variable covers qualify under the
+ strict rule, exactly the doc's "loses nothing" argument. No
+ admissible rule is unexecutable.
 * **The wrong-cover countermodel lives in `Countermodels.lean`**
-  (`loose_cover_rebinds`): `looseNodeStep` is the paper's reading —
-  the chosen cover may carry already-bound variables and iterating it
-  draws values for ALL its variables from its facts, REBINDING the
-  bound ones without re-checking the occurrence that bound them
-  (earlier nodes are never revisited) — and the triangle instance
-  shows a paper-valid plan whose loose execution emits a tuple
-  outside the denotation. That is 40-execution.md's audit-found
-  deviation, until now prose plus a Rust regression test only.
+ (`loose_cover_rebinds`): `looseNodeStep` is the paper's reading —
+ the chosen cover may carry already-bound variables and iterating it
+ draws values for ALL its variables from its facts, REBINDING the
+ bound ones without re-checking the occurrence that bound them
+ (earlier nodes are never revisited) — and the triangle instance
+ shows a paper-valid plan whose loose execution emits a tuple
+ outside the denotation. That is 40-execution.md's audit-found
+ deviation, until now prose plus a Rust regression test only.
 
 ## Narrowings recorded (law 5: narrow and record)
 
 * **Occurrence indices, not occurrence values.** A subatom addresses
-  its atom by position in `r.atoms` (`Subatom.occ : Nat`) — the
-  self-join discipline demands occurrence identity, and position IS
-  occurrence identity for a list-carried body.
+ its atom by position in `r.atoms` (`Subatom.occ: Nat`) — the
+ self-join discipline demands occurrence identity, and position IS
+ occurrence identity for a list-carried body.
 * **`occDisjoint` concludes subatom EQUALITY.** Two subatoms of one
-  node sharing an occurrence are forced equal (not absent): a
-  duplicated subatom is semantically idle, and the list carrier makes
-  "the same subatom twice" unrefusable at this level — the engine's
-  validator refuses the duplicate as mechanism.
+ node sharing an occurrence are forced equal (not absent): a
+ duplicated subatom is semantically idle, and the list carrier makes
+ "the same subatom twice" unrefusable at this level — the engine's
+ validator refuses the duplicate as mechanism.
 * **Plans stay over `Rule`.** Reach evaluation spends the per-rule
-  theorem against the current interior tables; this file does not
-  grow interior-aware plan nodes.
+ theorem against the current interior tables; this file does not
+ grow interior-aware plan nodes.
 -/
 
 namespace Bumbledb.Query
@@ -721,7 +721,7 @@ theorem leftDeepPlan_valid (r : Rule) : PlanValid r (leftDeepPlan r) := by
   refine
     { occScoped := ?_, complete := ?_, coversVar := ?_, onceVar := ?_,
       occDisjoint := ?_, covered := ?_ }
-  · -- scoped
+  · 
     intro n hn s hs
     rcases List.mem_append.mp hn with hg | hv
     · obtain ⟨i, hlt, rfl⟩ := hmem_gate n hg
@@ -732,13 +732,13 @@ theorem leftDeepPlan_valid (r : Rule) : PlanValid r (leftDeepPlan r) := by
       obtain ⟨i, a, ha, hb, rfl⟩ := mem_varNode.mp hs
       exact ⟨a, ha, fun v hvv => by
         rw [List.mem_singleton.mp hvv]; exact hb⟩
-  · -- complete
+  · 
     intro i hlt
     exact ⟨[⟨i, []⟩],
       List.mem_append.mpr (Or.inl (List.mem_map.mpr
         ⟨i, List.mem_range.mpr hlt, rfl⟩)),
       ⟨i, []⟩, List.mem_singleton.mpr rfl, rfl⟩
-  · -- coversVar
+  · 
     intro i a hia v hv
     have hpos : v ∈ r.positiveVars :=
       List.mem_flatMap.mpr ⟨a, List.mem_of_getElem? hia, hv⟩
@@ -747,14 +747,14 @@ theorem leftDeepPlan_valid (r : Rule) : PlanValid r (leftDeepPlan r) := by
         ⟨v, (mem_dedupFirst _ v).mpr hpos, rfl⟩)),
       ⟨i, [v]⟩, mem_varNode.mpr ⟨i, a, hia, hv, rfl⟩, rfl,
       List.mem_singleton.mpr rfl⟩
-  · -- onceVar
+  · 
     intro i v k₁ k₂ n₁ n₂ h₁ h₂ hs₁ hs₂
     obtain ⟨j₁, rfl, hd₁⟩ := leftDeepPlan_var_position h₁
       (hs₁.imp fun s hs => ⟨hs.1, hs.2.2⟩)
     obtain ⟨j₂, rfl, hd₂⟩ := leftDeepPlan_var_position h₂
       (hs₂.imp fun s hs => ⟨hs.1, hs.2.2⟩)
     rw [dedupFirst_getElem?_inj hd₁ hd₂]
-  · -- occDisjoint
+  · 
     intro n hn s₁ hs₁ s₂ hs₂ hocc
     rcases List.mem_append.mp hn with hg | hv
     · obtain ⟨i, -, rfl⟩ := hmem_gate n hg
@@ -764,7 +764,7 @@ theorem leftDeepPlan_valid (r : Rule) : PlanValid r (leftDeepPlan r) := by
       obtain ⟨i₂, a₂, -, -, rfl⟩ := mem_varNode.mp hs₂
       simp only at hocc
       rw [hocc]
-  · -- covered
+  · 
     intro k n hk
     by_cases hlt : k < r.atoms.length
     · have hkg : (leftDeepPlan r)[k]? = some [⟨k, []⟩] := by
