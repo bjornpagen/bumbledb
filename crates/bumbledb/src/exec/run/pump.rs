@@ -6,12 +6,11 @@ use super::{
 };
 
 impl Executor {
-    /// Consumes every pending entry at a middle node, cascading full
-    /// child batches immediately and draining the remainder at the end.
+
     #[expect(
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
-    )] // one batch loop; the invariants read in order
+    )] 
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
@@ -31,45 +30,23 @@ impl Executor {
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
         let carried_w = tables.carried[node_idx].len();
 
-        // One in-order pass: per-entry dynamic cover
-        // choice at processing time, probe_pass flushed on cover change.
-        // Cover-stable segregation precomputed covers
-        // and grouped entries to lift probe-batch means 37 → 39 — then
-        // the per-pass overhead it amortizes was priced at 11–30 ns,
-        // TWENTY TIMES below the assumption behind it, making the whole
-        // batch-mean lever class a ~1% effect; the two-pass machinery is
-        // deleted. Cross-call fill carry is rejected by the same number
         // before ever being built: lifting batch means to ~128 is worth
-        // 0.2–1.2% of triangle p50 at the measured pass overhead
-        // — the lever class is closed. The cover
-        // choice itself is a performance heuristic — any cover is
-        // correct — so choosing from live colt state (a force during an
-        // earlier flush could have flipped an Estimate to Exact) changes
-        // nothing semantic.
+
         let node = &plan.nodes()[node_idx];
-        // Origin ids are meaningful strictly BELOW the absorb node —
-        // resolved once per pump, never per entry (the instruction diet).
+
         let below_absorb = matches!(tables.absorb, super::SkipAbsorb::Node(a) if node_idx > a);
         let mut fill = 0usize;
-        // The open cover run: (cover_sub, arity, occ, level).
+
         let mut group: Option<(usize, usize, usize, usize)> = None;
-        // The Gather window (Gap B): per-entry cover choice, batch
-        // draws, and the probe-batch identity fill — the pump work
-        // between probe passes, formerly phase-unattributed. Two timer
-        // calls per flush, never per tuple: the window closes around
-        // every `probe_pass` so no deeper phase runs inside it.
+
         counters.phase_start(node_idx, JoinPhase::Gather);
         for entry in 0..scratch.pending_len {
             if !matches!(self.drive_state, super::DriveState::Running) {
                 break;
             }
-            // D2: a cancelled origin's pending work is dead —
-            // its outputs could only duplicate rows already seen. Origin
-            // ids are meaningful strictly BELOW the absorb node (minted
-            // at its routing); above it entries carry the meaningless
+
             // seed and must never be filtered. Cancellation fired during
-            // an earlier entry's flush is seen here: the check runs at
-            // each entry's turn.
+
             if below_absorb && self.origin_cancelled(scratch.pending_origins[entry]) {
                 continue;
             }
@@ -95,7 +72,7 @@ impl Executor {
             counters.cover_choice(node_idx, cover_sub, count);
             let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
             let cover_level = tables.entry_level[node_idx][cover_occ];
-            // Word-level batch arity (the SlotWidth layout).
+
             let cur_arity = self.slot_map[node_idx][cover_sub].len();
             if let Some((open_sub, open_arity, _, _)) = group
                 && open_sub != cover_sub
@@ -123,28 +100,14 @@ impl Executor {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
                 None => colts[cover_occ].start(),
             };
-            // A zero-arity cover is a nonemptiness gate: every position
-            // yields the same empty key row, so under set semantics one
-            // entry stands for the whole suffix — enumerating it would
-            // multiply this entry's descendants by the occurrence's row
-            // count for no distinguishable binding (the S-scale hang:
-            // an aggregate over a zero-binding gate atom folded
-            // |gate-relation| duplicate bindings per pending entry).
-            // The one consumer that CAN distinguish positions is a
-            // membership probe reading this occurrence's cursor — those
-            // occurrences keep enumerating.
+
             let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
-            // Hoisted per entry, never per element (the closing-probe
-            // constant diet): the identity fill below broadcasts these.
+
             let entry_u32 = u32::try_from(entry).expect("pending fits u32");
             let entry_origin = scratch.pending_origins[entry];
             let mut token = BatchToken::default();
             loop {
-                // The whole-execution poison lands mid-batch (a leaf skip
-                // under SkipAbsorb::Root, or a typed poison): node 0 holds ONE
-                // entry — the virtual root — so the per-entry check above
-                // can never re-fire for it; this is the granularity that
-                // actually stops the top-level cover draw.
+
                 if !matches!(self.drive_state, super::DriveState::Running) {
                     break;
                 }
@@ -157,16 +120,13 @@ impl Executor {
                     &mut scratch.children[fill..],
                     want,
                 );
-                // A zero-yield draw (the exhausted resume of an
-                // exact-fit entry, or an empty gate) is not a batch —
+
                 // the run_node twin breaks before counting; counting it
-                // here skewed batches/batch_entries low on exact-multiple
-                // fanouts.
+
                 if yielded > 0 {
                     counters.batch(node_idx, yielded);
                 }
-                // The probe-batch identity fill: one capacity check per
-                // draw, not one grow branch per element.
+
                 scratch
                     .parents
                     .extend(std::iter::repeat_n(entry_u32, yielded));
@@ -193,11 +153,11 @@ impl Executor {
                     counters.phase_start(node_idx, JoinPhase::Gather);
                     fill = 0;
                     if !gate_cover && yielded == want {
-                        continue; // the entry may have more; resume its token
+                        continue; 
                     }
                 }
                 if gate_cover || yielded < want {
-                    break; // entry exhausted (a gate entry at its one yield)
+                    break; 
                 }
             }
         }
@@ -226,9 +186,6 @@ impl Executor {
         scratch.parents.clear();
         scratch.element_origins.clear();
         self.scratch[node_idx] = scratch;
-        // No tail drain here: sub-batch remainders are a property of the
-        // execution's END, not of every pump return — a mid-stream
-        // recursion draining its child would collapse batch means at
-        // depth ≥ 2 (`run_pipeline` owns the one final drain).
+
     }
 }
