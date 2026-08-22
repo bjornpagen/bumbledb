@@ -3,7 +3,6 @@
 use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
-
     #[must_use]
     pub fn resident(&self) -> (u64, u64) {
         let mut images = 0;
