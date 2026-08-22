@@ -1,5 +1,4 @@
 //! One store-birth protocol: [`PublishStep`] folded over a catalog source.
-
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
