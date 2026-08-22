@@ -159,19 +159,16 @@ pub trait Fact<'a>: Sized {
     const RELATION: RelationId;
 
     /// # Errors
-
     fn encode_insert<C>(&self, context: &mut C, out: &mut Vec<u8>) -> Result<()>
     where
         C: CodecWrite<Self::Schema>;
 
     /// # Errors
-
     fn encode_probe<C>(&self, context: &C, out: &mut Vec<u8>) -> Result<Probe>
     where
         C: CodecRead<Self::Schema>;
 
     /// # Errors
-
     fn decode<C>(context: &'a C, fact: &[u8]) -> Result<Self>
     where
         C: CodecRead<Self::Schema>;
@@ -222,7 +219,6 @@ pub trait Key<'a>: Sized {
     const STATEMENT: StatementId;
 
     /// # Errors
-
     fn encode_determinant<C>(&self, context: &C, out: &mut Vec<u8>) -> Result<Probe>
     where
         C: CodecRead<Self::Schema>;
@@ -388,7 +384,6 @@ impl<'txn, S> ReadInstance<'txn, S> {
     }
 
     /// # Errors
-
     pub fn generation(&self) -> Result<crate::GenerationId> {
         self.txn().generation()
     }
