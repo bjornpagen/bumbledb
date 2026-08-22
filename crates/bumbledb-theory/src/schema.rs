@@ -4,7 +4,6 @@
 //! the `schema!` macro's expansion) constructs, and the pure judgments
 //! over it — [`SchemaDescriptor::materialized_statements`] and
 //! [`value_matches`]. The admission boundary stays engine-side: the only
-
 pub mod spec;
 
 use crate::value::Value;
