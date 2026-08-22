@@ -1,6 +1,5 @@
 //! Both engines touch every value; decoding into `compare::Owned` is `SQLite`
 //! measured under exactly the engine's protocol, with the
-
 use bumbledb::Value;
 use bumbledb::schema::ValueType;
 
