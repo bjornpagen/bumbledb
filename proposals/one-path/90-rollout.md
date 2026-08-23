@@ -73,8 +73,36 @@ amendment once against final shapes. X closes.
 
 ## Acceptance checklist (receipts land here)
 
-- [ ] R: one loss path shipped; intersect/footprint/W-arithmetic/wire
-      section deleted; repairs landed; Rust suite green
+- [x] R: one loss path shipped; intersect/footprint/W-arithmetic/wire
+      section deleted; repairs landed; Rust suite green. Landed at
+      16b3426f (the cut and the writer/replica repairs in the one
+      rewrite 40 sanctions — intersect.rs and footprint.rs whole, the
+      wire section, apply's recompute, subsume/republish/counts_live,
+      three of four counters, linger, both max_pending knobs, the
+      repair caps with their fabricated convergence error; the
+      unbounded Scream, duty off the commit lock, prev proven-by-CAS,
+      the order-strict sidecar), c59f3f21 (the engine's dual-corruption
+      MembershipDesync, check.sh green), a1ad65cc (WAIT_FOR_POLL_MS
+      named and entered in census lane (j), the Rust half 60 assigns
+      here), and e92f889e (60's Rust test consequences and the corpus
+      regenerated as header+ops). Recorded deviations: deliverables 1
+      and 2 share the 16b3426f rewrite because the writer items land in
+      the same file, per 40's own ruling; the contention causes read 10
+      concretely — below the bound a rejecting re-judgment IS the
+      serial Rejected, and at the bound the terminal re-judgment
+      sources the cause (its rejection is HotKey with the pending
+      cleared and nothing owed, its accepted-but-unpublished apply is
+      SlotRace with the batch retained) — and HotKey's statement is no
+      Option, because the engine's violation always names one; the
+      checkpoint document at ckpt/{digest}.json is re-rendered in place
+      on a Moved CAS (its address is the store digest, so
+      prev-proven-by-CAS re-renders rather than re-addresses), pinned
+      three ways in lane_d_manifest; the duty's consistent view is
+      proven, not scheduled — snapshot under a short lock, compact off
+      it, re-lock and require the same handle, same heads, no pending,
+      generation at the snapshot sum, retrying torn views under the
+      scream. Suite green whole at e92f889e: fmt, clippy -D warnings,
+      181 tests across 33 suites; check.sh green at c59f3f21.
 - [ ] T: TS twin of the cut; ErrStore identity fixed and pinned; sweep +
       constants; TS suite green
 - [x] L: Footprint model and L6–L8 gone; L9 restated; L10 untouched;
