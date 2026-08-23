@@ -34,7 +34,7 @@
 					"fix": "safe"
 				}
 			},
-			"recommended": true,
+			"preset": "recommended",
 			"correctness": {
 				"noUnusedImports": "error",
 				"noUnusedVariables": "error",
