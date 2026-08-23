@@ -76,8 +76,8 @@ The Rust crates can be used from the current release tag:
 
 ```toml
 [dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.16.0" }
-bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.16.0" }
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.17.0" }
+bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.17.0" }
 ```
 
 The TypeScript package ships with a native binary for macOS on Apple Silicon:
@@ -99,8 +99,8 @@ relations and frequent joins. It provides:
 - typed schemas, records, IDs, keys, parameters, and result rows;
 - joins, negation, comparisons, parameter sets, aggregates, and recursive
   reachability;
-- first-class half-open intervals, including point lookup, overlap tests,
-  duration, all thirteen Allen relationships, and merging adjacent ranges;
+- first-class half-open intervals, including point lookup, overlap tests, all
+  thirteen Allen relationships, and merging adjacent ranges;
 - unique keys, references, conditional references, exact one-to-one
   relationships, interval exclusions, and count, sum, or duration limits;
 - MVCC snapshots with concurrent readers and one serialized writer;
@@ -168,11 +168,13 @@ as part of the test suite.
 
 ## Performance
 
-The charts below come from the 2026-08-20 shared-machine night at revision
-`4dd1ee96` (crate 0.15.0) on an Apple M2 Max. Boost was on; the idle-machine
-requirement was waived. The main datasets contain 253,264 ledger rows and
-192,369 calendar rows. SQLite used prepared statements, appropriate indexes,
-`ANALYZE`, a 256 MiB cache, and matching durability settings.
+The charts below come from the 2026-08-22 shared-machine night at revision
+`01084e3e` (crate 0.17.0) on an Apple M2 Max. The run used shared-machine
+mode with boost on and the idle-machine requirement waived; the machine load
+around each timed section is recorded in the reports. The main datasets
+contain 253,264 ledger rows and 192,369 calendar rows. SQLite used prepared
+statements, appropriate indexes, `ANALYZE`, a 256 MiB cache, and matching
+durability settings.
 
 Every query result was compared with SQLite before timing. The randomized
 verification run covered 2,879 cases, and write outcomes were also compared
@@ -180,7 +182,7 @@ with a separate straightforward implementation. The primary read tests were
 run three times for durable stores and three times with durability disabled;
 the summary charts use the best median from each group. Raw reports, machine
 load, clock readings, and timing details are retained under
-`bench-out/night-2026-08-20/`.
+`night-2026-08-22/`.
 
 These tests favor the work Bumbledb is designed for: joins, graph traversal,
 time intervals, and aggregates over warm in-memory data. The transaction and
@@ -188,14 +190,14 @@ constraint sections below include the cases where SQLite is faster.
 
 ### Read performance
 
-The first chart shows all 33 read queries with the same inputs and verified
+The first chart shows all 32 read queries with the same inputs and verified
 results:
 
 ![Bumbledb and SQLite read latency](assets/bench-vs-sqlite.svg)
 
-Across those 33 queries, Bumbledb's median latency has a **27.9× geometric
+Across those 32 queries, Bumbledb's median latency has a **28.0× geometric
 mean speedup** over SQLite for the durable store. The individual results range
-from **2.6×** for an account-set lookup to **419×** for a calendar scan:
+from **3.9×** for an account-set lookup to **420×** for a calendar scan:
 
 ![Read speedup over SQLite](assets/bench-speedup.svg)
 
@@ -219,7 +221,7 @@ ratios.
 
 The broader suite covers joins, graph queries, analytical rollups, point
 lookups, cyclic joins, and time intervals. Across the 31 comparisons that
-finished in both engines, Bumbledb's median latency has a **20.7× geometric
+finished in both engines, Bumbledb's median latency has a **22.2× geometric
 mean speedup**. Two direct SQL translations exceeded the one-second limit.
 
 ![Speedup across additional workloads](assets/bench-scenarios.svg)
@@ -239,12 +241,12 @@ The analytical tests cover grouped totals, windows, and drill-downs:
 
 Point reads are close because they play directly to SQLite's B-tree
 implementation. Bumbledb is **3.3×** faster on the closest prepared lookup and
-**1.4×** faster on its typed keyed read:
+**1.5×** faster on its typed keyed read:
 
 ![Point-read latency](assets/world-points.svg)
 
 Cyclic joins are a difficult case for a fixed sequence of binary joins.
-Bumbledb is **11.7×** faster on the first ring query and **9.7×** faster on
+Bumbledb is **11.4×** faster on the first ring query and **9.3×** faster on
 the first bipartite stress test:
 
 ![Cyclic-join latency](assets/world-rings.svg)
@@ -259,8 +261,8 @@ the direct translations where they materially improve the comparison:
 
 SQLite's stress-test queries were limited to one second per sample. Two direct
 translations exceeded that limit on every attempt. Bumbledb completed the
-larger bipartite join in **1.51 seconds** and the interval-overlap join in
-**44.5 milliseconds**. A hand-written SQLite version of the overlap query did
+larger bipartite join in **1.69 seconds** and the interval-overlap join in
+**50.3 milliseconds**. A hand-written SQLite version of the overlap query did
 finish; Bumbledb was **10.8×** faster than that version.
 
 ![Queries that exceeded SQLite's time limit](assets/adversarial-dnf.svg)
@@ -269,10 +271,10 @@ finish; Bumbledb was **10.8×** faster than that version.
 
 The transaction benchmark measures keyed reads, inserts, updates, upserts,
 read-modify-write operations, deletes, and a 90/10 read/write mix with matching
-durability settings. SQLite is faster on 20 of the 22 comparisons and has a
-**1.73×** geometric mean advantage overall. Bumbledb wins the keyed reads, but
-SQLite's write path is substantially faster for large batches when durability
-is disabled.
+durability settings. SQLite is faster on 19 of the 22 comparisons and has a
+**1.85×** geometric mean advantage overall. Bumbledb wins the keyed reads and
+the durable single-record insert, but SQLite's write path is substantially
+faster for large batches when durability is disabled.
 
 ![Ordinary transaction performance](assets/world-crud.svg)
 
@@ -281,17 +283,17 @@ references, fixed sets, and resource limits with SQLite
 `UNIQUE`/`FOREIGN KEY`/`CHECK`/trigger implementations. SQLite is faster on
 10 of 12 comparisons. Successful durable commits are close, while SQLite
 rejects invalid writes much faster. The largest gap is a failed durable key
-check: Bumbledb spends 5.04 ms because its never-reuse ID guarantee is itself
-persisted, while SQLite returns after 19.5 µs.
+check: Bumbledb spends 4.24 ms because its never-reuse ID guarantee is itself
+persisted, while SQLite returns after 7.7 µs.
 
 ![Constraint-check performance](assets/world-lawful.svg)
 
 ### Writes
 
 Durable single-record commits are dominated by the storage flush in both
-engines: Bumbledb measures 5.06 ms at p50 and SQLite 4.47 ms. On a large
-collection insert Bumbledb completes it in 0.64 seconds compared with
-SQLite's 0.70 seconds.
+engines: Bumbledb measures 4.85 ms at p50 and SQLite 4.25 ms. On a large
+collection insert Bumbledb completes it in 0.65 seconds compared with
+SQLite's 0.71 seconds.
 
 ![Write and first-read latency](assets/bench-writes.svg)
 
@@ -318,16 +320,16 @@ performance.
 ### Scale and cold starts
 
 The scale test repeats four representative queries at the published dataset
-sizes. The calendar scan is **417×** faster than the direct SQLite query and
-**149×** faster than a hand-written alternative; the triangle query is
-**15.0×** faster, and the recursive fan-out query is **36.3×** faster.
+sizes. The calendar scan is **427×** faster than the direct SQLite query and
+**155×** faster than a hand-written alternative; the triangle query is
+**14.9×** faster, and the recursive fan-out query is **34.7×** faster.
 
 ![Performance at the published dataset sizes](assets/bench-curves.svg)
 
 The first query after opening a database includes work that later executions
-reuse. SQLite is faster on the cold recursive fan-out query, at 15.4 µs versus
-Bumbledb's 616 µs. Once warm, Bumbledb completes it in 584 ns versus SQLite's
-10.6 µs.
+reuse. SQLite is faster on the cold recursive fan-out query, at 22.7 µs versus
+Bumbledb's 786 µs. Once warm, Bumbledb completes it in 791 ns versus SQLite's
+10.0 µs.
 
 ![Cold and warm query latency](assets/bench-warmth.svg)
 
@@ -339,8 +341,8 @@ without durability, and a delete-heavy workload. One SQLite configuration
 runs periodic `VACUUM` and `ANALYZE`, with that maintenance time included in
 its throughput.
 
-On the durable steady workload, SQLite's window-probe latency rises from 288
-to 516 µs while Bumbledb remains at 21 µs. Bumbledb's store grows from 74.5
+On the durable steady workload, SQLite's window-probe latency rises from 299
+to 534 µs while Bumbledb remains at 21 µs. Bumbledb's store grows from 74.5
 to 83.0 MB; SQLite's unmaintained store grows from 14.8 to 17.4 MB, and
 periodic `VACUUM` reduces it to 13.2 MB. SQLite remains ahead on durable
 write throughput, while Bumbledb is ahead with durability disabled.
@@ -366,9 +368,9 @@ Write throughput:
 ### Heap instance versus the leased store
 
 The same ledger corpus, published once into a durable store and once into an
-`OwnedInstance`, is compared on point reads. Heap `get` is 208 ns against
-LMDB's 291 ns; `contains` is 375 ns against 417 ns. Admission cost on this
-night rose from 785 ns/fact at 693 facts to 910 ns/fact at 41,432 facts.
+`OwnedInstance`, is compared on point reads. Heap `get` is 167 ns against
+LMDB's 250 ns; `contains` is 292 ns against 416 ns. Admission cost on this
+night rose from 728 ns/fact at 693 facts to 923 ns/fact at 41,432 facts.
 
 ### Reproducing the benchmarks
 
@@ -423,7 +425,7 @@ relations:
 | `bool` | true or false | equality |
 | `str` | UTF-8 text that may repeat | equality and parameter sets |
 | `bytes<N>` | fixed-size hashes and binary identities | equality and parameter sets |
-| `interval<E>` | nonempty half-open ranges | point membership, overlap and Allen relationships, duration, merging |
+| `interval<E>` | nonempty half-open ranges | point membership, overlap and Allen relationships, merging |
 | `interval<E, w>` | fixed-width half-open ranges | the same interval operations |
 | `closed relation` | a fixed enum-like set, optionally with columns | equality, parameter sets, filtered references, joins |
 
@@ -440,8 +442,8 @@ Queries are plain data after macro or builder expansion. They can be stored,
 composed, prepared once, and executed repeatedly with different parameters.
 The engine supports multiple rules whose results are combined as a set,
 negated records, comparisons, set-valued parameters, `Count`, `Sum`, `Min`,
-`Max`, interval duration and merging, named intermediate results, and one
-linear recursive query for reachability.
+`Max`, interval merging, named intermediate results, and one linear recursive
+query for reachability.
 
 The raw query representation remains public for language bindings and tools.
 The Rust `query!` macro and TypeScript builder are conveniences over that same
@@ -525,8 +527,8 @@ results with the engine.
 
 ## Current release
 
-Version **0.16.0** covers the Rust engine, C ABI, and
-`@bjornpagen/bumbledb` TypeScript package. The C ABI version is **3**.
+Version **0.17.0** covers the Rust engine, C ABI, and
+`@bjornpagen/bumbledb` TypeScript package. The C ABI version is **4**.
 Storage format is **8**.
 
 Bumbledb uses one writer and concurrent snapshot readers. The engine owns no

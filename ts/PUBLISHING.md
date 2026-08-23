@@ -11,7 +11,33 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.16.0` is the one-representation release over `0.15.0` — one collection
+`0.17.0` is the purge release, and the first published version after
+`0.15.0` (`0.16.0` was completed but never published; its changes ship
+here). The engine surface was re-derived from its consumers: every
+feature now names primer-spec, a bumbledb-log lane, a deployment case,
+or a structural gate — or it is gone. Deleted end to end: the
+measure/duration query family (`Duration(v)` comparisons, duration
+head projections and folds, and the ray-probe second execution pass
+that existed only for them — compute `end − start` on the host), the
+Explain/Staleness diagnostic stacks, the `db.*` sugar quintet, the free
+comparison exports and the `Tx` alias, bool Min/Max folds, the unit
+`{N..*}` capacity floor (weighted floors stay legal), and every
+harness-only knob (`set_derived_budget`, `admit_measured`,
+`disk_size` stays — it is product). Withdrawn by the cheap-and-useful
+ruling and fully intact: `abandon()`, `ParamSet`/`inSet`,
+`LiteralSet::Many`, the whole interval/Allen family, and the entire TS
+type tier. The normative `docs/architecture/` set is deleted — the code
+is the spec, `RULINGS.md` carries the open ledger, and the census
+enforces the one-owner law. **The C ABI bumps to generation 4**: the
+D1 deletions renumbered `bdb_error_kind` and `bdb_find_term_kind`, so
+generation-3 hosts must recompile against the regenerated header.
+Storage stays format **8** — no migration; existing stores open
+unchanged. The cross-host fingerprint lock schema gained a
+`Duration(active)` weight (its pin regenerated in lockstep on both
+sides).
+
+`0.16.0` is the one-representation release over `0.15.0` (completed
+2026-08-21, **never published** — folded into `0.17.0` above) — one collection
 representation from host to delta (the accepted collection: an arena-backed
 shape-proved batch parsed once at the bridge; the column transport is GONE —
 `Iterable<Fact<R>>` is the one collection spelling), one cardinality read
@@ -178,7 +204,7 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits every spelling, then the build enforces the match. All
-spellings are `0.16.0` in this tree; `pnpm run build` asserts the lockstep
+spellings are `0.17.0` in this tree; `pnpm run build` asserts the lockstep
 on every run.
 
 ## Runbook (0.16.0, darwin-arm64 host, owner)
@@ -187,15 +213,15 @@ on every run.
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.16.0 (the build asserts it — the
+# 1. The lockstep is already set to 0.17.0 (the build asserts it — the
 #    platform pin is NOT a repo field, it injects at pack time):
-#    - ts/package.json                    "version": "0.16.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.16.0"
-#    - ts/crate/Cargo.toml                version = "0.16.0"
-#    - crates/bumbledb/Cargo.toml         version = "0.16.0"
-#    - crates/bumbledb-c/Cargo.toml       version = "0.16.0"
+#    - ts/package.json                    "version": "0.17.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.17.0"
+#    - ts/crate/Cargo.toml                version = "0.17.0"
+#    - crates/bumbledb/Cargo.toml         version = "0.17.0"
+#    - crates/bumbledb-c/Cargo.toml       version = "0.17.0"
 #    - workspace members (bench, macros, query, query-macros, theory)
-#    bdb_abi_version() stays 3 (layout generation).
+#    bdb_abi_version() answers 4 (the 0.17.0 tag renumbering).
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -217,12 +243,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.16.0 version
-pnpm view @bjornpagen/bumbledb@0.16.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.17.0 version
+pnpm view @bjornpagen/bumbledb@0.17.0 version
 
 # 6. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.16.0 <release-commit> -m "bumbledb 0.16.0" && git push origin v0.16.0
+#    git tag -a v0.17.0 <release-commit> -m "bumbledb 0.17.0" && git push origin v0.17.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
