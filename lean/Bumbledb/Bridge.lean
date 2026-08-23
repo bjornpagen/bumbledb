@@ -12,7 +12,7 @@ import Bumbledb.Exec.Reach
 import Bumbledb.Exec.SemiNaive
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
-import Bumbledb.Txn.Footprint
+import Bumbledb.Txn.Braids
 import Bumbledb.Decide
 import Bumbledb.Oracle
 import Bumbledb.Countermodels
@@ -611,27 +611,12 @@ def ledger : List Obligation := [
     "InstanceBuilder (crates/bumbledb/src/api/db/builder.rs); engine_admit (crates/bumbledb-bench/src/differential.rs); judge_complete (crates/bumbledb-bench/src/naive.rs); generate_complete_corpus (crates/bumbledb-bench/src/conformance/complete.rs)"
     "complete_admission_includes_closed_source_containments (crates/bumbledb-bench/src/conformance/complete.rs); three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); complete_admission_rejects_unhandled_closed_source (crates/bumbledb-bench/src/naive/tests/closed.rs)",
 
-  .row @Txn.Footprint.L6 `Bumbledb.Txn.Footprint.L6
-    "Footprint soundness: under full key disjointness a winner batch moves no obligation instance the loser's judgment reads — key obligation rows, containment witness rosters, and capacity child groups with their parent rosters stay fixed at every name the loser's footprint carries."
-    "footprint (crates/bumbledb-log/src/footprint.rs); intersect (crates/bumbledb-log/src/intersect.rs)"
-    "disjoint_pairs_commute_in_verdicts_and_row_content (crates/bumbledb-log/tests/f2_commutativity.rs); crates/bumbledb-log/tests/f3_matrix.rs",
-
-  .row @Txn.Footprint.L7 `Bumbledb.Txn.Footprint.L7
-    "Footprint stability, the republish license: a batch accepted at its base is accepted at the winner-moved base with identical effective adds and removes, so a fully key-disjoint loser republishes its recorded ops, carried footprint, and verdict untouched — never a re-judgment."
-    "Writer::republish_disjoint (crates/bumbledb-log/src/writer.rs)"
-    "disjoint_loss_republishes_readdressed_and_never_re_judges (crates/bumbledb-log/tests/f5_contention.rs)",
-
-  .row @Txn.Footprint.L8 `Bumbledb.Txn.Footprint.L8
-    "Commutativity: under full key disjointness either apply order lands one final state, so the loser applies the winner in place and its own already-applied effect stands as if it had come second."
-    "Writer::lose (crates/bumbledb-log/src/writer.rs); apply (crates/bumbledb-log/src/apply.rs)"
-    "disjoint_pairs_commute_in_verdicts_and_row_content (crates/bumbledb-log/tests/f2_commutativity.rs); disjoint_pairs_land_byte_identical_catalogs (crates/bumbledb-log/tests/f2_commutativity.rs)",
-
-  .row @Txn.Footprint.L9 `Bumbledb.Txn.Footprint.L9
-    "Component independence: two batches local to distinct braid components have disjoint footprints by construction, so cross-component commits are concurrent with no intersection ever computed."
+  .row @Txn.Braids.L9 `Bumbledb.Txn.Braids.L9
+    "Component locality: a statement's obligation instances read and write only relations inside one braid component, so judgment and application over one braid are invariant under any other braid's history — cross-braid commits are concurrent with nothing consulted across the seam."
     "braids (crates/bumbledb-log/src/braids.rs)"
     "braid_goldens_match (crates/bumbledb-log/tests/lane_a_braids.rs); multi_braid_interleavings_converge_to_one_digest (crates/bumbledb-log/tests/f2_commutativity.rs)",
 
-  .row @Txn.Footprint.L10 `Bumbledb.Txn.Footprint.L10
+  .row @Txn.Braids.L10 `Bumbledb.Txn.Braids.L10
     "Replay idempotence: re-applying a batch whose effects the state already contains is the identity with an accepted verdict and no generation advance, so every crash window heals by replaying forward — recovery is the catch-up loop, never an intent record."
     "apply (crates/bumbledb-log/src/apply.rs); Replica::resolve_pending (crates/bumbledb-log/src/replica.rs); Writer::clear_pending (crates/bumbledb-log/src/writer.rs)"
     "double_apply_every_batch_at_every_prefix_leaves_digest_generation_vector_unmoved (crates/bumbledb-log/tests/f4_crash.rs)"
@@ -641,7 +626,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 107 := rfl
+theorem ledger_count : ledger.length = 104 := rfl
 
 end Bridge
 end Bumbledb
