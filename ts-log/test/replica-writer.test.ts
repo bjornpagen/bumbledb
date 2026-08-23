@@ -209,7 +209,7 @@ describe("replica and writer over the fs store", function suite() {
 		await b[Symbol.asyncDispose]()
 	})
 
-	test("a fully disjoint loss republishes without re-judgment", async function disjointLoss() {
+	test("a disjoint-shaped loss re-judges at the tip and lands a fresh header at tip+1", async function disjointLoss() {
 		const { store, prefix, dir } = lane()
 		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
@@ -253,7 +253,7 @@ describe("replica and writer over the fs store", function suite() {
 		await b[Symbol.asyncDispose]()
 	})
 
-	test("a subsumed loss publishes nothing and reports the winner's generation", async function subsumedLoss() {
+	test("a subsumed-shaped loss re-judges to a net no-op: Accepted at the current generation, nothing published", async function subsumedLoss() {
 		const { store, prefix, dir } = lane()
 		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
@@ -307,6 +307,48 @@ describe("replica and writer over the fs store", function suite() {
 			]
 		)
 		await a[Symbol.asyncDispose]()
+	})
+
+	test("a stale writer forty slots behind resolves through one re-open and one race at the tip", async function staleForty() {
+		const { store, prefix, dir } = lane()
+		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
+		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
+		const writerA = openWriter(a)
+		const writerB = openWriter(b)
+
+		await writerA.commit(function seed(batch) {
+			batch.insert(Holder, [{ id: 1n, name: "ada" }])
+			return 0
+		})
+		await b.refresh()
+
+		for (let round = 0; round < 40; round++) {
+			const out = await writerA.commit(function mint(batch) {
+				batch.insert(Holder, [{ id: 100n + BigInt(round), name: `h${round}` }])
+				return 0
+			})
+			assert.ok(out.tag === "accepted")
+		}
+		assert.equal(a.vector.get("c00000000"), 41n)
+
+		const stale = await writerB.commit(function mint(batch) {
+			batch.insert(Holder, [{ id: 999n, name: "zed" }])
+			return 0
+		})
+		assert.ok(stale.tag === "accepted", "forty historical losses count nothing against the live bound")
+		assert.equal(stale.generation, 42n, "exactly one race at the tip: the re-judged batch lands at tip+1")
+		assert.equal(stale.durability, "published")
+		assert.equal(b.vector.get("c00000000"), 42n)
+		const beyond = await store.get("prod/main/log/c00000000/000000000000002b")
+		assert.equal(beyond, null, "no slot beyond the single republication exists")
+		assert.equal(
+			b.db.read(function count(instance) {
+				return instance.count(Holder)
+			}),
+			42n
+		)
+		await a[Symbol.asyncDispose]()
+		await b[Symbol.asyncDispose]()
 	})
 
 	test("open sweeps dead rotated store dirs, keeping only the adopted one", async function sweep() {
