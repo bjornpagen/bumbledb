@@ -208,7 +208,10 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 			'Holder(id) <={2} Account(holder | label == "it\\\'s \\"w\\teird\\"\\n\\\\e\\u{301}")'
 		)
 		assert.equal(renderStatement(rangeCapacity), "Holder(id) <={1..4} Account(holder | score == -42)")
-		assert.equal(renderStatement(floorCapacity), "Holder(id) <=[weight]{2..*} Account(holder | kind == {Checking, Savings})")
+		assert.equal(
+			renderStatement(floorCapacity),
+			"Holder(id) <=[weight]{2..*} Account(holder | kind == {Checking, Savings})"
+		)
 		assert.equal(renderStatement(psiTargetCapacity), "Account(id | flag == true) <={0..1} SavingsTerms(account)")
 		assert.equal(
 			renderStatement(literalGauntletCapacity),
