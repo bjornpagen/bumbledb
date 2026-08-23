@@ -1,20 +1,16 @@
 //! The command codec: one binary batch format, full parse before any
 //! apply, every refusal a typed sum naming relation, row, and field
-//! where one exists. Commands carry raw values, never intern ids, so
-//! the footprint section is verifiable by pure recomputation (the
-//! carried-and-checked law; the recompute lives in `crate::footprint`).
-//! Illegal combinations are unencodable, not refused: value payloads
-//! parse against the relation layout, footprint suffixes parse against
-//! their class, and the one numeric field (the capacity child delta)
-//! exists only where the class-and-mode pair admits it.
+//! where one exists. A batch is a header and its ops, nothing else:
+//! commands carry raw values, never intern ids, and every consumer
+//! judges the ops through the engine rather than reading any carried
+//! claim. Illegal combinations are unencodable, not refused: value
+//! payloads parse against the relation layout, and bytes past the last
+//! op refuse as trailing garbage.
 
-use bumbledb::schema::{IntervalElement, RelationId, SchemaDescriptor, StatementId, ValueType};
+use bumbledb::schema::{IntervalElement, RelationId, SchemaDescriptor, ValueType};
 use bumbledb::{Interval, Value};
 
 use crate::braids::{BraidId, Braids, braids};
-use crate::footprint::{
-    CapacityMode, ContainmentMode, Entry, FootprintError, Vocabulary, VocabularyError, footprint,
-};
 
 /// The four magic bytes opening every batch object.
 pub const MAGIC: [u8; 4] = *b"BDBL";
@@ -30,17 +26,12 @@ const TAG_FIXED_BYTES: u8 = 4;
 const TAG_INTERVAL: u8 = 5;
 const TAG_FIXED_INTERVAL: u8 = 6;
 
-pub(crate) const CLASS_FACT: u8 = 1;
-pub(crate) const CLASS_KEY: u8 = 2;
-pub(crate) const CLASS_CONTAINMENT: u8 = 3;
-pub(crate) const CLASS_CAPACITY: u8 = 4;
-
 const OP_INSERT: u8 = 1;
 const OP_DELETE: u8 = 2;
 
 /// A byte destination the one value-encoding function writes into: the
-/// wire buffer, a blake3 hasher (footprint keys hash the identical
-/// tagged bytes), or the discard sink used for shape checks alone.
+/// wire buffer, or the counting sink the drain's packing caps measure
+/// with.
 pub(crate) trait ByteSink {
     fn put(&mut self, bytes: &[u8]);
 }
@@ -49,19 +40,6 @@ impl ByteSink for Vec<u8> {
     fn put(&mut self, bytes: &[u8]) {
         self.extend_from_slice(bytes);
     }
-}
-
-impl ByteSink for blake3::Hasher {
-    fn put(&mut self, bytes: &[u8]) {
-        self.update(bytes);
-    }
-}
-
-/// Shape checking without bytes: `append_value` into nothing.
-pub(crate) struct NullSink;
-
-impl ByteSink for NullSink {
-    fn put(&mut self, _bytes: &[u8]) {}
 }
 
 /// Why a raw value refused to encode against its declared type.
@@ -76,8 +54,7 @@ pub enum ValueShape {
 }
 
 /// The one value-encoding function: `tag u8` + payload, the exact bytes
-/// the wire carries and the exact bytes footprint keys hash. Both
-/// consumers go through here so the two encodings cannot drift apart.
+/// the wire carries.
 pub(crate) fn append_value<S: ByteSink>(
     sink: &mut S,
     value: &Value,
@@ -183,8 +160,7 @@ const fn expected_tag(ty: ValueType) -> u8 {
     }
 }
 
-/// The op verb, and equally the F-class entry mode: an op's net
-/// survivor keeps the verb as its fact disposition.
+/// The op verb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OpKind {
     Insert,
@@ -224,14 +200,13 @@ pub struct BatchHeader {
     pub timestamp: u64,
 }
 
-/// A fully parsed batch. `footprint` is the published section as
-/// carried; consumers recompute it from `ops` and refuse mismatches —
-/// no consumer ever acts on the carried copy.
+/// A fully parsed batch: the header and the ops. A hostile batch can
+/// only be what its ops decode to — the engine's judgment at apply is
+/// the one consumer of their meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Batch {
     pub header: BatchHeader,
     pub ops: Vec<Op>,
-    pub footprint: Vec<Entry>,
 }
 
 /// Encode-side refusals: typed, named by op, relation, row, and field
@@ -271,14 +246,6 @@ pub enum EncodeError {
     TooManyRows {
         op: usize,
     },
-    TooManyFootprintEntries,
-    Footprint(FootprintError),
-}
-
-impl From<FootprintError> for EncodeError {
-    fn from(error: FootprintError) -> Self {
-        Self::Footprint(error)
-    }
 }
 
 /// Decode-side refusals. `identity` is the cross-implementation name
@@ -348,21 +315,6 @@ pub enum DecodeError {
         row: usize,
         field: u16,
     },
-    UnknownFootprintClass {
-        index: usize,
-        got: u8,
-    },
-    UnknownFootprintMode {
-        index: usize,
-        class: u8,
-        got: u8,
-    },
-    UnsortedFootprint {
-        index: usize,
-    },
-    DuplicateFootprintEntry {
-        index: usize,
-    },
     TrailingBytes {
         at: usize,
     },
@@ -388,10 +340,6 @@ impl DecodeError {
             Self::InvalidUtf8 { .. } => "InvalidUtf8",
             Self::EmptyInterval { .. } => "EmptyInterval",
             Self::IntervalOverflow { .. } => "IntervalOverflow",
-            Self::UnknownFootprintClass { .. } => "UnknownFootprintClass",
-            Self::UnknownFootprintMode { .. } => "UnknownFootprintMode",
-            Self::UnsortedFootprint { .. } => "UnsortedFootprint",
-            Self::DuplicateFootprintEntry { .. } => "DuplicateFootprintEntry",
             Self::TrailingBytes { .. } => "TrailingBytes",
         }
     }
@@ -458,6 +406,59 @@ impl<'bytes> Cursor<'bytes> {
     }
 }
 
+/// One relation's wire view: whether it is ordinary (writable on the
+/// wire) and its field layout.
+#[derive(Debug, Clone)]
+pub struct RelationInfo {
+    ordinary: bool,
+    layout: Box<[ValueType]>,
+}
+
+impl RelationInfo {
+    #[must_use]
+    pub const fn is_ordinary(&self) -> bool {
+        self.ordinary
+    }
+
+    #[must_use]
+    pub const fn layout(&self) -> &[ValueType] {
+        &self.layout
+    }
+}
+
+/// The descriptor parsed for the wire: per relation, ordinariness and
+/// layout. Closed relations encode nowhere and decode nowhere.
+#[derive(Debug, Clone)]
+pub struct Vocabulary {
+    relations: Box<[RelationInfo]>,
+}
+
+impl Vocabulary {
+    #[must_use]
+    pub fn new(descriptor: &SchemaDescriptor) -> Self {
+        Self {
+            relations: descriptor
+                .relations
+                .iter()
+                .map(|relation| RelationInfo {
+                    ordinary: relation.extension.is_none(),
+                    layout: relation
+                        .fields
+                        .iter()
+                        .map(|field| field.value_type)
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn relation(&self, id: RelationId) -> Option<&RelationInfo> {
+        self.relations
+            .get(usize::try_from(id.0).expect("u32 fits usize"))
+    }
+}
+
 /// The codec context: the descriptor parsed once (vocabulary + braid
 /// map) beside the schema fingerprint the wire pins. Encode and decode
 /// allocate output buffers only; everything derived lives here.
@@ -470,15 +471,13 @@ pub struct Codec {
 
 impl Codec {
     /// Parses the descriptor into the derived views the codec reads.
-    pub fn new(
-        descriptor: &SchemaDescriptor,
-        fingerprint: [u8; 32],
-    ) -> Result<Self, VocabularyError> {
-        Ok(Self {
+    #[must_use]
+    pub fn new(descriptor: &SchemaDescriptor, fingerprint: [u8; 32]) -> Self {
+        Self {
             fingerprint,
-            vocabulary: Vocabulary::new(descriptor)?,
+            vocabulary: Vocabulary::new(descriptor),
             braids: braids(descriptor),
-        })
+        }
     }
 
     #[must_use]
@@ -496,8 +495,7 @@ impl Codec {
         &self.braids
     }
 
-    /// Encodes a batch: header, ops, then the derived footprint section
-    /// (`crate::footprint::footprint` is the one producer of it).
+    /// Encodes a batch: header, then ops. Nothing else rides the wire.
     pub fn encode(&self, header: &BatchHeader, ops: &[Op]) -> Result<Vec<u8>, EncodeError> {
         if header.fingerprint != self.fingerprint {
             return Err(EncodeError::FingerprintMismatch);
@@ -569,20 +567,12 @@ impl Codec {
                 }
             }
         }
-
-        let entries = footprint(&self.vocabulary, ops)?;
-        let fp_count =
-            u32::try_from(entries.len()).map_err(|_| EncodeError::TooManyFootprintEntries)?;
-        out.put(&fp_count.to_le_bytes());
-        for entry in &entries {
-            append_entry(&mut out, entry);
-        }
         Ok(out)
     }
 
     /// Decodes a batch: a full sequential parse of every byte before
     /// any apply, refusing version, flags, fingerprint, braid
-    /// membership, malformed values, and footprint order violations.
+    /// membership, malformed values, and any byte past the last op.
     pub fn decode(&self, bytes: &[u8]) -> Result<Batch, DecodeError> {
         let mut cur = Cursor::new(bytes);
 
@@ -621,25 +611,6 @@ impl Codec {
             ops.push(self.decode_op(&mut cur, op_index, braid)?);
         }
 
-        let fp_count = cur.u32()?;
-        let mut entries: Vec<Entry> = Vec::with_capacity(capped(fp_count, cur.remaining(), 34));
-        for index in 0..fp_count {
-            let index = usize::try_from(index).expect("entry index fits usize");
-            let entry = decode_entry(&mut cur, index)?;
-            if let Some(last) = entries.last() {
-                match last.sort_key().cmp(&entry.sort_key()) {
-                    std::cmp::Ordering::Less => {}
-                    std::cmp::Ordering::Equal => {
-                        return Err(DecodeError::DuplicateFootprintEntry { index });
-                    }
-                    std::cmp::Ordering::Greater => {
-                        return Err(DecodeError::UnsortedFootprint { index });
-                    }
-                }
-            }
-            entries.push(entry);
-        }
-
         if cur.remaining() != 0 {
             return Err(DecodeError::TrailingBytes { at: cur.at });
         }
@@ -654,7 +625,6 @@ impl Codec {
                 timestamp,
             },
             ops,
-            footprint: entries,
         })
     }
 
@@ -816,105 +786,5 @@ fn decode_value(
                 Ok(Value::IntervalI64(interval))
             }
         },
-    }
-}
-
-fn append_entry(out: &mut Vec<u8>, entry: &Entry) {
-    match entry {
-        Entry::Fact { fid, mode } => {
-            out.put(&[CLASS_FACT]);
-            out.put(fid);
-            out.put(&[mode.wire()]);
-        }
-        Entry::Key { statement, key } => {
-            out.put(&[CLASS_KEY]);
-            out.put(&statement.0.to_le_bytes());
-            out.put(key);
-        }
-        Entry::Containment {
-            statement,
-            key,
-            mode,
-        } => {
-            out.put(&[CLASS_CONTAINMENT]);
-            out.put(&statement.0.to_le_bytes());
-            out.put(key);
-            out.put(&[mode.wire()]);
-        }
-        Entry::Capacity {
-            statement,
-            key,
-            mode,
-        } => {
-            out.put(&[CLASS_CAPACITY]);
-            out.put(&statement.0.to_le_bytes());
-            out.put(key);
-            match mode {
-                CapacityMode::ChildDelta(delta) => {
-                    out.put(&[mode.wire()]);
-                    out.put(&delta.to_le_bytes());
-                }
-                CapacityMode::ParentAdd | CapacityMode::ParentRemove => {
-                    out.put(&[mode.wire()]);
-                }
-            }
-        }
-    }
-}
-
-fn decode_entry(cur: &mut Cursor<'_>, index: usize) -> Result<Entry, DecodeError> {
-    let class = cur.u8()?;
-    match class {
-        CLASS_FACT => {
-            let fid = cur.array32()?;
-            let mode = match cur.u8()? {
-                OP_INSERT => OpKind::Insert,
-                OP_DELETE => OpKind::Delete,
-                got => {
-                    return Err(DecodeError::UnknownFootprintMode { index, class, got });
-                }
-            };
-            Ok(Entry::Fact { fid, mode })
-        }
-        CLASS_KEY => {
-            let statement = StatementId(cur.u16()?);
-            let key = cur.array32()?;
-            Ok(Entry::Key { statement, key })
-        }
-        CLASS_CONTAINMENT => {
-            let statement = StatementId(cur.u16()?);
-            let key = cur.array32()?;
-            let mode = match cur.u8()? {
-                1 => ContainmentMode::Need,
-                2 => ContainmentMode::SupportAdd,
-                3 => ContainmentMode::SupportRemove,
-                got => {
-                    return Err(DecodeError::UnknownFootprintMode { index, class, got });
-                }
-            };
-            Ok(Entry::Containment {
-                statement,
-                key,
-                mode,
-            })
-        }
-        CLASS_CAPACITY => {
-            let statement = StatementId(cur.u16()?);
-            let key = cur.array32()?;
-            let mode = match cur.u8()? {
-                1 => CapacityMode::ChildDelta(cur.i64()?),
-                2 => CapacityMode::ParentAdd,
-                3 => CapacityMode::ParentRemove,
-                got => {
-                    return Err(DecodeError::UnknownFootprintMode { index, class, got });
-                }
-            };
-            Ok(Entry::Capacity {
-                statement,
-                key,
-                mode,
-            })
-        }
-        got => Err(DecodeError::UnknownFootprintClass { index, got }),
     }
 }

@@ -1,12 +1,14 @@
-//! The manifest — the protocol's one mutable object — and the immutable
+//! The manifest — the protocol's one mutable object — and the
 //! checkpoint document it points to. Both are canonical single-line
 //! UTF-8 JSON with a fixed field order, so parse and render are exact
 //! template walks (hand-rolled on purpose: a general JSON reader would
 //! accept re-orderings and whitespace the canon forbids). The manifest
-//! is a pure pointer: every checkpoint fact lives in the
-//! content-addressed `ckpt/{digest}.json`, and the mutable CAS surface
-//! of the whole protocol is one 64-hex field. This module also owns the
-//! object key layout, so every consumer spells a key exactly one way.
+//! is a pure pointer: every checkpoint fact lives in
+//! `ckpt/{digest}.json` beside the store bytes whose digest names both,
+//! the document's `prev` is proven by the manifest CAS that installs
+//! it, and the mutable CAS surface of the whole protocol is one 64-hex
+//! field. This module also owns the object key layout, so every
+//! consumer spells a key exactly one way.
 
 use std::collections::BTreeMap;
 
@@ -397,15 +399,23 @@ pub enum PublishRefusal {
 
 /// Publishes `candidate` under the checkpoint order: the candidate
 /// replaces the incumbent iff its vector sum is strictly greater; a
-/// `Moved` CAS re-reads and re-applies the order. Termination is
-/// structural — every successful swap strictly raises the incumbent sum.
+/// `Moved` CAS re-reads and re-applies the order. The candidate's
+/// document is rendered and uploaded inside the loop, so its `prev`
+/// always names the incumbent the winning CAS actually replaced —
+/// proven by the CAS itself, never hoped — and every retained
+/// checkpoint stays reachable from the manifest by the backlink walk.
+/// Termination is structural — every successful swap strictly raises
+/// the incumbent sum.
 pub fn publish_checkpoint<S: ObjectStore>(
     store: &S,
     prefix: &str,
     braids: &Braids,
     candidate: [u8; 32],
-    candidate_sum: u64,
+    heads: &BTreeMap<BraidId, Head>,
+    catalog: [u8; 32],
+    writer: u64,
 ) -> StoreResult<Published> {
+    let candidate_sum: u64 = heads.values().map(|head| head.g).sum();
     loop {
         let Some(fetched) = store.get(&manifest_key(prefix))? else {
             return Ok(Published::Refused(PublishRefusal::ManifestMissing));
@@ -435,6 +445,13 @@ pub fn publish_checkpoint<S: ObjectStore>(
                 return Ok(Published::Kept { incumbent });
             }
         }
+        let doc = Checkpoint {
+            braids: heads.clone(),
+            catalog,
+            writer,
+            prev: manifest.checkpoint,
+        };
+        upsert(store, &ckpt_json_key(prefix, &candidate), &doc.render())?;
         let next = Manifest {
             fingerprint: manifest.fingerprint,
             checkpoint: Some(candidate),
@@ -442,6 +459,30 @@ pub fn publish_checkpoint<S: ObjectStore>(
         match store.put_swap(&manifest_key(prefix), &next.render(), &fetched.etag)? {
             Swap::Swapped(_) => return Ok(Published::Replaced),
             Swap::Moved => {}
+        }
+    }
+}
+
+/// Writes `bytes` at `key` whatever stands there: create when absent,
+/// byte-equal stands, anything else swaps under the read etag. The one
+/// consumer is the checkpoint document whose `prev` a CAS race
+/// re-renders.
+fn upsert<S: ObjectStore>(store: &S, key: &str, bytes: &[u8]) -> StoreResult<()> {
+    loop {
+        match store.put_create(key, bytes)? {
+            Create::Created(_) => return Ok(()),
+            Create::Exists => {
+                let Some(existing) = store.get(key)? else {
+                    continue;
+                };
+                if existing.bytes == bytes {
+                    return Ok(());
+                }
+                match store.put_swap(key, bytes, &existing.etag)? {
+                    Swap::Swapped(_) => return Ok(()),
+                    Swap::Moved => {}
+                }
+            }
         }
     }
 }

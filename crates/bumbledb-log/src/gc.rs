@@ -202,7 +202,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     theory: &T,
     target: &Vector,
 ) -> Result<Restore<T>, Fault> {
-    let (codec, fingerprint) = match derive_codec(theory) {
+    let (codec, fingerprint, _) = match derive_codec(theory) {
         Ok(derived) => derived,
         Err(refusal) => return Ok(Restore::Refused(RestoreRefusal::Open(refusal))),
     };
@@ -292,7 +292,7 @@ pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
     theory: &T,
     t_ms: u64,
 ) -> Result<Restore<T>, Fault> {
-    let (codec, fingerprint) = match derive_codec(theory) {
+    let (codec, fingerprint, _) = match derive_codec(theory) {
         Ok(derived) => derived,
         Err(refusal) => return Ok(Restore::Refused(RestoreRefusal::Open(refusal))),
     };
@@ -395,7 +395,7 @@ fn seed_restore<T: Theory + Clone, S: ObjectStore>(
                 ))));
             }
         };
-        let (codec, _) = derive_codec(theory).expect("derived once already");
+        let (codec, _, _) = derive_codec(theory).expect("derived once already");
         return Ok(Ok((db, Chain::genesis(codec.braids()))));
     };
     let bytes = match fetch_checkpoint_bytes(store, prefix, *digest)? {

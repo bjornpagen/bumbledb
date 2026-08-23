@@ -1,18 +1,16 @@
 //! Apply: the one place a fetched log object becomes engine state. The
-//! home of the refusal battery — decode (full parse before any apply),
-//! the chain discipline with its three proved causes, the footprint
-//! recompute — and of the first-applied-slot-must-change-state
-//! instrument. Apply is idempotent by set semantics (L10): re-applying a
-//! batch whose effects are present net-disposes every op, the engine
-//! takes its no-op arm, and the generation does not advance, which is
-//! why the crash window between an engine commit and its sidecar bump
-//! needs no detection state at all.
+//! home of the refusal battery — decode (full parse before any apply)
+//! and the chain discipline with its three proved causes — and of the
+//! first-applied-slot-must-change-state instrument. Apply is idempotent
+//! by set semantics (L10): re-applying a batch whose effects are present
+//! net-disposes every op, the engine takes its no-op arm, and the
+//! generation does not advance, which is why the crash window between an
+//! engine commit and its sidecar bump needs no detection state at all.
 
 use bumbledb::{Admission, Db, Violations};
 
 use crate::braids::BraidId;
 use crate::codec::{Codec, DecodeError, OpKind};
-use crate::footprint::{FootprintError, footprint};
 use crate::sidecar::{Chain, ChainEntry};
 
 /// The three proved causes of `ChainMismatch` — one identity, each arm
@@ -34,33 +32,17 @@ pub enum ChainCause {
     Timestamp { header_ts: u64, chain_ts: u64 },
 }
 
-/// Why the recomputed footprint could not agree with the carried one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FootprintCause {
-    /// Recomputation succeeded and produced a different section.
-    Diverged,
-    /// Recomputation itself refused — our encoder could never have
-    /// produced this batch.
-    Unrecomputable(FootprintError),
-}
-
 /// The apply-time refusal battery. Every arm is corruption-class: the
 /// object itself, or the chain it claims, is wrong, and no retry mends
 /// bytes. Arms carrying `writer` name the misbehaving publisher from the
 /// header it signed into the batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyRefusal {
-    /// The full parse refused: version, flags, fingerprint, layout,
-    /// footprint order and dedup, op relation outside the braid.
+    /// The full parse refused: version, flags, fingerprint, layout, op
+    /// relation outside the braid, trailing bytes.
     Decode(DecodeError),
     ChainMismatch {
         cause: ChainCause,
-        braid: BraidId,
-        slot: u64,
-        writer: u64,
-    },
-    FootprintMismatch {
-        cause: FootprintCause,
         braid: BraidId,
         slot: u64,
         writer: u64,
@@ -97,11 +79,11 @@ pub enum Applied {
 }
 
 /// Applies the log object at `(braid, slot)` to the store: full decode,
-/// chain discipline, footprint recompute, one `db.write` with ops in
-/// listed order, then the state-change instrument. `applied_pending` is
-/// the wholeness identity's last term (1 exactly when a pending batch is
-/// applied but unpublished, 0 otherwise). On `Advanced`/`Absorbed` the
-/// in-memory chain has advanced; persisting it is the caller's step two.
+/// chain discipline, one `db.write` with ops in listed order, then the
+/// state-change instrument. `applied_pending` is the wholeness
+/// identity's last term (1 exactly when a pending batch is applied but
+/// unpublished, 0 otherwise). On `Advanced`/`Absorbed` the in-memory
+/// chain has advanced; persisting it is the caller's step two.
 pub fn apply<T>(
     db: &Db<T>,
     chain: &mut Chain,
@@ -142,22 +124,6 @@ pub fn apply<T>(
             header_ts: header.timestamp,
             chain_ts: position.ts,
         }));
-    }
-
-    let footprint_refusal = |cause: FootprintCause| {
-        Applied::Refused(ApplyRefusal::FootprintMismatch {
-            cause,
-            braid,
-            slot,
-            writer: header.writer,
-        })
-    };
-    match footprint(codec.vocabulary(), &batch.ops) {
-        Ok(recomputed) if recomputed == batch.footprint => {}
-        Ok(_) => return Ok(footprint_refusal(FootprintCause::Diverged)),
-        Err(error) => {
-            return Ok(footprint_refusal(FootprintCause::Unrecomputable(error)));
-        }
     }
 
     let before = db.generation()?.value();

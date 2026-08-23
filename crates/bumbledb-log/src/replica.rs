@@ -21,7 +21,6 @@ use bumbledb::{Admission, Db, SchemaDescriptor, SchemaError, Theory, Violations}
 use crate::apply::{Applied, ApplyRefusal, apply};
 use crate::braids::BraidId;
 use crate::codec::Codec;
-use crate::footprint::VocabularyError;
 use crate::manifest::{
     Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
     manifest_key,
@@ -88,8 +87,6 @@ impl From<io::Error> for Fault {
 pub enum OpenRefusal {
     /// The theory itself failed engine validation.
     Theory(SchemaError),
-    /// The theory admitted no codec vocabulary.
-    Vocabulary(VocabularyError),
     ManifestMissing,
     Manifest(ManifestError),
     /// The manifest pins a different schema fingerprint.
@@ -193,9 +190,55 @@ pub enum Waited {
     Refused(OpenRefusal),
 }
 
+/// The legible scream of an unbounded repair loop: a warning every
+/// eighth attempt naming the current signature, and an alarm the moment
+/// one signature recurs. The loop it serves never caps and never
+/// fabricates a convergence error — it repairs forever and says so.
+pub(crate) struct Scream {
+    context: &'static str,
+    signature: Option<&'static str>,
+    alarmed: bool,
+    attempts: u64,
+}
+
+impl Scream {
+    const WARN_EVERY: u64 = 8;
+
+    pub(crate) const fn new(context: &'static str) -> Self {
+        Self {
+            context,
+            signature: None,
+            alarmed: false,
+            attempts: 0,
+        }
+    }
+
+    pub(crate) fn attempt(&mut self, signature: &'static str) {
+        self.attempts += 1;
+        if self.signature == Some(signature) {
+            if !self.alarmed {
+                self.alarmed = true;
+                eprintln!(
+                    "bumbledb-log alarm: {} repair signature recurs: {signature}",
+                    self.context
+                );
+            }
+        } else {
+            self.signature = Some(signature);
+            self.alarmed = false;
+        }
+        if self.attempts.is_multiple_of(Self::WARN_EVERY) {
+            eprintln!(
+                "bumbledb-log warning: {} repair attempt {}: {signature}",
+                self.context, self.attempts
+            );
+        }
+    }
+}
+
 enum AttemptEnd {
     Whole,
-    Discard,
+    Discard(&'static str),
     Refused(OpenRefusal),
 }
 
@@ -247,7 +290,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// the wholeness identity before anything serves from a
     /// pre-existing directory.
     pub fn open(store: S, prefix: &str, dir: &Path, theory: T) -> Result<Opened<T, S>, Fault> {
-        let (codec, fingerprint) = match derive_codec(&theory) {
+        let (codec, fingerprint, _) = match derive_codec(&theory) {
             Ok(derived) => derived,
             Err(refusal) => return Ok(Opened::Refused(refusal)),
         };
@@ -436,19 +479,20 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     }
 
     fn establish(&mut self) -> Result<Option<OpenRefusal>, Fault> {
-        for _ in 0..8 {
+        let mut scream = Scream::new("replica discard-and-re-pull");
+        loop {
             if let Some(refusal) = self.read_manifest()? {
                 return Ok(Some(refusal));
             }
             match self.attempt()? {
                 AttemptEnd::Whole => return Ok(None),
-                AttemptEnd::Discard => self.discard()?,
+                AttemptEnd::Discard(signature) => {
+                    self.discard()?;
+                    scream.attempt(signature);
+                }
                 AttemptEnd::Refused(refusal) => return Ok(Some(refusal)),
             }
         }
-        Err(Fault::Io(io::Error::other(
-            "discard-and-re-pull did not converge",
-        )))
     }
 
     fn read_manifest(&mut self) -> Result<Option<OpenRefusal>, Fault> {
@@ -529,11 +573,18 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         };
         match self.catch_up(phase)? {
             CatchUpEnd::Tips => {}
-            CatchUpEnd::Gap | CatchUpEnd::RejectedInOpen => return Ok(AttemptEnd::Discard),
+            CatchUpEnd::Gap => {
+                return Ok(AttemptEnd::Discard("catch-up hit a hole below the floor"));
+            }
+            CatchUpEnd::RejectedInOpen => {
+                return Ok(AttemptEnd::Discard("replay rejected in the open phase"));
+            }
         }
         let generation = self.db().generation()?.value();
         if generation != self.chain.sum() + self.applied_pending {
-            return Ok(AttemptEnd::Discard);
+            return Ok(AttemptEnd::Discard(
+                "the wholeness identity failed after catch-up",
+            ));
         }
         if let Some(refusal) = self.audit_reached_floor()? {
             return Ok(AttemptEnd::Refused(refusal));
@@ -583,7 +634,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                 Ok(db) => {
                     let Some(Ok(chain)) = Chain::read(&self.dir, self.codec.braids())? else {
                         drop(db);
-                        return Ok(Some(AttemptEnd::Discard));
+                        return Ok(Some(AttemptEnd::Discard("the sidecar refused to read")));
                     };
                     self.db = Some(db);
                     self.chain = chain;
@@ -593,7 +644,11 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                 Err(error @ bumbledb::Error::EnvironmentLocked) => {
                     return Err(Fault::Engine(error));
                 }
-                Err(_) => return Ok(Some(AttemptEnd::Discard)),
+                Err(_) => {
+                    return Ok(Some(AttemptEnd::Discard(
+                        "the local directory refused to open",
+                    )));
+                }
             }
         }
         if let Some((digest, doc)) = self.floor.clone() {
@@ -697,7 +752,9 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                     self.applied_pending = 0;
                     Ok(None)
                 } else {
-                    Ok(Some(AttemptEnd::Discard))
+                    Ok(Some(AttemptEnd::Discard(
+                        "a lost slot over an applied pending is a fork",
+                    )))
                 }
             }
             None => {
@@ -708,7 +765,9 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                     self.applied_pending = 1;
                     Ok(None)
                 } else {
-                    Ok(Some(AttemptEnd::Discard))
+                    Ok(Some(AttemptEnd::Discard(
+                        "a generation no pending term accounts for",
+                    )))
                 }
             }
         }
@@ -800,16 +859,18 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     }
 }
 
-/// Derives the codec and fingerprint from the theory — the pure prelude
-/// of `open` shared with the restore verbs in `crate::gc`.
+/// Derives the codec, fingerprint, and validated schema from the theory
+/// — the pure prelude of `open` shared with the restore verbs in
+/// `crate::gc` and with the writer, whose contention cause reads
+/// statement identities off the schema.
 pub(crate) fn derive_codec<T: Theory + Clone>(
     theory: &T,
-) -> Result<(Codec, [u8; 32]), OpenRefusal> {
+) -> Result<(Codec, [u8; 32], bumbledb::Schema), OpenRefusal> {
     let descriptor: SchemaDescriptor = theory.clone().descriptor();
     let schema = descriptor.clone().validate().map_err(OpenRefusal::Theory)?;
     let fingerprint = schema_fingerprint(&schema).0;
-    let codec = Codec::new(&descriptor, fingerprint).map_err(OpenRefusal::Vocabulary)?;
-    Ok((codec, fingerprint))
+    let codec = Codec::new(&descriptor, fingerprint);
+    Ok((codec, fingerprint, schema))
 }
 
 /// Fetches `ckpt/{digest}.mdb` and verifies the digest, retrying the

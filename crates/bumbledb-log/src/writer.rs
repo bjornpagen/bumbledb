@@ -1,21 +1,21 @@
 //! The writer: a replica plus the right to create log objects. One
-//! commit discipline for both ack modes over the shared pending slot;
-//! the loser algebra between the local store and the bucket, governed
+//! commit discipline for both ack modes over the shared pending slot,
+//! and ONE loss path between the local store and the bucket, governed
 //! by one law — a local commit survives in place iff it maps to its own
 //! slot. The publish law holds at the only place it could break: a
 //! batch reaches the network only if its local application advanced the
 //! generation, so every log slot is a state-changing commit and the
 //! wholeness identity stays one integer compare.
 //!
-//! A fully key-disjoint loss takes the republish-without-re-judgment
-//! fast path: the winner applies in place (L8 — winner-over-ours equals
-//! ours-over-winner), any further occupied slots replay under the same
-//! pairwise tests, and the recorded ops republish under a re-addressed
-//! header with ops, footprint, and verdict untouched. L7's acceptance
-//! form licenses exactly this — the loser algebra only ever republishes
-//! a batch its own store accepted, which is the hypothesis L7 carries
-//! (its rejected arm is refuted in `lean/Bumbledb/Countermodels`, and
-//! nothing here rests on it).
+//! On a lost slot the writer fetches the winner and byte-compares:
+//! byte-equal means the object is ours (an ambiguous PUT absorbed);
+//! anything else discards the local directory, re-opens through the
+//! replica to the current tip, re-persists the carried pending, and
+//! re-judges the recorded ops in one `db.write` — publish on
+//! accepted-and-state-changing, `Accepted` at the current generation on
+//! accepted-net-no-op, the serial `Rejected` otherwise. Each loop
+//! iteration re-opens to tip and races once, so a loss and a
+//! re-judgment are the same event, counted once.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -29,29 +29,28 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
 use bumbledb::schema::{
-    FieldId, RelationId, SchemaDescriptor, StatementDescriptor, StatementId, ValueType, Weight,
+    FieldId, RelationId, Schema, SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
+    Weight,
 };
 use bumbledb::{Admission, Db, Theory, Value, Violations};
 
 use crate::apply::{Applied, apply};
 use crate::braids::BraidId;
 use crate::codec::{BatchHeader, ByteSink, Codec, EncodeError, Op, OpKind, append_value};
-use crate::footprint::{Entry, FootprintError, footprint};
-use crate::intersect::{ConflictCause, LoserDecision, intersect};
 use crate::lease::{LeaseRefusal, Leased, Leases};
 use crate::manifest::{
-    Checkpoint, Head, Manifest, Published, ckpt_json_key, ckpt_mdb_key, create_manifest, log_key,
-    manifest_key, publish_checkpoint,
+    Checkpoint, Head, Manifest, Published, ckpt_mdb_key, create_manifest, log_key, manifest_key,
+    publish_checkpoint,
 };
 use crate::replica::{
-    Corruption, Fault, OpenRefusal, Vector, derive_codec, fetch_checkpoint_bytes,
+    Corruption, Fault, OpenRefusal, Scream, Vector, derive_codec, fetch_checkpoint_bytes,
     write_checkpoint_bytes,
 };
 use crate::sidecar::{Chain, ChainEntry, Pending};
 use crate::store::{Create, CreateProbe, ObjectStore, resolve_ambiguous_create, retry_read};
 
-/// Consecutive live losses at the tip before `Err::Contention`; history
-/// losses never count.
+/// Consecutive losses — each one race at the then-tip — before
+/// `Err::Contention`.
 pub const LOSS_BOUND: u32 = 16;
 
 /// One drain packs at most this many host writes into one batch.
@@ -107,26 +106,20 @@ pub enum BraidOutcome {
 }
 
 /// The ack mode: `Published` acks after the slot exists; `Local` moves
-/// the ack to the end of the local apply, bounded by the `max_pending`
-/// knobs — beyond them the ack stalls to publication instead of letting
-/// the loss window grow silently.
+/// the ack to the end of the local apply — the ack may precede the
+/// publish of the one pending batch, so the loss window is exactly that
+/// batch, at most one drain's worth, by construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AckMode {
     Published,
-    Local {
-        max_pending_batches: u64,
-        max_pending_bytes: u64,
-    },
+    Local,
 }
 
-/// Writer construction knobs. `linger` delays a drain's queue snapshot
-/// so concurrent commits pack; default zero — batch whatever is queued,
-/// never wait.
+/// Writer construction knobs: the identity and the ack mode.
 #[derive(Debug, Clone, Copy)]
 pub struct Options {
     pub writer_id: u64,
     pub ack: AckMode,
-    pub linger: Duration,
 }
 
 impl Options {
@@ -135,13 +128,14 @@ impl Options {
         Self {
             writer_id,
             ack: AckMode::Published,
-            linger: Duration::ZERO,
         }
     }
 }
 
 /// The commit discipline's observable steps, in execution order — the
-/// fault-injection seam the conformance crash matrices drive.
+/// fault-injection seam the conformance crash matrices drive. The
+/// re-persist of a carried pending after a loss's re-open reports as
+/// `PendingWrite` too: the sidecar write is the same durable act.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriterStep {
     Encode,
@@ -178,32 +172,15 @@ impl StepHook for NoFaults {
     }
 }
 
-/// Loser-algebra instrumentation, cumulative since open.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Counters {
-    pub re_judgments: u64,
-    pub republishes: u64,
-    pub subsumptions: u64,
-    pub disjoint_verdicts: u64,
-}
-
-#[derive(Default)]
-struct CounterCells {
-    re_judgments: AtomicU64,
-    republishes: AtomicU64,
-    subsumptions: AtomicU64,
-    disjoint_verdicts: AtomicU64,
-}
-
 /// What exhausted the contention bound. `HotKey` carries the statement
-/// and the loser's own raw determinant values — an operable handle, not
-/// a hash; the statement is absent exactly when the terminal conflicts
-/// were bare fact-identity races, which name no statement. `SlotRace`
-/// carries the tip when fully-disjoint racers out-ran us.
+/// and the offending fact's raw values from the terminal re-judgment's
+/// own rejection — engine-produced, an operable handle. `SlotRace`
+/// carries the tip when the terminal re-judgments were
+/// accepted-but-outraced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContentionCause {
     HotKey {
-        statement: Option<StatementId>,
+        statement: StatementId,
         values: Box<[Value]>,
     },
     SlotRace {
@@ -214,7 +191,7 @@ pub enum ContentionCause {
 /// The operational signal a resident writer surfaces when a
 /// non-byte-equal `Exists` proves it was deposed: both writer ids, from
 /// the batch headers. The response already happened — the loss finished
-/// as an ordinary loser and acks dropped to `Published`.
+/// through the one path and acks dropped to `Published`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Deposition {
     pub braid: BraidId,
@@ -224,7 +201,7 @@ pub struct Deposition {
 }
 
 /// The writer's error sum. Infrastructure failures ride `Fault`; the
-/// named arms are 60's own verbs.
+/// named arms are the protocol's own verbs.
 #[derive(Debug)]
 pub enum Error {
     Fault(Fault),
@@ -238,11 +215,8 @@ pub enum Error {
     /// A body that recorded nothing has no braid to commit under.
     EmptyCommit,
     Encode(EncodeError),
-    /// The recorded ops could not re-derive their footprint — our own
-    /// encoder could never have produced them.
-    Footprint(FootprintError),
-    /// The live-loss bound: publication retries on the next commit; the
-    /// applied batch stays in `pending`.
+    /// The loss bound: publication retries on the next commit; an
+    /// applied terminal re-judgment stays in `pending`.
     Contention {
         braid: BraidId,
         cause: ContentionCause,
@@ -279,7 +253,6 @@ impl fmt::Display for Error {
             }
             Self::EmptyCommit => write!(f, "the body recorded no ops"),
             Self::Encode(error) => write!(f, "encode refused: {error:?}"),
-            Self::Footprint(error) => write!(f, "footprint refused: {error:?}"),
             Self::Contention { braid, cause } => {
                 write!(f, "contention on {braid}: {cause:?}")
             }
@@ -384,10 +357,6 @@ impl<S: ObjectStore> Batch<'_, S> {
     }
 }
 
-/// Per-statement determinant projections: the sides whose rows
-/// project to the statement's footprint key.
-type DetSides = Vec<(RelationId, Box<[u16]>)>;
-
 /// The current checkpoint pointer and its parsed document.
 type Floor = Option<([u8; 32], Checkpoint)>;
 
@@ -402,11 +371,9 @@ struct ReservationShape {
 }
 
 /// Descriptor-derived views the writer reads outside the codec: raw
-/// layouts for key recomputation, per-statement determinant projections
-/// for the `HotKey` extraction, and the reservation shapes.
+/// layouts for the drain's packing measure, and the reservation shapes.
 struct SchemaMaps {
     layouts: BTreeMap<RelationId, Box<[ValueType]>>,
-    dets: BTreeMap<StatementId, DetSides>,
     reservations: BTreeMap<StatementId, ReservationShape>,
 }
 
@@ -424,71 +391,41 @@ fn schema_maps(descriptor: &SchemaDescriptor) -> SchemaMaps {
         );
     }
 
-    let mut dets: BTreeMap<StatementId, DetSides> = BTreeMap::new();
     let mut reservations: BTreeMap<StatementId, ReservationShape> = BTreeMap::new();
     let fields =
         |projection: &[FieldId]| -> Box<[u16]> { projection.iter().map(|field| field.0).collect() };
     for (index, statement) in descriptor.materialized_statements().iter().enumerate() {
         let id = StatementId(u16::try_from(index).expect("statement count fits u16"));
-        match statement {
-            StatementDescriptor::Functionality {
-                relation,
-                projection,
-            } => {
-                dets.insert(id, vec![(*relation, fields(projection))]);
-            }
-            StatementDescriptor::Containment { source, target } => {
-                dets.insert(
-                    id,
-                    vec![
-                        (source.relation, fields(&source.projection)),
-                        (target.relation, fields(&target.projection)),
-                    ],
-                );
-            }
-            StatementDescriptor::Capacity {
-                target,
-                weight,
-                source,
-                ..
-            } => {
-                dets.insert(
-                    id,
-                    vec![
-                        (source.relation, fields(&source.projection)),
-                        (target.relation, fields(&target.projection)),
-                    ],
-                );
-                let Weight::Field(weight_field) = weight else {
-                    continue;
-                };
-                let Some(layout) = layouts.get(&source.relation) else {
-                    continue;
-                };
-                let projection = fields(&source.projection);
-                let named: Vec<u16> = projection.iter().copied().chain([weight_field.0]).collect();
-                let leftovers: Vec<u16> = (0..u16::try_from(layout.len()).expect("field count"))
-                    .filter(|field| !named.contains(field))
-                    .collect();
-                if let [expiry_field] = leftovers.as_slice()
-                    && layout[usize::from(*expiry_field)] == ValueType::U64
-                {
-                    reservations.insert(
-                        id,
-                        ReservationShape {
-                            relation: source.relation,
-                            projection,
-                            weight_field: weight_field.0,
-                            expiry_field: *expiry_field,
-                        },
-                    );
-                }
-            }
+        let StatementDescriptor::Capacity { weight, source, .. } = statement else {
+            continue;
+        };
+        let Weight::Field(weight_field) = weight else {
+            continue;
+        };
+        let Some(layout) = layouts.get(&source.relation) else {
+            continue;
+        };
+        let projection = fields(&source.projection);
+        let named: Vec<u16> = projection.iter().copied().chain([weight_field.0]).collect();
+        let leftovers: Vec<u16> = (0..u16::try_from(layout.len()).expect("field count"))
+            .filter(|field| !named.contains(field))
+            .collect();
+        if let [expiry_field] = leftovers.as_slice()
+            && layout[usize::from(*expiry_field)] == ValueType::U64
+        {
+            reservations.insert(
+                id,
+                ReservationShape {
+                    relation: source.relation,
+                    projection,
+                    weight_field: weight_field.0,
+                    expiry_field: *expiry_field,
+                },
+            );
         }
     }
     SchemaMaps {
         layouts,
-        dets,
         reservations,
     }
 }
@@ -548,7 +485,7 @@ struct Request {
 }
 
 struct Core<T: Theory + Clone> {
-    db: Option<Db<T>>,
+    db: Option<Arc<Db<T>>>,
     chain: Chain,
     floor: Floor,
     wedged: BTreeMap<BraidId, Corruption>,
@@ -564,7 +501,7 @@ struct Core<T: Theory + Clone> {
 impl<T: Theory + Clone> Core<T> {
     fn db(&self) -> &Db<T> {
         self.db
-            .as_ref()
+            .as_deref()
             .expect("an established writer holds a store")
     }
 
@@ -573,8 +510,12 @@ impl<T: Theory + Clone> Core<T> {
     }
 }
 
+/// The loss ledger of one discipline run: how many races were lost, and
+/// the slot the last one was lost at.
+#[derive(Default)]
 struct Live {
     losses: u32,
+    tip: u64,
 }
 
 enum Settled {
@@ -591,9 +532,10 @@ enum Settled {
 
 enum PublishEnd {
     Done(Settled),
-    /// The loss discarded and re-established; the caller re-runs the
-    /// discipline — the conflict arm's re-judgment of the recorded ops.
-    ReJudge,
+    /// The slot was lost to these winner bytes; the one path answers.
+    Lost {
+        winner: Vec<u8>,
+    },
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -634,11 +576,11 @@ struct Inner<T: Theory + Clone, S: ObjectStore, H: StepHook> {
     dir: PathBuf,
     theory: T,
     codec: Codec,
+    schema: Schema,
     fingerprint: [u8; 32],
     writer_id: u64,
-    linger: Duration,
     hook: H,
-    counters: CounterCells,
+    losses: AtomicU64,
     leases: Mutex<Leases>,
     maps: SchemaMaps,
     queues: BTreeMap<BraidId, Mutex<VecDeque<Request>>>,
@@ -649,14 +591,14 @@ struct Inner<T: Theory + Clone, S: ObjectStore, H: StepHook> {
 
 enum MountEnd<T: Theory + Clone> {
     Mounted {
-        db: Box<Db<T>>,
+        db: Arc<Db<T>>,
         chain: Chain,
         /// A pre-existing directory is in the unproven open phase until
         /// the wholeness identity passes; a seeded or bootstrapped
         /// store is whole by construction.
         pre_existing: bool,
     },
-    Discard,
+    Discard(&'static str),
     Refused(OpenRefusal),
 }
 
@@ -708,7 +650,7 @@ where
         options: Options,
         hook: H,
     ) -> Result<WriterOpened<T, S, H>> {
-        let (codec, fingerprint) = match derive_codec(&theory) {
+        let (codec, fingerprint, schema) = match derive_codec(&theory) {
             Ok(derived) => derived,
             Err(refusal) => return Ok(WriterOpened::Refused(refusal)),
         };
@@ -742,11 +684,11 @@ where
             dir: dir.to_path_buf(),
             theory,
             codec,
+            schema,
             fingerprint,
             writer_id: options.writer_id,
-            linger: options.linger,
             hook,
-            counters: CounterCells::default(),
+            losses: AtomicU64::new(0),
             leases: Mutex::new(Leases::new()),
             maps,
             queues,
@@ -776,7 +718,7 @@ where
                 return Ok(WriterOpened::Refused(refusal));
             }
             if core.chain.pending.is_some() {
-                match inner.resolve_backlog(&mut core, None, &mut Live { losses: 0 }) {
+                match inner.resolve_backlog(&mut core, None, &mut Live::default()) {
                     Ok(()) | Err(Error::Contention { .. }) => {}
                     Err(error) => return Err(error),
                 }
@@ -868,16 +810,11 @@ where
         lock(&self.inner.core).chain.vector()
     }
 
-    /// Loser-algebra instrumentation since open.
+    /// Losses since open. A loss and a re-judgment are the same event
+    /// under the one path, so this is also the re-judgment count.
     #[must_use]
-    pub fn counters(&self) -> Counters {
-        let cells = &self.inner.counters;
-        Counters {
-            re_judgments: cells.re_judgments.load(Ordering::Relaxed),
-            republishes: cells.republishes.load(Ordering::Relaxed),
-            subsumptions: cells.subsumptions.load(Ordering::Relaxed),
-            disjoint_verdicts: cells.disjoint_verdicts.load(Ordering::Relaxed),
-        }
+    pub fn losses(&self) -> u64 {
+        self.inner.losses.load(Ordering::Relaxed)
     }
 
     /// The deposition signal, if a non-byte-equal `Exists` has proven a
@@ -905,8 +842,8 @@ where
         lock(&self.inner.core).wedged.keys().copied().collect()
     }
 
-    /// Re-sizes the checkpoint cadence (both arms; 10 owns the
-    /// defaults, the conformance pins re-size them).
+    /// Re-sizes the checkpoint cadence (both arms; the conformance pins
+    /// re-size them).
     pub fn set_checkpoint_cadence(&self, sum: u64, bytes: u64) {
         let mut core = lock(&self.inner.core);
         core.cadence_sum = sum.max(1);
@@ -1061,9 +998,6 @@ where
     /// A composite rejection falls back one-by-one in queue order so an
     /// innocent write never fails for a neighbor's violation.
     fn drain(self: &Arc<Self>, core: &mut Core<T>, braid: BraidId) {
-        if self.linger > Duration::ZERO {
-            std::thread::sleep(self.linger);
-        }
         let mut picked: Vec<Request> = Vec::new();
         {
             let mut queue = lock(&self.queues[&braid]);
@@ -1097,7 +1031,7 @@ where
             return;
         }
         if core.chain.pending.is_some()
-            && let Err(error) = self.resolve_backlog(core, None, &mut Live { losses: 0 })
+            && let Err(error) = self.resolve_backlog(core, None, &mut Live::default())
         {
             fail_all(&picked, error);
             return;
@@ -1111,19 +1045,11 @@ where
             .iter()
             .map(|request| Arc::clone(&request.waiter))
             .collect();
-        let fp = match footprint(self.codec.vocabulary(), &composite) {
-            Ok(fp) => fp,
-            Err(error) => {
-                fail_all(&picked, Error::Footprint(error));
-                return;
-            }
-        };
         match self.discipline(
             core,
             braid,
             &composite,
-            &fp,
-            &mut Live { losses: 0 },
+            &mut Live::default(),
             Some(&waiters),
         ) {
             Ok(Settled::Accepted { generation }) => {
@@ -1156,23 +1082,7 @@ where
     /// resolved keep their `LocalPending` answer — the honest arm.
     fn fallback(self: &Arc<Self>, core: &mut Core<T>, braid: BraidId, requests: &[Request]) {
         for request in requests {
-            let fp = match footprint(self.codec.vocabulary(), &request.ops) {
-                Ok(fp) => fp,
-                Err(error) => {
-                    request
-                        .waiter
-                        .resolve(Resolved::Failed(Arc::new(Error::Footprint(error))));
-                    continue;
-                }
-            };
-            match self.discipline(
-                core,
-                braid,
-                &request.ops,
-                &fp,
-                &mut Live { losses: 0 },
-                None,
-            ) {
+            match self.discipline(core, braid, &request.ops, &mut Live::default(), None) {
                 Ok(Settled::Accepted { generation }) => {
                     request.waiter.resolve(Resolved::Accepted {
                         braid,
@@ -1196,18 +1106,21 @@ where
     /// The commit discipline, one shape for every pass: encode at the
     /// current head with the monotone ts clamp, fsync the pending slot
     /// BEFORE first judgment, apply in one `db.write`, then publish.
-    /// A conflict loss loops back here — the re-judgment is the same
-    /// `db.write` of the same recorded ops, never a body re-run.
+    /// A loss loops back here through the disposable law — the
+    /// re-judgment is the same `db.write` of the same recorded ops at
+    /// the re-opened tip, never a body re-run. At the loss bound the
+    /// final re-judgment sources the contention cause: its own
+    /// rejection is `HotKey` (statement and offending values from the
+    /// engine's violation), an accepted-but-unpublished apply is
+    /// `SlotRace` with the batch retained in `pending`.
     fn discipline(
         self: &Arc<Self>,
         core: &mut Core<T>,
         braid: BraidId,
         ops: &[Op],
-        fp: &[Entry],
         live: &mut Live,
         mut waiters: Option<&[Arc<Waiter>]>,
     ) -> Result<Settled> {
-        let mut pass = 0u64;
         loop {
             if core.wedged.contains_key(&braid) {
                 return Err(Error::Wedged { braid });
@@ -1257,6 +1170,12 @@ where
             match admission {
                 Admission::Rejected(violations) => {
                     self.clear_pending(core)?;
+                    if live.losses >= LOSS_BOUND {
+                        return Err(Error::Contention {
+                            braid,
+                            cause: self.hot_key(&violations),
+                        });
+                    }
                     return Ok(Settled::Rejected(violations));
                 }
                 Admission::Accepted(committed) => {
@@ -1269,13 +1188,18 @@ where
                 }
             }
 
+            if live.losses >= LOSS_BOUND {
+                // The bound is spent and the final re-judgment
+                // accepted: the applied batch stays in pending, and
+                // publication retries on the next commit.
+                return Err(Error::Contention {
+                    braid,
+                    cause: ContentionCause::SlotRace { tip: live.tip },
+                });
+            }
+
             if let Some(acked) = waiters.take()
-                && let AckMode::Local {
-                    max_pending_batches,
-                    max_pending_bytes,
-                } = core.ack
-                && max_pending_batches >= 1
-                && bytes.len() as u64 <= max_pending_bytes
+                && core.ack == AckMode::Local
             {
                 for waiter in acked {
                     waiter.resolve(Resolved::Accepted {
@@ -1288,35 +1212,21 @@ where
                 return Ok(Settled::Detached { bytes });
             }
 
-            if pass > 0 {
-                self.counters.republishes.fetch_add(1, Ordering::Relaxed);
-            }
-            pass += 1;
-
-            match self.publish(
-                core,
-                braid,
-                slot,
-                header.timestamp,
-                &bytes,
-                ops,
-                fp,
-                live,
-                true,
-            )? {
+            match self.publish(core, braid, slot, header.timestamp, &bytes)? {
                 PublishEnd::Done(settled) => return Ok(settled),
-                PublishEnd::ReJudge => {}
+                PublishEnd::Lost { winner } => {
+                    self.lose(core, braid, slot, &winner, live)?;
+                }
             }
         }
     }
 
     /// One publication attempt: `put_create`, then `Created`, the
-    /// byte-equal absorption of our own ambiguous PUT, or the loser
-    /// algebra. A `put_create` failure is an ambiguous outcome — the
-    /// request may have landed — so it is never retried blindly: the
-    /// follow-up is a GET of the target key comparing content, and only
-    /// a proven-absent create is reissued.
-    #[allow(clippy::too_many_arguments)]
+    /// byte-equal absorption of our own ambiguous PUT, or the loss. A
+    /// `put_create` failure is an ambiguous outcome — the request may
+    /// have landed — so it is never retried blindly: the follow-up is a
+    /// GET of the target key comparing content, and only a
+    /// proven-absent create is reissued.
     fn publish(
         self: &Arc<Self>,
         core: &mut Core<T>,
@@ -1324,10 +1234,6 @@ where
         slot: u64,
         ts: u64,
         bytes: &[u8],
-        ops: &[Op],
-        fp: &[Entry],
-        live: &mut Live,
-        counts_live: bool,
     ) -> Result<PublishEnd> {
         const CREATE_ATTEMPTS: u32 = 6;
         let key = log_key(&self.prefix, braid, slot);
@@ -1369,41 +1275,33 @@ where
                     self.advance_and_clear(core, braid, slot, ts, bytes)?;
                     return Ok(PublishEnd::Done(Settled::Accepted { generation: slot }));
                 }
-                self.lose(core, braid, slot, &winner.bytes, ops, fp, live, counts_live)
+                Ok(PublishEnd::Lost {
+                    winner: winner.bytes,
+                })
             }
         }
     }
 
-    /// The loser algebra at a lost slot. Subsumed applies the winner
-    /// and lets the engine decide survive-or-discard through the
-    /// wholeness identity; full key disjointness takes the republish
-    /// fast path (L7 keeps the carried verdict and the publish-law
-    /// standing true at the moved base); everything else discards and
-    /// re-judges.
-    #[allow(clippy::too_many_arguments)]
+    /// The one loss path: count the loss, surface the deposition signal
+    /// where local acks made the writer resident, then carry the
+    /// pending bytes through the disposable law — discard the
+    /// directory, re-open through the replica to the current tip, and
+    /// re-persist the carried pending before any re-judgment, so
+    /// recovery stays crash-idempotent at every prefix.
     fn lose(
-        self: &Arc<Self>,
+        &self,
         core: &mut Core<T>,
         braid: BraidId,
         slot: u64,
         winner_bytes: &[u8],
-        ops: &[Op],
-        fp: &[Entry],
         live: &mut Live,
-        counts_live: bool,
-    ) -> Result<PublishEnd> {
-        let winner = match self.codec.decode(winner_bytes) {
-            Ok(batch) => batch,
-            Err(error) => {
-                core.wedged.insert(
-                    braid,
-                    Corruption::Refused(crate::apply::ApplyRefusal::Decode(error)),
-                );
-                return Err(Error::Wedged { braid });
-            }
-        };
-        if let AckMode::Local { .. } = core.ack
+    ) -> Result<()> {
+        live.losses += 1;
+        live.tip = slot;
+        self.losses.fetch_add(1, Ordering::Relaxed);
+        if core.ack == AckMode::Local
             && core.deposition.is_none()
+            && let Ok(winner) = self.codec.decode(winner_bytes)
         {
             core.deposition = Some(Deposition {
                 braid,
@@ -1413,267 +1311,25 @@ where
             });
             core.ack = AckMode::Published;
         }
-        let decision = intersect(
-            self.codec.vocabulary(),
-            fp,
-            ops,
-            &winner.ops,
-            &BTreeMap::new(),
-        )
-        .map_err(Error::Footprint)?;
-        match decision {
-            LoserDecision::Subsumed => self.subsume(core, braid, slot, winner_bytes),
-            LoserDecision::Disjoint => {
-                self.counters
-                    .disjoint_verdicts
-                    .fetch_add(1, Ordering::Relaxed);
-                if counts_live {
-                    live.losses += 1;
-                    if live.losses >= LOSS_BOUND {
-                        return Err(Error::Contention {
-                            braid,
-                            cause: ContentionCause::SlotRace { tip: slot },
-                        });
-                    }
-                }
-                self.republish_disjoint(core, braid, slot, winner_bytes, ops, fp, live)
-            }
-            LoserDecision::Conflict(cause) => {
-                if counts_live {
-                    live.losses += 1;
-                    if live.losses >= LOSS_BOUND {
-                        return Err(Error::Contention {
-                            braid,
-                            cause: self.hot_key(ops, cause),
-                        });
-                    }
-                }
-                self.counters.re_judgments.fetch_add(1, Ordering::Relaxed);
-                self.re_establish(core)?;
-                Ok(PublishEnd::ReJudge)
-            }
-        }
+        let carried = core.chain.pending.clone();
+        self.re_establish(core, carried)
     }
 
-    /// The subsumed arm: the winner already performed our net effect,
-    /// so nothing publishes and the engine decides the survival arm at
-    /// the apply — a no-op means the winner's slot is accounted by our
-    /// own earlier apply and the store survives in place; anything else
-    /// means one slot now covers two local advances, the store forked,
-    /// and forks are the disposable law's business, never
-    /// bookkeeping's.
-    fn subsume(
-        self: &Arc<Self>,
-        core: &mut Core<T>,
-        braid: BraidId,
-        slot: u64,
-        winner_bytes: &[u8],
-    ) -> Result<PublishEnd> {
-        self.counters.subsumptions.fetch_add(1, Ordering::Relaxed);
-        let applied = apply(
-            core.db
-                .as_ref()
-                .expect("an established writer holds a store"),
-            &mut core.chain,
-            &self.codec,
-            braid,
-            slot,
-            winner_bytes,
-            0,
-        )
-        .map_err(|err| Error::Fault(Fault::Engine(err)))?;
-        match applied {
-            Applied::Absorbed { .. } => {
-                self.clear_pending(core)?;
-                Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
-            }
-            Applied::Advanced { .. } | Applied::Rejected(_) | Applied::Refused(_) => {
-                self.re_establish(core)?;
-                Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
-            }
-        }
-    }
-
-    /// The disjoint fast path (L7 licenses carrying the verdict and the
-    /// footprint; L8 makes winner-over-ours equal ours-over-winner):
-    /// apply the lost slot's winner in place — under full key
-    /// disjointness that apply is provably state-changing-accepted —
-    /// then replay any further occupied slots under the same pairwise
-    /// tests (losses to history never count toward the live bound), and
-    /// republish the recorded ops under a re-addressed header at the
-    /// tip. The tip attempt races live, so its losses count.
-    #[allow(clippy::too_many_arguments)]
-    fn republish_disjoint(
-        self: &Arc<Self>,
-        core: &mut Core<T>,
-        braid: BraidId,
-        slot: u64,
-        winner_bytes: &[u8],
-        ops: &[Op],
-        fp: &[Entry],
-        live: &mut Live,
-    ) -> Result<PublishEnd> {
-        let mut at = slot;
-        let mut pending_apply: Vec<u8> = winner_bytes.to_vec();
-        loop {
-            let applied = apply(
-                core.db
-                    .as_ref()
-                    .expect("an established writer holds a store"),
-                &mut core.chain,
-                &self.codec,
-                braid,
-                at,
-                &pending_apply,
-                1,
-            )
-            .map_err(|err| Error::Fault(Fault::Engine(err)))?;
-            match applied {
-                Applied::Advanced { .. } => {}
-                Applied::Absorbed { .. } | Applied::Rejected(_) => {
-                    // Not the state-changing accept full disjointness
-                    // promises: the conflict arm's rebuild is always
-                    // sound.
-                    self.re_establish(core)?;
-                    return Ok(PublishEnd::ReJudge);
-                }
-                Applied::Refused(refusal) => {
-                    core.wedged.insert(braid, Corruption::Refused(refusal));
-                    return Err(Error::Wedged { braid });
-                }
-            }
-            let key = log_key(&self.prefix, braid, at + 1);
-            let occupant = retry_read(|| self.store.get(&key))
-                .map_err(|err| Error::Fault(Fault::Store(err)))?;
-            let Some(fetched) = occupant else {
-                break;
-            };
-            let Ok(batch) = self.codec.decode(&fetched.bytes) else {
-                self.re_establish(core)?;
-                return Ok(PublishEnd::ReJudge);
-            };
-            match intersect(
-                self.codec.vocabulary(),
-                fp,
-                ops,
-                &batch.ops,
-                &BTreeMap::new(),
-            )
-            .map_err(Error::Footprint)?
-            {
-                LoserDecision::Subsumed => {
-                    return self.subsume(core, braid, at + 1, &fetched.bytes);
-                }
-                LoserDecision::Disjoint => {
-                    self.counters
-                        .disjoint_verdicts
-                        .fetch_add(1, Ordering::Relaxed);
-                    at += 1;
-                    pending_apply = fetched.bytes;
-                }
-                LoserDecision::Conflict(_) => {
-                    self.re_establish(core)?;
-                    return Ok(PublishEnd::ReJudge);
-                }
-            }
-        }
-        let head = core.chain.position(braid);
-        let next = head.g + 1;
-        let header = BatchHeader {
-            fingerprint: self.fingerprint,
-            braid,
-            braid_gen: next,
-            prev: head.prev,
-            writer: self.writer_id,
-            timestamp: now_ms().max(head.ts),
-        };
-        let bytes = self.codec.encode(&header, ops).map_err(Error::Encode)?;
-        self.step(WriterStep::Encode)?;
-        core.chain.pending = Some(Pending {
-            braid,
-            slot: next,
-            bytes: bytes.clone(),
-        });
-        core.chain
-            .write_atomic(&self.dir)
-            .map_err(|err| Error::Fault(Fault::Io(err)))?;
-        self.step(WriterStep::PendingWrite)?;
-        self.counters.republishes.fetch_add(1, Ordering::Relaxed);
-        self.publish(
-            core,
-            braid,
-            next,
-            header.timestamp,
-            &bytes,
-            ops,
-            fp,
-            live,
-            true,
-        )
-    }
-
-    /// Maps the terminal conflict onto the loser's own raw determinant
-    /// values — the operable handle the host examines.
-    fn hot_key(&self, ops: &[Op], cause: ConflictCause) -> ContentionCause {
-        match cause {
-            ConflictCause::Fact { fid } => {
-                for op in ops {
-                    let Some(layout) = self.maps.layouts.get(&op.relation) else {
-                        continue;
-                    };
-                    for row in &op.rows {
-                        if hash_values(&op.relation.0.to_le_bytes(), layout, None, row) == Some(fid)
-                        {
-                            return ContentionCause::HotKey {
-                                statement: None,
-                                values: row.clone(),
-                            };
-                        }
-                    }
-                }
-                ContentionCause::HotKey {
-                    statement: None,
-                    values: Box::from([]),
-                }
-            }
-            ConflictCause::Key { statement, key }
-            | ConflictCause::Containment { statement, key }
-            | ConflictCause::CapacityInterval { statement, key }
-            | ConflictCause::CapacityParent { statement, key }
-            | ConflictCause::CapacityMeasureMissing { statement, key } => {
-                if let Some(sides) = self.maps.dets.get(&statement) {
-                    for (relation, projection) in sides {
-                        let Some(layout) = self.maps.layouts.get(relation) else {
-                            continue;
-                        };
-                        for op in ops.iter().filter(|op| op.relation == *relation) {
-                            for row in &op.rows {
-                                if hash_values(
-                                    &statement.0.to_le_bytes(),
-                                    layout,
-                                    Some(projection),
-                                    row,
-                                ) == Some(key)
-                                {
-                                    let values: Box<[Value]> = projection
-                                        .iter()
-                                        .map(|field| row[usize::from(*field)].clone())
-                                        .collect();
-                                    return ContentionCause::HotKey {
-                                        statement: Some(statement),
-                                        values,
-                                    };
-                                }
-                            }
-                        }
-                    }
-                }
-                ContentionCause::HotKey {
-                    statement: Some(statement),
-                    values: Box::from([]),
-                }
-            }
-        }
+    /// Maps the terminal re-judgment's rejection onto the contention
+    /// payload: the violation names its statement, and the cited fact
+    /// carries the offending raw values — engine-produced, never
+    /// reconstructed.
+    fn hot_key(&self, violations: &Violations) -> ContentionCause {
+        let violation = violations
+            .get(0)
+            .expect("a rejection carries at least one violation");
+        let statement = violation.statement_id(&self.schema);
+        let values: Box<[Value]> = violations
+            .cited_facts(0)
+            .first()
+            .map(|fact| Box::from(fact.values()))
+            .unwrap_or_default();
+        ContentionCause::HotKey { statement, values }
     }
 
     fn advance_and_clear(
@@ -1708,12 +1364,12 @@ where
         Ok(())
     }
 
-    /// Pending resolution — 60's three forced arms, idempotent by L10:
+    /// Pending resolution — the three forced arms, idempotent by L10:
     /// apply the pending batch; `Rejected` clears and publishes nothing
     /// (a resurrected never-judged batch); an accepted no-op at the
     /// exact vector sum was born a no-op and clears; otherwise the
-    /// commit is real and unpublished — catch up with the loser tests
-    /// and publish, create-or-compare.
+    /// commit is real and unpublished — publish create-or-compare, and
+    /// a lost slot takes the one path: re-open to tip and race once.
     #[allow(clippy::too_many_lines)]
     fn resolve_backlog(
         self: &Arc<Self>,
@@ -1731,11 +1387,9 @@ where
         let Ok(batch) = self.codec.decode(&pending.bytes) else {
             // Our own pending bytes refusing to decode is a torn local
             // state; the disposable law answers.
-            self.re_establish(core)?;
-            return Ok(());
+            return self.re_establish(core, None);
         };
         let ops = batch.ops;
-        let fp = footprint(self.codec.vocabulary(), &ops).map_err(Error::Footprint)?;
 
         let before = core.generation()?;
         let admission = core
@@ -1757,9 +1411,10 @@ where
         self.step(WriterStep::ApplyLocal)?;
         let after = match admission {
             Admission::Rejected(_) => {
-                // Nothing was acked; nothing is owed; a born-rejected
-                // batch reaching the log is the publish law's cardinal
-                // sin, structurally impossible here.
+                // Nothing was acked at `Published`, and a `Local` ack
+                // spent its recorded loss window; a born-rejected batch
+                // reaching the log is the publish law's cardinal sin,
+                // structurally impossible here.
                 self.clear_pending(core)?;
                 return Ok(());
             }
@@ -1775,25 +1430,25 @@ where
         if after != sum + 1 || before > after {
             // A generation no pending term accounts for: phantom or
             // torn store.
-            self.re_establish(core)?;
-            return Ok(());
+            return self.re_establish(core, None);
         }
 
         // Real and unpublished. The slot is head+1 by construction;
-        // whatever occupies it is history, and losses to history never
-        // count toward the live bound.
+        // whatever occupies it decides between the byte-equal
+        // absorption and the one loss path.
         let key = log_key(&self.prefix, braid, pending.slot);
         let occupant = self
             .store
             .get(&key)
             .map_err(|err| Error::Fault(Fault::Store(err)))?;
-        let end = match occupant {
+        match occupant {
             Some(winner) if winner.bytes == pending.bytes => {
                 // Already published: the crash was mid-publish, after
-                // the create landed.
+                // the create landed. The byte comparison proves the
+                // slot is ours and the store survives in place.
                 let applied = apply(
                     core.db
-                        .as_ref()
+                        .as_deref()
                         .expect("an established writer holds a store"),
                     &mut core.chain,
                     &self.codec,
@@ -1809,21 +1464,13 @@ where
                         return Ok(());
                     }
                     Applied::Rejected(_) | Applied::Refused(_) => {
-                        self.re_establish(core)?;
-                        return Ok(());
+                        return self.re_establish(core, None);
                     }
                 }
             }
-            Some(winner) => self.lose(
-                core,
-                braid,
-                pending.slot,
-                &winner.bytes,
-                &ops,
-                &fp,
-                live,
-                false,
-            )?,
+            Some(winner) => {
+                self.lose(core, braid, pending.slot, &winner.bytes, live)?;
+            }
             None => {
                 let hole = core
                     .floor
@@ -1832,51 +1479,39 @@ where
                     .is_some_and(|head| pending.slot <= head.g);
                 if hole {
                     // Retention passed our slot: the world moved beyond
-                    // reach of the pairwise tests; rebuild and re-judge.
-                    self.re_establish(core)?;
-                    PublishEnd::ReJudge
+                    // reach; re-open to tip and re-judge there.
+                    self.re_establish(core, Some(pending))?;
                 } else {
-                    self.publish(
+                    match self.publish(
                         core,
                         braid,
                         pending.slot,
                         batch.header.timestamp,
                         &pending.bytes,
-                        &ops,
-                        &fp,
-                        live,
-                        true,
-                    )?
-                }
-            }
-        };
-        match end {
-            PublishEnd::Done(_) => Ok(()),
-            PublishEnd::ReJudge => {
-                let settled = self.discipline(core, braid, &ops, &fp, live, None)?;
-                if let Settled::Rejected(_) = settled
-                    && let Some(segments) = segments
-                    && segments.len() > 1
-                {
-                    // The composite rejected at the conflict-loss
-                    // re-judgment: one-by-one fallback, each caller as
-                    // its own transaction in queue order.
-                    for segment in segments {
-                        let fp = footprint(self.codec.vocabulary(), segment)
-                            .map_err(Error::Footprint)?;
-                        let _ = self.discipline(
-                            core,
-                            braid,
-                            segment,
-                            &fp,
-                            &mut Live { losses: 0 },
-                            None,
-                        )?;
+                    )? {
+                        PublishEnd::Done(_) => return Ok(()),
+                        PublishEnd::Lost { winner } => {
+                            self.lose(core, braid, pending.slot, &winner, live)?;
+                        }
                     }
                 }
-                Ok(())
             }
         }
+
+        // The one path's re-judgment of the recorded ops at the tip.
+        let settled = self.discipline(core, braid, &ops, live, None)?;
+        if let Settled::Rejected(_) = settled
+            && let Some(segments) = segments
+            && segments.len() > 1
+        {
+            // The composite rejected at the re-judgment: one-by-one
+            // fallback, each caller as its own transaction in queue
+            // order.
+            for segment in segments {
+                let _ = self.discipline(core, braid, segment, &mut Live::default(), None)?;
+            }
+        }
+        Ok(())
     }
 
     /// The detached publisher: acks moved to the end of the local
@@ -1893,16 +1528,15 @@ where
                 .as_ref()
                 .is_some_and(|pending| pending.bytes == bytes);
             if matches {
-                let _ = inner.resolve_backlog(&mut core, Some(&segments), &mut Live { losses: 0 });
+                let _ = inner.resolve_backlog(&mut core, Some(&segments), &mut Live::default());
             }
         });
         lock(&self.threads).push(handle);
     }
 
-    /// Checkpoint duty: on a cadence crossing, compact and snapshot
-    /// under the frozen core, then upload both objects and run the
-    /// manifest CAS off the commit loop. Races resolve by the
-    /// checkpoint order; losing objects are gc fodder.
+    /// Cadence detection is the commit path's whole share of the
+    /// checkpoint duty: compact, digest, uploads, and the manifest CAS
+    /// all run on the detached thread, off the commit lock.
     fn maybe_duty(self: &Arc<Self>, core: &mut Core<T>) {
         let sum = core.chain.sum();
         if core.duty_busy
@@ -1912,23 +1546,67 @@ where
             return;
         }
         core.duty_busy = true;
+        let inner = Arc::clone(self);
+        let handle = std::thread::spawn(move || inner.run_duty());
+        lock(&self.threads).push(handle);
+    }
+
+    /// The checkpoint duty, entirely off the commit lock. The
+    /// consistent view is proven rather than scheduled: snapshot the
+    /// store handle and the heads under a short lock, compact off the
+    /// lock, then re-take the lock and require that nothing moved — the
+    /// same handle, the same heads, no pending term, the generation
+    /// still the snapshot sum — which proves the compacted copy holds
+    /// exactly the snapshot's content. A torn view retries with the
+    /// legible scream; commits never wait on the duty.
+    fn run_duty(self: &Arc<Self>) {
+        let mut scream = Scream::new("checkpoint duty");
         let seq = self.scratch_seq.fetch_add(1, Ordering::Relaxed);
         let scratch = PathBuf::from(format!("{}.ckpt{seq}", self.dir.display()));
-        let _ = fs::remove_dir_all(&scratch);
-        let compacted: std::result::Result<(Vec<u8>, [u8; 32]), ()> = (|| {
-            core.db().compact(&scratch).map_err(|_| ())?;
-            let bytes = fs::read(scratch.join(DATA_FILE)).map_err(|_| ())?;
-            let catalog = core.db().catalog_digest().map_err(|_| ())?;
-            Ok((bytes, catalog))
-        })();
-        let _ = fs::remove_dir_all(&scratch);
-        let Ok((bytes, catalog)) = compacted else {
-            core.duty_busy = false;
+        let view = loop {
+            let snapshot = {
+                let core = lock(&self.core);
+                match (&core.db, core.chain.pending.is_some()) {
+                    (Some(db), false) => Some((Arc::clone(db), core.chain.entries.clone())),
+                    _ => None,
+                }
+            };
+            let Some((db, entries)) = snapshot else {
+                // A pending slot is occupied or the store is mid
+                // re-open: the next cadence crossing re-arms the duty.
+                break None;
+            };
+            let sum: u64 = entries.values().map(|entry| entry.g).sum();
+            let _ = fs::remove_dir_all(&scratch);
+            let compacted: std::result::Result<Vec<u8>, ()> = (|| {
+                db.compact(&scratch).map_err(|_| ())?;
+                fs::read(scratch.join(DATA_FILE)).map_err(|_| ())
+            })();
+            let _ = fs::remove_dir_all(&scratch);
+            let Ok(bytes) = compacted else { break None };
+            let Ok(catalog) = db.catalog_digest() else {
+                break None;
+            };
+            let consistent = {
+                let core = lock(&self.core);
+                core.db
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &db))
+                    && core.chain.pending.is_none()
+                    && core.chain.entries == entries
+                    && db.generation().map(bumbledb::GenerationId::value) == Ok(sum)
+            };
+            if consistent {
+                break Some((bytes, catalog, entries, sum));
+            }
+            scream.attempt("a commit landed inside the snapshot window");
+        };
+        let Some((bytes, catalog, entries, sum)) = view else {
+            lock(&self.core).duty_busy = false;
             return;
         };
-        let heads: BTreeMap<BraidId, Head> = core
-            .chain
-            .entries
+        let digest = *blake3::hash(&bytes).as_bytes();
+        let heads: BTreeMap<BraidId, Head> = entries
             .iter()
             .map(|(braid, entry)| {
                 (
@@ -1941,61 +1619,42 @@ where
                 )
             })
             .collect();
-        let inner = Arc::clone(self);
-        let writer_id = self.writer_id;
-        let handle = std::thread::spawn(move || {
-            let digest = *blake3::hash(&bytes).as_bytes();
-            let sum: u64 = heads.values().map(|head| head.g).sum();
-            let outcome = (|| -> std::result::Result<bool, ()> {
-                let prev = inner
-                    .store
-                    .get(&manifest_key(&inner.prefix))
-                    .map_err(|_| ())?
-                    .and_then(|fetched| Manifest::parse(&fetched.bytes).ok())
-                    .and_then(|manifest| manifest.checkpoint);
-                let doc = Checkpoint {
-                    braids: heads,
-                    catalog,
-                    writer: writer_id,
-                    prev,
-                };
-                inner
-                    .store
-                    .put_create(&ckpt_mdb_key(&inner.prefix, &digest), &bytes)
-                    .map_err(|_| ())?;
-                inner
-                    .store
-                    .put_create(&ckpt_json_key(&inner.prefix, &digest), &doc.render())
-                    .map_err(|_| ())?;
-                match publish_checkpoint(
-                    inner.store.as_ref(),
-                    &inner.prefix,
-                    inner.codec.braids(),
-                    digest,
-                    sum,
-                )
-                .map_err(|_| ())?
-                {
-                    Published::Replaced | Published::Kept { .. } => Ok(true),
-                    Published::Refused(_) => Ok(false),
-                }
-            })();
-            let mut core = lock(&inner.core);
-            core.duty_busy = false;
-            if outcome == Ok(true) {
-                core.ckpt_sum = core.ckpt_sum.max(sum);
-                core.log_bytes = 0;
+        let outcome = (|| -> std::result::Result<bool, ()> {
+            self.store
+                .put_create(&ckpt_mdb_key(&self.prefix, &digest), &bytes)
+                .map_err(|_| ())?;
+            match publish_checkpoint(
+                self.store.as_ref(),
+                &self.prefix,
+                self.codec.braids(),
+                digest,
+                &heads,
+                catalog,
+                self.writer_id,
+            )
+            .map_err(|_| ())?
+            {
+                Published::Replaced | Published::Kept { .. } => Ok(true),
+                Published::Refused(_) => Ok(false),
             }
-        });
-        lock(&self.threads).push(handle);
+        })();
+        let mut core = lock(&self.core);
+        core.duty_busy = false;
+        if outcome == Ok(true) {
+            core.ckpt_sum = core.ckpt_sum.max(sum);
+            core.log_bytes = 0;
+        }
     }
 
     /// Establish at open: manifest gauntlet, mount, pending arms 1 and
     /// 2 inline (arm 3 marks the backlog), catch-up skipping the
     /// backlog braid, and the wholeness identity. `Some` is a refusal;
-    /// `None` leaves the core established.
+    /// `None` leaves the core established. The loop repairs forever
+    /// with the legible scream — a healthy remote converges, and a
+    /// remote that keeps tearing keeps saying so.
     fn open_establish(self: &Arc<Self>, core: &mut Core<T>) -> Result<Option<OpenRefusal>> {
-        for _ in 0..8 {
+        let mut scream = Scream::new("writer open discard-and-re-pull");
+        loop {
             match self.read_floor()? {
                 Ok(floor) => core.floor = floor,
                 Err(refusal) => return Ok(Some(refusal)),
@@ -2007,13 +1666,14 @@ where
                     chain,
                     pre_existing,
                 } => (db, chain, pre_existing),
-                MountEnd::Discard => {
+                MountEnd::Discard(signature) => {
                     self.discard_dir()?;
+                    scream.attempt(signature);
                     continue;
                 }
                 MountEnd::Refused(refusal) => return Ok(Some(refusal)),
             };
-            core.db = Some(*db);
+            core.db = Some(db);
             core.chain = chain;
             core.wedged.clear();
 
@@ -2029,15 +1689,23 @@ where
                     PendingArm::Discard => {
                         core.db = None;
                         self.discard_dir()?;
+                        scream.attempt("the pending arm convicted a torn store");
                         continue;
                     }
                 }
             }
             match self.catch_up(core, skip, applied, pre_existing)? {
                 CatchUp::Tips => {}
-                CatchUp::Gap | CatchUp::RejectedInOpen => {
+                CatchUp::Gap => {
                     core.db = None;
                     self.discard_dir()?;
+                    scream.attempt("catch-up hit a hole below the floor");
+                    continue;
+                }
+                CatchUp::RejectedInOpen => {
+                    core.db = None;
+                    self.discard_dir()?;
+                    scream.attempt("replay rejected in the open phase");
                     continue;
                 }
             }
@@ -2047,18 +1715,20 @@ where
             }
             core.db = None;
             self.discard_dir()?;
+            scream.attempt("the wholeness identity failed after catch-up");
         }
-        Err(Error::Fault(Fault::Io(io::Error::other(
-            "discard-and-re-pull did not converge",
-        ))))
     }
 
     /// The disposable law mid-commit: drop the store, delete the
-    /// directory, and rebuild winner-current from the bucket.
-    fn re_establish(&self, core: &mut Core<T>) -> Result<()> {
+    /// directory, rebuild winner-current from the bucket, and
+    /// re-persist any carried pending into the fresh sidecar before the
+    /// caller re-judges — so recovery stays crash-idempotent at every
+    /// prefix. The loop repairs forever with the legible scream.
+    fn re_establish(&self, core: &mut Core<T>, carry: Option<Pending>) -> Result<()> {
         core.db = None;
         self.discard_dir()?;
-        for _ in 0..8 {
+        let mut scream = Scream::new("writer discard-and-re-pull");
+        loop {
             match self.read_floor()? {
                 Ok(floor) => core.floor = floor,
                 Err(refusal) => return Err(Error::Refused(refusal)),
@@ -2070,32 +1740,46 @@ where
                     chain,
                     pre_existing,
                 } => (db, chain, pre_existing),
-                MountEnd::Discard => {
+                MountEnd::Discard(signature) => {
                     self.discard_dir()?;
+                    scream.attempt(signature);
                     continue;
                 }
                 MountEnd::Refused(refusal) => return Err(Error::Refused(refusal)),
             };
-            core.db = Some(*db);
+            core.db = Some(db);
             core.chain = chain;
             core.wedged.clear();
             match self.catch_up(core, None, 0, pre_existing)? {
                 CatchUp::Tips => {}
-                CatchUp::Gap | CatchUp::RejectedInOpen => {
+                CatchUp::Gap => {
                     core.db = None;
                     self.discard_dir()?;
+                    scream.attempt("catch-up hit a hole below the floor");
+                    continue;
+                }
+                CatchUp::RejectedInOpen => {
+                    core.db = None;
+                    self.discard_dir()?;
+                    scream.attempt("replay rejected in the open phase");
                     continue;
                 }
             }
             if core.generation()? == core.chain.sum() {
-                return Ok(());
+                break;
             }
             core.db = None;
             self.discard_dir()?;
+            scream.attempt("the wholeness identity failed after catch-up");
         }
-        Err(Error::Fault(Fault::Io(io::Error::other(
-            "discard-and-re-pull did not converge",
-        ))))
+        if let Some(pending) = carry {
+            core.chain.pending = Some(pending);
+            core.chain
+                .write_atomic(&self.dir)
+                .map_err(|err| Error::Fault(Fault::Io(err)))?;
+            self.step(WriterStep::PendingWrite)?;
+        }
+        Ok(())
     }
 
     /// Applies the pending batch and reads the arm: the verdict plus
@@ -2167,7 +1851,7 @@ where
         };
         let doc = self
             .store
-            .get(&ckpt_json_key(&self.prefix, &digest))
+            .get(&crate::manifest::ckpt_json_key(&self.prefix, &digest))
             .map_err(|err| Error::Fault(Fault::Store(err)))?;
         let Some(doc) = doc else {
             return Ok(Err(OpenRefusal::CheckpointDocMissing { digest }));
@@ -2186,10 +1870,10 @@ where
                         .map_err(|err| Error::Fault(Fault::Io(err)))?
                     else {
                         drop(db);
-                        return Ok(MountEnd::Discard);
+                        return Ok(MountEnd::Discard("the sidecar refused to read"));
                     };
                     Ok(MountEnd::Mounted {
-                        db: Box::new(db),
+                        db: Arc::new(db),
                         chain,
                         pre_existing: true,
                     })
@@ -2197,7 +1881,7 @@ where
                 Err(error @ bumbledb::Error::EnvironmentLocked) => {
                     Err(Error::Fault(Fault::Engine(error)))
                 }
-                Err(_) => Ok(MountEnd::Discard),
+                Err(_) => Ok(MountEnd::Discard("the local directory refused to open")),
             };
         }
         if let Some((digest, doc)) = core.floor.clone() {
@@ -2212,7 +1896,7 @@ where
                     .write_atomic(&self.dir)
                     .map_err(|err| Error::Fault(Fault::Io(err)))?;
                 Ok(MountEnd::Mounted {
-                    db: Box::new(db),
+                    db: Arc::new(db),
                     chain,
                     pre_existing: false,
                 })
@@ -2286,14 +1970,14 @@ where
             .write_atomic(&self.dir)
             .map_err(|err| Error::Fault(Fault::Io(err)))?;
         Ok(MountEnd::Mounted {
-            db: Box::new(db),
+            db: Arc::new(db),
             chain,
             pre_existing: false,
         })
     }
 
     /// Round-robin catch-up over all braids but the backlog's own —
-    /// that braid's replay runs under the loser tests instead. A
+    /// that braid's replay runs through backlog resolution instead. A
     /// rejected replay on a pre-existing directory is the open-phase
     /// discard; on a seeded or bootstrapped store it wedges.
     fn catch_up(
@@ -2338,7 +2022,7 @@ where
                     continue;
                 };
                 let outcome = apply(
-                    core.db.as_ref().expect("mounted"),
+                    core.db.as_deref().expect("mounted"),
                     &mut core.chain,
                     &self.codec,
                     *braid,
@@ -2385,33 +2069,4 @@ where
             Err(err) => Err(Error::Fault(Fault::Io(err))),
         }
     }
-}
-
-/// Recomputes a raw-value key: blake3 over the prefix and the tagged
-/// raw values of `projection` (or the whole row when absent) — the same
-/// bytes the wire's one value encoder writes, so the recomputation can
-/// never drift from the footprint's own keys.
-fn hash_values(
-    prefix: &[u8],
-    layout: &[ValueType],
-    projection: Option<&[u16]>,
-    row: &[Value],
-) -> Option<[u8; 32]> {
-    if row.len() != layout.len() {
-        return None;
-    }
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(prefix);
-    let fields: Vec<u16> = match projection {
-        Some(projection) => projection.to_vec(),
-        None => (0..u16::try_from(layout.len()).ok()?).collect(),
-    };
-    for field in fields {
-        let index = usize::from(field);
-        if index >= row.len() {
-            return None;
-        }
-        append_value(&mut hasher, &row[index], layout[index]).ok()?;
-    }
-    Some(*hasher.finalize().as_bytes())
 }

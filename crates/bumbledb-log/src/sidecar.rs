@@ -146,8 +146,12 @@ impl Chain {
         format!("{{\"v\":{DOC_VERSION},\"chain\":{{{chain}}},\"pending\":{pending}}}").into_bytes()
     }
 
-    /// Strict parse. Braid ids must be ones the decomposition mints;
-    /// braids the file omits sit at genesis.
+    /// Strict parse to a canonical fixpoint, order-strict like
+    /// `Checkpoint::parse`: braid ids must be ones the decomposition
+    /// mints, entries must ascend in the render's canonical braid order
+    /// (which leaves a duplicate no place to stand), and an accepted
+    /// document re-renders byte-identically. Braids the file omits sit
+    /// at genesis.
     pub fn parse(bytes: &[u8], braids: &Braids) -> Result<Self, SidecarError> {
         let mal = |at| SidecarError::Malformed { at };
         let mut text = Text::new(bytes);
@@ -176,9 +180,13 @@ impl Chain {
             text.lit("\",\"ts\":").map_err(mal)?;
             let ts = text.u64().map_err(mal)?;
             text.lit("}").map_err(mal)?;
-            if entries.insert(braid, ChainEntry { g, prev, ts }).is_some() {
+            if entries
+                .last_key_value()
+                .is_some_and(|(last, _)| *last >= braid)
+            {
                 return Err(mal(text.at()));
             }
+            entries.insert(braid, ChainEntry { g, prev, ts });
         }
         text.lit("},\"pending\":").map_err(mal)?;
         let pending = if text.peek("null") {
