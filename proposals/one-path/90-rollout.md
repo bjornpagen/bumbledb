@@ -77,8 +77,22 @@ amendment once against final shapes. X closes.
       section deleted; repairs landed; Rust suite green
 - [ ] T: TS twin of the cut; ErrStore identity fixed and pinned; sweep +
       constants; TS suite green
-- [ ] L: Footprint model and L6–L8 gone; L9 restated; L10 untouched;
-      ledger 104; lean.sh green
+- [x] L: Footprint model and L6–L8 gone; L9 restated; L10 untouched;
+      ledger 104; lean.sh green. Landed at c6a359dc (both countermodels
+      plus their four fixtures out of Countermodels.lean) and f2a65db1
+      (the model, the W arithmetic, L6/L7/L8 with the relaxed family and
+      the stability engine — 44 named declarations; L9 restated over the
+      statement graph and the judgment via three congruences;
+      Txn/Footprint.lean renamed Txn/Braids.lean, namespace following).
+      One recorded deviation: the file rename moves L10's qualified name
+      to Bumbledb.Txn.Braids.L10, so the L10 ledger row's two citation
+      tokens follow it — premise, mechanism, and instrument are
+      byte-identical. One recorded strengthening: restated L9 quantifies
+      the braid's own batch freely (only the foreign history's LocalTo
+      is spent), so the old hd hypothesis carries no consumer and is
+      gone. lean.sh green twice, the second run concurrent with lanes
+      R/T mid-flight: census 104 rows / 332 tokens, corpus 277 cases at
+      0 disagreements, three-way comparator green.
 - [ ] P: one on-disk protocol, two conforming implementations; interop
       lane green both directions; TS multi-process lane green;
       flock/libc/unsafe/.etag/random-etags deleted
