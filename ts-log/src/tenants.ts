@@ -21,7 +21,9 @@ interface OpenTenantsOptions<Rels extends SchemaRelations> {
 	readonly root: string
 	readonly dir: string
 	readonly theory: Schema<Rels>
-	/** 50's 400 MB gate: checkpoint + working set per instance. */
+	/** 50's 400 MB gate: checkpoint + working set per instance. Advisory,
+	 *  measured once at each tenant's open — a replica that grows after
+	 *  admission is not re-weighed until it is evicted and re-opened. */
 	readonly budgetBytes?: number
 	readonly maxOpen?: number
 }

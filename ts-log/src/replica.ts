@@ -32,6 +32,10 @@ const ZERO_HASH = "0".repeat(64)
 /** The gc-safety heartbeat cadence (50): every N-th refresh pass re-reads the manifest. */
 const HEARTBEAT_PASSES = 16
 
+/** The re-poll cadence between waitFor's catch-up passes; the
+ *  read-your-writes waiter in `waitFor` is this number's one consumer. */
+const WAIT_FOR_POLL_MS = 20
+
 interface OpenReplicaOptions<Rels extends SchemaRelations> {
 	readonly store: ObjectStore
 	readonly prefix: string
@@ -470,6 +474,22 @@ async function newestStoreDir(dir: string): Promise<string | null> {
 	return newest
 }
 
+/** The disposable law says cache directories do not hoard corpses: every
+ *  rotated `store-*` LMDB dir except the adopted one is dead — left by a
+ *  crashed process or a prior rotation — and is swept at open. */
+async function sweepRotations<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
+	const listed = await errors.try(fs.readdir(core.dir))
+	if (listed.error) {
+		return
+	}
+	for (const name of listed.data) {
+		if (!name.startsWith("store-") || name === core.storeName) {
+			continue
+		}
+		await fs.rm(path.join(core.dir, name), { recursive: true, force: true })
+	}
+}
+
 /**
  * Pending recovery, first half (60): apply the resurrected batch; the
  * verdict plus the wholeness instrument force all three arms. A batch
@@ -598,6 +618,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	if (coldPending !== null) {
 		await resolveColdPending(core, coldPending)
 	}
+	await sweepRotations(core)
 	return core
 }
 
@@ -736,7 +757,7 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 					return
 				}
 				await new Promise(function later(resolve) {
-					setTimeout(resolve, 20)
+					setTimeout(resolve, WAIT_FOR_POLL_MS)
 				})
 			}
 		},

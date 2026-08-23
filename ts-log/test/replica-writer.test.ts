@@ -309,6 +309,31 @@ describe("replica and writer over the fs store", function suite() {
 		await a[Symbol.asyncDispose]()
 	})
 
+	test("open sweeps dead rotated store dirs, keeping only the adopted one", async function sweep() {
+		const { store, prefix, dir } = lane()
+		{
+			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
+			const writer = openWriter(a)
+			await writer.commit(function seed(batch) {
+				batch.insert(Holder, [{ id: 1n, name: "ada" }])
+				return 0
+			})
+			await a[Symbol.asyncDispose]()
+		}
+		fs.mkdirSync(path.join(dir("a"), "store-corpse-1"), { recursive: true })
+		fs.writeFileSync(path.join(dir("a"), "store-corpse-1", "data.mdb"), "dead")
+		fs.utimesSync(path.join(dir("a"), "store-corpse-1"), 0, 0)
+
+		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
+		const rotations = fs.readdirSync(dir("a")).filter(function stores(name) {
+			return name.startsWith("store-")
+		})
+		assert.equal(rotations.length, 1)
+		assert.notEqual(rotations[0], "store-corpse-1")
+		assert.equal(again.vector.get("c00000000"), 1n)
+		await again[Symbol.asyncDispose]()
+	})
+
 	test("a spanning commit is a typed refusal naming the verb boundary", async function spanning() {
 		const { store, prefix, dir } = lane()
 		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
