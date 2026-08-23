@@ -7,3 +7,4 @@ pub mod manifest;
 pub mod replica;
 pub mod sidecar;
 pub mod store;
+pub mod tenants;
