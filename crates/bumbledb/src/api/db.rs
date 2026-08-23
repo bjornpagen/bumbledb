@@ -19,6 +19,7 @@ use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 mod apply;
 mod builder;
+mod catalog_digest;
 mod collection;
 mod delete;
 mod delete_dyn;
