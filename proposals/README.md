@@ -34,9 +34,3 @@ is the centerpiece; [90-rollout.md](90-rollout.md) is the fleet dispatch.
 | [70-typescript.md](70-typescript.md) | The TS surface, the mirrored pure trio, temporal law, error identities |
 | [80-conformance.md](80-conformance.md) | Nine lanes: determinism, commutativity oracle, matrix cells, crash matrices, contention, PITR, parity, pins, fuzz |
 | [90-rollout.md](90-rollout.md) | The build lanes (incl. the Lean lane), order, gates, checklist |
-
-House laws throughout: representation over control flow
-(`audit/REQUIRED-READING.md`); one way per question; zero `dyn` in our own
-Rust; sums for outcomes; parse-all-first; attribution-first; every
-requirement names its consumer. The Lean gate is structural: optimism does
-not merge before footprint stability (L7) builds.
