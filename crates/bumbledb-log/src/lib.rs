@@ -10,3 +10,4 @@ pub mod replica;
 pub mod sidecar;
 pub mod store;
 pub mod tenants;
+pub mod writer;
