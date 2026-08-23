@@ -69,14 +69,21 @@ fn digest_catalog<C: OrderedRead>(catalog: &C) -> Result<[u8; 32]> {
 }
 
 /// Every stored row's identity, read off the `M` namespace: the fact hash
-/// is state-independent where the row id is allocation history.
+/// is state-independent where the row id is allocation history. Two `M`
+/// entries claiming one row id are the same membership desync a missing
+/// entry is — loud, never a silent overwrite.
 fn row_identities<C: OrderedRead>(catalog: &C) -> Result<BTreeMap<(u32, u64), [u8; 32]>> {
     let mut identities = BTreeMap::new();
     let mut range = catalog.range(CatalogMap::Data, Bounds::all())?;
     while let Some(entry) = ReadCursor::next(&mut range)? {
         if let Some((relation, hash)) = keys::parse_membership_key(entry.key) {
             let row_id = stored_u64(entry.value, "M row id")?;
-            identities.insert((relation.0, row_id), *hash);
+            if identities.insert((relation.0, row_id), *hash).is_some() {
+                return Err(Error::Corruption(CorruptionError::MembershipDesync {
+                    relation,
+                    row_id,
+                }));
+            }
         }
     }
     Ok(identities)
@@ -298,6 +305,53 @@ mod tests {
         let after_a = a.catalog_digest().expect("digest");
         assert_ne!(before, after_a, "the batch changed content");
         assert_eq!(after_a, b.catalog_digest().expect("digest"));
+    }
+
+    /// Two `M` entries claiming one row id refuse as loudly as a
+    /// missing one: the identity quotient never silently picks a
+    /// winner between two claimed fact identities.
+    #[test]
+    fn a_double_claimed_row_id_is_a_loud_membership_desync() {
+        let dir = TempDir::new("digest-dual-claim");
+        let db = create(&dir);
+        seed(&db);
+
+        let row_id = {
+            let txn = db.env().read_txn().expect("read txn");
+            let catalog = txn.catalog();
+            let mut found = None;
+            let mut range = catalog
+                .range(CatalogMap::Data, Bounds::all())
+                .expect("range");
+            while let Some(entry) = ReadCursor::next(&mut range).expect("cursor") {
+                if let Some((relation, _)) = keys::parse_membership_key(entry.key)
+                    && relation == NAMED
+                {
+                    found = Some(stored_u64(entry.value, "M row id").expect("row id"));
+                    break;
+                }
+            }
+            found.expect("a seeded relation holds a membership entry")
+        };
+
+        let mut txn = db.env().write_txn().expect("raw txn");
+        let forged = keys::membership_key(NAMED, &[0xEE; 32]).to_vec();
+        txn.env()
+            .data()
+            .put(txn.raw_mut(), &forged, row_id.to_le_bytes().as_slice())
+            .expect("plant the second claim");
+        txn.commit().expect("raw commit");
+
+        match db.catalog_digest() {
+            Err(Error::Corruption(CorruptionError::MembershipDesync {
+                relation,
+                row_id: claimed,
+            })) => {
+                assert_eq!(relation, NAMED);
+                assert_eq!(claimed, row_id);
+            }
+            other => panic!("two M entries claiming one row id must refuse: {other:?}"),
+        }
     }
 
     /// A schema whose statements exercise every row-id carrier: an FD on
