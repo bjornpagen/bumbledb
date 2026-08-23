@@ -1,0 +1,181 @@
+{
+  "expect": "ok",
+  "fingerprint": "c00de0a96a8b2741bc96dacedc74936db3dacb498d10d65182b2521eb4b47593",
+  "footprint": [
+    {
+      "class": "F",
+      "fid": "502264d9a0647d03f3c80e54d181349ee3b465b1a28998b3a1665d0e396be6ad",
+      "mode": "delete"
+    },
+    {
+      "class": "F",
+      "fid": "c8cce37818f004d1db03c62ad51937e5c7636dba84315e207b801c2d17b91843",
+      "mode": "insert"
+    },
+    {
+      "class": "F",
+      "fid": "d3cea2ba1796838bf30428e38419a500d0dd35326ab4043ec2e14a3c976c146f",
+      "mode": "insert"
+    },
+    {
+      "class": "K",
+      "key": "49c96b2056fa731b4e1951d93ebe7186de93d219d7ad31e822a908e7f4838ae5",
+      "statement": 0
+    },
+    {
+      "class": "K",
+      "key": "501f855e96abf944f540ce809c078075ed2fcfb9ee13577543300e5144d78f4b",
+      "statement": 0
+    },
+    {
+      "class": "K",
+      "key": "586b846d9bc7ef1a31da1356e2441eaac6424cff67b9ae507bc10b9b8bedfad8",
+      "statement": 0
+    }
+  ],
+  "header": {
+    "braid": "c00000000",
+    "braidGen": "1",
+    "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+    "timestamp": "1755801600000",
+    "writer": "7"
+  },
+  "ops": [
+    {
+      "kind": "insert",
+      "relation": 0,
+      "rows": [
+        [
+          {
+            "bool": true
+          },
+          {
+            "u64": "18446744073709551615"
+          },
+          {
+            "i64": "-9223372036854775808"
+          },
+          {
+            "string": "héllo⛳"
+          },
+          {
+            "fixedBytes": "deadbe"
+          },
+          {
+            "intervalU64": [
+              "0",
+              "18446744073709551615"
+            ]
+          },
+          {
+            "intervalI64": [
+              "-9223372036854775808",
+              "9223372036854775807"
+            ]
+          },
+          {
+            "intervalU64": [
+              "10",
+              "15"
+            ]
+          },
+          {
+            "intervalI64": [
+              "-2",
+              "3"
+            ]
+          }
+        ],
+        [
+          {
+            "bool": false
+          },
+          {
+            "u64": "0"
+          },
+          {
+            "i64": "9223372036854775807"
+          },
+          {
+            "string": ""
+          },
+          {
+            "fixedBytes": "000000"
+          },
+          {
+            "intervalU64": [
+              "5",
+              "6"
+            ]
+          },
+          {
+            "intervalI64": [
+              "-1",
+              "0"
+            ]
+          },
+          {
+            "intervalU64": [
+              "0",
+              "5"
+            ]
+          },
+          {
+            "intervalI64": [
+              "-9223372036854775808",
+              "-9223372036854775803"
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "delete",
+      "relation": 0,
+      "rows": [
+        [
+          {
+            "bool": true
+          },
+          {
+            "u64": "42"
+          },
+          {
+            "i64": "0"
+          },
+          {
+            "string": "x"
+          },
+          {
+            "fixedBytes": "010203"
+          },
+          {
+            "intervalU64": [
+              "1",
+              "2"
+            ]
+          },
+          {
+            "intervalI64": [
+              "0",
+              "1"
+            ]
+          },
+          {
+            "intervalU64": [
+              "7",
+              "12"
+            ]
+          },
+          {
+            "intervalI64": [
+              "0",
+              "5"
+            ]
+          }
+        ]
+      ]
+    }
+  ],
+  "schema": "kitchen"
+}

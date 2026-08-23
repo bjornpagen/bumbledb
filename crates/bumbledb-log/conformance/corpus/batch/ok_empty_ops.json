@@ -1,0 +1,14 @@
+{
+  "expect": "ok",
+  "fingerprint": "c00de0a96a8b2741bc96dacedc74936db3dacb498d10d65182b2521eb4b47593",
+  "footprint": [],
+  "header": {
+    "braid": "c00000000",
+    "braidGen": "9",
+    "prev": "1111111111111111111111111111111111111111111111111111111111111111",
+    "timestamp": "1755801600000",
+    "writer": "7"
+  },
+  "ops": [],
+  "schema": "kitchen"
+}

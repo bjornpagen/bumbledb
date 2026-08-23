@@ -1,0 +1,214 @@
+{
+  "expect": "ok",
+  "fingerprint": "013f5b4dd0ee08b17565a9cfb2e5abab162b7cddfa3b73d122f3f16f8582dc80",
+  "footprint": [
+    {
+      "class": "F",
+      "fid": "15a559100476a39249a765c6124ba9c11803f9d8eead3db0bf09febe818dcd45",
+      "mode": "delete"
+    },
+    {
+      "class": "F",
+      "fid": "76eea8c44ffcea37a5ae5420da8e8e3b812a999acfe446b2d902a491ed66ea7c",
+      "mode": "insert"
+    },
+    {
+      "class": "F",
+      "fid": "7d4f194e77e18be0d2f7695db03b40e81873759daa789f321c2abe43091e6061",
+      "mode": "insert"
+    },
+    {
+      "class": "F",
+      "fid": "7eb59189a1e687014c383002b06075a666ddbd97de74b292f4115f87ccd376a9",
+      "mode": "insert"
+    },
+    {
+      "class": "F",
+      "fid": "880967b4d3410cb45e891d672b20dc42cde2b42a510abfab7120419dd9436533",
+      "mode": "delete"
+    },
+    {
+      "class": "F",
+      "fid": "f47bf5d56cf08d2a6a5e211d57c9c1446051788593b795fd78e4ddc89bc1ba50",
+      "mode": "insert"
+    },
+    {
+      "class": "K",
+      "key": "504a14e0e0013561bca9acea5e1979aa367715355acb5535fe4ad0e62a790497",
+      "statement": 0
+    },
+    {
+      "class": "K",
+      "key": "8cc38d76bd3d76662f5c732a6b99eb394711f05c2504b34c104d4995ea505d87",
+      "statement": 0
+    },
+    {
+      "class": "C",
+      "key": "3430ccb4ff950db737c173900a4fe817b4455232857a0282d423577d4426d090",
+      "mode": "support-",
+      "statement": 1
+    },
+    {
+      "class": "C",
+      "key": "7229dcbb9639f165771ce90910eb166c9b92f8ff93dcb013a118df0fdf36aae0",
+      "mode": "need",
+      "statement": 1
+    },
+    {
+      "class": "C",
+      "key": "7229dcbb9639f165771ce90910eb166c9b92f8ff93dcb013a118df0fdf36aae0",
+      "mode": "support+",
+      "statement": 1
+    },
+    {
+      "class": "W",
+      "key": "5f3dd11517e52bb60b1a63814327f2862aec3db3e99c47fd8f4795bdc2f8f61e",
+      "mode": "parent-",
+      "statement": 2
+    },
+    {
+      "class": "W",
+      "delta": "5",
+      "key": "9e4b5c9775c3aad30b521a803088b3017e542ab9b378f6be0274bf63804fee2e",
+      "mode": "childDelta",
+      "statement": 2
+    },
+    {
+      "class": "W",
+      "key": "9e4b5c9775c3aad30b521a803088b3017e542ab9b378f6be0274bf63804fee2e",
+      "mode": "parent+",
+      "statement": 2
+    },
+    {
+      "class": "W",
+      "delta": "10",
+      "key": "96bbe5c73a90831896a8b3684f96949564bad05d9835326d4a05d2b88879b770",
+      "mode": "childDelta",
+      "statement": 3
+    },
+    {
+      "class": "W",
+      "key": "96bbe5c73a90831896a8b3684f96949564bad05d9835326d4a05d2b88879b770",
+      "mode": "parent+",
+      "statement": 3
+    },
+    {
+      "class": "W",
+      "key": "f841c6759213e7efc823100f7d1d11a8ae8b00e9890222872e549911efd5f8a1",
+      "mode": "parent-",
+      "statement": 3
+    }
+  ],
+  "header": {
+    "braid": "c00000000",
+    "braidGen": "42",
+    "prev": "2222222222222222222222222222222222222222222222222222222222222222",
+    "timestamp": "1755801600000",
+    "writer": "7"
+  },
+  "ops": [
+    {
+      "kind": "insert",
+      "relation": 0,
+      "rows": [
+        [
+          {
+            "u64": "7"
+          },
+          {
+            "u64": "1"
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "insert",
+      "relation": 1,
+      "rows": [
+        [
+          {
+            "u64": "5"
+          },
+          {
+            "u64": "7"
+          },
+          {
+            "u64": "2"
+          },
+          {
+            "u64": "3"
+          },
+          {
+            "intervalU64": [
+              "10",
+              "20"
+            ]
+          }
+        ],
+        [
+          {
+            "u64": "6"
+          },
+          {
+            "u64": "7"
+          },
+          {
+            "u64": "2"
+          },
+          {
+            "u64": "2"
+          },
+          {
+            "intervalU64": [
+              "10",
+              "20"
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "insert",
+      "relation": 2,
+      "rows": [
+        [
+          {
+            "u64": "2"
+          },
+          {
+            "u64": "10"
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "delete",
+      "relation": 2,
+      "rows": [
+        [
+          {
+            "u64": "9"
+          },
+          {
+            "u64": "5"
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "delete",
+      "relation": 0,
+      "rows": [
+        [
+          {
+            "u64": "8"
+          },
+          {
+            "u64": "0"
+          }
+        ]
+      ]
+    }
+  ],
+  "schema": "booking"
+}

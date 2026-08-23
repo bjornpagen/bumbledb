@@ -1,0 +1,6 @@
+{
+  "expect": "refusal",
+  "fingerprint": "c00de0a96a8b2741bc96dacedc74936db3dacb498d10d65182b2521eb4b47593",
+  "refusal": "UnknownFootprintClass",
+  "schema": "kitchen"
+}

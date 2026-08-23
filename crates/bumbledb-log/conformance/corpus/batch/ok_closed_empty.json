@@ -1,0 +1,68 @@
+{
+  "expect": "ok",
+  "fingerprint": "4502d841ac0f76b83175741a83fcb83c5021702d52545029f426fdb9d93422d5",
+  "footprint": [
+    {
+      "class": "F",
+      "fid": "55a0fee9af6c8844370f260b6326f14ea872fbcbc3c74ecb83d22bf4b18a0bf5",
+      "mode": "insert"
+    },
+    {
+      "class": "F",
+      "fid": "ea82f907c23d6ef7fcfb128c39c9593dabd603514e3c995a9f63e22a286ed871",
+      "mode": "insert"
+    },
+    {
+      "class": "K",
+      "key": "c0a0308a8b1d0bb6b594d8b7724bf4ec6ca27b549c9eb14fb55ab50666df9908",
+      "statement": 0
+    },
+    {
+      "class": "C",
+      "key": "6935d2340ff45cecbaa6ea9a40b155c3e19639612ea8632d8eae1d55a6d9a6a4",
+      "mode": "support+",
+      "statement": 2
+    },
+    {
+      "class": "C",
+      "key": "b46794ecb6a91862980273979cee319512894da0ed12d89d81204c725f04fa30",
+      "mode": "need",
+      "statement": 2
+    }
+  ],
+  "header": {
+    "braid": "c00000000",
+    "braidGen": "2",
+    "prev": "4444444444444444444444444444444444444444444444444444444444444444",
+    "timestamp": "1755801600000",
+    "writer": "7"
+  },
+  "ops": [
+    {
+      "kind": "insert",
+      "relation": 1,
+      "rows": [
+        [
+          {
+            "u64": "1"
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "insert",
+      "relation": 0,
+      "rows": [
+        [
+          {
+            "u64": "3"
+          },
+          {
+            "u64": "9"
+          }
+        ]
+      ]
+    }
+  ],
+  "schema": "multi"
+}
