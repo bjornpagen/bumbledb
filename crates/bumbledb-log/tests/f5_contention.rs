@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use bumbledb::schema::fingerprint::fingerprint as schema_fingerprint;
 use bumbledb::schema::{
@@ -27,7 +28,8 @@ use bumbledb::schema::{
 use bumbledb::{Value, Violation};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Batch, BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::footprint::footprint;
+use bumbledb_log::footprint::{CapacityMode, Entry, footprint};
+use bumbledb_log::intersect::{LoserDecision, intersect};
 use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::fs::FsStore;
@@ -35,7 +37,7 @@ use bumbledb_log::store::{
     Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreError, Swap,
 };
 use bumbledb_log::writer::{
-    Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
+    AckMode, Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
     WriterOpened, WriterStep,
 };
 
@@ -161,6 +163,10 @@ fn venue_braid(codec: &Codec) -> BraidId {
 
 fn recipe_row(id: u64, title: &str) -> Box<[Value]> {
     Box::from([Value::U64(id), Value::String(title.into())])
+}
+
+fn step_row(recipe: u64, name: &str) -> Box<[Value]> {
+    Box::from([Value::U64(recipe), Value::String(name.into())])
 }
 
 fn note_row(id: u64, body: &str) -> Box<[Value]> {
@@ -1542,4 +1548,643 @@ fn hot_capacity_parent_fleet_prices_the_slack_serially() {
     // The verifying replica replays every slot accepted — the serial
     // verdicts and the log agree.
     converged_digest(&root);
+}
+
+/// The wire length of a rendered footprint section: the count word
+/// plus the per-class entry shapes of 20.
+fn section_len(entries: &[Entry]) -> usize {
+    4 + entries
+        .iter()
+        .map(|entry| match entry {
+            Entry::Fact { .. } => 34,
+            Entry::Key { .. } => 35,
+            Entry::Capacity {
+                mode: CapacityMode::ChildDelta(_),
+                ..
+            } => 44,
+            Entry::Containment { .. } | Entry::Capacity { .. } => 36,
+        })
+        .sum::<usize>()
+}
+
+#[test]
+fn lying_winner_is_caught_by_recomputation_never_the_carried_section() {
+    let root = temp_dir("liar");
+    let writer = open_at(root.clone(), &root.join("w"), 12);
+    let codec = codec();
+    let braid = kitchen_braid(&codec);
+
+    // The lying batch: the true ops carry the conflicting recipe
+    // insert plus an unrelated step, but the spliced footprint section
+    // is derived from the step alone — it understates the recipe's K
+    // and F entries, the exact steering a hostile writer would use to
+    // push every loser onto the republish path.
+    let true_ops = vec![
+        insert(RECIPE, recipe_row(7, "winner")),
+        insert(STEP, step_row(90, "dangling")),
+    ];
+    let subset_ops = vec![insert(STEP, step_row(90, "dangling"))];
+    let mut publisher = TestPublisher::attach(root.clone());
+    let (slot, honest) = publisher.encode(braid, &true_ops, 5);
+    let (_, small) = publisher.encode(braid, &subset_ops, 5);
+    let honest_batch = codec.decode(&honest).expect("decode honest bytes");
+    let small_batch = codec.decode(&small).expect("decode subset bytes");
+    let mut lying = honest[..honest.len() - section_len(&honest_batch.footprint)].to_vec();
+    lying.extend_from_slice(&small[small.len() - section_len(&small_batch.footprint)..]);
+    let lying_batch = codec.decode(&lying).expect("the lie parses");
+    assert_eq!(lying_batch.ops.len(), 2, "the ops survived the splice");
+    assert_eq!(
+        lying_batch.footprint, small_batch.footprint,
+        "the carried section understates the ops"
+    );
+    publisher.publish_bytes(braid, slot, &lying, 5);
+
+    let loser_ops = vec![insert(RECIPE, recipe_row(7, "loser"))];
+    let loser_fp = footprint(codec.vocabulary(), &loser_ops).expect("loser footprint");
+    // A loser that trusted the carried section would read Disjoint and
+    // republish into a slot every replica then refuses.
+    assert_eq!(
+        intersect(
+            codec.vocabulary(),
+            &loser_fp,
+            &loser_ops,
+            &subset_ops,
+            &BTreeMap::new(),
+        )
+        .expect("intersect the carried claim"),
+        LoserDecision::Disjoint,
+        "the carried section claims disjointness"
+    );
+    // Recomputation from the fetched ops sees the shared determinant.
+    assert!(
+        matches!(
+            intersect(
+                codec.vocabulary(),
+                &loser_fp,
+                &loser_ops,
+                &lying_batch.ops,
+                &BTreeMap::new(),
+            )
+            .expect("intersect the recomputation"),
+            LoserDecision::Conflict(_)
+        ),
+        "recomputation catches the lie before intersecting"
+    );
+
+    let err = writer
+        .commit(|batch| {
+            batch.insert(RECIPE, [recipe_row(7, "loser")]);
+            Ok(())
+        })
+        .expect_err("the lying slot is corruption-class, never a republish");
+    assert!(
+        matches!(err, Error::Wedged { braid: wedged } if wedged == braid),
+        "the braid wedges at the tripwire: {err:?}"
+    );
+    assert_eq!(writer.wedged_braids(), vec![braid]);
+
+    // Nothing republished behind the lie.
+    let store = FsStore::new(root.clone());
+    assert!(
+        store.get(&log_key("", braid, 2)).expect("get").is_none(),
+        "no loser trusted the carried section"
+    );
+    // The fleet-wide tripwire: a fresh replica refuses the slot and
+    // wedges the braid rather than serving the lie.
+    let opened = Replica::open(
+        FsStore::new(root.clone()),
+        "",
+        &root.join("tripwire"),
+        theory(),
+    )
+    .expect("open replica");
+    let Opened::Ready(replica) = opened else {
+        panic!("the replica serves its other braids");
+    };
+    assert!(
+        replica.wedged().contains_key(&braid),
+        "every replica catches the same lie at replay"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn packed_drain_delete_cures_the_solo_violation() {
+    // Packed: one caller's delete cures another's violation — the
+    // drain is one transaction by law, and the engine judges the
+    // composite's final state.
+    let root = temp_dir("drain");
+    let options = Options {
+        writer_id: 13,
+        ack: AckMode::Published,
+        linger: Duration::from_millis(300),
+    };
+    let writer = match Writer::open(
+        FsStore::new(root.clone()),
+        "",
+        &root.join("w"),
+        theory(),
+        options,
+    )
+    .expect("open writer")
+    {
+        WriterOpened::Ready(writer) => writer,
+        WriterOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
+    };
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(VENUE, [Box::from([Value::U64(1)]) as Box<[Value]>]);
+                Ok(())
+            })
+            .expect("venue setup"),
+        Commit::Accepted { generation: 1, .. }
+    ));
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(BOOKING, [booking_row(1, CEILING - 1)]);
+                Ok(())
+            })
+            .expect("fill the ceiling"),
+        Commit::Accepted { generation: 2, .. }
+    ));
+
+    let barrier = std::sync::Barrier::new(2);
+    let (cure, insert_outcome) = std::thread::scope(|scope| {
+        let cure_task = scope.spawn(|| {
+            barrier.wait();
+            writer.commit(|batch| {
+                batch.delete(BOOKING, [booking_row(1, CEILING - 1)]);
+                Ok(())
+            })
+        });
+        let insert_task = scope.spawn(|| {
+            barrier.wait();
+            writer.commit(|batch| {
+                batch.insert(BOOKING, [booking_row(1, 50)]);
+                Ok(())
+            })
+        });
+        (
+            cure_task.join().expect("join").expect("commit"),
+            insert_task.join().expect("join").expect("commit"),
+        )
+    });
+    let Commit::Accepted { generation: g1, .. } = cure else {
+        panic!("the composite accepts");
+    };
+    let Commit::Accepted { generation: g2, .. } = insert_outcome else {
+        panic!("the composite accepts what a solo run would reject");
+    };
+    assert_eq!(g1, 3);
+    assert_eq!(g2, 3, "one batch, one generation, one object");
+
+    let codec = codec();
+    let braid = venue_braid(&codec);
+    let batches = verify_log(&root);
+    assert_eq!(batches[&braid].len(), 3);
+    assert_eq!(
+        batches[&braid][2].ops.len(),
+        2,
+        "both callers packed into one transaction"
+    );
+    // The verifying replica replays the composite as one transaction —
+    // the documented outcome, not a surprise.
+    converged_digest(&root);
+    assert_whole(&writer, "the packing writer");
+
+    // Solo control on a fresh prefix: the same insert without the
+    // neighboring delete is the serial capacity rejection.
+    let solo_root = temp_dir("drain_solo");
+    let solo = open_at(solo_root.clone(), &solo_root.join("w"), 14);
+    assert!(matches!(
+        solo.commit(|batch| {
+            batch.insert(VENUE, [Box::from([Value::U64(1)]) as Box<[Value]>]);
+            Ok(())
+        })
+        .expect("venue setup"),
+        Commit::Accepted { .. }
+    ));
+    assert!(matches!(
+        solo.commit(|batch| {
+            batch.insert(BOOKING, [booking_row(1, CEILING - 1)]);
+            Ok(())
+        })
+        .expect("fill the ceiling"),
+        Commit::Accepted { .. }
+    ));
+    let solo_outcome = solo
+        .commit(|batch| {
+            batch.insert(BOOKING, [booking_row(1, 50)]);
+            Ok(())
+        })
+        .expect("solo verdict");
+    let Commit::Rejected(violations) = solo_outcome else {
+        panic!("solo rejects where the composite accepted");
+    };
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::Capacity { .. })),
+        "the solo rejection is the typed capacity violation"
+    );
+}
+
+/// The Feral uniqueness storm: 64 writers inserting one hot
+/// determinant per round — their experiment leaked 70-6,300
+/// duplicates; this gate is zero duplicates, one Accepted, and 63
+/// typed FD rejections, every round. The per-round shape runs at the
+/// exact Feral width of 64; the round count is scaled from their 100
+/// to 16 under the wall-clock license (measured: 8 s per round — 63
+/// discard-and-rebuild re-judgments each — puts 100 rounds past 13
+/// minutes for one test).
+#[test]
+fn feral_uniqueness_storm_zero_duplicates() {
+    const WRITERS: u64 = 64;
+    const ROUNDS: u64 = 16;
+    let root = temp_dir("feral_unique");
+    let barrier = std::sync::Barrier::new(usize::try_from(WRITERS).expect("fits"));
+    let per_writer: Vec<Vec<Commit<()>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|i| {
+                let root = root.clone();
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let dir = root.join(format!("w{i}"));
+                    let writer = open_at(root.clone(), &dir, 400 + i);
+                    // A tight checkpoint cadence keeps every loser's
+                    // rebuild a seed-plus-short-tail instead of a full
+                    // replay — the protocol's own pressure valve.
+                    writer.set_checkpoint_cadence(32, u64::MAX);
+                    let mut outcomes = Vec::new();
+                    for r in 0..ROUNDS {
+                        barrier.wait();
+                        let outcome = writer
+                            .commit(|batch| {
+                                batch.insert(
+                                    RECIPE,
+                                    [recipe_row(70_000 + r, &format!("writer {i}"))],
+                                );
+                                Ok(())
+                            })
+                            .expect("one loss per loser per round never nears the bound");
+                        outcomes.push(outcome);
+                    }
+                    assert_whole(&writer, "a storm writer");
+                    writer.quiesce();
+                    outcomes
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("storm thread"))
+            .collect()
+    });
+
+    for r in 0..usize::try_from(ROUNDS).expect("fits") {
+        let mut accepted = 0u64;
+        let mut rejected = 0u64;
+        for outcomes in &per_writer {
+            match &outcomes[r] {
+                Commit::Accepted { .. } => accepted += 1,
+                Commit::Rejected(violations) => {
+                    assert!(
+                        violations
+                            .iter()
+                            .any(|violation| matches!(violation, Violation::Functionality { .. })),
+                        "every loser gets the typed FD rejection"
+                    );
+                    rejected += 1;
+                }
+            }
+        }
+        assert_eq!(accepted, 1, "one Accepted per round");
+        assert_eq!(rejected, WRITERS - 1, "63 typed FD rejections per round");
+    }
+
+    let codec = codec();
+    let braid = kitchen_braid(&codec);
+    let batches = verify_log(&root);
+    assert_eq!(
+        u64::try_from(batches[&braid].len()).expect("fits"),
+        ROUNDS,
+        "losers publish nothing: one slot per round"
+    );
+    let mut determinants: BTreeMap<u64, u64> = BTreeMap::new();
+    for batch in &batches[&braid] {
+        for op in &batch.ops {
+            for row in &op.rows {
+                let Value::U64(id) = row[0] else {
+                    panic!("recipe determinant is u64")
+                };
+                *determinants.entry(id).or_insert(0) += 1;
+            }
+        }
+    }
+    assert_eq!(
+        u64::try_from(determinants.len()).expect("fits"),
+        ROUNDS,
+        "every round's determinant landed"
+    );
+    assert!(
+        determinants.values().all(|count| *count == 1),
+        "zero duplicates leaked"
+    );
+    converged_digest(&root);
+}
+
+/// The Feral association storm: one target-delete racing 64 concurrent
+/// source-inserts per round — their experiment orphaned up to 6,400
+/// rows; this gate is zero orphans and serial verdicts throughout. The
+/// race runs at the exact Feral width of 64 inserters plus the
+/// deleter, for the full 100 rounds.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn feral_association_storm_zero_orphans() {
+    const INSERTERS: u64 = 64;
+    const ROUNDS: u64 = 100;
+    let root = temp_dir("feral_orphan");
+    let start = std::sync::Barrier::new(usize::try_from(INSERTERS + 1).expect("fits"));
+    let finish = std::sync::Barrier::new(usize::try_from(INSERTERS + 1).expect("fits"));
+    std::thread::scope(|scope| {
+        let deleter = {
+            let root = root.clone();
+            let start = &start;
+            let finish = &finish;
+            scope.spawn(move || {
+                let dir = root.join("deleter");
+                let writer = open_at(root.clone(), &dir, 500);
+                writer.set_checkpoint_cadence(32, u64::MAX);
+                for r in 0..ROUNDS {
+                    // Seed the round's target before the race opens.
+                    let mut seeded = false;
+                    for _ in 0..10 {
+                        match writer.commit(|batch| {
+                            batch.insert(RECIPE, [recipe_row(80_000 + r, "base")]);
+                            Ok(())
+                        }) {
+                            Ok(Commit::Accepted { .. }) => {
+                                seeded = true;
+                                break;
+                            }
+                            Ok(Commit::Rejected(violations)) => {
+                                panic!("a fresh determinant never rejects: {violations:?}")
+                            }
+                            Err(Error::Contention { .. }) => {}
+                            Err(error) => panic!("seed failed: {error}"),
+                        }
+                    }
+                    assert!(seeded, "the seed lands within the retry budget");
+                    start.wait();
+                    match writer.commit(|batch| {
+                        batch.delete(RECIPE, [recipe_row(80_000 + r, "base")]);
+                        Ok(())
+                    }) {
+                        Ok(Commit::Accepted { .. }) | Err(Error::Contention { .. }) => {}
+                        Ok(Commit::Rejected(violations)) => {
+                            assert!(
+                                violations.iter().any(|violation| matches!(
+                                    violation,
+                                    Violation::Containment { .. }
+                                )),
+                                "a refused target delete cites the containment"
+                            );
+                        }
+                        Err(error) => panic!("delete failed: {error}"),
+                    }
+                    finish.wait();
+                }
+                while writer.backlog().is_some() {
+                    writer
+                        .commit(|batch| {
+                            batch.insert(NOTE, [note_row(600_000, "deleter flush")]);
+                            Ok(())
+                        })
+                        .expect("flush drains the backlog");
+                }
+                assert_whole(&writer, "the storm deleter");
+                writer.quiesce();
+            })
+        };
+        let handles: Vec<_> = (1..=INSERTERS)
+            .map(|i| {
+                let root = root.clone();
+                let start = &start;
+                let finish = &finish;
+                scope.spawn(move || {
+                    let dir = root.join(format!("i{i}"));
+                    let writer = open_at(root.clone(), &dir, 500 + i);
+                    writer.set_checkpoint_cadence(32, u64::MAX);
+                    for r in 0..ROUNDS {
+                        start.wait();
+                        match writer.commit(|batch| {
+                            batch.insert(STEP, [step_row(80_000 + r, &format!("s{i}"))]);
+                            Ok(())
+                        }) {
+                            Ok(Commit::Accepted { .. }) | Err(Error::Contention { .. }) => {}
+                            Ok(Commit::Rejected(violations)) => {
+                                assert!(
+                                    violations.iter().any(|violation| matches!(
+                                        violation,
+                                        Violation::Containment { .. }
+                                    )),
+                                    "a refused source insert cites the containment"
+                                );
+                            }
+                            Err(error) => panic!("insert failed: {error}"),
+                        }
+                        finish.wait();
+                    }
+                    while writer.backlog().is_some() {
+                        writer
+                            .commit(|batch| {
+                                batch.insert(NOTE, [note_row(600_000 + i, "flush")]);
+                                Ok(())
+                            })
+                            .expect("flush drains the backlog");
+                    }
+                    assert_whole(&writer, "a storm inserter");
+                    writer.quiesce();
+                })
+            })
+            .collect();
+        deleter.join().expect("deleter thread");
+        for handle in handles {
+            handle.join().expect("inserter thread");
+        }
+    });
+
+    verify_log(&root);
+    // Zero orphans, judged by a fresh replica of the published truth:
+    // wherever any step survived, its recipe survived with it — the
+    // serial verdicts never let the delete and an insert both win.
+    let dir = temp_dir("orphan_check");
+    let opened = Replica::open(FsStore::new(root.clone()), "", &dir.join("r"), theory())
+        .expect("open verifying replica");
+    let Opened::Ready(replica) = opened else {
+        panic!("verifying replica refused");
+    };
+    assert!(replica.wedged().is_empty(), "serial verdicts throughout");
+    replica
+        .db()
+        .read(|instance| {
+            for r in 0..ROUNDS {
+                let recipe_present =
+                    instance.contains_dyn(RECIPE, &recipe_row(80_000 + r, "base"))?;
+                for i in 1..=INSERTERS {
+                    if instance.contains_dyn(STEP, &step_row(80_000 + r, &format!("s{i}")))? {
+                        assert!(
+                            recipe_present,
+                            "zero orphans: round {r} step s{i} outlived its recipe"
+                        );
+                    }
+                }
+            }
+            Ok(())
+        })
+        .expect("read");
+    converged_digest(&root);
+}
+
+/// The deterministic sampler for the skew curve: cumulative Zipfian
+/// weights over ranked keys.
+#[allow(clippy::cast_precision_loss)]
+fn zipf_cdf(keys: u64, skew: f64) -> Vec<f64> {
+    let mut weights: Vec<f64> = (1..=keys)
+        .map(|rank| 1.0 / (rank as f64).powf(skew))
+        .collect();
+    let total: f64 = weights.iter().sum();
+    let mut cumulative = 0.0;
+    for weight in &mut weights {
+        cumulative += *weight / total;
+        *weight = cumulative;
+    }
+    weights
+}
+
+struct XorShift(u64);
+
+impl XorShift {
+    #[allow(clippy::cast_precision_loss)]
+    fn next_unit(&mut self) -> f64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+fn zipf_key(cdf: &[f64], unit: f64) -> u64 {
+    let index = cdf.partition_point(|cumulative| *cumulative < unit);
+    u64::try_from(index.min(cdf.len() - 1)).expect("key fits") + 1
+}
+
+/// The hot-key skew curve's correctness half (F11 records its
+/// throughput): 8 writers drawing recipe determinants Zipfian at skew
+/// 0.99 over 64 keys, 25 commits each — the recorded parameters. The
+/// first writer of a key wins it forever; every later dependent is the
+/// serial FD rejection; the log never holds a duplicate determinant.
+#[test]
+fn zipfian_skew_keeps_verdicts_serial_and_keys_unique() {
+    const WRITERS: u64 = 8;
+    const COMMITS: u64 = 25;
+    const KEYS: u64 = 64;
+    const SKEW: f64 = 0.99;
+    let root = temp_dir("zipf");
+    let cdf = zipf_cdf(KEYS, SKEW);
+    let ledgers: Vec<(Vec<u64>, Vec<u64>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|i| {
+                let root = root.clone();
+                let cdf = &cdf;
+                scope.spawn(move || {
+                    let dir = root.join(format!("w{i}"));
+                    let writer = open_at(root.clone(), &dir, 700 + i);
+                    let mut rng = XorShift(0x5eed_0000 + i);
+                    let mut sampled = Vec::new();
+                    let mut accepted = Vec::new();
+                    for j in 0..COMMITS {
+                        let key = zipf_key(cdf, rng.next_unit());
+                        sampled.push(key);
+                        match writer.commit(|batch| {
+                            batch.insert(RECIPE, [recipe_row(90_000 + key, &format!("w{i} c{j}"))]);
+                            Ok(())
+                        }) {
+                            Ok(Commit::Accepted { .. }) => accepted.push(key),
+                            Ok(Commit::Rejected(violations)) => {
+                                assert!(
+                                    violations.iter().any(|violation| matches!(
+                                        violation,
+                                        Violation::Functionality { .. }
+                                    )),
+                                    "a lost key is the serial FD rejection"
+                                );
+                            }
+                            Err(Error::Contention { .. }) => {}
+                            Err(error) => panic!("skewed commit failed: {error}"),
+                        }
+                    }
+                    while writer.backlog().is_some() {
+                        writer
+                            .commit(|batch| {
+                                batch.insert(NOTE, [note_row(700_000 + i, "flush")]);
+                                Ok(())
+                            })
+                            .expect("flush drains the backlog");
+                    }
+                    assert_whole(&writer, "a skewed writer");
+                    writer.quiesce();
+                    (sampled, accepted)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("skew thread"))
+            .collect()
+    });
+
+    let codec = codec();
+    let braid = kitchen_braid(&codec);
+    let batches = verify_log(&root);
+    converged_digest(&root);
+    let mut sampled: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    let mut accepted: Vec<u64> = Vec::new();
+    for (keys, wins) in &ledgers {
+        sampled.extend(keys.iter().copied());
+        accepted.extend(wins.iter().copied());
+    }
+    let mut determinants: BTreeMap<u64, u64> = BTreeMap::new();
+    for batch in &batches[&braid] {
+        for op in &batch.ops {
+            for row in &op.rows {
+                let Value::U64(id) = row[0] else {
+                    panic!("recipe determinant is u64")
+                };
+                *determinants.entry(id - 90_000).or_insert(0) += 1;
+            }
+        }
+    }
+    assert!(
+        determinants.values().all(|count| *count == 1),
+        "zero duplicate determinants under skew"
+    );
+    assert!(
+        determinants.keys().all(|key| sampled.contains(key)),
+        "the log holds only sampled keys"
+    );
+    let mut accepted_sorted = accepted.clone();
+    accepted_sorted.sort_unstable();
+    accepted_sorted.dedup();
+    assert_eq!(
+        accepted_sorted.len(),
+        accepted.len(),
+        "no key is ever won twice"
+    );
+    assert!(
+        accepted.iter().all(|key| determinants.contains_key(key)),
+        "every acked win is in the log exactly once"
+    );
 }
