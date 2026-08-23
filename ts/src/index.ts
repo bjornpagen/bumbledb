@@ -118,6 +118,7 @@ export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaCla
 export { lower } from "#lower.ts"
 export type { KeyFact } from "#marshal.ts"
 export type { FactValue, ParsedQuery, QueryIr, StatementKindTag } from "#native.ts"
+export { internalBlake3 } from "#native.ts"
 
 export type {
 	AnyCond,

@@ -11,8 +11,8 @@ use bumbledb::{
     Theory, Value, Violations, Witness, WriteTx, render_rejection,
 };
 use napi::bindgen_prelude::{
-    Array, AsyncTask, BigInt, Env, External, FnArgs, Function, Object, Task, ToNapiValue, TypeName,
-    Unknown, ValueType,
+    Array, AsyncTask, BigInt, Buffer, Env, External, FnArgs, Function, Object, Task, ToNapiValue,
+    TypeName, Unknown, ValueType,
 };
 use napi::sys;
 use napi_derive::napi;
@@ -32,6 +32,19 @@ pub fn engine_version() -> String {
         env!("CARGO_PKG_VERSION"),
         bumbledb::STORAGE_FORMAT_VERSION
     )
+}
+
+/// The engine's own blake3 (`bumbledb::digest::Digest`), lent to the
+/// replication driver so the SDK ships exactly one hash implementation.
+/// Internal surface: not part of the SDK's documented API.
+#[napi]
+#[doc(hidden)]
+#[allow(clippy::needless_pass_by_value)]
+#[must_use]
+pub fn blake3_hash(data: Buffer) -> Buffer {
+    let mut digest = bumbledb::digest::Digest::new();
+    digest.update(&data);
+    Buffer::from(digest.finalize().to_vec())
 }
 
 struct Sealed {

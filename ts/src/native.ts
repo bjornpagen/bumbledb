@@ -257,6 +257,8 @@ type PrepareKind = "irError"
 interface Native {
 	engineVersion(): string
 
+	blake3Hash(data: Uint8Array): Uint8Array
+
 	dbCreate(path: string, spec: SchemaSpec): Promise<CreateResult>
 
 	dbOpen(path: string, spec: SchemaSpec): Promise<DbOpenResult>
@@ -393,6 +395,18 @@ function dbClose(db: DbHandle): void {
 	binding.dbClose(db)
 }
 
+/**
+ * @internal blake3 of the given bytes via the resident native binding —
+ * the engine's own hash, lent to the replication driver
+ * (`@bjornpagen/bumbledb-log`). Not SDK API; the export is deliberately
+ * undocumented in the package surface.
+ */
+function internalBlake3(data: Uint8Array): Uint8Array {
+	return bridged("bumbledb blake3", function hashBytes() {
+		return binding.blake3Hash(data)
+	})
+}
+
 function isEngineThrow(value: unknown): value is { kind: ErrorFamilyKind; message: string } {
 	if (typeof value !== "object" || value === null) {
 		return false
@@ -481,4 +495,4 @@ export type {
 	WitnessHandle,
 	WriteTag
 }
-export { bridged, bridgedAsync, dbClose, errorFromThrow, loadNativeBinding, native, SHIPPED_PLATFORMS }
+export { bridged, bridgedAsync, dbClose, errorFromThrow, internalBlake3, loadNativeBinding, native, SHIPPED_PLATFORMS }
