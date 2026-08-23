@@ -1,3 +1,4 @@
+pub mod apply;
 pub mod braids;
 pub mod codec;
 pub mod footprint;
