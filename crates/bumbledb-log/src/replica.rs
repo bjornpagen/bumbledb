@@ -34,6 +34,11 @@ use crate::store::{Etag, ObjectStore, Poll, StoreError};
 /// re-sized per deployment via [`Replica::set_heartbeat_every`].
 pub const HEARTBEAT_EVERY: u64 = 16;
 
+/// The re-poll cadence of [`Replica::wait_for`], its one consumer: the
+/// read-your-writes waiter sleeps this long between refresh passes
+/// that have not yet reached the target vector.
+pub const WAIT_FOR_POLL_MS: u64 = 10;
+
 const DATA_FILE: &str = "data.mdb";
 
 /// A braid vector: applied counts keyed by braid id. Any vector is a
@@ -457,7 +462,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                 Refreshed::Vector(_) => {}
                 Refreshed::Refused(refusal) => return Ok(Waited::Refused(refusal)),
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(WAIT_FOR_POLL_MS));
         }
     }
 

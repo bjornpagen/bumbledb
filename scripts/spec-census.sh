@@ -389,6 +389,7 @@ one_owner_rust=(
   LEASE_WIDTH
   CHECKPOINT_EVERY_SUM
   CHECKPOINT_EVERY_BYTES
+  WAIT_FOR_POLL_MS
 )
 for name in "${one_owner_rust[@]}"; do
   count=$(grep -rE "const ${name}[[:space:]]*:" crates/bumbledb-log/src --include='*.rs' | wc -l | tr -d ' ')
