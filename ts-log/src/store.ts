@@ -1,22 +1,25 @@
 /**
- * The object-store capability (40): exactly five verbs, outcomes as
- * sums, infrastructure failures on the ErrStore channel. `fsStore` is
- * tier-1, not a dev double — deployment case 5's production backend.
+ * The object-store capability: exactly five verbs, outcomes as sums,
+ * infrastructure failures on the ErrStore channel. `fsStore` is tier-1,
+ * not a dev double — deployment case 5's production backend.
  *
- * The fs discipline, stated: every verb on a key serializes under an
- * O_EXCL lockfile in `<root>/.locks` (the lock body is the owner's pid;
- * a lock whose pid is dead is broken and retaken — sound on one machine
- * only, which is FsStore's load-bearing deployment law). Create-only is
- * a `wx`-flag temp plus rename; `Created` and `Swapped` resolve only
- * after fsync of the object file and its parent directory. Etags are
- * fresh random tokens in a `<key>.etag` sidecar written through the
- * same temp-rename-fsync path.
+ * The one on-disk protocol, shared with the Rust driver: create-only
+ * publishes an exclusive synced temp with link(2), where EEXIST is the
+ * honest exists; the etag is the blake3 of the content, lowercase hex,
+ * computed on every read and never stored; `putSwap` serializes under a
+ * pid-lockfile beside the key, published with the same exclusive
+ * temp-plus-link discipline so it can never exist without its body (the
+ * owner pid) — a contender breaks the lock iff the owner is dead, which
+ * is sound on one machine only, fsStore's load-bearing deployment law.
+ * `created` and `swapped` resolve only after fsync of the object file
+ * and its parent directory.
  */
 
-import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
+import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
+import { toHex } from "#bytes.ts"
 import { wrapStore } from "#errors.ts"
 
 interface Fetched {
@@ -43,6 +46,16 @@ interface ObjectStore {
 	delete(key: string): Promise<void>
 }
 
+/** Suffix of the per-key pid-lockfile that serializes `putSwap`. */
+const LOCK_SUFFIX = ".lock"
+
+/** Ceiling of the jittered wait between probes of a live-held lock. */
+const LOCK_RETRY_MS = 10
+
+function contentEtag(bytes: Uint8Array): string {
+	return toHex(new Uint8Array(internalBlake3(bytes)))
+}
+
 function checkKey(key: string): void {
 	if (key.length === 0 || key.startsWith("/") || key.endsWith("/")) {
 		throw errors.new(`store key is not a slash path: ${key}`)
@@ -51,23 +64,14 @@ function checkKey(key: string): void {
 		if (segment.length === 0 || segment === "." || segment === "..") {
 			throw errors.new(`store key segment is illegal: ${key}`)
 		}
-	}
-	if (key.endsWith(".etag")) {
-		throw errors.new(`store key collides with the etag sidecar suffix: ${key}`)
+		if (segment.endsWith(LOCK_SUFFIX)) {
+			throw errors.new(`store key collides with the lockfile suffix: ${key}`)
+		}
 	}
 }
 
-function freshEtag(): string {
-	return `${process.hrtime.bigint().toString(16)}-${crypto.randomBytes(8).toString("hex")}`
-}
-
-async function fsyncFile(file: string): Promise<void> {
-	const handle = await fs.open(file, "r")
-	const synced = await errors.try(handle.sync())
-	await handle.close()
-	if (synced.error) {
-		throw errors.wrap(synced.error, `fsync ${file}`)
-	}
+function codeOf(error: Error): string | undefined {
+	return (error as NodeJS.ErrnoException).code
 }
 
 async function fsyncDir(dir: string): Promise<void> {
@@ -79,11 +83,15 @@ async function fsyncDir(dir: string): Promise<void> {
 	}
 }
 
-/** Temp under `wx`, write, fsync, rename into place, fsync the directory. */
-async function atomicWrite(target: string, bytes: Uint8Array): Promise<void> {
+let tempSeq = 0
+
+/** Write `bytes` to a fresh `wx` temp file beside `target` and fsync it.
+ *  The caller publishes the synced temp atomically. */
+async function syncedTemp(target: string, bytes: Uint8Array): Promise<string> {
 	const dir = path.dirname(target)
 	await fs.mkdir(dir, { recursive: true })
-	const temp = path.join(dir, `.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`)
+	tempSeq += 1
+	const temp = path.join(dir, `.${path.basename(target)}.tmp.${process.pid}.${tempSeq}`)
 	const handle = await fs.open(temp, "wx")
 	const written = await errors.try(
 		(async function writeAll() {
@@ -96,8 +104,22 @@ async function atomicWrite(target: string, bytes: Uint8Array): Promise<void> {
 		await fs.rm(temp, { force: true })
 		throw errors.wrap(written.error, `write ${target}`)
 	}
-	await fs.rename(temp, target)
-	await fsyncDir(dir)
+	return temp
+}
+
+/** link(2) is the exclusivity primitive: rename replaces an existing
+ *  destination, so it cannot arbitrate create-only, while link fails
+ *  atomically with EEXIST across processes — exactly the
+ *  If-None-Match: * contract. */
+async function publishLink(temp: string, dest: string): Promise<"linked" | "occupied"> {
+	const linked = await errors.try(fs.link(temp, dest))
+	if (linked.error === undefined) {
+		return "linked"
+	}
+	if (codeOf(linked.error) === "EEXIST") {
+		return "occupied"
+	}
+	throw linked.error
 }
 
 function pidAlive(pid: number): boolean {
@@ -107,34 +129,39 @@ function pidAlive(pid: number): boolean {
 	if (probed.error === undefined) {
 		return true
 	}
-	const code = (probed.error as NodeJS.ErrnoException).code
-	return code !== "ESRCH"
+	return codeOf(probed.error) !== "ESRCH"
 }
 
 async function acquireLock(lockPath: string): Promise<void> {
-	await fs.mkdir(path.dirname(lockPath), { recursive: true })
-	const deadline = Date.now() + 10_000
+	const body = new TextEncoder().encode(String(process.pid))
 	for (;;) {
-		const opened = await errors.try(fs.open(lockPath, "wx"))
-		if (opened.error === undefined) {
-			await opened.data.writeFile(String(process.pid))
-			await opened.data.close()
+		const temp = await syncedTemp(lockPath, body)
+		const published = await errors.try(publishLink(temp, lockPath))
+		await fs.rm(temp, { force: true })
+		if (published.error) {
+			throw published.error
+		}
+		if (published.data === "linked") {
 			return
 		}
-		const body = await errors.try(fs.readFile(lockPath, "utf8"))
-		if (body.error === undefined) {
-			const pid = Number.parseInt(body.data, 10)
-			if (Number.isInteger(pid) && pid > 0 && !pidAlive(pid)) {
-				await fs.rm(lockPath, { force: true })
+		const read = await errors.try(fs.readFile(lockPath, "utf8"))
+		if (read.error) {
+			if (codeOf(read.error) === "ENOENT") {
 				continue
 			}
+			throw read.error
 		}
-		if (Date.now() > deadline) {
-			throw errors.new(`store lock is held past the deadline: ${lockPath}`)
+		const owner = read.data.trim()
+		if (!/^\d+$/.test(owner)) {
+			throw errors.new(`lockfile body is not a pid: ${lockPath}`)
 		}
-		await new Promise(function later(resolve) {
-			setTimeout(resolve, 4 + Math.floor(Math.random() * 6))
-		})
+		if (pidAlive(Number.parseInt(owner, 10))) {
+			await new Promise(function later(resolve) {
+				setTimeout(resolve, Math.random() * LOCK_RETRY_MS)
+			})
+		} else {
+			await fs.rm(lockPath, { force: true })
+		}
 	}
 }
 
@@ -151,118 +178,112 @@ function fsStore(root: string): ObjectStore {
 		return path.join(rootPath, ...key.split("/"))
 	}
 
-	function lockPath(key: string): string {
-		return path.join(rootPath, ".locks", encodeURIComponent(key))
-	}
-
-	async function locked<R>(key: string, verb: string, body: () => Promise<R>): Promise<R> {
-		const lock = lockPath(key)
-		const acquired = await errors.try(acquireLock(lock))
-		if (acquired.error) {
-			throw wrapStore(acquired.error, `${verb} ${key}`)
-		}
-		const ran = await errors.try(body())
-		await releaseLock(lock)
-		if (ran.error) {
-			throw wrapStore(ran.error, `${verb} ${key}`)
-		}
-		return ran.data
-	}
-
-	async function readEtag(target: string): Promise<string | null> {
-		const read = await errors.try(fs.readFile(`${target}.etag`, "utf8"))
+	async function readFetched(target: string): Promise<Fetched | null> {
+		const read = await errors.try(fs.readFile(target))
 		if (read.error) {
-			return null
+			if (codeOf(read.error) === "ENOENT") {
+				return null
+			}
+			throw read.error
 		}
-		return read.data
-	}
-
-	/** A crash window can leave an object without its etag sidecar; the
-	 *  next locked reader repairs it with a fresh token. */
-	async function etagOf(target: string): Promise<string> {
-		const existing = await readEtag(target)
-		if (existing !== null) {
-			return existing
-		}
-		const minted = freshEtag()
-		await atomicWrite(`${target}.etag`, new TextEncoder().encode(minted))
-		return minted
-	}
-
-	async function exists(target: string): Promise<boolean> {
-		const stat = await errors.try(fs.stat(target))
-		return stat.error === undefined
+		const bytes = new Uint8Array(read.data)
+		return { bytes, etag: contentEtag(bytes) }
 	}
 
 	return {
 		async get(key) {
-			return locked(key, "get", async function getBody() {
-				const target = objectPath(key)
-				const read = await errors.try(fs.readFile(target))
-				if (read.error) {
-					return null
-				}
-				return { bytes: new Uint8Array(read.data), etag: await etagOf(target) }
-			})
+			const target = objectPath(key)
+			const read = await errors.try(readFetched(target))
+			if (read.error) {
+				throw wrapStore(read.error, `get ${key}`)
+			}
+			return read.data
 		},
 
 		async getIfChanged(key, etag) {
-			return locked(key, "getIfChanged", async function pollBody(): Promise<Poll> {
-				const target = objectPath(key)
-				const read = await errors.try(fs.readFile(target))
-				if (read.error) {
-					throw errors.wrap(read.error, "poll target absent")
-				}
-				const current = await etagOf(target)
-				if (current === etag) {
-					return { tag: "unchanged" }
-				}
-				return { tag: "changed", fetched: { bytes: new Uint8Array(read.data), etag: current } }
-			})
+			const target = objectPath(key)
+			const read = await errors.try(readFetched(target))
+			if (read.error) {
+				throw wrapStore(read.error, `getIfChanged ${key}`)
+			}
+			if (read.data === null) {
+				throw wrapStore(errors.new("poll target absent"), `getIfChanged ${key}`)
+			}
+			if (read.data.etag === etag) {
+				return { tag: "unchanged" }
+			}
+			return { tag: "changed", fetched: read.data }
 		},
 
 		async putCreate(key, bytes) {
-			return locked(key, "putCreate", async function createBody(): Promise<Create> {
-				const target = objectPath(key)
-				if (await exists(target)) {
-					return { tag: "exists" }
-				}
-				await atomicWrite(target, bytes)
-				const etag = freshEtag()
-				await atomicWrite(`${target}.etag`, new TextEncoder().encode(etag))
-				await fsyncFile(target)
-				return { tag: "created", etag }
-			})
+			const target = objectPath(key)
+			const ran = await errors.try(
+				(async function createBody(): Promise<Create> {
+					const temp = await syncedTemp(target, bytes)
+					const published = await errors.try(publishLink(temp, target))
+					await fs.rm(temp, { force: true })
+					if (published.error) {
+						throw published.error
+					}
+					if (published.data === "occupied") {
+						return { tag: "exists" }
+					}
+					await fsyncDir(path.dirname(target))
+					return { tag: "created", etag: contentEtag(bytes) }
+				})()
+			)
+			if (ran.error) {
+				throw wrapStore(ran.error, `putCreate ${key}`)
+			}
+			return ran.data
 		},
 
 		async putSwap(key, bytes, etag) {
-			return locked(key, "putSwap", async function swapBody(): Promise<Swap> {
-				const target = objectPath(key)
-				if (!(await exists(target))) {
-					return { tag: "moved" }
-				}
-				const current = await etagOf(target)
-				if (current !== etag) {
-					return { tag: "moved" }
-				}
-				await atomicWrite(target, bytes)
-				const next = freshEtag()
-				await atomicWrite(`${target}.etag`, new TextEncoder().encode(next))
-				await fsyncFile(target)
-				return { tag: "swapped", etag: next }
-			})
+			const target = objectPath(key)
+			const lock = `${target}${LOCK_SUFFIX}`
+			const ran = await errors.try(
+				(async function swapBody(): Promise<Swap> {
+					await acquireLock(lock)
+					const swapped = await errors.try(
+						(async function underLock(): Promise<Swap> {
+							const current = await readFetched(target)
+							if (current === null || current.etag !== etag) {
+								return { tag: "moved" }
+							}
+							const temp = await syncedTemp(target, bytes)
+							const renamed = await errors.try(fs.rename(temp, target))
+							if (renamed.error) {
+								await fs.rm(temp, { force: true })
+								throw renamed.error
+							}
+							await fsyncDir(path.dirname(target))
+							return { tag: "swapped", etag: contentEtag(bytes) }
+						})()
+					)
+					await releaseLock(lock)
+					if (swapped.error) {
+						throw swapped.error
+					}
+					return swapped.data
+				})()
+			)
+			if (ran.error) {
+				throw wrapStore(ran.error, `putSwap ${key}`)
+			}
+			return ran.data
 		},
 
 		async delete(key) {
-			await locked(key, "delete", async function deleteBody() {
-				const target = objectPath(key)
-				await fs.rm(target, { force: true })
-				await fs.rm(`${target}.etag`, { force: true })
-				const dirSynced = await errors.try(fsyncDir(path.dirname(target)))
-				if (dirSynced.error) {
-					return
-				}
-			})
+			const target = objectPath(key)
+			const ran = await errors.try(
+				(async function deleteBody() {
+					await fs.rm(target, { force: true })
+					await fs.rm(`${target}${LOCK_SUFFIX}`, { force: true })
+				})()
+			)
+			if (ran.error) {
+				throw wrapStore(ran.error, `delete ${key}`)
+			}
 		}
 	}
 }

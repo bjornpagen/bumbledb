@@ -114,9 +114,110 @@ fn delete_is_unconditional_and_idempotent() {
 #[test]
 fn malformed_keys_are_refused_at_the_boundary() {
     let store = FsStore::new(fresh_root("bad_keys"));
-    for key in ["", "/abs", "a//b", "../escape", "a/./b", "trailing/"] {
+    for key in [
+        "",
+        "/abs",
+        "a//b",
+        "../escape",
+        "a/./b",
+        "trailing/",
+        "manifest.json.lock",
+        "a.lock/b",
+    ] {
         assert!(store.get(key).is_err(), "key {key:?} must be refused");
     }
+}
+
+#[test]
+fn a_dead_owners_lockfile_beside_the_key_is_broken_by_put_swap() {
+    let root = fresh_root("dead_lock");
+    let store = FsStore::new(&root);
+    let Create::Created(birth) = store.put_create("manifest.json", b"v1").expect("create") else {
+        panic!("fresh key must be Created");
+    };
+    std::fs::write(root.join("manifest.json.lock"), b"999999999").expect("plant dead lock");
+    let swapped = store
+        .put_swap("manifest.json", b"v2", &birth)
+        .expect("swap");
+    assert_eq!(swapped, Swap::Swapped(content_etag(b"v2")));
+    assert!(
+        !root.join("manifest.json.lock").exists(),
+        "the broken lock leaves no residue"
+    );
+}
+
+#[test]
+fn the_verbs_leave_no_sidecar_beside_the_object() {
+    let root = fresh_root("no_sidecar");
+    let store = FsStore::new(&root);
+    let Create::Created(birth) = store.put_create("manifest.json", b"v1").expect("create") else {
+        panic!("fresh key must be Created");
+    };
+    store
+        .put_swap("manifest.json", b"v2", &birth)
+        .expect("swap");
+    store.get("manifest.json").expect("get");
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .expect("read root")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec!["manifest.json".to_string()],
+        "the object's bytes are the whole on-disk record"
+    );
+}
+
+#[test]
+fn put_swap_serializes_across_threads_without_lost_updates() {
+    let root = fresh_root("swap_threads");
+    let store = std::sync::Arc::new(FsStore::new(&root));
+    assert!(matches!(
+        store.put_create("manifest.json", b"0").expect("birth"),
+        Create::Created(_)
+    ));
+    let threads: Vec<_> = (0..4u64)
+        .map(|_| {
+            let store = std::sync::Arc::clone(&store);
+            std::thread::spawn(move || {
+                let mut landed = 0u64;
+                while landed < 8 {
+                    let current = store.get("manifest.json").expect("get").expect("present");
+                    let value: u64 = String::from_utf8(current.bytes)
+                        .expect("utf8")
+                        .parse()
+                        .expect("decimal");
+                    let next = (value + 1).to_string();
+                    if let Swap::Swapped(_) = store
+                        .put_swap("manifest.json", next.as_bytes(), &current.etag)
+                        .expect("swap")
+                    {
+                        landed += 1;
+                    }
+                }
+            })
+        })
+        .collect();
+    for handle in threads {
+        handle.join().expect("thread");
+    }
+    let total: u64 = String::from_utf8(
+        store
+            .get("manifest.json")
+            .expect("get")
+            .expect("present")
+            .bytes,
+    )
+    .expect("utf8")
+    .parse()
+    .expect("decimal");
+    assert_eq!(total, 32, "no swap was lost and none applied twice");
 }
 
 #[test]

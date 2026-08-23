@@ -9,7 +9,6 @@ publish = false
 [dependencies]
 bumbledb = { path = "../bumbledb" }
 blake3 = "1.8.5"
-libc = "0.2"
 
 [dev-dependencies]
 bumbledb = { path = "../bumbledb", features = ["trace"] }

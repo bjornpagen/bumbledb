@@ -46,7 +46,6 @@ version = "0.17.0"
 dependencies = [
  "blake3",
  "bumbledb",
- "libc",
  "serde_json",
 ]
 
