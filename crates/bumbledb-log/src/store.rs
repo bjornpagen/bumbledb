@@ -2,6 +2,8 @@
 //! offer. Five verbs, all outcomes sums; `Err` carries infrastructure
 //! failure (network, 5xx, auth, io) and nothing else.
 
+pub mod fs;
+
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
