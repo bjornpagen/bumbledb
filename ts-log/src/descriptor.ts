@@ -20,7 +20,7 @@ import type {
 } from "@bjornpagen/bumbledb"
 import { internalBlake3, lower } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { ByteWriter, toHex, utf8Encoder } from "#bytes.ts"
+import { ByteWriter, fromHex, toHex, utf8Encoder } from "#bytes.ts"
 import type { LogValue } from "#value.ts"
 import { writeCanonicalLiteral } from "#value.ts"
 
@@ -96,8 +96,12 @@ interface LogDescriptor {
 	readonly fingerprintBytes: Uint8Array
 }
 
-/** The pure trio's input: the theory value or its already-lowered spec. */
-type LogTheory = AnySchema | SchemaSpec
+/** The pure trio's input: the theory value, its lowered spec, or an already-parsed descriptor. */
+type LogTheory = AnySchema | SchemaSpec | LogDescriptor
+
+function isDescriptor(theory: LogTheory): theory is LogDescriptor {
+	return "braidMembers" in theory
+}
 
 function isSpec(theory: LogTheory): theory is SchemaSpec {
 	return Array.isArray((theory as SchemaSpec).relations)
@@ -106,6 +110,9 @@ function isSpec(theory: LogTheory): theory is SchemaSpec {
 const cache = new WeakMap<object, LogDescriptor>()
 
 function descriptorOf(theory: LogTheory): LogDescriptor {
+	if (isDescriptor(theory)) {
+		return theory
+	}
 	const hit = cache.get(theory)
 	if (hit !== undefined) {
 		return hit
@@ -417,7 +424,14 @@ function parseSpec(spec: SchemaSpec): LogDescriptor {
 		}
 	}
 
-	const fingerprintBytes = fingerprintOf(relations, statements)
+	let hashed: { readonly hex: string; readonly bytes: Uint8Array } | undefined
+	function fingerprintLazily(): { readonly hex: string; readonly bytes: Uint8Array } {
+		if (hashed === undefined) {
+			const bytes = fingerprintOf(relations, statements)
+			hashed = { hex: toHex(bytes), bytes }
+		}
+		return hashed
+	}
 
 	const descriptor: LogDescriptor = {
 		relations,
@@ -426,10 +440,33 @@ function parseSpec(spec: SchemaSpec): LogDescriptor {
 		braidOfRelation,
 		braidMembers,
 		serialAtStatements,
-		fingerprint: toHex(fingerprintBytes),
-		fingerprintBytes
+		get fingerprint() {
+			return fingerprintLazily().hex
+		},
+		get fingerprintBytes() {
+			return fingerprintLazily().bytes
+		}
 	}
 	return descriptor
+}
+
+/**
+ * The same descriptor under a pinned fingerprint — for stores whose
+ * identity is carried (a manifest, a conformance sidecar) rather than
+ * recomputed, e.g. when the mirror cannot hash a closed relation's
+ * interned string axioms.
+ */
+function withFingerprint(descriptor: LogDescriptor, fingerprint: string): LogDescriptor {
+	return {
+		relations: descriptor.relations,
+		relationByName: descriptor.relationByName,
+		statements: descriptor.statements,
+		braidOfRelation: descriptor.braidOfRelation,
+		braidMembers: descriptor.braidMembers,
+		serialAtStatements: descriptor.serialAtStatements,
+		fingerprint,
+		fingerprintBytes: fromHex(fingerprint)
+	}
 }
 
 function deriveBraids(
@@ -701,4 +738,4 @@ export type {
 	StatementInfo,
 	WeightInfo
 }
-export { braidHex, descriptorOf }
+export { braidHex, descriptorOf, withFingerprint }

@@ -154,9 +154,14 @@ function writeTagged(out: ByteWriter, type: ValueTypeSpec, value: LogValue): voi
 	}
 }
 
+/** The value parser's refusal channel: one method per proved cause,
+ *  matching the Rust decoder's cross-implementation identities. */
 interface TaggedRefusal {
 	badTag(expected: number, actual: number): never
-	malformed(what: string): never
+	boolByte(byte: number): never
+	invalidUtf8(): never
+	emptyInterval(): never
+	intervalOverflow(): never
 }
 
 /** Full parse at the layout's type; every illegal byte is a typed refusal. */
@@ -170,7 +175,7 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 		case "bool": {
 			const byte = reader.u8("bool payload")
 			if (byte > 1) {
-				refusal.malformed("bool byte")
+				refusal.boolByte(byte)
 			}
 			return byte === 1
 		}
@@ -185,7 +190,7 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 				return utf8StrictDecoder.decode(raw)
 			})
 			if (decoded.error) {
-				refusal.malformed("utf-8")
+				refusal.invalidUtf8()
 			}
 			return decoded.data
 		}
@@ -196,14 +201,14 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 				const start = type.element === "u64" ? reader.u64le("interval start") : reader.i64le("interval start")
 				const end = type.element === "u64" ? reader.u64le("interval end") : reader.i64le("interval end")
 				if (start >= end) {
-					refusal.malformed("empty interval")
+					refusal.emptyInterval()
 				}
 				return { start, end }
 			}
 			const start = type.element === "u64" ? reader.u64le("interval start") : reader.i64le("interval start")
 			const end = start + type.width
 			if (type.element === "u64" ? end > U64_MAX : end > I64_MAX) {
-				refusal.malformed("fixed interval overflow")
+				refusal.intervalOverflow()
 			}
 			return { start, end }
 		}

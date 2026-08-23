@@ -106,7 +106,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"magic"
+			"BadMagic"
 		)
 	})
 
@@ -117,7 +117,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"version"
+			"Version"
 		)
 	})
 
@@ -128,7 +128,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"flags"
+			"Flags"
 		)
 	})
 
@@ -139,7 +139,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"fingerprint"
+			"FingerprintMismatch"
 		)
 	})
 
@@ -150,7 +150,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"op-relation"
+			"OpRelationOutsideBraid"
 		)
 	})
 
@@ -161,7 +161,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"op-kind"
+			"UnknownOpKind"
 		)
 	})
 
@@ -173,7 +173,7 @@ describe("the command codec", function suite() {
 		})
 		assert.ok(caught.error && errors.is(caught.error, ErrRefused))
 		const cause = refusalOf(caught.error)
-		assert.ok(cause !== undefined && cause.kind === "row-shape")
+		assert.ok(cause !== undefined && cause.kind === "TagMismatch")
 		assert.equal(cause.relation, "Holder")
 		assert.equal(cause.row, 0)
 		assert.equal(cause.field, "id")
@@ -192,7 +192,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes)
 			}),
-			"footprint-order"
+			"UnsortedFootprint"
 		)
 	})
 
@@ -204,7 +204,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, padded)
 			}),
-			"trailing"
+			"TrailingBytes"
 		)
 	})
 
@@ -214,7 +214,7 @@ describe("the command codec", function suite() {
 			refusalKindOf(function decodeIt() {
 				return decodeBatch(Ledger, bytes.slice(0, 50))
 			}),
-			"truncated"
+			"Truncated"
 		)
 	})
 

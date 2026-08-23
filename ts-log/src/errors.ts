@@ -43,25 +43,39 @@ const ErrContention = errors.new("bumbledb-log contention: consecutive live-tip 
 /** The vendor channel: I/O and store infrastructure failures. */
 const ErrStore = errors.new("bumbledb-log store failure")
 
+/**
+ * Decode refusal kinds carry the cross-implementation identity names the
+ * Rust driver's `DecodeError::identity` pins — the conformance corpus
+ * compares them string for string. The tail kinds are this driver's own
+ * replica-boundary refusals.
+ */
 type RefusalCause =
-	| { readonly kind: "magic" }
-	| { readonly kind: "version"; readonly version: number }
-	| { readonly kind: "flags"; readonly flags: number }
-	| { readonly kind: "fingerprint"; readonly carried: string; readonly expected: string }
-	| { readonly kind: "braid-unknown"; readonly braid: number }
-	| { readonly kind: "op-kind"; readonly opKind: number }
-	| { readonly kind: "op-relation"; readonly relation: number; readonly braid: string }
-	| { readonly kind: "row-shape"; readonly relation: string; readonly row: number; readonly field: string }
-	| { readonly kind: "truncated"; readonly at: string }
-	| { readonly kind: "trailing"; readonly bytes: number }
-	| { readonly kind: "footprint-order"; readonly index: number }
-	| { readonly kind: "footprint-shape"; readonly index: number }
-	| { readonly kind: "manifest-shape" }
-	| { readonly kind: "manifest-version"; readonly version: number }
-	| { readonly kind: "checkpoint-shape" }
-	| { readonly kind: "checkpoint-braids"; readonly carried: readonly string[]; readonly derived: readonly string[] }
-	| { readonly kind: "checkpoint-digest"; readonly expected: string; readonly computed: string }
-	| { readonly kind: "no-op-slot"; readonly braid: string; readonly slot: bigint; readonly writer: bigint }
+	| { readonly kind: "Truncated"; readonly at: string }
+	| { readonly kind: "BadMagic" }
+	| { readonly kind: "Version"; readonly version: number }
+	| { readonly kind: "Flags"; readonly flags: number }
+	| { readonly kind: "FingerprintMismatch"; readonly carried: string; readonly expected: string }
+	| { readonly kind: "UnknownBraid"; readonly braid: number }
+	| { readonly kind: "UnknownOpKind"; readonly op: number; readonly opKind: number }
+	| { readonly kind: "UnknownRelation"; readonly op: number; readonly relation: number }
+	| { readonly kind: "ClosedRelation"; readonly op: number; readonly relation: number }
+	| { readonly kind: "OpRelationOutsideBraid"; readonly op: number; readonly relation: number; readonly braid: string }
+	| { readonly kind: "TagMismatch"; readonly relation: string; readonly row: number; readonly field: string }
+	| { readonly kind: "BoolByte"; readonly relation: string; readonly row: number; readonly field: string }
+	| { readonly kind: "InvalidUtf8"; readonly relation: string; readonly row: number; readonly field: string }
+	| { readonly kind: "EmptyInterval"; readonly relation: string; readonly row: number; readonly field: string }
+	| { readonly kind: "IntervalOverflow"; readonly relation: string; readonly row: number; readonly field: string }
+	| { readonly kind: "UnknownFootprintClass"; readonly index: number }
+	| { readonly kind: "UnknownFootprintMode"; readonly index: number }
+	| { readonly kind: "UnsortedFootprint"; readonly index: number }
+	| { readonly kind: "DuplicateFootprintEntry"; readonly index: number }
+	| { readonly kind: "TrailingBytes"; readonly bytes: number }
+	| { readonly kind: "ManifestShape" }
+	| { readonly kind: "ManifestVersion"; readonly version: number }
+	| { readonly kind: "CheckpointShape" }
+	| { readonly kind: "CheckpointBraids"; readonly carried: readonly string[]; readonly derived: readonly string[] }
+	| { readonly kind: "CheckpointDigest"; readonly expected: string; readonly computed: string }
+	| { readonly kind: "NoOpSlot"; readonly braid: string; readonly slot: bigint; readonly writer: bigint }
 
 type ChainCause = "prev" | "slot" | "timestamp"
 
