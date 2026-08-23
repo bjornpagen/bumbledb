@@ -2,6 +2,7 @@ pub mod apply;
 pub mod braids;
 pub mod codec;
 pub mod footprint;
+pub mod gc;
 pub mod intersect;
 pub mod manifest;
 pub mod replica;
