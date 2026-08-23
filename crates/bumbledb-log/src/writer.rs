@@ -7,13 +7,15 @@
 //! generation, so every log slot is a state-changing commit and the
 //! wholeness identity stays one integer compare.
 //!
-//! The republish-without-re-judgment fast path on a fully key-disjoint
-//! loss is computed but not taken: L7's acceptance form is proven, but
-//! its rejected arm is refuted by a mechanized countermodel
-//! (`lean/Bumbledb/Countermodels`), so every non-subsumed loss routes
-//! through the conflict arm's re-judgment — always sound, merely
-//! slower. The intersect verdict is still produced and counted, so the
-//! gate can lift without a wire or state change.
+//! A fully key-disjoint loss takes the republish-without-re-judgment
+//! fast path: the winner applies in place (L8 — winner-over-ours equals
+//! ours-over-winner), any further occupied slots replay under the same
+//! pairwise tests, and the recorded ops republish under a re-addressed
+//! header with ops, footprint, and verdict untouched. L7's acceptance
+//! form licenses exactly this — the loser algebra only ever republishes
+//! a batch its own store accepted, which is the hypothesis L7 carries
+//! (its rejected arm is refuted in `lean/Bumbledb/Countermodels`, and
+//! nothing here rests on it).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -46,7 +48,7 @@ use crate::replica::{
     write_checkpoint_bytes,
 };
 use crate::sidecar::{Chain, ChainEntry, Pending};
-use crate::store::{Create, ObjectStore, retry_read};
+use crate::store::{Create, CreateProbe, ObjectStore, resolve_ambiguous_create, retry_read};
 
 /// Consecutive live losses at the tip before `Err::Contention`; history
 /// losses never count.
@@ -1310,7 +1312,10 @@ where
 
     /// One publication attempt: `put_create`, then `Created`, the
     /// byte-equal absorption of our own ambiguous PUT, or the loser
-    /// algebra.
+    /// algebra. A `put_create` failure is an ambiguous outcome — the
+    /// request may have landed — so it is never retried blindly: the
+    /// follow-up is a GET of the target key comparing content, and only
+    /// a proven-absent create is reissued.
     #[allow(clippy::too_many_arguments)]
     fn publish(
         self: &Arc<Self>,
@@ -1324,11 +1329,28 @@ where
         live: &mut Live,
         counts_live: bool,
     ) -> Result<PublishEnd> {
+        const CREATE_ATTEMPTS: u32 = 6;
         let key = log_key(&self.prefix, braid, slot);
-        let created = self
-            .store
-            .put_create(&key, bytes)
-            .map_err(|err| Error::Fault(Fault::Store(err)))?;
+        let mut attempt: u32 = 0;
+        let created = loop {
+            match self.store.put_create(&key, bytes) {
+                Ok(created) => break created,
+                Err(err) => {
+                    match resolve_ambiguous_create(self.store.as_ref(), &key, bytes)
+                        .map_err(|probe_err| Error::Fault(Fault::Store(probe_err)))?
+                    {
+                        CreateProbe::Landed(etag) => break Create::Created(etag),
+                        CreateProbe::Lost(_) => break Create::Exists,
+                        CreateProbe::Absent => {
+                            attempt += 1;
+                            if attempt == CREATE_ATTEMPTS {
+                                return Err(Error::Fault(Fault::Store(err)));
+                            }
+                        }
+                    }
+                }
+            }
+        };
         self.step(WriterStep::PutLog)?;
         match created {
             Create::Created(_) => {
@@ -1354,8 +1376,10 @@ where
 
     /// The loser algebra at a lost slot. Subsumed applies the winner
     /// and lets the engine decide survive-or-discard through the
-    /// wholeness identity; everything else discards and re-judges (the
-    /// disjoint fast path is gated — module doc).
+    /// wholeness identity; full key disjointness takes the republish
+    /// fast path (L7 keeps the carried verdict and the publish-law
+    /// standing true at the moved base); everything else discards and
+    /// re-judges.
     #[allow(clippy::too_many_arguments)]
     fn lose(
         self: &Arc<Self>,
@@ -1398,36 +1422,7 @@ where
         )
         .map_err(Error::Footprint)?;
         match decision {
-            LoserDecision::Subsumed => {
-                self.counters.subsumptions.fetch_add(1, Ordering::Relaxed);
-                let applied = apply(
-                    core.db
-                        .as_ref()
-                        .expect("an established writer holds a store"),
-                    &mut core.chain,
-                    &self.codec,
-                    braid,
-                    slot,
-                    winner_bytes,
-                    0,
-                )
-                .map_err(|err| Error::Fault(Fault::Engine(err)))?;
-                match applied {
-                    Applied::Absorbed { .. } => {
-                        // The winner's effects were exactly ours; its
-                        // slot is accounted by our own earlier apply.
-                        self.clear_pending(core)?;
-                        Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
-                    }
-                    Applied::Advanced { .. } | Applied::Rejected(_) | Applied::Refused(_) => {
-                        // One slot now covers two local advances: the
-                        // store forked, and forks are the disposable
-                        // law's business, never bookkeeping's.
-                        self.re_establish(core)?;
-                        Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
-                    }
-                }
-            }
+            LoserDecision::Subsumed => self.subsume(core, braid, slot, winner_bytes),
             LoserDecision::Disjoint => {
                 self.counters
                     .disjoint_verdicts
@@ -1441,9 +1436,7 @@ where
                         });
                     }
                 }
-                self.counters.re_judgments.fetch_add(1, Ordering::Relaxed);
-                self.re_establish(core)?;
-                Ok(PublishEnd::ReJudge)
+                self.republish_disjoint(core, braid, slot, winner_bytes, ops, fp, live)
             }
             LoserDecision::Conflict(cause) => {
                 if counts_live {
@@ -1460,6 +1453,163 @@ where
                 Ok(PublishEnd::ReJudge)
             }
         }
+    }
+
+    /// The subsumed arm: the winner already performed our net effect,
+    /// so nothing publishes and the engine decides the survival arm at
+    /// the apply — a no-op means the winner's slot is accounted by our
+    /// own earlier apply and the store survives in place; anything else
+    /// means one slot now covers two local advances, the store forked,
+    /// and forks are the disposable law's business, never
+    /// bookkeeping's.
+    fn subsume(
+        self: &Arc<Self>,
+        core: &mut Core<T>,
+        braid: BraidId,
+        slot: u64,
+        winner_bytes: &[u8],
+    ) -> Result<PublishEnd> {
+        self.counters.subsumptions.fetch_add(1, Ordering::Relaxed);
+        let applied = apply(
+            core.db
+                .as_ref()
+                .expect("an established writer holds a store"),
+            &mut core.chain,
+            &self.codec,
+            braid,
+            slot,
+            winner_bytes,
+            0,
+        )
+        .map_err(|err| Error::Fault(Fault::Engine(err)))?;
+        match applied {
+            Applied::Absorbed { .. } => {
+                self.clear_pending(core)?;
+                Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
+            }
+            Applied::Advanced { .. } | Applied::Rejected(_) | Applied::Refused(_) => {
+                self.re_establish(core)?;
+                Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
+            }
+        }
+    }
+
+    /// The disjoint fast path (L7 licenses carrying the verdict and the
+    /// footprint; L8 makes winner-over-ours equal ours-over-winner):
+    /// apply the lost slot's winner in place — under full key
+    /// disjointness that apply is provably state-changing-accepted —
+    /// then replay any further occupied slots under the same pairwise
+    /// tests (losses to history never count toward the live bound), and
+    /// republish the recorded ops under a re-addressed header at the
+    /// tip. The tip attempt races live, so its losses count.
+    #[allow(clippy::too_many_arguments)]
+    fn republish_disjoint(
+        self: &Arc<Self>,
+        core: &mut Core<T>,
+        braid: BraidId,
+        slot: u64,
+        winner_bytes: &[u8],
+        ops: &[Op],
+        fp: &[Entry],
+        live: &mut Live,
+    ) -> Result<PublishEnd> {
+        let mut at = slot;
+        let mut pending_apply: Vec<u8> = winner_bytes.to_vec();
+        loop {
+            let applied = apply(
+                core.db
+                    .as_ref()
+                    .expect("an established writer holds a store"),
+                &mut core.chain,
+                &self.codec,
+                braid,
+                at,
+                &pending_apply,
+                1,
+            )
+            .map_err(|err| Error::Fault(Fault::Engine(err)))?;
+            match applied {
+                Applied::Advanced { .. } => {}
+                Applied::Absorbed { .. } | Applied::Rejected(_) => {
+                    // Not the state-changing accept full disjointness
+                    // promises: the conflict arm's rebuild is always
+                    // sound.
+                    self.re_establish(core)?;
+                    return Ok(PublishEnd::ReJudge);
+                }
+                Applied::Refused(refusal) => {
+                    core.wedged.insert(braid, Corruption::Refused(refusal));
+                    return Err(Error::Wedged { braid });
+                }
+            }
+            let key = log_key(&self.prefix, braid, at + 1);
+            let occupant = retry_read(|| self.store.get(&key))
+                .map_err(|err| Error::Fault(Fault::Store(err)))?;
+            let Some(fetched) = occupant else {
+                break;
+            };
+            let Ok(batch) = self.codec.decode(&fetched.bytes) else {
+                self.re_establish(core)?;
+                return Ok(PublishEnd::ReJudge);
+            };
+            match intersect(
+                self.codec.vocabulary(),
+                fp,
+                ops,
+                &batch.ops,
+                &BTreeMap::new(),
+            )
+            .map_err(Error::Footprint)?
+            {
+                LoserDecision::Subsumed => {
+                    return self.subsume(core, braid, at + 1, &fetched.bytes);
+                }
+                LoserDecision::Disjoint => {
+                    self.counters
+                        .disjoint_verdicts
+                        .fetch_add(1, Ordering::Relaxed);
+                    at += 1;
+                    pending_apply = fetched.bytes;
+                }
+                LoserDecision::Conflict(_) => {
+                    self.re_establish(core)?;
+                    return Ok(PublishEnd::ReJudge);
+                }
+            }
+        }
+        let head = core.chain.position(braid);
+        let next = head.g + 1;
+        let header = BatchHeader {
+            fingerprint: self.fingerprint,
+            braid,
+            braid_gen: next,
+            prev: head.prev,
+            writer: self.writer_id,
+            timestamp: now_ms().max(head.ts),
+        };
+        let bytes = self.codec.encode(&header, ops).map_err(Error::Encode)?;
+        self.step(WriterStep::Encode)?;
+        core.chain.pending = Some(Pending {
+            braid,
+            slot: next,
+            bytes: bytes.clone(),
+        });
+        core.chain
+            .write_atomic(&self.dir)
+            .map_err(|err| Error::Fault(Fault::Io(err)))?;
+        self.step(WriterStep::PendingWrite)?;
+        self.counters.republishes.fetch_add(1, Ordering::Relaxed);
+        self.publish(
+            core,
+            braid,
+            next,
+            header.timestamp,
+            &bytes,
+            ops,
+            fp,
+            live,
+            true,
+        )
     }
 
     /// Maps the terminal conflict onto the loser's own raw determinant

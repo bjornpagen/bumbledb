@@ -361,7 +361,7 @@ fn conflict_loss_rejudges_to_the_serial_rejection() {
 }
 
 #[test]
-fn disjoint_loss_is_computed_and_rejudged_under_the_gate() {
+fn disjoint_loss_republishes_without_re_judgment() {
     let root = temp_dir("disjoint");
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir, 11);
@@ -406,8 +406,8 @@ fn disjoint_loss_is_computed_and_rejudged_under_the_gate() {
     let counters = writer.counters();
     assert_eq!(counters.disjoint_verdicts, 1, "the verdict is counted");
     assert_eq!(
-        counters.re_judgments, 1,
-        "the optimism path is gated: the loss re-judged"
+        counters.re_judgments, 0,
+        "the optimism path: a fully key-disjoint loss never re-judges"
     );
     assert_eq!(counters.republishes, 1);
     let store = FsStore::new(root);
