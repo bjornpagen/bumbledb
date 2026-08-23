@@ -401,6 +401,7 @@ done
 one_owner_ts=(
   LEASE_WIDTH
   LOSS_BOUND
+  WAIT_FOR_POLL_MS
 )
 for name in "${one_owner_ts[@]}"; do
   count=$(grep -rE "const ${name}[[:space:]]*=" ts-log/src --include='*.ts' | wc -l | tr -d ' ')
