@@ -296,9 +296,8 @@ interface Native {
 	 * Records a collection of inserts into the delta; returns the engine
 	 * `{ submitted, changed }` report. `cells` is ONE flat row-major array
 	 * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
-	 * row count the caller states — the one collection crossing
-	 * (proposals/one-representation/20): the JS side alone knows N when the
-	 * roster is fieldless (N nullary facts project to 0 cells, so no
+	 * row count the caller states — the one collection crossing: the JS side
+	 * alone knows N when the roster is fieldless (N nullary facts project to 0 cells, so no
 	 * derivation can recover N), and the bridge verifies
 	 * `cells.length === rows × arity` exactly against its resident sealed
 	 * roster before building the engine's shape-proved collection in a

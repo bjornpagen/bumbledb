@@ -126,8 +126,7 @@ interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaCla
 	 * (VarsOf unifies with itself by identity; the general form's deferred
 	 * conditionals cannot). The mint invariant — a variable's mint slot IS its
 	 * position slot, same owner, same column — discharges the join judgment by
-	 * construction (proposals/one-representation/50-generic-binding.md, "The
-	 * ruling"); an all-var record contributes no params, so the chain starts
+	 * construction; an all-var record contributes no params, so the chain starts
 	 * paramless. {@link ExactVars} maps a foreign key to `never`, so an
 	 * aliased extra-key record falls to the general form's judgment.
 	 */
@@ -155,9 +154,8 @@ interface QueryRuleChain<
 	/**
 	 * The FULL binding: every column of R bound to its own v(R) mint — the
 	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params — P rides through unchanged.
+	 * slot IS its position slot) discharges the join judgment by construction;
+	 * an all-var record contributes no params — P rides through unchanged.
 	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
 	 * extra-key record falls to the general form's judgment.
 	 */
@@ -188,9 +186,8 @@ interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends Schema
 	/**
 	 * The FULL binding: every column of R bound to its own v(R) mint — the
 	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params, so the chain starts paramless.
+	 * slot IS its position slot) discharges the join judgment by construction;
+	 * an all-var record contributes no params, so the chain starts paramless.
 	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
 	 * extra-key record falls to the general form's judgment.
 	 */
@@ -216,9 +213,8 @@ interface InteriorRuleChain<
 	/**
 	 * The FULL binding: every column of R bound to its own v(R) mint — the
 	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params — P rides through unchanged.
+	 * slot IS its position slot) discharges the join judgment by construction;
+	 * an all-var record contributes no params — P rides through unchanged.
 	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
 	 * extra-key record falls to the general form's judgment.
 	 */
@@ -244,9 +240,8 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 	/**
 	 * The FULL binding: every column of R bound to its own v(R) mint — the
 	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params, so the chain starts paramless.
+	 * slot IS its position slot) discharges the join judgment by construction;
+	 * an all-var record contributes no params, so the chain starts paramless.
 	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
 	 * extra-key record falls to the general form's judgment.
 	 */
@@ -272,9 +267,8 @@ interface RecRuleChain<
 	/**
 	 * The FULL binding: every column of R bound to its own v(R) mint — the
 	 * identity atom, generic R included. The mint invariant (a variable's mint
-	 * slot IS its position slot) discharges the join judgment by construction
-	 * (proposals/one-representation/50-generic-binding.md, "The ruling"); an
-	 * all-var record contributes no params — P rides through unchanged.
+	 * slot IS its position slot) discharges the join judgment by construction;
+	 * an all-var record contributes no params — P rides through unchanged.
 	 * {@link ExactVars} maps a foreign key to `never`, so an aliased
 	 * extra-key record falls to the general form's judgment.
 	 */

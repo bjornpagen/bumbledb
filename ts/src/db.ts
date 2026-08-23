@@ -80,8 +80,8 @@ interface FlatCollection {
 /**
  * The flat projector: every fact's cells land in ONE row-major
  * `FactValue` array (length rows×arity) — no JS array per fact exists
- * anywhere between the caller's objects and the native crossing
- * (proposals/one-representation/20, V1) — and the row count is counted
+ * anywhere between the caller's objects and the native crossing — and
+ * the row count is counted
  * while projecting (the {@link FlatCollection} law: the stated count is
  * what the bridge verifies against `rows × arity`, exactly, for every
  * arity). The per-cell judgment is `cellOf` — the one cell judge `rowOf`

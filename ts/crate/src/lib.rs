@@ -38,8 +38,8 @@ struct Sealed {
     descriptor: SchemaDescriptor,
     statements: Vec<StatementDescriptor>,
     /// The resident sealed field rosters, index = `RelationId` ordinal —
-    /// D4 (`proposals/one-representation/70`): computed once here,
-    /// borrowed by every fact-lane call; the bridge re-derives nothing.
+    /// computed once here, borrowed by every fact-lane call; the bridge
+    /// re-derives nothing.
     rosters: Vec<marshal::SealedRoster>,
 }
 
