@@ -1,24 +1,23 @@
 /**
  * The writer (60): a replica plus the right to create log objects. One
- * commit path; the loser algebra (15) between it and the store. There
- * is no Contended arm — contention is absorbed: a subsumed loss reports
- * the winner's generation, a disjoint loss republishes silently, a
- * conflicting loss re-judges the recorded ops (never the host closure),
- * and bounded live-tip losses surface as ErrContention carrying the hot
- * key's raw determinants or the racing tip.
+ * commit path and one loss path: a lost slot's byte-equal occupant is
+ * an ambiguous PUT absorbed; anything else discards the local
+ * directory, re-opens through the replica to the current tip, and
+ * re-judges the recorded ops once — the verdict IS a serial execution,
+ * performed. Each loop iteration races once at the then-tip, so a
+ * historical loss is structurally uncountable, and bounded live-tip
+ * losses surface as ErrContention carrying the terminal re-judgment's
+ * own violation or the racing tip.
  */
 
 import * as crypto from "node:crypto"
 import type { Fact, FreshKeys, MemberRelation, SchemaRelations, Violation } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { bytesEqual, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import type { BatchOp } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
 import type { RelationInfo } from "#descriptor.ts"
-import { ErrReplayDiverged, ErrSpanningCommit, throwContention } from "#errors.ts"
-import type { BatchOp } from "#footprint.ts"
-import { computeFootprint } from "#footprint.ts"
-import type { SharedKey } from "#intersect.ts"
-import { intersectionOf } from "#intersect.ts"
+import { ErrSpanningCommit, throwContention } from "#errors.ts"
 import { idsKey, logKey } from "#keys.ts"
 import type { Core, Replica } from "#replica.ts"
 import {
@@ -251,7 +250,7 @@ function recorderOf<Rels extends SchemaRelations>(
 
 /** Runs the recording body, refilling the id-lease pool on a drained
  *  draw and re-running — recording is pure, so a re-run before any
- *  judgment re-invokes nothing the loser algebra promised not to. */
+ *  judgment invokes nothing twice that the store could observe. */
 async function recordWithLeases<Rels extends SchemaRelations, R>(
 	core: Core<Rels>,
 	state: WriterState,
@@ -295,14 +294,47 @@ function braidsTouched<Rels extends SchemaRelations>(
 	return partitioned
 }
 
-type LastLoss = { readonly kind: "slot-race" } | { readonly kind: "conflict"; readonly shared: readonly SharedKey[] }
+/** The terminal contention scream: the re-judgment's own rejection names
+ *  the hot statement and carries the offending facts' raw values; an
+ *  accepted-but-outraced terminal loss carries the racing tip. */
+function screamContention<Rels extends SchemaRelations>(
+	braid: string,
+	rejudged:
+		| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
+		| { readonly tag: "outraced"; readonly tip: bigint }
+): never {
+	if (rejudged.tag === "rejected") {
+		const violation = rejudged.violations[0]
+		throwContention(
+			{
+				braid,
+				cause: {
+					kind: "hot-key",
+					statement: violation === undefined ? "" : violation.canonical,
+					determinants: (violation?.facts ?? []).map(function rawOf(offending) {
+						return offending.fact
+					})
+				}
+			},
+			`braid ${braid}: ${LOSS_BOUND} consecutive losses at the live tip and the terminal re-judgment rejected`
+		)
+	}
+	throwContention(
+		{ braid, cause: { kind: "slot-race", tip: rejudged.tip } },
+		`braid ${braid}: ${LOSS_BOUND} consecutive losses at the live tip outraced accepted re-judgments`
+	)
+}
 
 /**
- * Publishes the applied pending batch: slot CAS, then the loser algebra
- * on Exists — subsume (drop), republish (fully key-disjoint), or
- * re-judge (anything else, the quantitative W arm included: with no
- * base measure at hand the arithmetic shortcut is skipped and the
- * always-sound re-judgment runs).
+ * Publishes the applied pending batch: slot CAS, then the one loss path
+ * on Exists. A byte-equal occupant is our own ambiguous PUT, absorbed.
+ * Anything else carries the pending through a directory discard —
+ * re-persisted into the fresh sidecar before any re-judgment, so a
+ * crash mid-loss resolves it at the next open — re-opens to the
+ * current tip, and re-judges the recorded ops in one db.write: publish
+ * on accepted-and-state-changing, Accepted at the current generation
+ * on a net no-op (the publish law), or the serial Rejected. Each
+ * iteration races once at the then-tip; the bound counts iterations.
  */
 async function publishPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -310,39 +342,12 @@ async function publishPending<Rels extends SchemaRelations>(
 	ops: readonly BatchOp[]
 ): Promise<Commit<Rels, undefined>> {
 	let losses = 0
-	let lastLoss: LastLoss = { kind: "slot-race" }
 	for (;;) {
 		const pending = core.pending
 		if (pending === null) {
 			throw errors.new("publish reached with no pending batch")
 		}
 		const braid = pending.braid
-		if (losses >= LOSS_BOUND) {
-			if (lastLoss.kind === "conflict") {
-				const shared = lastLoss.shared[0]
-				const provenance =
-					shared === undefined
-						? undefined
-						: computeFootprint(core.descriptor, ops).provenance.get(
-								`${shared.class}:${shared.statement ?? ""}:${shared.keyHex}`
-							)
-				throwContention(
-					{
-						braid,
-						cause: {
-							kind: "hot-key",
-							statement: shared?.statement ?? provenance?.statement ?? -1,
-							determinants: provenance?.values ?? []
-						}
-					},
-					`braid ${braid}: ${LOSS_BOUND} consecutive conflicting losses at the live tip`
-				)
-			}
-			throwContention(
-				{ braid, cause: { kind: "slot-race", tip: chainEntry(core, braid).g } },
-				`braid ${braid}: ${LOSS_BOUND} consecutive disjoint losses at the live tip`
-			)
-		}
 		const created = await core.store.putCreate(logKey(core.prefix, braid, pending.gen), pending.bytes)
 		let winnerBytes: Uint8Array | null = null
 		if (created.tag === "exists") {
@@ -361,49 +366,20 @@ async function publishPending<Rels extends SchemaRelations>(
 			return { tag: "accepted", value: undefined, braid, generation: pending.gen, durability: "published" }
 		}
 
-		const winner = decodeBatch(core.descriptor, winnerBytes)
-		const meet = intersectionOf(core.descriptor, ops, winner.ops)
 		losses += 1
-
-		if (meet.tag === "subsumed") {
-			const before = generationOf(core)
-			const applied = applyOps(core, winner.ops)
-			if (applied.tag !== "accepted") {
-				throw errors.wrap(ErrReplayDiverged, `braid ${braid} slot ${pending.gen}: a subsuming winner rejected locally`)
-			}
-			core.chain.set(braid, { g: pending.gen, prev: blake3Hex(winnerBytes), ts: winner.header.timestamp })
-			const identical = applied.value.generation === before
-			await clearPending(core)
-			if (!identical) {
-				await discardAndReopen(core)
-			}
-			return { tag: "accepted", value: undefined, braid, generation: pending.gen, durability: "published" }
-		}
-
-		if (meet.tag === "disjoint") {
-			lastLoss = { kind: "slot-race" }
-			const before = generationOf(core)
-			const applied = applyOps(core, winner.ops)
-			if (applied.tag !== "accepted" || applied.value.generation === before) {
-				throw errors.wrap(
-					ErrReplayDiverged,
-					`braid ${braid} slot ${pending.gen}: a fully disjoint winner failed its provably state-changing apply`
-				)
-			}
-			core.chain.set(braid, { g: pending.gen, prev: blake3Hex(winnerBytes), ts: winner.header.timestamp })
-			await readdressPending(core, ops, state.writerId)
-			continue
-		}
-
-		lastLoss = { kind: "conflict", shared: meet.tag === "conflict" ? meet.shared : [] }
-		await clearPending(core)
+		core.pendingApplied = false
 		await discardAndReopen(core)
 		const before = generationOf(core)
 		const rejudged = applyOps(core, ops)
 		if (rejudged.tag === "rejected") {
+			await clearPending(core)
+			if (losses >= LOSS_BOUND) {
+				screamContention(braid, { tag: "rejected", violations: rejudged.violations })
+			}
 			return { tag: "rejected", violations: rejudged.violations }
 		}
 		if (rejudged.value.generation === before) {
+			await clearPending(core)
 			return {
 				tag: "accepted",
 				value: undefined,
@@ -413,6 +389,9 @@ async function publishPending<Rels extends SchemaRelations>(
 			}
 		}
 		await readdressPending(core, ops, state.writerId)
+		if (losses >= LOSS_BOUND) {
+			screamContention(braid, { tag: "outraced", tip: chainEntry(core, braid).g })
+		}
 	}
 }
 

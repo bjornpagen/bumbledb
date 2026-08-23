@@ -3,12 +3,10 @@ import { describe, test } from "node:test"
 import { bool, bytes as bytesField, i64, interval, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
-import type { BatchHeader } from "#codec.ts"
-import { decodeBatch, encodeBatch, footprintSectionBytes, footprintSectionsEqual, verifyChain } from "#codec.ts"
+import type { BatchHeader, BatchOp } from "#codec.ts"
+import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
-import type { BatchOp } from "#footprint.ts"
-import { footprintOf } from "#footprint.ts"
 import { Ledger } from "#test/fixtures.ts"
 
 const ZERO = "0".repeat(64)
@@ -61,12 +59,11 @@ function refusalKindOf(run: () => unknown): string {
 }
 
 describe("the command codec", function suite() {
-	test("decode(encode) roundtrips header, ops, and footprint; re-encode is byte-identical", function roundtrip() {
+	test("decode(encode) roundtrips header and ops; re-encode is byte-identical", function roundtrip() {
 		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
 		const decoded = decodeBatch(Ledger, bytes)
 		assert.deepEqual(decoded.header, headerOf())
 		assert.deepEqual(decoded.ops, opsOf())
-		assert.ok(footprintSectionsEqual(decoded.footprint, footprintOf(Ledger, opsOf())))
 		const again = encodeBatch(Ledger, decoded.header, decoded.ops)
 		assert.equal(toHex(again), toHex(bytes))
 	})
@@ -177,23 +174,6 @@ describe("the command codec", function suite() {
 		assert.equal(cause.relation, "Holder")
 		assert.equal(cause.row, 0)
 		assert.equal(cause.field, "id")
-	})
-
-	test("an unsorted footprint section refuses", function unsorted() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		const decoded = decodeBatch(Ledger, bytes)
-		const section = footprintSectionBytes(decoded.footprint)
-		const offset = bytes.length - section.length
-		const first = bytes.slice(offset + 4, offset + 4 + 34)
-		const second = bytes.slice(offset + 4 + 34, offset + 4 + 68)
-		bytes.set(second, offset + 4)
-		bytes.set(first, offset + 4 + 34)
-		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
-			}),
-			"UnsortedFootprint"
-		)
 	})
 
 	test("trailing bytes refuse", function trailing() {

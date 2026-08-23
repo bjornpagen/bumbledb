@@ -16,13 +16,11 @@ import * as errors from "@superbuilders/errors"
 import { bytesEqual, toHex } from "#bytes.ts"
 import type { ChainEntry, PendingBatch } from "#chain.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
-import { decodeBatch, encodeBatch, footprintSectionsEqual, verifyChain } from "#codec.ts"
+import type { BatchOp } from "#codec.ts"
+import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { LogDescriptor, RelationInfo } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
-import { ErrFootprintMismatch, ErrGapDetected, ErrReplayDiverged, refuse } from "#errors.ts"
-import type { BatchOp } from "#footprint.ts"
-import { computeFootprint } from "#footprint.ts"
-import { intersectionOf } from "#intersect.ts"
+import { ErrGapDetected, ErrReplayDiverged, refuse } from "#errors.ts"
 import { checkpointJsonKey, checkpointMdbKey, logKey, manifestKey } from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
 import { parseCheckpoint, parseManifest, renderManifest } from "#manifest.ts"
@@ -59,7 +57,6 @@ interface Core<Rels extends SchemaRelations> {
 	pending: PendingBatch | null
 	pendingOps: readonly BatchOp[] | null
 	pendingApplied: boolean
-	pendingConflicted: boolean
 	manifestEtag: string | null
 	checkpoint: CheckpointFacts | null
 	checkpointDigest: string | null
@@ -158,7 +155,6 @@ async function clearPending<Rels extends SchemaRelations>(core: Core<Rels>): Pro
 	core.pending = null
 	core.pendingOps = null
 	core.pendingApplied = false
-	core.pendingConflicted = false
 	await persistSidecar(core)
 }
 
@@ -219,9 +215,9 @@ type SlotApply = { readonly tag: "applied"; readonly generation: bigint } | { re
 
 /**
  * The two-step apply discipline: `db.write` the batch, then advance the
- * sidecar. Chain, footprint, and publish-law refusals live here; a
- * rejected replay is phase-scoped (50): discard before the store has
- * proven itself whole, `ErrReplayDiverged` after.
+ * sidecar. Chain and publish-law refusals live here; a rejected replay
+ * is phase-scoped (50): discard before the store has proven itself
+ * whole, `ErrReplayDiverged` after.
  */
 async function applySlot<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -233,10 +229,6 @@ async function applySlot<Rels extends SchemaRelations>(
 	const decoded = decodeBatch(core.descriptor, bytes)
 	const entry = chainEntry(core, braid)
 	verifyChain(decoded.header, braid, slot, { g: entry.g, prev: entry.prev, ts: entry.ts })
-	const recomputed = computeFootprint(core.descriptor, decoded.ops).entries
-	if (!footprintSectionsEqual(recomputed, decoded.footprint)) {
-		throw errors.wrap(ErrFootprintMismatch, `braid ${braid} slot ${slot} writer ${decoded.header.writer}`)
-	}
 	const outcome = applyOps(core, decoded.ops)
 	if (outcome.tag === "rejected") {
 		if (phase === "open") {
@@ -271,42 +263,6 @@ function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: string, n
 	return next <= floor.g
 }
 
-/**
- * Runs the loser tests against an intermediate winner while a recovered
- * pending is applied (60's recovery, third arm): byte-equal means our
- * slot was already published; a subsuming winner absorbs the pending; a
- * disjoint winner leaves it to re-address at the tip; anything else
- * marks it for the conflict re-judgment after catch-up.
- */
-async function meetWinnerWithPending<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	braid: string,
-	bytes: Uint8Array
-): Promise<void> {
-	if (core.pending === null || core.pendingOps === null || !core.pendingApplied || braid !== core.pending.braid) {
-		return
-	}
-	if (bytesEqual(bytes, core.pending.bytes)) {
-		core.pending = null
-		core.pendingOps = null
-		core.pendingApplied = false
-		await persistSidecar(core)
-		return
-	}
-	const winner = decodeBatch(core.descriptor, bytes)
-	const outcome = intersectionOf(core.descriptor, core.pendingOps, winner.ops)
-	if (outcome.tag === "subsumed") {
-		core.pending = null
-		core.pendingOps = null
-		core.pendingApplied = false
-		await persistSidecar(core)
-		return
-	}
-	if (outcome.tag !== "disjoint") {
-		core.pendingConflicted = true
-	}
-}
-
 async function catchUpBraid<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	braid: string,
@@ -321,7 +277,20 @@ async function catchUpBraid<Rels extends SchemaRelations>(
 			}
 			return "tip"
 		}
-		await meetWinnerWithPending(core, braid, fetched.bytes)
+		if (core.pendingApplied && core.pending !== null && braid === core.pending.braid && next === core.pending.gen) {
+			// An applied pending contests exactly its own slot: byte-equal
+			// means our slot was already published and the pending ends
+			// here; any other occupant is a lost race, and the store —
+			// carrying the pending's effects on a stale base — is
+			// discarded so the one loss path re-judges at the tip (L10).
+			if (!bytesEqual(fetched.bytes, core.pending.bytes)) {
+				return "discard"
+			}
+			core.pending = null
+			core.pendingOps = null
+			core.pendingApplied = false
+			await persistSidecar(core)
+		}
 		const applied = await applySlot(core, braid, next, fetched.bytes, phase)
 		if (applied.tag === "discard") {
 			return "discard"
@@ -537,9 +506,8 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
  * Pending resurrection through a cold re-pull: the store directory was
  * unopenable (or discarded), so the sidecar's pending is resolved
  * against a freshly caught-up store — a byte-equal published slot
- * absorbs it, and everything else takes the always-sound re-judgment
- * at the tip (15's conflict arm; L7/L9 make it the identical verdict
- * when nobody took the slot).
+ * absorbs it (L10's idempotent replay), and everything else takes the
+ * one loss path's re-judgment at the tip.
  */
 async function resolveColdPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -581,7 +549,6 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		pending: null,
 		pendingOps: null,
 		pendingApplied: false,
-		pendingConflicted: false,
 		manifestEtag: null,
 		checkpoint: null,
 		checkpointDigest: null,
@@ -631,30 +598,29 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	if (coldPending !== null) {
 		await resolveColdPending(core, coldPending)
 	}
-
-	if (core.pendingApplied && core.pending !== null && core.pendingOps !== null) {
-		const writerId = decodeBatch(core.descriptor, core.pending.bytes).header.writer
-		if (core.pendingConflicted) {
-			const ops = core.pendingOps
-			await clearPending(core)
-			await discardAndReopen(core)
-			const before = generationOf(core)
-			const rejudged = applyOps(core, ops)
-			if (rejudged.tag === "accepted" && rejudged.value.generation > before) {
-				await readdressPending(core, ops, writerId)
-			}
-		} else {
-			await readdressPending(core, core.pendingOps, writerId)
-		}
-	}
 	return core
+}
+
+/**
+ * The steady-state discard route: a catch-up that met a contested
+ * pending slot (or a rejected replay at open phase) surrenders the
+ * directory; the sidecar's pending rides through as a cold pending and
+ * takes the one loss path's re-judgment at the fresh tip.
+ */
+async function repairDiscard<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
+	const coldPending = core.pending
+	await clearPending(core)
+	await discardAndReopen(core)
+	if (coldPending !== null) {
+		await resolveColdPending(core, coldPending)
+	}
 }
 
 /**
  * Re-addresses an applied-but-unpublished batch at the braid's current
  * tip: fresh slot, `prev` citing the new predecessor, timestamp
- * re-clamped — ops and footprint untouched (L7 licenses carrying the
- * verdict). Publication itself retries on the next commit (60).
+ * re-clamped — the ops are exactly the recorded ops the re-judgment
+ * just accepted. Publication itself retries on the next commit (60).
  */
 async function readdressPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -689,7 +655,6 @@ async function readdressPending<Rels extends SchemaRelations>(
 	core.pending = { braid, gen: entry.g + 1n, bytes }
 	core.pendingOps = ops
 	core.pendingApplied = true
-	core.pendingConflicted = false
 	await persistSidecar(core)
 }
 
@@ -721,10 +686,14 @@ async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid
 	}
 	if (braid !== undefined) {
 		chainEntry(core, braid)
-		await catchUpBraid(core, braid, "steady")
+		if ((await catchUpBraid(core, braid, "steady")) === "discard") {
+			await repairDiscard(core)
+		}
 		return
 	}
-	await catchUpAll(core, "steady")
+	if ((await catchUpAll(core, "steady")) === "discard") {
+		await repairDiscard(core)
+	}
 }
 
 async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Replica<Rels>> {
@@ -758,7 +727,9 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 				}
 				await withGate(core, async function waitPass() {
 					for (const braid of vector.keys()) {
-						await catchUpBraid(core, braid, "steady")
+						if ((await catchUpBraid(core, braid, "steady")) === "discard") {
+							await repairDiscard(core)
+						}
 					}
 				})
 				if (dominates(vectorOf(core), vector)) {

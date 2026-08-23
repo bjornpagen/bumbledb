@@ -6,13 +6,11 @@ import type { LiteralSpec, SchemaSpec, StatementSpec, ValueSpec, ValueTypeSpec }
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { fromHex, toHex } from "#bytes.ts"
-import type { BatchHeader } from "#codec.ts"
+import type { BatchHeader, BatchOp } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { LogDescriptor } from "#descriptor.ts"
 import { descriptorOf, withFingerprint } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
-import type { BatchOp, FootprintEntry } from "#footprint.ts"
-import { footprintOf } from "#footprint.ts"
 import type { LogValue } from "#value.ts"
 
 /**
@@ -266,7 +264,6 @@ interface BatchFixture {
 		readonly relation: number
 		readonly rows: readonly (readonly CorpusValue[])[]
 	}>
-	readonly footprint?: ReadonlyArray<Record<string, unknown>>
 }
 
 interface ChainFixture {
@@ -280,32 +277,31 @@ interface ChainFixture {
 	readonly writer?: string
 }
 
-/** The sidecar rendering of a footprint entry, shared with the Rust suite. */
-function renderEntry(entry: FootprintEntry): Record<string, unknown> {
-	switch (entry.class) {
-		case "F":
-			return { class: "F", fid: toHex(entry.key), mode: entry.mode }
-		case "K":
-			return { class: "K", statement: entry.statement, key: toHex(entry.key) }
-		case "C":
-			return { class: "C", statement: entry.statement, key: toHex(entry.key), mode: entry.mode }
-		case "W":
-			if (entry.mode === "child") {
-				return {
-					class: "W",
-					statement: entry.statement,
-					key: toHex(entry.key),
-					mode: "childDelta",
-					delta: entry.delta.toString()
-				}
-			}
-			return { class: "W", statement: entry.statement, key: toHex(entry.key), mode: entry.mode }
+/** The corpus regenerates as header+ops when the Rust lane lands its
+ *  cut; a fixture still carrying a footprint sidecar is the prior wire
+ *  generation and cannot decode under this grammar. */
+function corpusIsHeaderOps(): boolean {
+	for (const file of fs.readdirSync(path.join(corpusRoot, "batch"))) {
+		if (!file.endsWith(".json")) {
+			continue
+		}
+		const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as Record<string, unknown>
+		if ("footprint" in fixture) {
+			return false
+		}
 	}
+	return true
 }
 
 if (!present) {
 	describe("parity goldens", function suite() {
 		test("skipped: crates/bumbledb-log/conformance/corpus is not in the tree", { skip: true }, function absent() {})
+	})
+} else if (!corpusIsHeaderOps()) {
+	describe("parity goldens", function suite() {
+		test("skipped: the corpus is the pre-cut wire generation; the Rust lane regenerates it as header+ops", {
+			skip: true
+		}, function stale() {})
 	})
 } else {
 	const schemasRaw = JSON.parse(fs.readFileSync(path.join(corpusRoot, "schemas.json"), "utf8")) as {
@@ -402,13 +398,6 @@ if (!present) {
 					}
 				})
 				assert.deepEqual(decoded.ops, ops, `${stem}: ops`)
-				assert.ok(fixture.footprint !== undefined, `${stem}: ok sidecars carry the footprint golden`)
-				assert.deepEqual(decoded.footprint.map(renderEntry), fixture.footprint, `${stem}: carried footprint`)
-				assert.deepEqual(
-					footprintOf(descriptor, decoded.ops).map(renderEntry),
-					fixture.footprint,
-					`${stem}: footprintOf recomputation`
-				)
 				const encoded = encodeBatch(descriptor, header, ops)
 				assert.equal(toHex(encoded), toHex(bytes), `${stem}: byte-exact re-encode`)
 			})

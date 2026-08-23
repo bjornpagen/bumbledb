@@ -29,11 +29,6 @@ const ErrReplayDiverged = errors.new(
 	"bumbledb-log replayDiverged: a published batch rejected during steady-state replay"
 )
 
-/** Recomputed footprint differs from the published section. */
-const ErrFootprintMismatch = errors.new(
-	"bumbledb-log footprintMismatch: the published footprint section is not the recomputation of the ops"
-)
-
 /** The chain discipline, one identity with three proved causes. */
 const ErrChainMismatch = errors.new("bumbledb-log chainMismatch: the batch violates the braid's chain discipline")
 
@@ -65,10 +60,6 @@ type RefusalCause =
 	| { readonly kind: "InvalidUtf8"; readonly relation: string; readonly row: number; readonly field: string }
 	| { readonly kind: "EmptyInterval"; readonly relation: string; readonly row: number; readonly field: string }
 	| { readonly kind: "IntervalOverflow"; readonly relation: string; readonly row: number; readonly field: string }
-	| { readonly kind: "UnknownFootprintClass"; readonly index: number }
-	| { readonly kind: "UnknownFootprintMode"; readonly index: number }
-	| { readonly kind: "UnsortedFootprint"; readonly index: number }
-	| { readonly kind: "DuplicateFootprintEntry"; readonly index: number }
 	| { readonly kind: "TrailingBytes"; readonly bytes: number }
 	| { readonly kind: "ManifestShape" }
 	| { readonly kind: "ManifestVersion"; readonly version: number }
@@ -87,7 +78,11 @@ interface ChainMismatchData {
 }
 
 type ContentionCause =
-	| { readonly kind: "hot-key"; readonly statement: number; readonly determinants: readonly unknown[] }
+	| {
+			readonly kind: "hot-key"
+			readonly statement: string
+			readonly determinants: ReadonlyArray<Readonly<Record<string, unknown>>>
+	  }
 	| { readonly kind: "slot-race"; readonly tip: bigint }
 
 interface ContentionData {
@@ -154,7 +149,6 @@ export {
 	contentionOf,
 	ErrChainMismatch,
 	ErrContention,
-	ErrFootprintMismatch,
 	ErrGapDetected,
 	ErrRefused,
 	ErrReplayDiverged,
