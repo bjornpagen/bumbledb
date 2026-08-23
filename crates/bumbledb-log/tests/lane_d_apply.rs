@@ -1,11 +1,11 @@
 //! Apply: the refusal battery, the three proved chain causes, the
-//! footprint tripwire, the state-change instrument, and the idempotent
-//! crash-window absorption.
+//! state-change instrument, and the idempotent crash-window
+//! absorption.
 
 mod lane_d_support;
 
 use bumbledb::{Db, Value};
-use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, FootprintCause, apply};
+use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::{BatchHeader, Op, OpKind};
 use bumbledb_log::sidecar::{Chain, ChainEntry};
 use lane_d_support::{
@@ -181,35 +181,6 @@ fn decode_refusals_surface_as_the_battery() {
             assert_eq!(error.identity(), "Version");
         }
         other => panic!("expected a decode refusal, got {other:?}"),
-    }
-}
-
-#[test]
-fn footprint_mismatch_catches_a_spliced_section() {
-    let codec = codec();
-    let braid = kitchen_braid(&codec);
-    let db = fresh_db("apply_footprint");
-    let mut chain = Chain::genesis(codec.braids());
-
-    let honest = codec
-        .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(1)])
-        .expect("encode");
-    let other = codec
-        .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(2)])
-        .expect("encode");
-    // Both batches carry a single F entry, so the footprint sections
-    // have equal length; splicing one onto the other's ops yields a
-    // decode-clean batch whose carried section cannot recompute.
-    let tail = 4 + 34;
-    let mut spliced = honest[..honest.len() - tail].to_vec();
-    spliced.extend_from_slice(&other[other.len() - tail..]);
-    match apply(&db, &mut chain, &codec, braid, 1, &spliced, 0).expect("apply") {
-        Applied::Refused(ApplyRefusal::FootprintMismatch {
-            cause: FootprintCause::Diverged,
-            writer,
-            ..
-        }) => assert_eq!(writer, 42),
-        other => panic!("expected the footprint tripwire, got {other:?}"),
     }
 }
 

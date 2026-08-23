@@ -3,7 +3,7 @@
 //! Every case is reproduced from this table and compared against the
 //! files on disk; `BUMBLEDB_LOG_BLESS=1` rewrites the corpus after a
 //! deliberate format change. Ok cases additionally pin the
-//! decode-encode fixpoint and the footprint recompute-equality law.
+//! decode-encode fixpoint.
 
 #[path = "lane_a_support/mod.rs"]
 mod support;
@@ -14,7 +14,6 @@ use bumbledb::Interval;
 use bumbledb::Value;
 use bumbledb::schema::SchemaDescriptor;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::footprint::footprint;
 use serde_json::Value as Json;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +30,7 @@ struct Case {
 }
 
 fn codec_for(schemas: &BTreeMap<String, SchemaDescriptor>, name: &str) -> Codec {
-    Codec::new(&schemas[name], support::corpus_fingerprint(name)).expect("fixture vocabulary")
+    Codec::new(&schemas[name], support::corpus_fingerprint(name))
 }
 
 fn header(codec: &Codec, braid_raw: u32, braid_gen: u64, prev: [u8; 32]) -> BatchHeader {
@@ -214,39 +213,6 @@ fn ok_cases(schemas: &BTreeMap<String, SchemaDescriptor>) -> Vec<Case> {
         intent: Intent::Ok,
     });
 
-    let row_x: Box<[Value]> = Box::from([u(1), u(1), u(4), u(5), iv(0, 5)]);
-    let row_y: Box<[Value]> = Box::from([u(2), u(1), u(4), u(3), iv(0, 5)]);
-    let merge_ops = [
-        Op {
-            kind: OpKind::Insert,
-            relation: rel(1),
-            rows: vec![row_x.clone()],
-        },
-        Op {
-            kind: OpKind::Delete,
-            relation: rel(1),
-            rows: vec![row_x],
-        },
-        Op {
-            kind: OpKind::Insert,
-            relation: rel(1),
-            rows: vec![row_y.clone()],
-        },
-        Op {
-            kind: OpKind::Insert,
-            relation: rel(1),
-            rows: vec![row_y],
-        },
-    ];
-    cases.push(Case {
-        name: "ok_w_merge_net",
-        schema: "booking",
-        bytes: booking
-            .encode(&header(&booking, 0, 3, [0x33; 32]), &merge_ops)
-            .expect("encode"),
-        intent: Intent::Ok,
-    });
-
     let closed_ops = [
         Op {
             kind: OpKind::Insert,
@@ -322,25 +288,6 @@ mod raw {
         header.extend_from_slice(&relation.to_le_bytes());
         header.extend_from_slice(&1u32.to_le_bytes());
         header.extend_from_slice(row);
-    }
-
-    pub fn footprint_only(header: &mut Vec<u8>, entries: &[Vec<u8>]) {
-        header.extend_from_slice(&0u32.to_le_bytes());
-        header.extend_from_slice(
-            &u32::try_from(entries.len())
-                .expect("entry count")
-                .to_le_bytes(),
-        );
-        for entry in entries {
-            header.extend_from_slice(entry);
-        }
-    }
-
-    pub fn key_entry(statement: u16, key: [u8; 32]) -> Vec<u8> {
-        let mut out = vec![2u8];
-        out.extend_from_slice(&statement.to_le_bytes());
-        out.extend_from_slice(&key);
-        out
     }
 
     pub fn bool_field(byte: u8) -> Vec<u8> {
@@ -565,62 +512,6 @@ fn refusal_cases(schemas: &BTreeMap<String, SchemaDescriptor>) -> Vec<Case> {
         );
     }
 
-    {
-        let mut bytes = raw::header(&kitchen_fp, 0);
-        raw::footprint_only(
-            &mut bytes,
-            &[raw::key_entry(0, [0xff; 32]), raw::key_entry(0, [0x00; 32])],
-        );
-        push(
-            "r_unsorted_footprint",
-            "kitchen",
-            bytes,
-            "UnsortedFootprint",
-        );
-    }
-    {
-        let mut bytes = raw::header(&kitchen_fp, 0);
-        raw::footprint_only(
-            &mut bytes,
-            &[raw::key_entry(0, [0x07; 32]), raw::key_entry(0, [0x07; 32])],
-        );
-        push(
-            "r_duplicate_entry",
-            "kitchen",
-            bytes,
-            "DuplicateFootprintEntry",
-        );
-    }
-    {
-        let mut bytes = raw::header(&kitchen_fp, 0);
-        raw::footprint_only(&mut bytes, &[raw::key_entry(0, [0x07; 32])]);
-        bytes.extend_from_slice(&5i64.to_le_bytes());
-        push("r_delta_on_k_entry", "kitchen", bytes, "TrailingBytes");
-    }
-    {
-        let mut bytes = raw::header(&kitchen_fp, 0);
-        raw::footprint_only(&mut bytes, &[vec![9u8]]);
-        push(
-            "r_unknown_fp_class",
-            "kitchen",
-            bytes,
-            "UnknownFootprintClass",
-        );
-    }
-    {
-        let mut bytes = raw::header(&kitchen_fp, 0);
-        let mut entry = vec![1u8];
-        entry.extend_from_slice(&[0x07; 32]);
-        entry.push(7);
-        raw::footprint_only(&mut bytes, &[entry]);
-        push(
-            "r_unknown_fp_mode",
-            "kitchen",
-            bytes,
-            "UnknownFootprintMode",
-        );
-    }
-
     cases
 }
 
@@ -629,13 +520,6 @@ fn sidecar_for(case: &Case, codec: &Codec) -> Json {
     match codec.decode(&case.bytes) {
         Ok(batch) => {
             assert_eq!(case.intent, Intent::Ok, "case {} decoded", case.name);
-            let recomputed =
-                footprint(codec.vocabulary(), &batch.ops).expect("footprint recompute");
-            assert_eq!(
-                recomputed, batch.footprint,
-                "case {}: published section equals recompute",
-                case.name
-            );
             let reencoded = codec
                 .encode(&batch.header, &batch.ops)
                 .expect("re-encode decoded batch");

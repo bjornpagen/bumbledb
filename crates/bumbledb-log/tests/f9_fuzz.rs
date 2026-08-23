@@ -5,32 +5,24 @@
 //! refusal landing at the exact end of the accepted prefix (the
 //! offset-free sequential proof: the parser knows where a batch ends
 //! from the bytes alone, no offset table to poison). The same harness
-//! shape runs over the manifest and checkpoint parsers, where an
-//! accepted mutant must be a canonical fixpoint (parse-then-render
-//! reproduces the exact input bytes), and over the footprint
-//! recomputation comparator, where a mutated footprint section must
-//! land `FootprintMismatch` or a typed decode refusal — never
-//! acceptance, never a state change.
+//! shape runs over the manifest, checkpoint, and chain-sidecar
+//! parsers, where an accepted mutant must be a canonical fixpoint
+//! (parse-then-render reproduces the exact input bytes).
 
 #[path = "lane_a_support/mod.rs"]
 mod support;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use bumbledb::schema::fingerprint::fingerprint as schema_fingerprint;
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-    Side, StatementDescriptor, StatementId, ValidateDescriptor as _, ValueType, Weight,
+    Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
-use bumbledb::{Db, Value};
-use bumbledb_log::apply::{Applied, ApplyRefusal, FootprintCause, apply};
 use bumbledb_log::braids::BraidId;
-use bumbledb_log::codec::{BatchHeader, Codec, DecodeError, MAGIC, Op, OpKind, VERSION};
-use bumbledb_log::footprint::{CapacityMode, ContainmentMode, Entry, FootprintError};
+use bumbledb_log::codec::{Codec, DecodeError};
 use bumbledb_log::manifest::{Checkpoint, CheckpointError, Head, Manifest, ManifestError, hex32};
-use bumbledb_log::sidecar::Chain;
+use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarError};
 
 struct XorShift(u64);
 
@@ -69,7 +61,7 @@ fn goldens() -> Vec<(String, Codec, Vec<u8>, bool)> {
         let fingerprint: [u8; 32] = support::unhex(sidecar["fingerprint"].as_str().expect("hex"))
             .try_into()
             .expect("32 bytes");
-        let codec = Codec::new(&schemas[&schema], fingerprint).expect("fixture vocabulary");
+        let codec = Codec::new(&schemas[&schema], fingerprint);
         let bytes = std::fs::read(path.with_extension("bin")).expect("bin");
         let ok = sidecar["expect"].as_str() == Some("ok");
         out.push((schema, codec, bytes, ok));
@@ -199,15 +191,6 @@ fn hostile_counts_cannot_force_allocation_or_overflow() {
                 .expect_err("an unbacked row count refuses");
             assert_typed_in_bounds(&name, &refusal, rows_bomb.len());
         }
-
-        let section = section_len(&batch.footprint);
-        let fp_count_at = bytes.len() - section;
-        let mut fp_bomb = bytes.clone();
-        fp_bomb[fp_count_at..fp_count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        let refusal = codec
-            .decode(&fp_bomb)
-            .expect_err("an unbacked footprint count refuses");
-        assert_typed_in_bounds(&name, &refusal, fp_bomb.len());
     }
 }
 
@@ -520,7 +503,7 @@ fn manifest_targeted_deviations_refuse_where_the_template_breaks() {
 }
 
 // ---------------------------------------------------------------------
-// The footprint recomputation comparator.
+// The fixture theory behind the checkpoint and sidecar goldens.
 // ---------------------------------------------------------------------
 
 const RECIPE: RelationId = RelationId(0);
@@ -528,19 +511,8 @@ const STEP: RelationId = RelationId(1);
 const VENUE: RelationId = RelationId(2);
 const BOOKING: RelationId = RelationId(3);
 
-static DIR_SEQ: AtomicU64 = AtomicU64::new(0);
-
-fn temp_dir(tag: &str) -> PathBuf {
-    let seq = DIR_SEQ.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("f9_{tag}_{}_{seq}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("create test root");
-    path
-}
-
-/// Two braids covering all four footprint classes: recipe+step under a
-/// key and a containment, venue+booking under a weighted capacity whose
-/// bound is the venue's own cap field.
+/// Two braids: recipe+step under a key and a containment, venue+booking
+/// under a weighted capacity whose bound is the venue's own cap field.
 fn fixture_theory() -> SchemaDescriptor {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -606,368 +578,84 @@ fn fixture_codec() -> Codec {
     let descriptor = fixture_theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
-fn fresh_db(tag: &str) -> Db<SchemaDescriptor> {
-    let dir = temp_dir(tag).join("db");
-    Db::create(&dir, fixture_theory())
-        .expect("create")
-        .expect("theory admits empty store")
-}
+// ---------------------------------------------------------------------
+// The chain sidecar parser, same harness shape.
+// ---------------------------------------------------------------------
 
-fn header(codec: &Codec, braid: BraidId) -> BatchHeader {
-    BatchHeader {
-        fingerprint: *codec.fingerprint(),
+fn chain_goldens(codec: &Codec) -> Vec<Chain> {
+    let mut advanced = Chain::genesis(codec.braids());
+    for (index, entry) in advanced.entries.values_mut().enumerate() {
+        let fill = u8::try_from(index + 1).expect("small index");
+        *entry = ChainEntry {
+            g: 40 + u64::try_from(index).expect("small index") * 3,
+            prev: [fill; 32],
+            ts: 9_000 + u64::try_from(index).expect("small index"),
+        };
+    }
+    let braid = *advanced.entries.keys().next().expect("a braid exists");
+    let mut pending = advanced.clone();
+    pending.pending = Some(Pending {
         braid,
-        braid_gen: 1,
-        prev: [0u8; 32],
-        writer: 9,
-        timestamp: 500,
+        slot: 41,
+        bytes: vec![0xde, 0xad, 0xbe, 0xef],
+    });
+    vec![Chain::genesis(codec.braids()), advanced, pending]
+}
+
+fn assert_sidecar_refusal_in_bounds(error: SidecarError, len: usize) {
+    match error {
+        SidecarError::Malformed { at } => assert!(at <= len, "offset in bounds"),
+        SidecarError::Version { .. } | SidecarError::UnknownBraid { .. } => {}
     }
 }
 
-/// A first slot on the kitchen braid touching F, K, and C entries.
-fn kitchen_batch(codec: &Codec) -> (BraidId, Vec<u8>, Vec<Entry>) {
-    let braid = codec.braids().braid_of(RECIPE).expect("recipe braid");
-    let ops = [
-        Op {
-            kind: OpKind::Insert,
-            relation: RECIPE,
-            rows: vec![Box::from([Value::U64(1)])],
-        },
-        Op {
-            kind: OpKind::Insert,
-            relation: STEP,
-            rows: vec![Box::from([Value::U64(1), Value::String("chop".into())])],
-        },
-    ];
-    let bytes = codec.encode(&header(codec, braid), &ops).expect("encode");
-    let entries = codec.decode(&bytes).expect("golden decodes").footprint;
-    (braid, bytes, entries)
-}
-
-/// A first slot on the venue braid touching F and both W modes.
-fn venue_batch(codec: &Codec) -> (BraidId, Vec<u8>, Vec<Entry>) {
-    let braid = codec.braids().braid_of(VENUE).expect("venue braid");
-    let ops = [
-        Op {
-            kind: OpKind::Insert,
-            relation: VENUE,
-            rows: vec![Box::from([Value::U64(1), Value::U64(100)])],
-        },
-        Op {
-            kind: OpKind::Insert,
-            relation: BOOKING,
-            rows: vec![Box::from([Value::U64(1), Value::U64(5)])],
-        },
-    ];
-    let bytes = codec.encode(&header(codec, braid), &ops).expect("encode");
-    let entries = codec.decode(&bytes).expect("golden decodes").footprint;
-    (braid, bytes, entries)
-}
-
-/// The wire bytes of one footprint entry, mirroring the codec's
-/// class/mode numbering so forged sections stay decodable.
-fn encode_entry(entry: &Entry) -> Vec<u8> {
-    let mut out = Vec::new();
-    match entry {
-        Entry::Fact { fid, mode } => {
-            out.push(1);
-            out.extend_from_slice(fid);
-            out.push(match mode {
-                OpKind::Insert => 1,
-                OpKind::Delete => 2,
-            });
-        }
-        Entry::Key { statement, key } => {
-            out.push(2);
-            out.extend_from_slice(&statement.0.to_le_bytes());
-            out.extend_from_slice(key);
-        }
-        Entry::Containment {
-            statement,
-            key,
-            mode,
-        } => {
-            out.push(3);
-            out.extend_from_slice(&statement.0.to_le_bytes());
-            out.extend_from_slice(key);
-            out.push(match mode {
-                ContainmentMode::Need => 1,
-                ContainmentMode::SupportAdd => 2,
-                ContainmentMode::SupportRemove => 3,
-            });
-        }
-        Entry::Capacity {
-            statement,
-            key,
-            mode,
-        } => {
-            out.push(4);
-            out.extend_from_slice(&statement.0.to_le_bytes());
-            out.extend_from_slice(key);
-            match mode {
-                CapacityMode::ChildDelta(delta) => {
-                    out.push(1);
-                    out.extend_from_slice(&delta.to_le_bytes());
-                }
-                CapacityMode::ParentAdd => out.push(2),
-                CapacityMode::ParentRemove => out.push(3),
+#[test]
+fn sidecar_mutation_storm_holds_the_canonical_fixpoint() {
+    let codec = fixture_codec();
+    let mut prng = XorShift(0xf9f9_0007_0000_0aaa);
+    for golden in chain_goldens(&codec) {
+        let bytes = golden.render();
+        assert_eq!(
+            Chain::parse(&bytes, codec.braids()),
+            Ok(golden),
+            "the golden round-trips"
+        );
+        for _ in 0..6_000 {
+            let mutated = storm_mutant(&mut prng, &bytes);
+            match Chain::parse(&mutated, codec.braids()) {
+                Ok(parsed) => assert_eq!(
+                    parsed.render(),
+                    mutated,
+                    "an accepted document is canonical — parse-then-render is the identity"
+                ),
+                Err(error) => assert_sidecar_refusal_in_bounds(error, mutated.len()),
             }
         }
     }
-    out
-}
-
-fn section_len(entries: &[Entry]) -> usize {
-    4 + entries
-        .iter()
-        .map(|entry| encode_entry(entry).len())
-        .sum::<usize>()
-}
-
-/// Rebuilds the batch with a replacement footprint section: everything
-/// up to the section's count field kept byte-identical, the new entries
-/// spliced behind a corrected count.
-fn with_section(bytes: &[u8], original: &[Entry], entries: &[Entry]) -> Vec<u8> {
-    let mut out = bytes[..bytes.len() - section_len(original)].to_vec();
-    out.extend_from_slice(
-        &u32::try_from(entries.len())
-            .expect("few entries")
-            .to_le_bytes(),
-    );
-    for entry in entries {
-        out.extend_from_slice(&encode_entry(entry));
-    }
-    out
-}
-
-/// A mutated footprint section may fail the section parse (typed decode
-/// refusal) or reach the comparator and mismatch — it must never be
-/// accepted and never touch state.
-fn assert_comparator_refusal(name: &str, applied: &Applied) {
-    match applied {
-        Applied::Refused(ApplyRefusal::Decode(error)) => {
-            assert!(!error.identity().is_empty(), "{name}: typed identity");
-        }
-        Applied::Refused(ApplyRefusal::FootprintMismatch { .. }) => {}
-        other => panic!("{name}: a mutated footprint section must refuse, got {other:?}"),
-    }
-}
-
-fn apply_mutant(db: &Db<SchemaDescriptor>, codec: &Codec, braid: BraidId, bytes: &[u8]) -> Applied {
-    let mut chain = Chain::genesis(codec.braids());
-    apply(db, &mut chain, codec, braid, 1, bytes, 0).expect("store plumbing")
 }
 
 #[test]
-fn footprint_section_byte_storm_never_reaches_acceptance() {
+fn sidecar_byte_soup_refuses_in_bounds() {
     let codec = fixture_codec();
-    let db = fresh_db("fp_storm");
-    let mut prng = XorShift(0xf9f9_0006_ba5e_ba11);
-    let fixtures = [kitchen_batch(&codec), venue_batch(&codec)];
-
-    for (braid, bytes, entries) in &fixtures {
-        let start = bytes.len() - section_len(entries);
-        for _ in 0..4_000 {
-            let mut mutated = bytes.clone();
-            match prng.next() % 5 {
-                0 | 1 => {
-                    for _ in 0..=prng.below(3) {
-                        let at = start + prng.below(mutated.len() - start);
-                        mutated[at] ^= u8::try_from(prng.next() % 255 + 1).expect("byte");
-                    }
-                }
-                2 => {
-                    let len = start + prng.below(mutated.len() - start);
-                    mutated.truncate(len);
-                }
-                3 => {
-                    let at = start + prng.below(mutated.len() - start + 1);
-                    let chunk: Vec<u8> = (0..=prng.below(8)).map(|_| prng.byte()).collect();
-                    mutated.splice(at..at, chunk);
-                }
-                _ => {
-                    let at = start + prng.below(mutated.len() - start);
-                    let end = (at + 1 + prng.below(8)).min(mutated.len());
-                    mutated.drain(at..end);
-                }
-            }
-            let applied = apply_mutant(&db, &codec, *braid, &mutated);
-            assert_comparator_refusal("section storm", &applied);
+    let mut prng = XorShift(0xf9f9_0008_0000_0bbb);
+    let alphabet = b"0123456789abcdef\"{}:,nulvig ";
+    let golden = chain_goldens(&codec).remove(2).render();
+    for _ in 0..12_000 {
+        let cut = prng.below(golden.len() + 1);
+        let mut soup = golden[..cut].to_vec();
+        for _ in 0..prng.below(120) {
+            let byte = if prng.next().is_multiple_of(4) {
+                prng.byte()
+            } else {
+                alphabet[prng.below(alphabet.len())]
+            };
+            soup.push(byte);
+        }
+        if let Err(error) = Chain::parse(&soup, codec.braids()) {
+            assert_sidecar_refusal_in_bounds(error, soup.len());
         }
     }
-
-    // No mutant reached the engine: the storm store is still at birth,
-    // and the unmutated fixtures now apply as ordinary first slots.
-    assert_eq!(db.generation().expect("generation").value(), 0);
-    let mut chain = Chain::genesis(codec.braids());
-    for (braid, bytes, _) in &fixtures {
-        let applied = apply(&db, &mut chain, &codec, *braid, 1, bytes, 0).expect("store plumbing");
-        assert!(
-            matches!(applied, Applied::Advanced { .. }),
-            "the clean fixture applies: {applied:?}"
-        );
-    }
-    assert_eq!(db.generation().expect("generation").value(), 2);
-}
-
-#[test]
-fn structured_footprint_forgeries_land_their_exact_refusals() {
-    let codec = fixture_codec();
-    let db = fresh_db("fp_forge");
-    let (kitchen_braid, kitchen_bytes, kitchen_entries) = kitchen_batch(&codec);
-    let (venue_braid, venue_bytes, venue_entries) = venue_batch(&codec);
-
-    let diverged = |name: &str, braid: BraidId, bytes: &[u8]| {
-        let applied = apply_mutant(&db, &codec, braid, bytes);
-        assert!(
-            matches!(
-                applied,
-                Applied::Refused(ApplyRefusal::FootprintMismatch {
-                    cause: FootprintCause::Diverged,
-                    ..
-                })
-            ),
-            "{name}: the comparator convicts the carried section, got {applied:?}"
-        );
-    };
-
-    // A dropped entry: still sorted, still decodable, no longer true.
-    let mut dropped = kitchen_entries.clone();
-    dropped.pop();
-    diverged(
-        "dropped entry",
-        kitchen_braid,
-        &with_section(&kitchen_bytes, &kitchen_entries, &dropped),
-    );
-
-    // The empty section: the cheapest possible understatement.
-    diverged(
-        "empty section",
-        kitchen_braid,
-        &with_section(&kitchen_bytes, &kitchen_entries, &[]),
-    );
-
-    // A forged extra entry appended at the sort order's ceiling.
-    let forged = Entry::Capacity {
-        statement: StatementId(u16::MAX),
-        key: [0xff; 32],
-        mode: CapacityMode::ParentRemove,
-    };
-    let mut padded = kitchen_entries.clone();
-    padded.push(forged);
-    diverged(
-        "forged entry",
-        kitchen_braid,
-        &with_section(&kitchen_bytes, &kitchen_entries, &padded),
-    );
-
-    // The lying winner's exact shape: the child delta understated, and
-    // separately nudged by one — the payload is not identity, so both
-    // sections decode and both must fail the recompute.
-    for (name, forged_delta) in [("understated delta", 0i64), ("nudged delta", 6)] {
-        let tampered: Vec<Entry> = venue_entries
-            .iter()
-            .map(|entry| match entry {
-                Entry::Capacity {
-                    statement,
-                    key,
-                    mode: CapacityMode::ChildDelta(_),
-                } => Entry::Capacity {
-                    statement: *statement,
-                    key: *key,
-                    mode: CapacityMode::ChildDelta(forged_delta),
-                },
-                other => *other,
-            })
-            .collect();
-        assert_ne!(tampered, venue_entries, "the tamper changed the section");
-        diverged(
-            name,
-            venue_braid,
-            &with_section(&venue_bytes, &venue_entries, &tampered),
-        );
-    }
-
-    // Order violations die in the decoder, before the comparator runs.
-    let mut swapped = kitchen_entries.clone();
-    swapped.swap(0, 1);
-    assert_eq!(
-        apply_mutant(
-            &db,
-            &codec,
-            kitchen_braid,
-            &with_section(&kitchen_bytes, &kitchen_entries, &swapped)
-        ),
-        Applied::Refused(ApplyRefusal::Decode(DecodeError::UnsortedFootprint {
-            index: 1
-        })),
-    );
-    let mut doubled = kitchen_entries.clone();
-    doubled.insert(1, doubled[0]);
-    assert_eq!(
-        apply_mutant(
-            &db,
-            &codec,
-            kitchen_braid,
-            &with_section(&kitchen_bytes, &kitchen_entries, &doubled)
-        ),
-        Applied::Refused(ApplyRefusal::Decode(DecodeError::DuplicateFootprintEntry {
-            index: 1
-        })),
-    );
-
-    assert_eq!(
-        db.generation().expect("generation").value(),
-        0,
-        "no forgery touched state"
-    );
-}
-
-#[test]
-fn unrecomputable_ops_land_footprint_mismatch_never_ub() {
-    let codec = fixture_codec();
-    let db = fresh_db("fp_overflow");
-    let braid = codec.braids().braid_of(VENUE).expect("venue braid");
-
-    // Hand-built bytes our encoder refuses to produce: two bookings
-    // whose weight sum leaves i64, under an empty carried section. The
-    // decode is clean — the recompute itself is the tripwire.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&MAGIC);
-    bytes.extend_from_slice(&VERSION.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(codec.fingerprint());
-    bytes.extend_from_slice(&braid.raw().to_le_bytes());
-    bytes.extend_from_slice(&1u64.to_le_bytes());
-    bytes.extend_from_slice(&[0u8; 32]);
-    bytes.extend_from_slice(&9u64.to_le_bytes());
-    bytes.extend_from_slice(&500u64.to_le_bytes());
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.push(1);
-    bytes.extend_from_slice(&BOOKING.0.to_le_bytes());
-    bytes.extend_from_slice(&2u32.to_le_bytes());
-    for qty in [u64::MAX, u64::MAX - 1] {
-        bytes.push(1);
-        bytes.extend_from_slice(&1u64.to_le_bytes());
-        bytes.push(1);
-        bytes.extend_from_slice(&qty.to_le_bytes());
-    }
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-
-    assert!(codec.decode(&bytes).is_ok(), "the poison batch decodes");
-    let applied = apply_mutant(&db, &codec, braid, &bytes);
-    assert!(
-        matches!(
-            applied,
-            Applied::Refused(ApplyRefusal::FootprintMismatch {
-                cause: FootprintCause::Unrecomputable(FootprintError::DeltaOverflow { .. }),
-                ..
-            })
-        ),
-        "recomputation refusal is the typed unrecomputable arm, got {applied:?}"
-    );
-    assert_eq!(db.generation().expect("generation").value(), 0);
 }

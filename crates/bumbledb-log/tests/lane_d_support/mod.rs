@@ -16,8 +16,7 @@ use bumbledb::{Db, Theory, Value};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{
-    Checkpoint, Head, Manifest, ckpt_json_key, ckpt_mdb_key, create_manifest, log_key,
-    publish_checkpoint,
+    Head, Manifest, ckpt_mdb_key, create_manifest, log_key, publish_checkpoint,
 };
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{Create, ObjectStore};
@@ -93,7 +92,7 @@ pub fn codec() -> Codec {
     let descriptor = theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
 pub fn fingerprint() -> [u8; 32] {
@@ -240,33 +239,18 @@ impl TestLog {
         let bytes = std::fs::read(compact_dir.join("data.mdb")).expect("compacted store file");
         let digest = *blake3::hash(&bytes).as_bytes();
 
-        let manifest_bytes = self
-            .store
-            .get(&bumbledb_log::manifest::manifest_key(&self.prefix))
-            .expect("manifest get")
-            .expect("manifest exists");
-        let manifest = Manifest::parse(&manifest_bytes.bytes).expect("manifest parses");
-
-        let doc = Checkpoint {
-            braids: self.heads.clone(),
-            catalog: db.catalog_digest().expect("catalog digest"),
-            writer: self.writer,
-            prev: manifest.checkpoint,
-        };
         let _ = self
             .store
             .put_create(&ckpt_mdb_key(&self.prefix, &digest), &bytes)
             .expect("put checkpoint object");
-        let _ = self
-            .store
-            .put_create(&ckpt_json_key(&self.prefix, &digest), &doc.render())
-            .expect("put checkpoint doc");
         let published = publish_checkpoint(
             &self.store,
             &self.prefix,
             self.codec.braids(),
             digest,
-            doc.sum(),
+            &self.heads,
+            db.catalog_digest().expect("catalog digest"),
+            self.writer,
         )
         .expect("publish checkpoint");
         assert!(matches!(

@@ -154,21 +154,18 @@ fn the_checkpoint_order_keeps_a_greater_incumbent() {
             )
         })
         .collect();
-    let incumbent_doc = Checkpoint {
-        braids: heads,
-        catalog: [9u8; 32],
-        writer: 999,
-        prev: None,
-    };
     let incumbent_digest = [1u8; 32];
-    store
-        .put_create(
-            &ckpt_json_key("", &incumbent_digest),
-            &incumbent_doc.render(),
-        )
-        .expect("plant doc");
     assert!(matches!(
-        publish_checkpoint(&store, "", codec.braids(), incumbent_digest, 50).expect("publish"),
+        publish_checkpoint(
+            &store,
+            "",
+            codec.braids(),
+            incumbent_digest,
+            &heads,
+            [9u8; 32],
+            999,
+        )
+        .expect("publish"),
         bumbledb_log::manifest::Published::Replaced
     ));
 

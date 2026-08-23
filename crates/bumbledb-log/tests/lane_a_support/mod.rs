@@ -14,7 +14,6 @@ use bumbledb::schema::{
 };
 use bumbledb::{Interval, Value};
 use bumbledb_log::codec::{Batch, BatchHeader, Op, OpKind};
-use bumbledb_log::footprint::{CapacityMode, ContainmentMode, Entry};
 use serde_json::Value as Json;
 
 pub fn corpus_dir() -> PathBuf {
@@ -347,64 +346,9 @@ pub fn render_ops(ops: &[Op]) -> Json {
     )
 }
 
-pub fn render_entry(entry: &Entry) -> Json {
-    match entry {
-        Entry::Fact { fid, mode } => serde_json::json!({
-            "class": "F",
-            "fid": hex(fid),
-            "mode": match mode { OpKind::Insert => "insert", OpKind::Delete => "delete" },
-        }),
-        Entry::Key { statement, key } => serde_json::json!({
-            "class": "K",
-            "statement": statement.0,
-            "key": hex(key),
-        }),
-        Entry::Containment {
-            statement,
-            key,
-            mode,
-        } => serde_json::json!({
-            "class": "C",
-            "statement": statement.0,
-            "key": hex(key),
-            "mode": match mode {
-                ContainmentMode::Need => "need",
-                ContainmentMode::SupportAdd => "support+",
-                ContainmentMode::SupportRemove => "support-",
-            },
-        }),
-        Entry::Capacity {
-            statement,
-            key,
-            mode,
-        } => match mode {
-            CapacityMode::ChildDelta(delta) => serde_json::json!({
-                "class": "W",
-                "statement": statement.0,
-                "key": hex(key),
-                "mode": "childDelta",
-                "delta": delta.to_string(),
-            }),
-            CapacityMode::ParentAdd => serde_json::json!({
-                "class": "W",
-                "statement": statement.0,
-                "key": hex(key),
-                "mode": "parent+",
-            }),
-            CapacityMode::ParentRemove => serde_json::json!({
-                "class": "W",
-                "statement": statement.0,
-                "key": hex(key),
-                "mode": "parent-",
-            }),
-        },
-    }
-}
-
 pub fn render_batch(batch: &Batch) -> Json {
     serde_json::json!({
         "header": render_header(&batch.header),
         "ops": render_ops(&batch.ops),
-        "footprint": batch.footprint.iter().map(render_entry).collect::<Vec<_>>(),
     })
 }

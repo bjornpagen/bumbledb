@@ -10,8 +10,8 @@ use bumbledb_log::manifest::{
     Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, log_key,
     manifest_key, publish_checkpoint,
 };
-use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
+use bumbledb_log::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
 use lane_d_support::{codec, kitchen_braid, note_braid, temp_dir};
 
 fn digest(seed: u8) -> [u8; 32] {
@@ -169,18 +169,45 @@ fn key_layout_matches_the_protocol() {
     );
 }
 
-fn upload_checkpoint(store: &FsStore, seed: u8, kitchen_g: u64, note_g: u64) -> ([u8; 32], u64) {
-    let doc = Checkpoint {
-        braids: heads(kitchen_g, note_g),
-        catalog: digest(seed),
-        writer: u64::from(seed),
-        prev: None,
-    };
+fn publish(store: &FsStore, seed: u8, kitchen_g: u64, note_g: u64) -> ([u8; 32], Published) {
+    let codec = codec();
     let id = digest(seed);
-    store
-        .put_create(&ckpt_json_key("", &id), &doc.render())
-        .expect("upload doc");
-    (id, doc.sum())
+    let published = publish_checkpoint(
+        store,
+        "",
+        codec.braids(),
+        id,
+        &heads(kitchen_g, note_g),
+        digest(seed),
+        u64::from(seed),
+    )
+    .expect("publish");
+    (id, published)
+}
+
+fn manifest_checkpoint(store: &FsStore) -> Option<[u8; 32]> {
+    Manifest::parse(
+        &store
+            .get(&manifest_key(""))
+            .expect("get")
+            .expect("manifest")
+            .bytes,
+    )
+    .expect("parses")
+    .checkpoint
+}
+
+fn doc_of(store: &FsStore, id: [u8; 32]) -> Checkpoint {
+    let codec = codec();
+    Checkpoint::parse(
+        &store
+            .get(&ckpt_json_key("", &id))
+            .expect("get")
+            .expect("doc")
+            .bytes,
+        codec.braids(),
+    )
+    .expect("doc parses")
 }
 
 #[test]
@@ -188,63 +215,162 @@ fn checkpoint_order_keeps_the_greater_sum() {
     let root = temp_dir("ckpt_order");
     let log = lane_d_support::TestLog::new(root, "");
     let store = &log.store;
-    let braids = log.codec.braids();
 
-    let (big, big_sum) = upload_checkpoint(store, 0x81, 6, 4);
-    let (small, small_sum) = upload_checkpoint(store, 0x82, 3, 2);
-
-    assert!(matches!(
-        publish_checkpoint(store, "", braids, big, big_sum).expect("publish big"),
-        Published::Replaced
-    ));
-    match publish_checkpoint(store, "", braids, small, small_sum).expect("publish small") {
+    let (big, published_big) = publish(store, 0x81, 6, 4);
+    assert!(matches!(published_big, Published::Replaced));
+    let (small, published_small) = publish(store, 0x82, 3, 2);
+    match published_small {
         Published::Kept { incumbent } => assert_eq!(incumbent, big),
         other => panic!("small candidate must lose, got {other:?}"),
     }
-    let manifest = Manifest::parse(
-        &store
-            .get(&manifest_key(""))
-            .expect("get")
-            .expect("manifest")
-            .bytes,
+    assert_eq!(manifest_checkpoint(store), Some(big));
+    let _ = small;
+}
+
+#[test]
+fn every_incumbent_stays_reachable_by_the_backlink_walk() {
+    let root = temp_dir("ckpt_backlink");
+    let log = lane_d_support::TestLog::new(root, "");
+    let store = &log.store;
+
+    let (first, _) = publish(store, 0xa1, 1, 1);
+    let (second, _) = publish(store, 0xa2, 2, 2);
+    let (third, _) = publish(store, 0xa3, 3, 3);
+
+    assert_eq!(manifest_checkpoint(store), Some(third));
+    assert_eq!(
+        doc_of(store, third).prev,
+        Some(second),
+        "prev names the incumbent the CAS actually replaced"
+    );
+    assert_eq!(doc_of(store, second).prev, Some(first));
+    assert_eq!(doc_of(store, first).prev, None);
+}
+
+/// Injects a competing publication between a caller's manifest read and
+/// its CAS attempt: the first swap lands `Moved`, forcing the caller
+/// through the rebuild-prev arm.
+struct SwapInterloper {
+    inner: FsStore,
+    root: std::path::PathBuf,
+    armed: std::sync::atomic::AtomicBool,
+}
+
+impl ObjectStore for SwapInterloper {
+    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+        self.inner.get(key)
+    }
+
+    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+        self.inner.get_if_changed(key, etag)
+    }
+
+    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+        self.inner.put_create(key, bytes)
+    }
+
+    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+        if key == manifest_key("") && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let plain = FsStore::new(self.root.clone());
+            let codec = codec();
+            let published = publish_checkpoint(
+                &plain,
+                "",
+                codec.braids(),
+                digest(0xb1),
+                &heads(4, 4),
+                digest(0xb1),
+                0xb1,
+            )
+            .expect("interloper publishes");
+            assert!(matches!(published, Published::Replaced));
+        }
+        self.inner.put_swap(key, bytes, etag)
+    }
+
+    fn delete(&self, key: &str) -> StoreResult<()> {
+        self.inner.delete(key)
+    }
+}
+
+#[test]
+fn a_moved_cas_rebuilds_prev_to_the_incumbent_actually_replaced() {
+    let root = temp_dir("ckpt_moved");
+    let log = lane_d_support::TestLog::new(root.clone(), "");
+    let plain = &log.store;
+
+    let (first, _) = publish(plain, 0xc1, 1, 1);
+    assert_eq!(manifest_checkpoint(plain), Some(first));
+
+    // The caller reads incumbent `first`, but the interloper lands a
+    // greater checkpoint before the caller's CAS: the caller's first
+    // swap is Moved, and the rebuild must re-point prev at the
+    // interloper — the incumbent the winning swap actually replaces.
+    let racing = SwapInterloper {
+        inner: FsStore::new(root.clone()),
+        root: root.clone(),
+        armed: std::sync::atomic::AtomicBool::new(true),
+    };
+    let codec = codec();
+    let winner = digest(0xc2);
+    let published = publish_checkpoint(
+        &racing,
+        "",
+        codec.braids(),
+        winner,
+        &heads(9, 9),
+        digest(0xc2),
+        0xc2,
     )
-    .expect("parses");
-    assert_eq!(manifest.checkpoint, Some(big));
+    .expect("publish through the race");
+    assert!(matches!(published, Published::Replaced));
+
+    assert_eq!(manifest_checkpoint(plain), Some(winner));
+    assert_eq!(
+        doc_of(plain, winner).prev,
+        Some(digest(0xb1)),
+        "prev is proven by the CAS: it names the interloper, never the stale read"
+    );
+    assert_eq!(doc_of(plain, digest(0xb1)).prev, Some(first));
 }
 
 #[test]
 fn checkpoint_order_race_converges_on_the_greater_sum() {
     let root = temp_dir("ckpt_race");
     let log = lane_d_support::TestLog::new(root.clone(), "");
-    let braids = log.codec.braids();
 
-    let (small, small_sum) = upload_checkpoint(&log.store, 0x91, 2, 1);
-    let (big, big_sum) = upload_checkpoint(&log.store, 0x92, 8, 8);
-
-    std::thread::scope(|scope| {
+    let outcome_b = std::thread::scope(|scope| {
         let a = scope.spawn(|| {
             let store = FsStore::new(root.clone());
             let codec = codec();
-            publish_checkpoint(&store, "", codec.braids(), small, small_sum).expect("small racer")
+            publish_checkpoint(
+                &store,
+                "",
+                codec.braids(),
+                digest(0x91),
+                &heads(2, 1),
+                digest(0x91),
+                0x91,
+            )
+            .expect("small racer")
         });
         let b = scope.spawn(|| {
             let store = FsStore::new(root.clone());
             let codec = codec();
-            publish_checkpoint(&store, "", codec.braids(), big, big_sum).expect("big racer")
+            publish_checkpoint(
+                &store,
+                "",
+                codec.braids(),
+                digest(0x92),
+                &heads(8, 8),
+                digest(0x92),
+                0x92,
+            )
+            .expect("big racer")
         });
         let _ = a.join().expect("small thread");
-        let outcome_b = b.join().expect("big thread");
-        assert!(matches!(outcome_b, Published::Replaced));
+        b.join().expect("big thread")
     });
-
-    let manifest = Manifest::parse(
-        &log.store
-            .get(&manifest_key(""))
-            .expect("get")
-            .expect("manifest")
-            .bytes,
-    )
-    .expect("parses");
-    assert_eq!(manifest.checkpoint, Some(big));
-    let _ = braids;
+    assert!(matches!(outcome_b, Published::Replaced));
+    assert_eq!(manifest_checkpoint(&log.store), Some(digest(0x92)));
 }

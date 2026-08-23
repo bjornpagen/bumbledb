@@ -65,6 +65,68 @@ fn parse_refuses_version_whitespace_and_unknown_braids() {
 }
 
 #[test]
+fn parse_is_order_strict_like_the_checkpoint_parser() {
+    let codec = codec();
+    let mut chain = Chain::genesis(codec.braids());
+    chain.entries.insert(
+        kitchen_braid(&codec),
+        ChainEntry {
+            g: 3,
+            prev: [0x11; 32],
+            ts: 100,
+        },
+    );
+    chain.entries.insert(
+        note_braid(&codec),
+        ChainEntry {
+            g: 5,
+            prev: [0x22; 32],
+            ts: 200,
+        },
+    );
+    let canonical = String::from_utf8(chain.render()).expect("utf8");
+    let kitchen = format!("\"{}\"", kitchen_braid(&codec));
+    let note = format!("\"{}\"", note_braid(&codec));
+    let kitchen_entry_start = canonical.find(&kitchen).expect("kitchen entry");
+    let note_entry_start = canonical.find(&note).expect("note entry");
+    assert!(kitchen_entry_start < note_entry_start, "canonical order");
+
+    // The same two facts in swapped order are non-canonical bytes of
+    // the same value; the order-strict walk refuses them, so an
+    // accepted sidecar always re-renders byte-identically.
+    let kitchen_body = &canonical[kitchen_entry_start
+        ..canonical[kitchen_entry_start..]
+            .find("},")
+            .map(|end| kitchen_entry_start + end + 1)
+            .expect("kitchen body end")];
+    let note_body = &canonical[note_entry_start
+        ..canonical[note_entry_start..]
+            .find('}')
+            .map(|end| note_entry_start + end + 1)
+            .expect("note body end")];
+    let swapped = canonical.replacen(
+        &format!("{kitchen_body},{note_body}"),
+        &format!("{note_body},{kitchen_body}"),
+        1,
+    );
+    assert_ne!(swapped, canonical, "the swap changed the bytes");
+    assert!(matches!(
+        Chain::parse(swapped.as_bytes(), codec.braids()),
+        Err(SidecarError::Malformed { .. })
+    ));
+
+    let duplicated = canonical.replacen(
+        &format!("{kitchen_body},{note_body}"),
+        &format!("{kitchen_body},{kitchen_body}"),
+        1,
+    );
+    assert!(matches!(
+        Chain::parse(duplicated.as_bytes(), codec.braids()),
+        Err(SidecarError::Malformed { .. })
+    ));
+}
+
+#[test]
 fn vector_and_sum_agree_with_entries() {
     let codec = codec();
     let mut chain = Chain::genesis(codec.braids());

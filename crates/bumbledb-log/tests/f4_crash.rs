@@ -53,10 +53,7 @@ enum Mode {
 fn options(mode: Mode, writer_id: u64) -> Options {
     let mut options = Options::new(writer_id);
     if mode == Mode::Local {
-        options.ack = AckMode::Local {
-            max_pending_batches: 8,
-            max_pending_bytes: 1 << 20,
-        };
+        options.ack = AckMode::Local;
     }
     options
 }
@@ -199,7 +196,11 @@ fn crash_case(mode: Mode, step: WriterStep) {
     drop(writer);
 
     // Recovery is an ordinary open: pending resolution + catch-up + the
-    // wholeness identity, nothing else.
+    // wholeness identity, nothing else — in place, never a discard. For
+    // the mid-publish cells the marker also proves the byte-equal
+    // absorption arm ran: the occupant compared equal to the pending
+    // bytes and the store survived where a loss would have deleted it.
+    std::fs::write(dir.join("marker"), b"in-place").expect("plant marker");
     obs::start_capture();
     let recovered = open_with(root.clone(), &dir, options(mode, 41), Recorder::default());
     let events = obs::finish_capture();
@@ -256,6 +257,10 @@ fn crash_case(mode: Mode, step: WriterStep) {
             "{mode:?}/{step:?}: the crash-window re-application lands in the engine no-op arm"
         );
     }
+    assert!(
+        dir.join("marker").exists(),
+        "{mode:?}/{step:?}: recovery resolved in place — the absorption arm, never a discard"
+    );
     let digest = recovered.with_db(|db| db.catalog_digest().expect("digest"));
     drop(recovered);
 
@@ -298,6 +303,74 @@ fn writer_crash_matrix_local_ack_mode() {
     for step in WRITER_STEPS {
         crash_case(Mode::Local, step);
     }
+}
+
+/// The loss path's re-persist window: the crash lands exactly at the
+/// carried pending's re-persist into the fresh sidecar — the second
+/// `PendingWrite` of one commit, after the loss's discard and re-open
+/// and before the re-judgment. Recovery is the ordinary pending
+/// resolution: the carried batch re-judges at the tip with one race,
+/// and the commit lands exactly once.
+#[test]
+fn crash_at_the_loss_re_persist_recovers_through_pending_resolution() {
+    let root = temp_dir("f4_repersist");
+    let dir = root.join("w");
+    let writer = open_with(
+        root.clone(),
+        &dir,
+        options(Mode::Published, 41),
+        CrashOnce::new(WriterStep::PendingWrite, 1),
+    );
+    let codec = codec();
+    let braid = note_braid(&codec);
+    let mut log = TestLog::attach(root.clone(), "");
+    log.publish(braid, &[insert(NOTE, note_row(50, "competitor"))], 5);
+
+    let err = writer
+        .commit(|batch| {
+            batch.insert(NOTE, [note_row(51, "carried")]);
+            Ok(())
+        })
+        .expect_err("the crash lands at the re-persist");
+    assert!(matches!(
+        err,
+        Error::InjectedCrash {
+            step: WriterStep::PendingWrite
+        }
+    ));
+    writer.quiesce();
+    drop(writer);
+
+    let recovered = open_with(
+        root.clone(),
+        &dir,
+        options(Mode::Published, 41),
+        Recorder::default(),
+    );
+    assert_eq!(recovered.backlog(), None, "resolved at open");
+    assert_eq!(recovered.vector()[&braid], 2, "the tip plus our slot");
+    let store = FsStore::new(root);
+    let slot2 = store
+        .get(&log_key("", braid, 2))
+        .expect("get")
+        .expect("the carried commit landed at tip+1");
+    let batch = codec.decode(&slot2.bytes).expect("decode");
+    assert_eq!(batch.header.writer, 41, "our own slot, exactly once");
+    assert!(
+        store.get(&log_key("", braid, 3)).expect("get").is_none(),
+        "never twice"
+    );
+    let sum: u64 = recovered.vector().values().sum();
+    let generation = recovered.with_db(|db| db.generation().expect("generation").value());
+    assert_eq!(generation, sum, "whole after the windowed crash");
+    recovered.with_db(|db| {
+        db.read(|instance| {
+            assert!(instance.contains_dyn(NOTE, &note_row(50, "competitor"))?);
+            assert!(instance.contains_dyn(NOTE, &note_row(51, "carried"))?);
+            Ok(())
+        })
+        .expect("read");
+    });
 }
 
 #[test]

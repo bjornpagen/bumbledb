@@ -4,7 +4,7 @@
 //! internals. Intern-mint determinism lands as byte-identical catalog
 //! digests across independent replays; a fresh-in-command collision
 //! arrives as an ordinary functionality rejection, serially and through
-//! the loser algebra's re-judgment alike; op order inside a batch rides
+//! the loss path's re-judgment alike; op order inside a batch rides
 //! the wire but cannot reach stored bytes; and the publish law's engine
 //! half — `commit_noop` in the trace means no generation advance means
 //! nothing to publish — is observed on the live trace names for the
@@ -116,7 +116,7 @@ fn codec() -> Codec {
     let descriptor = theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
 fn kitchen_braid(codec: &Codec) -> BraidId {
@@ -354,9 +354,8 @@ fn concurrent_fresh_double_mint_re_judges_to_the_serial_functionality_rejection(
     assert_eq!(accepted_generation(&won), 1);
 
     // B still stands at the zero vector: its local apply accepts, its
-    // publish loses slot 1, and the conflict arm re-judges the recorded
-    // ops against the winner's state — the serial verdict, arriving
-    // through the loser algebra unchanged.
+    // publish loses slot 1, and the one path re-judges the recorded
+    // ops against the winner's state — the serial verdict, unchanged.
     let lost = writer_b
         .commit(|batch| {
             batch.insert(TICKET, [ticket_row(7, "beta")]);
@@ -372,13 +371,7 @@ fn concurrent_fresh_double_mint_re_judges_to_the_serial_functionality_rejection(
             .any(|violation| matches!(violation, Violation::Functionality { .. })),
         "the concurrent collision carries the same ordinary verdict: {violations:?}"
     );
-    let counters = writer_b.counters();
-    assert_eq!(
-        counters.re_judgments, 1,
-        "one conflict loss, one re-judgment"
-    );
-    assert_eq!(counters.subsumptions, 0);
-    assert_eq!(counters.disjoint_verdicts, 0);
+    assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
     let store = FsStore::new(root);
     assert!(

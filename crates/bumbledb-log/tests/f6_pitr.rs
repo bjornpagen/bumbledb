@@ -114,7 +114,7 @@ fn codec() -> Codec {
     let descriptor = theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
 fn kitchen_braid(codec: &Codec) -> BraidId {
@@ -259,16 +259,14 @@ impl TestLog {
             .store
             .put_create(&ckpt_mdb_key(&self.prefix, &digest), mdb)
             .expect("put checkpoint object");
-        let _ = self
-            .store
-            .put_create(&ckpt_json_key(&self.prefix, &digest), &doc.render())
-            .expect("put checkpoint doc");
         let published = publish_checkpoint(
             &self.store,
             &self.prefix,
             self.codec.braids(),
             digest,
-            doc.sum(),
+            &doc.braids,
+            doc.catalog,
+            doc.writer,
         )
         .expect("publish checkpoint");
         assert!(matches!(published, Published::Replaced));

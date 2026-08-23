@@ -6,8 +6,6 @@
 
 mod lane_e_support;
 
-use std::time::Duration;
-
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{AckMode, Commit, Durability, Options, Writer, WriterOpened};
@@ -25,11 +23,7 @@ fn a_deposed_resident_finishes_the_loss_and_drops_to_published_acks() {
     let root = temp_dir("depose");
     let resident_options = Options {
         writer_id: 100,
-        ack: AckMode::Local {
-            max_pending_batches: 8,
-            max_pending_bytes: 1024 * 1024,
-        },
-        linger: Duration::ZERO,
+        ack: AckMode::Local,
     };
     let resident = ready(
         Writer::open(

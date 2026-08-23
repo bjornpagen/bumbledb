@@ -44,7 +44,7 @@ fn goldens() -> Vec<(String, Codec, Vec<u8>, bool)> {
         let fingerprint: [u8; 32] = support::unhex(sidecar["fingerprint"].as_str().expect("hex"))
             .try_into()
             .expect("32 bytes");
-        let codec = Codec::new(&schemas[&schema], fingerprint).expect("fixture vocabulary");
+        let codec = Codec::new(&schemas[&schema], fingerprint);
         let bytes = std::fs::read(path.with_extension("bin")).expect("bin");
         let ok = sidecar["expect"].as_str() == Some("ok");
         out.push((schema, codec, bytes, ok));
@@ -99,7 +99,7 @@ fn a_seeded_byte_storm_never_panics_and_always_types_its_refusals() {
             match codec.decode(&mutated) {
                 Ok(_) => {
                     // A mutation that lands on another valid batch is
-                    // fine; the footprint compare at apply is the next
+                    // fine; the chain discipline at apply is the next
                     // tripwire.
                 }
                 Err(refusal) => {

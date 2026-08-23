@@ -1,16 +1,15 @@
-//! The commit discipline and the loser algebra: the exact outcome
+//! The commit discipline and the one loss path: the exact outcome
 //! types, the publish law, spanning refusal, the split verb, the
-//! ambiguous-PUT absorption, and all three loser arms with the engine
-//! deciding survive-or-discard through the wholeness identity.
+//! ambiguous-PUT absorption, and the loss shapes — identical effects
+//! and strict supersets landing Accepted at the current generation
+//! through the re-judged net no-op, disjoint-shaped losses landing a
+//! re-judged republish with a fresh header at tip+1, conflicts landing
+//! the serial Rejected.
 
 mod lane_e_support;
 
-use std::collections::BTreeMap;
-
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::braids::BraidId;
-use bumbledb_log::footprint::footprint;
-use bumbledb_log::intersect::{LoserDecision, intersect};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
@@ -236,13 +235,12 @@ fn ambiguous_put_absorbed_by_fetch_and_compare() {
         ),
         "byte-equal Exists is our own earlier PUT, absorbed"
     );
-    assert_eq!(writer.counters().subsumptions, 0);
-    assert_eq!(writer.counters().re_judgments, 0);
+    assert_eq!(writer.losses(), 0, "absorption is not a loss");
 }
 
 #[test]
-fn subsumed_identical_race_reports_the_winner() {
-    let root = temp_dir("subsumed_eq");
+fn identical_effects_race_lands_accepted_at_the_winners_generation() {
+    let root = temp_dir("identical_race");
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir, 11);
     let codec = codec();
@@ -263,22 +261,25 @@ fn subsumed_identical_race_reports_the_winner() {
         ..
     } = outcome
     else {
-        panic!("subsumed loss reports Accepted");
+        panic!("a loss whose effects the winner performed reports Accepted");
     };
-    assert_eq!(generation, 1, "the winner's generation");
+    assert_eq!(
+        generation, 1,
+        "the re-judgment nets a no-op and the publish law answers at the winner's generation"
+    );
     assert_eq!(durability, Durability::Published);
-    assert_eq!(writer.counters().subsumptions, 1);
+    assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
     let store = FsStore::new(root);
     assert!(
         store.get(&log_key("", braid, 2)).expect("get").is_none(),
-        "the loser never republishes"
+        "the log never gains a no-op slot"
     );
     assert_eq!(writer.vector()[&braid], 1, "the winner's slot is accounted");
 }
 
 #[test]
-fn subsumed_strict_containment_forks_and_discards() {
-    let root = temp_dir("subsumed_fork");
+fn strict_superset_race_lands_accepted_with_the_residue_present() {
+    let root = temp_dir("superset_race");
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir, 11);
     let codec = codec();
@@ -309,9 +310,9 @@ fn subsumed_strict_containment_forks_and_discards() {
                 ..
             }
         ),
-        "the winner strictly contains us; our effects are in it"
+        "the winner strictly contains us; the re-judgment nets a no-op"
     );
-    assert_eq!(writer.counters().subsumptions, 1);
+    assert_eq!(writer.losses(), 1);
     assert_eq!(writer.vector()[&braid], 1);
     writer.with_db(|db| {
         db.read(|instance| {
@@ -346,7 +347,7 @@ fn conflict_loss_rejudges_to_the_serial_rejection() {
         matches!(outcome, Commit::Rejected(_)),
         "exactly the verdict serial execution would have produced"
     );
-    assert_eq!(writer.counters().re_judgments, 1);
+    assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
     assert_eq!(writer.vector()[&braid], 1, "winner-current after the loss");
     writer.with_db(|db| {
         db.read(|instance| {
@@ -361,7 +362,7 @@ fn conflict_loss_rejudges_to_the_serial_rejection() {
 }
 
 #[test]
-fn disjoint_loss_republishes_without_re_judgment() {
+fn disjoint_loss_rejudges_and_republishes_at_tip_plus_one() {
     let root = temp_dir("disjoint");
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir, 11);
@@ -369,21 +370,6 @@ fn disjoint_loss_republishes_without_re_judgment() {
     let braid = kitchen_braid(&codec);
 
     let winner_ops = vec![insert(RECIPE, recipe_row(2, "theirs"))];
-    let loser_ops = vec![insert(RECIPE, recipe_row(3, "ours"))];
-    let loser_fp = footprint(codec.vocabulary(), &loser_ops).expect("footprint");
-    assert_eq!(
-        intersect(
-            codec.vocabulary(),
-            &loser_fp,
-            &loser_ops,
-            &winner_ops,
-            &BTreeMap::new(),
-        )
-        .expect("intersect"),
-        LoserDecision::Disjoint,
-        "the strict disjoint verdict is computed"
-    );
-
     let mut log = TestLog::attach(root.clone(), "");
     log.publish(braid, &winner_ops, 10);
 
@@ -399,24 +385,28 @@ fn disjoint_loss_republishes_without_re_judgment() {
         ..
     } = outcome
     else {
-        panic!("a disjoint loss lands");
+        panic!("a disjoint-shaped loss lands");
     };
-    assert_eq!(generation, 2, "republished into its own slot");
+    assert_eq!(generation, 2, "the re-judged republish lands at tip+1");
     assert_eq!(durability, Durability::Published);
-    let counters = writer.counters();
-    assert_eq!(counters.disjoint_verdicts, 1, "the verdict is counted");
-    assert_eq!(
-        counters.re_judgments, 0,
-        "the optimism path: a fully key-disjoint loss never re-judges"
-    );
-    assert_eq!(counters.republishes, 1);
+    assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
     let store = FsStore::new(root);
     let slot2 = store
         .get(&log_key("", braid, 2))
         .expect("get")
         .expect("republished");
     let batch = codec.decode(&slot2.bytes).expect("decode");
-    assert_eq!(batch.header.writer, 11);
+    assert_eq!(batch.header.writer, 11, "a fresh header of our own");
+    assert_eq!(batch.header.braid_gen, 2);
+    let slot1 = store
+        .get(&log_key("", braid, 1))
+        .expect("get")
+        .expect("the winner's slot");
+    assert_eq!(
+        batch.header.prev,
+        *blake3::hash(&slot1.bytes).as_bytes(),
+        "the fresh header cites the winner as its base"
+    );
     writer.with_db(|db| {
         db.read(|instance| {
             assert!(instance.contains_dyn(RECIPE, &recipe_row(2, "theirs"))?);

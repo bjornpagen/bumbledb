@@ -1,62 +1,146 @@
 //! Group commit: one loop per braid, concurrent commits partition and
 //! queue, a drain packs into ONE batch and one transaction by law —
 //! the composite may accept what solo runs would reject — and a
-//! composite rejection falls back one-by-one in queue order.
+//! composite rejection falls back one-by-one in queue order. Packing
+//! is forced deterministically by parking an unrelated commit inside
+//! its slot PUT: the core stays busy, the callers queue behind it, and
+//! the next drain picks them together.
 
 mod lane_e_support;
 
 use std::sync::Barrier;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::manifest::log_key;
-use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{AckMode, Commit, Options, Writer, WriterOpened};
-use lane_e_support::{RECIPE, STEP, codec, kitchen_braid, recipe_row, step_row, temp_dir, theory};
+use bumbledb_log::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
+use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
+use lane_e_support::{
+    NOTE, RECIPE, STEP, codec, kitchen_braid, note_row, recipe_row, step_row, temp_dir, theory,
+};
 
-fn open_lingering(
+/// Parks the first log-slot create until the gate opens, holding the
+/// commit core busy while other callers queue.
+struct HoldFirstPut {
+    inner: FsStore,
+    gate: std::sync::Arc<AtomicBool>,
+    tripped: AtomicBool,
+}
+
+impl HoldFirstPut {
+    fn new(root: std::path::PathBuf) -> (Self, std::sync::Arc<AtomicBool>) {
+        let gate = std::sync::Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                inner: FsStore::new(root),
+                gate: std::sync::Arc::clone(&gate),
+                tripped: AtomicBool::new(false),
+            },
+            gate,
+        )
+    }
+}
+
+impl ObjectStore for HoldFirstPut {
+    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+        self.inner.get(key)
+    }
+
+    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+        self.inner.get_if_changed(key, etag)
+    }
+
+    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+        if key.starts_with("log/") && !self.tripped.swap(true, Ordering::SeqCst) {
+            while !self.gate.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        self.inner.put_create(key, bytes)
+    }
+
+    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+        self.inner.put_swap(key, bytes, etag)
+    }
+
+    fn delete(&self, key: &str) -> StoreResult<()> {
+        self.inner.delete(key)
+    }
+}
+
+type GatedWriter = Writer<SchemaDescriptor, HoldFirstPut>;
+
+fn open_gated(
     root: std::path::PathBuf,
     dir: &std::path::Path,
-) -> Writer<SchemaDescriptor, FsStore> {
-    let options = Options {
-        writer_id: 51,
-        ack: AckMode::Published,
-        linger: Duration::from_millis(300),
-    };
-    match Writer::open(FsStore::new(root), "", dir, theory(), options).expect("open writer") {
+) -> (GatedWriter, std::sync::Arc<AtomicBool>) {
+    let (store, gate) = HoldFirstPut::new(root);
+    let writer = match Writer::open(store, "", dir, theory(), Options::new(51)).expect("open") {
         WriterOpened::Ready(writer) => writer,
         WriterOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
-    }
+    };
+    (writer, gate)
+}
+
+/// Runs `holder` on one thread (it parks in its slot PUT), queues the
+/// two kitchen callers behind it, opens the gate, and returns both
+/// kitchen outcomes.
+fn packed_pair(
+    writer: &GatedWriter,
+    gate: &AtomicBool,
+    first: impl FnOnce() -> bumbledb_log::writer::Result<Commit<()>> + Send,
+    second: impl FnOnce() -> bumbledb_log::writer::Result<Commit<()>> + Send,
+) -> (Commit<()>, Commit<()>) {
+    let start = Barrier::new(2);
+    std::thread::scope(|scope| {
+        let holder = scope.spawn(|| {
+            start.wait();
+            writer.commit(|batch| {
+                batch.insert(NOTE, [note_row(9_000, "hold the core")]);
+                Ok(())
+            })
+        });
+        start.wait();
+        // The holder reaches its slot PUT and parks with the core held.
+        std::thread::sleep(Duration::from_millis(50));
+        let first_task = scope.spawn(first);
+        let second_task = scope.spawn(second);
+        // Both callers queue behind the busy core before the gate opens.
+        std::thread::sleep(Duration::from_millis(150));
+        gate.store(true, Ordering::SeqCst);
+        let hold = holder.join().expect("join holder").expect("holder commit");
+        assert!(matches!(hold, Commit::Accepted { .. }));
+        (
+            first_task.join().expect("join").expect("commit"),
+            second_task.join().expect("join").expect("commit"),
+        )
+    })
 }
 
 #[test]
 fn a_drain_packs_concurrent_commits_into_one_transaction() {
     let root = temp_dir("pack");
     let dir = root.join("w");
-    let writer = open_lingering(root.clone(), &dir);
-    let barrier = Barrier::new(2);
+    let (writer, gate) = open_gated(root.clone(), &dir);
 
-    let (step_outcome, recipe_outcome) = std::thread::scope(|scope| {
-        let step_task = scope.spawn(|| {
-            barrier.wait();
+    let (step_outcome, recipe_outcome) = packed_pair(
+        &writer,
+        &gate,
+        || {
             writer.commit(|batch| {
                 batch.insert(STEP, [step_row(7, "mix")]);
                 Ok(())
             })
-        });
-        let recipe_task = scope.spawn(|| {
-            barrier.wait();
+        },
+        || {
             writer.commit(|batch| {
                 batch.insert(RECIPE, [recipe_row(7, "cake")]);
                 Ok(())
             })
-        });
-        (
-            step_task.join().expect("join").expect("commit"),
-            recipe_task.join().expect("join").expect("commit"),
-        )
-    });
+        },
+    );
 
     // The step alone would reject (no recipe 7); the drain is one
     // transaction, so the engine judges the composite's final state.
@@ -85,29 +169,24 @@ fn a_drain_packs_concurrent_commits_into_one_transaction() {
 fn a_rejected_composite_falls_back_one_by_one() {
     let root = temp_dir("fallback");
     let dir = root.join("w");
-    let writer = open_lingering(root.clone(), &dir);
-    let barrier = Barrier::new(2);
+    let (writer, gate) = open_gated(root.clone(), &dir);
 
-    let (guilty, innocent) = std::thread::scope(|scope| {
-        let guilty_task = scope.spawn(|| {
-            barrier.wait();
+    let (guilty, innocent) = packed_pair(
+        &writer,
+        &gate,
+        || {
             writer.commit(|batch| {
                 batch.insert(STEP, [step_row(99, "orphan")]);
                 Ok(())
             })
-        });
-        let innocent_task = scope.spawn(|| {
-            barrier.wait();
+        },
+        || {
             writer.commit(|batch| {
                 batch.insert(RECIPE, [recipe_row(50, "pie")]);
                 Ok(())
             })
-        });
-        (
-            guilty_task.join().expect("join").expect("commit"),
-            innocent_task.join().expect("join").expect("commit"),
-        )
-    });
+        },
+    );
 
     assert!(
         matches!(guilty, Commit::Rejected(_)),

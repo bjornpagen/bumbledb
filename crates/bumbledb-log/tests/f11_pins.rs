@@ -3,7 +3,7 @@
 //! prints `PIN f11` lines carrying the measured figures with their
 //! attribution. Nothing gates on a value — the numbers ride the release
 //! receipt, and the only assertions are shape checks proving each
-//! harness measured the path it names (the loser counters fired, the
+//! harness measured the path it names (the loss counter fired, the
 //! verdicts matched). The S3 smoke is credential-gated and skips
 //! loudly.
 
@@ -16,20 +16,17 @@
 
 mod lane_e_support;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Barrier;
 use std::time::{Duration, Instant};
 
 use bumbledb::{SchemaDescriptor, Value};
 use bumbledb_log::braids::BraidId;
-use bumbledb_log::footprint::footprint;
-use bumbledb_log::intersect::{LoserDecision, intersect};
 use bumbledb_log::manifest::{Manifest, ckpt_mdb_key, log_key, manifest_key};
 use bumbledb_log::replica::{Opened, Provenance, Refreshed, Replica};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{Commit, Counters, Error, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Commit, Error, Options, Writer, WriterOpened};
 use lane_e_support::{
     Competitor, NOTE, RECIPE, RacingStore, TestLog, VENUE, codec, insert, kitchen_braid,
     note_braid, note_row, recipe_row, temp_dir, theory, venue_braid,
@@ -252,15 +249,13 @@ fn pin_per_braid_commit_latency_floor() {
     );
 }
 
-/// Loss costs: the no-loss baseline, a disjoint loss end to end (the
-/// attribution line names whether the fast path or a re-judgment
-/// carried it), a conflict loss re-judging to the serial rejection —
-/// the discard + re-open shape that was also the old baseline's cost
-/// for every loss — and the pure fast-path components (one
-/// intersection + one slot PUT) measured alone.
+/// Loss cost: the no-loss baseline and one loss end to end — under
+/// the one path a loss IS a re-judgment (discard, re-open, re-persist,
+/// re-judge, publish), so the loss cost is one number — beside the
+/// slot PUT alone for attribution.
 #[test]
 #[ignore = "measurement harness: run with --ignored --nocapture to record the pins"]
-fn pin_loss_costs_disjoint_vs_conflict_vs_discard() {
+fn pin_loss_cost_one_number() {
     // Baseline: no losses anywhere.
     let base_root = temp_dir("f11_loss_base");
     let base_writer = open_writer(base_root.clone(), &base_root.join("w"), 11);
@@ -271,10 +266,9 @@ fn pin_loss_costs_disjoint_vs_conflict_vs_discard() {
     report("loss cost baseline (no loss)", &mut base_samples);
     let base = median(&mut base_samples);
 
-    // Disjoint loss: the racing store plants a chain-valid competitor
-    // note on every armed slot attempt, so every measured commit pays
-    // exactly one live disjoint loss before landing.
-    let root = temp_dir("f11_loss_disjoint");
+    // One loss per measured commit: the racing store plants a
+    // chain-valid competitor note on every armed slot attempt.
+    let root = temp_dir("f11_loss");
     let braid = note_braid(&codec());
     let (racing, handle) = RacingStore::new(root.clone(), "", braid, 0, Competitor::Notes);
     let writer = match Writer::open(racing, "", &root.join("w"), theory(), Options::new(12))
@@ -284,8 +278,8 @@ fn pin_loss_costs_disjoint_vs_conflict_vs_discard() {
         WriterOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
     };
     let _ = timed_note(&writer, 90_001);
-    let before = writer.counters();
-    let mut disjoint_samples: Vec<Duration> = (0..16)
+    let before = writer.losses();
+    let mut loss_samples: Vec<Duration> = (0..16)
         .map(|i| {
             force_checkpoint(&writer, 80_000 + i);
             handle.seed_from(root.clone());
@@ -293,75 +287,23 @@ fn pin_loss_costs_disjoint_vs_conflict_vs_discard() {
             timed_note(&writer, 100 + i)
         })
         .collect();
-    let after = writer.counters();
-    assert!(after.disjoint_verdicts >= before.disjoint_verdicts + 16);
-    assert!(after.republishes >= before.republishes + 16);
-    let disjoint_re_judged = after.re_judgments - before.re_judgments;
-    report("disjoint loss, end to end", &mut disjoint_samples);
-    println!(
-        "PIN f11 disjoint loss attribution: 16 losses, {disjoint_re_judged} re-judgments — \
-         zero means the republish-without-re-judgment fast path carried them; nonzero means \
-         the gate routed them through discard + re-judge",
+    assert_eq!(
+        writer.losses(),
+        before + 16,
+        "each measured commit paid exactly one loss"
     );
-    let disjoint = median(&mut disjoint_samples);
-
-    // Conflict loss: a planted winner takes the loser's slot with the
-    // same recipe determinant; the loser re-judges to the serial FD
-    // rejection.
-    let croot = temp_dir("f11_loss_conflict");
-    let cwriter = open_writer(croot.clone(), &croot.join("w"), 13);
-    let _ = timed_note(&cwriter, 90_002);
-    let mut log = TestLog::attach(croot.clone(), "");
-    let kitchen = kitchen_braid(&codec());
-    let mut conflict_samples: Vec<Duration> = (0..16)
-        .map(|i| {
-            force_checkpoint(&cwriter, 80_000 + i);
-            log.publish(kitchen, &[insert(RECIPE, recipe_row(i, "winner"))], i + 1);
-            let start = Instant::now();
-            let outcome = cwriter
-                .commit(|batch| {
-                    batch.insert(RECIPE, [recipe_row(i, "loser")]);
-                    Ok(())
-                })
-                .expect("conflict commit");
-            let elapsed = start.elapsed();
-            assert!(
-                matches!(outcome, Commit::Rejected(_)),
-                "the re-judgment produces the serial FD rejection"
-            );
-            elapsed
-        })
-        .collect();
     report(
-        "conflict loss, end to end (discard + re-open + re-judge to rejection)",
-        &mut conflict_samples,
+        "one loss, end to end (discard + re-open + re-judge)",
+        &mut loss_samples,
     );
-    let conflict = median(&mut conflict_samples);
-
-    // Fast-path attribution: what the lifted gate would spend — one
-    // pure intersection plus one slot PUT (the local apply already
-    // happened before the loss was known).
-    let fixture = codec();
-    let loser_ops = vec![insert(NOTE, note_row(1, "loser"))];
-    let winner_ops = vec![insert(NOTE, note_row(2, "winner"))];
-    let loser_fp = footprint(fixture.vocabulary(), &loser_ops).expect("footprint");
-    let start = Instant::now();
-    for _ in 0..10_000 {
-        let decision = intersect(
-            fixture.vocabulary(),
-            &loser_fp,
-            &loser_ops,
-            &winner_ops,
-            &BTreeMap::new(),
-        )
-        .expect("intersect");
-        assert_eq!(decision, LoserDecision::Disjoint);
-    }
-    let intersect_each = start.elapsed() / 10_000;
+    let loss = median(&mut loss_samples);
 
     let put_root = temp_dir("f11_loss_put");
     let put_store = FsStore::new(put_root);
-    let bytes = log.encode(note_braid(&fixture), &loser_ops, 1).1;
+    let log = TestLog::attach(root.clone(), "");
+    let bytes = log
+        .encode(braid, &[insert(NOTE, note_row(1, "loser"))], 1)
+        .1;
     let mut put_samples: Vec<Duration> = (0..256)
         .map(|i| {
             let key = format!("bench/{i}");
@@ -377,18 +319,13 @@ fn pin_loss_costs_disjoint_vs_conflict_vs_discard() {
     let put = median(&mut put_samples);
 
     println!(
-        "PIN f11 loss cost summary: baseline={:.1}us; disjoint-loss={:.1}us (extra {:.1}us); \
-         conflict-loss={:.1}us (extra {:.1}us — the discard + re-open + re-judge shape, \
-         which is also what every disjoint loss paid under the old discard-everything \
-         baseline); pure fast-path components: intersect={:.2}us + slot PUT={:.1}us = {:.1}us",
+        "PIN f11 loss cost summary: baseline={:.1}us; one-loss={:.1}us (extra {:.1}us — \
+         the one path's discard + re-open + re-persist + re-judge, every loss the same \
+         number); slot PUT alone={:.1}us",
         micros(base),
-        micros(disjoint),
-        micros(disjoint.saturating_sub(base)),
-        micros(conflict),
-        micros(conflict.saturating_sub(base)),
-        micros(intersect_each),
+        micros(loss),
+        micros(loss.saturating_sub(base)),
         micros(put),
-        micros(intersect_each + put),
     );
 }
 
@@ -649,34 +586,18 @@ fn pin_idle_probe_cost_per_pass() {
     );
 }
 
-fn sum_counters(tallies: &[Tally]) -> Counters {
-    let mut total = Counters {
-        re_judgments: 0,
-        republishes: 0,
-        subsumptions: 0,
-        disjoint_verdicts: 0,
-    };
-    for tally in tallies {
-        total.re_judgments += tally.counters.re_judgments;
-        total.republishes += tally.counters.republishes;
-        total.subsumptions += tally.counters.subsumptions;
-        total.disjoint_verdicts += tally.counters.disjoint_verdicts;
-    }
-    total
-}
-
 struct Tally {
     accepted: u64,
     rejected: u64,
     contended: u64,
-    counters: Counters,
+    losses: u64,
 }
 
 /// The contention curve: four writers over one `FsStore` prefix insert
 /// recipes whose determinant is drawn Zipfian from 4096 keys, skew 0
-/// to 0.999. Throughput, the re-judge rate, and the verdict mix ride
-/// one line per skew; rejections at high skew are the serial FD
-/// verdicts the algebra exists to produce.
+/// to 0.999. Throughput, the loss rate, and the verdict mix ride one
+/// line per skew; rejections at high skew are the serial FD verdicts
+/// the one path exists to produce.
 #[test]
 #[ignore = "measurement harness: run with --ignored --nocapture to record the pins"]
 fn pin_contention_curve_zipfian_hot_key() {
@@ -708,7 +629,7 @@ fn pin_contention_curve_zipfian_hot_key() {
                             accepted: 0,
                             rejected: 0,
                             contended: 0,
-                            counters: writer.counters(),
+                            losses: 0,
                         };
                         for i in 0..PER_WRITER {
                             let key = zipf.sample(&mut rng) + 1;
@@ -724,7 +645,7 @@ fn pin_contention_curve_zipfian_hot_key() {
                             }
                         }
                         writer.quiesce();
-                        tally.counters = writer.counters();
+                        tally.losses = writer.losses();
                         tally
                     })
                 })
@@ -737,7 +658,7 @@ fn pin_contention_curve_zipfian_hot_key() {
                 .collect();
             (start.elapsed(), tallies)
         });
-        let totals = sum_counters(&tallies);
+        let losses: u64 = tallies.iter().map(|t| t.losses).sum();
         let accepted: u64 = tallies.iter().map(|t| t.accepted).sum();
         let rejected: u64 = tallies.iter().map(|t| t.rejected).sum();
         let contended: u64 = tallies.iter().map(|t| t.contended).sum();
@@ -745,26 +666,21 @@ fn pin_contention_curve_zipfian_hot_key() {
         println!(
             "PIN f11 contention curve: theta={theta} writers={WRITERS} keys={KEYS} \
              commits={commits} elapsed={:.2}s decided/s={:.0} accepted={accepted} \
-             rejected={rejected} contended={contended} re_judge_rate={:.3} \
-             re_judgments={} republishes={} subsumed={} disjoint={}",
+             rejected={rejected} contended={contended} loss_rate={:.3} losses={losses}",
             elapsed.as_secs_f64(),
             commits as f64 / elapsed.as_secs_f64(),
-            totals.re_judgments as f64 / commits as f64,
-            totals.re_judgments,
-            totals.republishes,
-            totals.subsumptions,
-            totals.disjoint_verdicts,
+            losses as f64 / commits as f64,
         );
     }
 }
 
-/// The conflict ratio on a deterministic alternating two-writer
-/// workload: identical rows race into subsumption, distinct notes into
-/// disjoint losses (republished through the gated re-judgment), hot
-/// recipe determinants into serial rejections.
+/// The loss mix on a deterministic alternating two-writer workload:
+/// identical rows race into re-judged net no-ops, distinct notes into
+/// re-judged republishes, hot recipe determinants into serial
+/// rejections — every shape one loss, one number.
 #[test]
 #[ignore = "measurement harness: run with --ignored --nocapture to record the pins"]
-fn pin_conflict_ratio_mixed_workload() {
+fn pin_loss_mix_alternating_workload() {
     const ROUNDS: u64 = 24;
     let root = temp_dir("f11_ratio");
     let a = open_writer(root.clone(), &root.join("wa"), 51);
@@ -791,46 +707,24 @@ fn pin_conflict_ratio_mixed_workload() {
         commit(&a, RECIPE, recipe_row(i, "first"));
         commit(&b, RECIPE, recipe_row(i, "second"));
     }
-    let counters = sum_counters(&[
-        Tally {
-            accepted: 0,
-            rejected: 0,
-            contended: 0,
-            counters: a.counters(),
-        },
-        Tally {
-            accepted: 0,
-            rejected: 0,
-            contended: 0,
-            counters: b.counters(),
-        },
-    ]);
+    let losses = a.losses() + b.losses();
     let commits = accepted + rejected;
     assert_eq!(commits, ROUNDS * 6);
-    assert!(counters.subsumptions > 0, "the dup lane subsumed");
-    assert!(
-        counters.disjoint_verdicts > 0,
-        "the solo lane lost disjoint"
-    );
+    assert!(losses > 0, "the racing lanes lost and re-judged");
     assert!(rejected > 0, "the hot lane rejected serially");
+    assert!(accepted > 0, "the dup and solo lanes landed");
     println!(
-        "PIN f11 conflict ratio: commits={commits} accepted={accepted} rejected={rejected} \
-         subsumed={} ({:.3}) republished={} ({:.3}) re_judged={} ({:.3}) rejected_share={:.3}",
-        counters.subsumptions,
-        counters.subsumptions as f64 / commits as f64,
-        counters.republishes,
-        counters.republishes as f64 / commits as f64,
-        counters.re_judgments,
-        counters.re_judgments as f64 / commits as f64,
+        "PIN f11 loss mix: commits={commits} accepted={accepted} rejected={rejected} \
+         losses={losses} ({:.3}/commit) rejected_share={:.3}",
+        losses as f64 / commits as f64,
         rejected as f64 / commits as f64,
     );
 }
 
 /// The crossover behind the sixteen-loss bound: measure a resident
 /// writer's single-braid group-commit throughput and the cost of one
-/// live disjoint loss, then record the loss rate at which loss
-/// resolution alone consumes the writer — and what a full run to the
-/// bound stalls for.
+/// loss, then record the loss rate at which loss resolution alone
+/// consumes the writer — and what a full run to the bound stalls for.
 #[test]
 #[ignore = "measurement harness: run with --ignored --nocapture to record the pins"]
 fn pin_crossover_point_for_the_loss_bound() {
@@ -887,7 +781,7 @@ fn pin_crossover_point_for_the_loss_bound() {
     let crossover = 1.0 / loss_cost.as_secs_f64();
     println!(
         "PIN f11 crossover: group-commit capacity {throughput:.0} commits/s on one braid; \
-         one live disjoint loss costs {:.1}ms over the {:.1}ms no-loss commit; a live-loss \
+         one loss costs {:.1}ms over the {:.1}ms no-loss commit; a loss \
          rate above {crossover:.0}/s spends the writer entirely on loss resolution \
          (loss-rate x cost >= 1); a full run to the 16-loss bound stalls {:.0}ms before \
          Err::Contention — the recorded basis for the bound and for resident mode on hot \

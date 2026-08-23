@@ -1,9 +1,10 @@
-//! The contention bound: sixteen consecutive live losses surface as
-//! `Err::Contention` with the cause that actually exhausted the bound —
-//! `SlotRace` for fully-disjoint racers, `HotKey` with the raw
-//! determinant values for conflicts — and the applied batch stays in
-//! `pending`: the store is whole, reads serve, and publication retries
-//! on the next commit.
+//! The contention bound: sixteen consecutive losses surface as
+//! `Err::Contention`, and the terminal re-judgment sources the cause —
+//! `SlotRace` with the applied batch retained in `pending` when the
+//! final re-judgment accepted and the tip was simply busy, `HotKey`
+//! with the statement and the offending fact's raw values from the
+//! engine's own violation when the racers turned the re-judgment into
+//! a rejection.
 
 mod lane_e_support;
 
@@ -12,12 +13,24 @@ use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{
-    Commit, ContentionCause, Error, Options, Writer, WriterOpened, WriterStep,
+    Commit, ContentionCause, Error, LOSS_BOUND, Options, Writer, WriterOpened, WriterStep,
 };
 use lane_e_support::{
     BOOKING, BOOKING_CAPACITY, Competitor, CrashOnce, NOTE, RacingStore, VENUE, codec, note_braid,
     note_row, temp_dir, theory, venue_braid,
 };
+
+/// The venue capacity ceiling the shared fixture theory declares.
+const CEILING: u64 = 100_000;
+
+/// Racer booking units sized so the sixteenth loss is the first whose
+/// re-judgment the ceiling convicts: fifteen racers plus our booking
+/// stay under the ceiling, sixteen push it over, and the racers' own
+/// replay stays admissible.
+const RACER_UNITS: u64 = 6_240;
+
+/// Our booking's units in the hot-key fixture.
+const LOSER_UNITS: u64 = 100;
 
 fn ready<S: bumbledb_log::store::ObjectStore + 'static>(
     opened: WriterOpened<SchemaDescriptor, S>,
@@ -48,8 +61,13 @@ fn sixteen_disjoint_losses_surface_slot_race_and_keep_pending() {
         panic!("Contention expected, got {err:?}");
     };
     assert_eq!(got, braid);
-    assert_eq!(cause, ContentionCause::SlotRace { tip: 16 });
+    assert_eq!(
+        cause,
+        ContentionCause::SlotRace { tip: 16 },
+        "the terminal re-judgment accepted and the tip was busy"
+    );
     assert_eq!(racer.plants(), 16);
+    assert_eq!(writer.losses(), u64::from(LOSS_BOUND));
     assert_eq!(
         writer.backlog(),
         Some(braid),
@@ -87,7 +105,7 @@ fn sixteen_disjoint_losses_surface_slot_race_and_keep_pending() {
 }
 
 #[test]
-fn sixteen_conflicts_surface_hot_key_with_raw_determinants() {
+fn a_rejecting_terminal_rejudgment_surfaces_hot_key_from_the_violation() {
     let root = temp_dir("hotkey");
     let dir = root.join("w");
     let codec = codec();
@@ -97,7 +115,10 @@ fn sixteen_conflicts_surface_hot_key_with_raw_determinants() {
         "",
         braid,
         0,
-        Competitor::Bookings { venue: 1 },
+        Competitor::Bookings {
+            venue: 1,
+            base_units: RACER_UNITS,
+        },
     );
     let writer =
         ready(Writer::open(store, "", &dir, theory(), Options::new(22)).expect("open writer"));
@@ -111,15 +132,25 @@ fn sixteen_conflicts_surface_hot_key_with_raw_determinants() {
             .expect("venue setup"),
         Commit::Accepted { generation: 1, .. }
     ));
+    // Fifteen racer bookings plus ours fit; the sixteenth crosses the
+    // ceiling exactly where the bound is spent, so the terminal
+    // re-judgment is the engine's own capacity rejection.
+    let racer_fill: u64 = (0..16).map(|seq| RACER_UNITS + seq).sum();
+    assert!(racer_fill <= CEILING, "the racers' own replay stays legal");
+    assert!(racer_fill - (RACER_UNITS + 15) + LOSER_UNITS <= CEILING);
+    assert!(racer_fill + LOSER_UNITS > CEILING);
     racer.seed_from(root.clone());
     racer.arm(16);
 
     let err = writer
         .commit(|batch| {
-            batch.insert(BOOKING, [Box::from([Value::U64(1), Value::U64(5)])]);
+            batch.insert(
+                BOOKING,
+                [Box::from([Value::U64(1), Value::U64(LOSER_UNITS)])],
+            );
             Ok(())
         })
-        .expect_err("conflicts exhausted the bound");
+        .expect_err("the racers turned the terminal re-judgment into a rejection");
     let Error::Contention { braid: got, cause } = err else {
         panic!("Contention expected, got {err:?}");
     };
@@ -127,13 +158,21 @@ fn sixteen_conflicts_surface_hot_key_with_raw_determinants() {
     let ContentionCause::HotKey { statement, values } = cause else {
         panic!("HotKey expected, got {cause:?}");
     };
-    assert_eq!(statement, Some(BOOKING_CAPACITY));
-    assert_eq!(
-        values.as_ref(),
-        &[Value::U64(1)],
-        "the loser owns its raw determinant values"
+    assert_eq!(statement, BOOKING_CAPACITY, "the violation names itself");
+    assert!(
+        values.contains(&Value::U64(1)),
+        "the offending fact's raw values carry the parent determinant: {values:?}"
     );
-    assert_eq!(writer.backlog(), Some(braid));
+    assert_eq!(racer.plants(), 16);
+    assert_eq!(writer.losses(), u64::from(LOSS_BOUND));
+    assert_eq!(
+        writer.backlog(),
+        None,
+        "a rejected terminal re-judgment clears the pending — nothing is owed"
+    );
+    let generation = writer.with_db(|db| db.generation().expect("generation").value());
+    let sum: u64 = writer.vector().values().sum();
+    assert_eq!(generation, sum, "whole with nothing pending");
 }
 
 #[test]

@@ -1,10 +1,9 @@
-//! Ack modes: `published` default, `local` moving the ack to the end of
-//! the local apply with `durability` in the outcome, bounded by the
-//! `max_pending` knobs — beyond them acks stall to publication.
+//! Ack modes: `published` default; `local` moving the ack to the end
+//! of the local apply with `durability` in the outcome. The loss window
+//! is the one pending batch by construction — the pending slot is
+//! structurally depth-1, so no knob exists to widen or narrow it.
 
 mod lane_e_support;
-
-use std::time::Duration;
 
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::manifest::log_key;
@@ -15,14 +14,10 @@ use bumbledb_log::writer::{
 };
 use lane_e_support::{CrashOnce, NOTE, codec, note_braid, note_row, temp_dir, theory};
 
-fn local_options(writer_id: u64, max_batches: u64, max_bytes: u64) -> Options {
+fn local_options(writer_id: u64) -> Options {
     Options {
         writer_id,
-        ack: AckMode::Local {
-            max_pending_batches: max_batches,
-            max_pending_bytes: max_bytes,
-        },
-        linger: Duration::ZERO,
+        ack: AckMode::Local,
     }
 }
 
@@ -48,7 +43,7 @@ fn local_ack_returns_local_pending_and_publishes_behind() {
             "",
             &dir,
             theory(),
-            local_options(41, 8, 1024 * 1024),
+            local_options(41),
         )
         .expect("open writer"),
     );
@@ -81,67 +76,6 @@ fn local_ack_returns_local_pending_and_publishes_behind() {
 }
 
 #[test]
-fn zero_batch_knob_stalls_the_ack_to_publication() {
-    let root = temp_dir("stall_batches");
-    let dir = root.join("w");
-    let writer = ready(
-        Writer::open(
-            FsStore::new(root),
-            "",
-            &dir,
-            theory(),
-            local_options(41, 0, 1024 * 1024),
-        )
-        .expect("open writer"),
-    );
-    let outcome = writer
-        .commit(|batch| {
-            batch.insert(NOTE, [note_row(1, "stalled")]);
-            Ok(())
-        })
-        .expect("commit");
-    assert!(
-        matches!(
-            outcome,
-            Commit::Accepted {
-                durability: Durability::Published,
-                ..
-            }
-        ),
-        "beyond max_pending the ack stalls rather than widen the loss window"
-    );
-}
-
-#[test]
-fn byte_knob_stalls_an_oversized_batch() {
-    let root = temp_dir("stall_bytes");
-    let dir = root.join("w");
-    let writer = ready(
-        Writer::open(
-            FsStore::new(root),
-            "",
-            &dir,
-            theory(),
-            local_options(41, 8, 1),
-        )
-        .expect("open writer"),
-    );
-    let outcome = writer
-        .commit(|batch| {
-            batch.insert(NOTE, [note_row(1, "wide")]);
-            Ok(())
-        })
-        .expect("commit");
-    assert!(matches!(
-        outcome,
-        Commit::Accepted {
-            durability: Durability::Published,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn crashed_publisher_retains_pending_and_the_next_commit_publishes() {
     let root = temp_dir("detached_crash");
     let dir = root.join("w");
@@ -152,7 +86,7 @@ fn crashed_publisher_retains_pending_and_the_next_commit_publishes() {
             "",
             &dir,
             theory(),
-            local_options(42, 8, 1024 * 1024),
+            local_options(42),
             CrashOnce::new(WriterStep::ApplyLocal, 1),
         )
         .expect("open writer"),

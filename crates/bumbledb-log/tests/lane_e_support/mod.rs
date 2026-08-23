@@ -146,7 +146,7 @@ pub fn codec() -> Codec {
     let descriptor = theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
 pub fn kitchen_braid(codec: &Codec) -> BraidId {
@@ -288,12 +288,14 @@ impl StepHook for CrashOnce {
     }
 }
 
-/// What the racing store plants: distinct notes, or distinct bookings
-/// under one shared venue parent (the W-conflict shape).
+/// What the racing store plants: distinct notes (fully disjoint — the
+/// `SlotRace` shape), or distinct bookings under one shared venue
+/// parent, sized `base_units + seq` so the fixture prices exactly when
+/// the ceiling convicts the loser's re-judgment (the `HotKey` shape).
 #[derive(Clone, Copy)]
 pub enum Competitor {
     Notes,
-    Bookings { venue: u64 },
+    Bookings { venue: u64, base_units: u64 },
 }
 
 struct RacerState {
@@ -308,7 +310,7 @@ struct RacerState {
 
 /// Wraps `FsStore` and, while armed, wins every `put_create` on the
 /// target braid's log keys by planting a chain-valid competitor batch
-/// first — the deterministic tool for driving the loser algebra to the
+/// first — the deterministic tool for driving the loss path to the
 /// contention bound.
 pub struct RacingStore {
     inner: FsStore,
@@ -405,9 +407,9 @@ impl RacingStore {
         let seq = state.seq.fetch_add(1, Ordering::SeqCst);
         let ops = match state.kind {
             Competitor::Notes => vec![insert(NOTE, note_row(20_000 + seq, "racer"))],
-            Competitor::Bookings { venue } => vec![insert(
+            Competitor::Bookings { venue, base_units } => vec![insert(
                 BOOKING,
-                Box::from([Value::U64(venue), Value::U64(1_000 + seq)]),
+                Box::from([Value::U64(venue), Value::U64(base_units + seq)]),
             )],
         };
         let mut head = self.state.head.lock().expect("racer head");

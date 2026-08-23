@@ -19,9 +19,7 @@ use bumbledb_log::apply::{Applied, apply};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Codec, Op, OpKind};
 use bumbledb_log::gc::{Restore, restore_to_vector};
-use bumbledb_log::manifest::{
-    Checkpoint, Head, Published, ckpt_json_key, ckpt_mdb_key, log_key, publish_checkpoint,
-};
+use bumbledb_log::manifest::{Head, Published, ckpt_mdb_key, log_key, publish_checkpoint};
 use bumbledb_log::replica::{Opened, Provenance, Replica, Vector};
 use bumbledb_log::sidecar::Chain;
 use bumbledb_log::store::fs::FsStore;
@@ -131,7 +129,7 @@ fn codec() -> Codec {
     let descriptor = theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
 /// splitmix64 — the world generator's one source of randomness, seeded
@@ -366,38 +364,36 @@ fn publish_hop_checkpoint(
     let _ = std::fs::remove_dir_all(scratch);
     let catalog = db.catalog_digest().expect("hop catalog digest");
     let digest = *blake3::hash(&bytes).as_bytes();
-    let doc = Checkpoint {
-        braids: chain
-            .entries
-            .iter()
-            .map(|(braid, entry)| {
-                (
-                    *braid,
-                    Head {
-                        g: entry.g,
-                        hash: entry.prev,
-                        ts: entry.ts,
-                    },
-                )
-            })
-            .collect(),
-        catalog,
-        writer: 4200 + seed,
-        prev: None,
-    };
+    let heads: std::collections::BTreeMap<_, Head> = chain
+        .entries
+        .iter()
+        .map(|(braid, entry)| {
+            (
+                *braid,
+                Head {
+                    g: entry.g,
+                    hash: entry.prev,
+                    ts: entry.ts,
+                },
+            )
+        })
+        .collect();
     assert!(matches!(
         store
             .put_create(&ckpt_mdb_key("", &digest), &bytes)
             .expect("upload checkpoint object"),
         Create::Created(_)
     ));
-    assert!(matches!(
-        store
-            .put_create(&ckpt_json_key("", &digest), &doc.render())
-            .expect("upload checkpoint doc"),
-        Create::Created(_)
-    ));
-    match publish_checkpoint(store, "", codec.braids(), digest, chain.sum()).expect("manifest CAS")
+    match publish_checkpoint(
+        store,
+        "",
+        codec.braids(),
+        digest,
+        &heads,
+        catalog,
+        4200 + seed,
+    )
+    .expect("manifest CAS")
     {
         Published::Replaced | Published::Kept { .. } => {}
         Published::Refused(refusal) => panic!("seed {seed}: checkpoint refused: {refusal:?}"),
@@ -470,7 +466,8 @@ fn run_world(seed: u64) {
         "seed {seed}: the replay store ends whole"
     );
 
-    if let Some((hop_vector, mut hop_chain)) = hop {
+    let (hop_vector, mut hop_chain) = hop.expect("the checkpoint hop ran: every world crosses it");
+    {
         let restored = restore_to_vector(&store, "", &root.join("hop"), &theory(), &hop_vector)
             .expect("restore infrastructure");
         let Restore::Restored { db: hop_db, vector } = restored else {

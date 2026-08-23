@@ -1,9 +1,8 @@
 //! Lane 7's Rust half of the cross-language parity goldens: the corpus
 //! under `conformance/corpus` is consumed from disk as the oracle — the
-//! sidecar is parsed, the binary is decoded against it, the footprint
-//! is recomputed as the pure function, and the batch is re-encoded byte
-//! for byte. The TypeScript suite consumes the identical files, so any
-//! drift between the two codecs, footprint functions, or braid
+//! sidecar is parsed, the binary is decoded against it, and the batch
+//! is re-encoded byte for byte. The TypeScript suite consumes the
+//! identical files, so any drift between the two codecs or braid
 //! derivations lands here or there as a typed disagreement.
 
 #[path = "lane_a_support/mod.rs"]
@@ -13,7 +12,6 @@ use bumbledb::{Interval, Value};
 use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::braids::braids;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::footprint::footprint;
 use bumbledb_log::sidecar::{Chain, ChainEntry};
 use serde_json::Value as Json;
 
@@ -51,8 +49,7 @@ fn corpus_bytes(section: &str, stem: &str) -> Vec<u8> {
 fn codec_of(fixture: &Json) -> (String, Codec) {
     let schema = fixture["schema"].as_str().expect("schema name").to_string();
     let descriptor = support::schema(&schema);
-    let codec =
-        Codec::new(&descriptor, support::corpus_fingerprint(&schema)).expect("fixture vocabulary");
+    let codec = Codec::new(&descriptor, support::corpus_fingerprint(&schema));
     assert_eq!(
         fixture["fingerprint"].as_str().expect("fingerprint"),
         support::hex(codec.fingerprint()),
@@ -62,9 +59,9 @@ fn codec_of(fixture: &Json) -> (String, Codec) {
 }
 
 /// Every batch golden, decoded from disk against its sidecar: ok
-/// fixtures must yield the sidecar's header, ops, and footprint, agree
-/// with the pure recomputation, and re-encode to the identical bytes;
-/// refusal fixtures must carry the sidecar's typed identity.
+/// fixtures must yield the sidecar's header and ops and re-encode to
+/// the identical bytes; refusal fixtures must carry the sidecar's
+/// typed identity.
 #[test]
 fn batch_corpus_decodes_recomputes_and_reencodes() {
     let fixtures = corpus_files("batch");
@@ -84,17 +81,6 @@ fn batch_corpus_decodes_recomputes_and_reencodes() {
                     support::render_ops(&batch.ops),
                     fixture["ops"],
                     "{stem}: ops"
-                );
-                assert_eq!(
-                    Json::Array(batch.footprint.iter().map(support::render_entry).collect()),
-                    fixture["footprint"],
-                    "{stem}: carried footprint section"
-                );
-                let recomputed =
-                    footprint(codec.vocabulary(), &batch.ops).expect("footprint recomputes");
-                assert_eq!(
-                    recomputed, batch.footprint,
-                    "{stem}: the pure function reproduces the carried section"
                 );
                 let reencoded = codec
                     .encode(&batch.header, &batch.ops)
@@ -138,10 +124,6 @@ fn batch_corpus_covers_the_wire() {
         "InvalidUtf8",
         "EmptyInterval",
         "IntervalOverflow",
-        "UnknownFootprintClass",
-        "UnknownFootprintMode",
-        "UnsortedFootprint",
-        "DuplicateFootprintEntry",
         "TrailingBytes",
     ];
     let mut refused = std::collections::BTreeSet::new();
@@ -488,10 +470,8 @@ fn chain_corpus_pins_the_three_causes() {
     if support::bless() {
         std::fs::create_dir_all(&dir).expect("chain dir");
     }
-    let kitchen =
-        Codec::new(&schemas["kitchen"], support::corpus_fingerprint("kitchen")).expect("codec");
-    let booking =
-        Codec::new(&schemas["booking"], support::corpus_fingerprint("booking")).expect("codec");
+    let kitchen = Codec::new(&schemas["kitchen"], support::corpus_fingerprint("kitchen"));
+    let booking = Codec::new(&schemas["booking"], support::corpus_fingerprint("booking"));
 
     let cases = chain_cases(&kitchen, &booking);
     let mut seen = Vec::new();

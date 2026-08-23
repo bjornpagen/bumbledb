@@ -1,23 +1,23 @@
-//! Conformance F5 — contention and the loser algebra. N in-process
+//! Conformance F5 — contention under the one loss path. N in-process
 //! writers over one `FsStore` prefix, each with its own replica
 //! directory; the standing gates on every fixture: per-braid logs
 //! gap-free with each slot created once, every `prev` hash verified,
 //! every acked commit appearing exactly once, all replicas converging
 //! on `catalog_digest`, and the wholeness identity
 //! `generation == Σ vector + |pending|` asserted on every store — the
-//! invariant the loser algebra must never bend. Subsumed losses publish
-//! nothing and report the winner's generation with both engine-decided
-//! arms pinned; fully key-disjoint losses never re-judge (the counter
-//! is the pin) and republish with re-addressed headers that pass every
-//! chain check; conflicting losses produce serial verdicts; the
-//! ambiguous-outcome GET-verify law resolves injected response drops;
-//! and both `Err::Contention` causes come from dedicated livelock
-//! fixtures.
+//! invariant the loss path must never bend. A loss whose effects the
+//! winner already performed re-judges to the engine's net no-op and
+//! lands `Accepted` at the current generation with nothing published;
+//! a disjoint-shaped loss re-judges and republishes with a fresh
+//! header at tip+1; a conflicting loss produces the serial verdict;
+//! the ambiguous-outcome GET-verify law resolves injected response
+//! drops; and both `Err::Contention` causes come from dedicated
+//! livelock fixtures whose terminal re-judgment sources the payload.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use bumbledb::schema::fingerprint::fingerprint as schema_fingerprint;
@@ -28,8 +28,6 @@ use bumbledb::schema::{
 use bumbledb::{Value, Violation};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Batch, BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::footprint::{CapacityMode, Entry, footprint};
-use bumbledb_log::intersect::{LoserDecision, intersect};
 use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::fs::FsStore;
@@ -37,7 +35,7 @@ use bumbledb_log::store::{
     Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreError, Swap,
 };
 use bumbledb_log::writer::{
-    AckMode, Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
+    Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
     WriterOpened, WriterStep,
 };
 
@@ -146,7 +144,7 @@ fn codec() -> Codec {
     let descriptor = theory();
     let schema = descriptor.clone().validate().expect("fixture validates");
     let fingerprint = schema_fingerprint(&schema).0;
-    Codec::new(&descriptor, fingerprint).expect("fixture vocabulary")
+    Codec::new(&descriptor, fingerprint)
 }
 
 fn kitchen_braid(codec: &Codec) -> BraidId {
@@ -201,7 +199,7 @@ fn open_at(root: PathBuf, dir: &Path, writer_id: u64) -> Writer<SchemaDescriptor
 }
 
 /// The wholeness identity `generation == Σ vector + |pending|` — the
-/// invariant the loser algebra must never bend, asserted on every
+/// invariant the loss path must never bend, asserted on every
 /// writer after every fixture.
 fn assert_whole<S, H>(writer: &Writer<SchemaDescriptor, S, H>, context: &str)
 where
@@ -221,9 +219,8 @@ where
 /// The standing gates on the published prefix: per-braid logs gap-free
 /// (the on-disk slot names are exactly `1..=tip`, so each slot was
 /// created once), every header passing the chain battery (slot
-/// identity, `prev` hash, monotone timestamp) and every carried
-/// footprint equal to its recomputation. Returns the decoded batches
-/// per braid.
+/// identity, `prev` hash, monotone timestamp). Returns the decoded
+/// batches per braid.
 fn verify_log(root: &Path) -> BTreeMap<BraidId, Vec<Batch>> {
     let codec = codec();
     let store = FsStore::new(root.to_path_buf());
@@ -269,11 +266,6 @@ fn verify_log(root: &Path) -> BTreeMap<BraidId, Vec<Batch>> {
                 batch.header.timestamp >= prev_ts,
                 "monotone timestamps at {braid}/{slot}"
             );
-            assert_eq!(
-                footprint(codec.vocabulary(), &batch.ops).expect("recompute"),
-                batch.footprint,
-                "carried footprint equals recomputation at {braid}/{slot}"
-            );
             prev = *blake3::hash(&fetched.bytes).as_bytes();
             prev_ts = batch.header.timestamp;
             batches.push(batch);
@@ -284,8 +276,8 @@ fn verify_log(root: &Path) -> BTreeMap<BraidId, Vec<Batch>> {
 }
 
 /// Convergence: a fresh replica replays the whole prefix under apply's
-/// own battery (chain discipline, footprint recompute, publish-law
-/// instrument), lands whole, and reports its catalog digest.
+/// own battery (chain discipline, publish-law instrument), lands
+/// whole, and reports its catalog digest.
 fn converged_digest(root: &Path) -> [u8; 32] {
     let dir = temp_dir("verify_replica");
     let opened = Replica::open(
@@ -482,12 +474,13 @@ impl ObjectStore for DropResponses {
 
 /// What the racing store plants at every contested slot: distinct
 /// notes (fully disjoint — the `SlotRace` shape), or distinct bookings
-/// under one shared venue parent (the W-conflict `HotKey` shape, units
-/// kept small so replay stays under the ceiling).
+/// under one shared venue parent, sized `base_units + seq` so the
+/// fixture prices exactly when the ceiling convicts the loser's
+/// terminal re-judgment (the `HotKey` shape).
 #[derive(Clone, Copy)]
 enum Competitor {
     Notes,
-    Bookings { venue: u64 },
+    Bookings { venue: u64, base_units: u64 },
 }
 
 struct PlanterState {
@@ -581,11 +574,12 @@ impl RacingStore {
         let seq = state.seq.fetch_add(1, Ordering::SeqCst);
         let ops = match state.kind {
             Competitor::Notes => vec![insert(NOTE, note_row(20_000 + seq, "racer"))],
-            // Units start at 6: distinct from every fixture's own
-            // booking (no accidental row identity, which would turn
-            // the loser's re-apply into a legitimate net no-op) and
-            // small enough that a full replay stays under the ceiling.
-            Competitor::Bookings { venue } => vec![insert(BOOKING, booking_row(venue, seq + 6))],
+            // Distinct units per plant: no accidental row identity,
+            // which would turn the loser's re-apply into a legitimate
+            // net no-op.
+            Competitor::Bookings { venue, base_units } => {
+                vec![insert(BOOKING, booking_row(venue, base_units + seq))]
+            }
         };
         let mut head = state.head.lock().expect("planter head");
         let header = BatchHeader {
@@ -641,7 +635,7 @@ impl ObjectStore for RacingStore {
 }
 
 #[test]
-fn disjoint_loss_republishes_readdressed_and_never_re_judges() {
+fn disjoint_loss_rejudges_once_and_republishes_at_tip_plus_one() {
     let root = temp_dir("disjoint");
     let writer_a = open_at(root.clone(), &root.join("wa"), 1);
     let writer_b = open_at(root.clone(), &root.join("wb"), 2);
@@ -671,36 +665,27 @@ fn disjoint_loss_republishes_readdressed_and_never_re_judges() {
     else {
         panic!("a disjoint loss lands");
     };
-    assert_eq!(generation, 2, "republished into its own slot");
+    assert_eq!(generation, 2, "the re-judged republish lands at tip+1");
     assert_eq!(durability, Durability::Published);
-
-    let counters = writer_b.counters();
-    assert_eq!(
-        counters.re_judgments, 0,
-        "a fully key-disjoint loss never re-judges"
-    );
-    assert_eq!(counters.disjoint_verdicts, 1);
-    assert_eq!(counters.republishes, 1);
-    assert_eq!(counters.subsumptions, 0);
+    assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
     let batches = verify_log(&root);
     let slots = &batches[&braid];
     assert_eq!(slots.len(), 2);
     assert_eq!(slots[0].header.writer, 1);
-    assert_eq!(slots[1].header.writer, 2, "the republished header is ours");
+    assert_eq!(slots[1].header.writer, 2, "the fresh header is ours");
     assert!(
         slots[1].header.timestamp >= slots[0].header.timestamp,
-        "timestamp re-clamped against the winner"
+        "timestamp clamped against the winner"
     );
 
     assert_whole(&writer_a, "the slot winner");
     assert_whole(&writer_b, "the republishing loser");
-    converged_digest(&root);
-    // Content-level convergence for the fast-path loser: it applied
-    // ours-then-winner while replay runs winner-then-ours, and the
-    // engine's per-relation row ids are commit-order counters, so the
-    // byte digests legitimately differ across apply orders (the lane-2
-    // finding); L8's set-level equality is what the algebra promises.
+    assert_eq!(
+        writer_digest(&writer_b),
+        converged_digest(&root),
+        "the re-opened loser applied in log order and converges byte-for-byte"
+    );
     writer_b.with_db(|db| {
         db.read(|instance| {
             assert!(instance.contains_dyn(NOTE, &note_row(1, "theirs"))?);
@@ -712,17 +697,13 @@ fn disjoint_loss_republishes_readdressed_and_never_re_judges() {
 }
 
 #[test]
-fn subsumed_identical_effects_survive_in_place_at_the_winners_generation() {
-    let root = temp_dir("subsumed_noop");
+fn identical_effects_race_lands_accepted_at_the_winners_generation() {
+    let root = temp_dir("identical");
     let dir_b = root.join("wb");
     let writer_a = open_at(root.clone(), &root.join("wa"), 1);
     let writer_b = open_at(root.clone(), &dir_b, 2);
     let codec = codec();
     let braid = note_braid(&codec);
-
-    // A marker inside the loser's directory: in-place survival keeps
-    // it; a fork-discard would delete the directory whole.
-    std::fs::write(dir_b.join("marker"), b"in-place").expect("plant marker");
 
     assert!(matches!(
         writer_a
@@ -745,42 +726,28 @@ fn subsumed_identical_effects_survive_in_place_at_the_winners_generation() {
         ..
     } = outcome
     else {
-        panic!("a subsumed loss reports the winner's outcome");
+        panic!("a loss whose effects the winner performed reports Accepted");
     };
     assert_eq!(generation, 1, "the winner's generation, not a new slot");
     assert_eq!(durability, Durability::Published);
-
-    let counters = writer_b.counters();
-    assert_eq!(counters.subsumptions, 1);
-    assert_eq!(counters.re_judgments, 0);
-    assert_eq!(counters.republishes, 0);
-    assert!(
-        dir_b.join("marker").exists(),
-        "the engine's no-op arm: the store survived in place"
-    );
+    assert_eq!(writer_b.losses(), 1, "one loss, one re-judged net no-op");
 
     let batches = verify_log(&root);
-    assert_eq!(
-        batches[&braid].len(),
-        1,
-        "a subsumed loss publishes nothing"
-    );
+    assert_eq!(batches[&braid].len(), 1, "the log never gains a no-op slot");
     assert_whole(&writer_a, "the winner");
-    assert_whole(&writer_b, "the subsumed loser");
+    assert_whole(&writer_b, "the absorbed loser");
     assert_eq!(writer_digest(&writer_a), writer_digest(&writer_b));
     assert_eq!(writer_digest(&writer_b), converged_digest(&root));
 }
 
 #[test]
-fn subsumed_strict_superset_forks_and_discards() {
-    let root = temp_dir("subsumed_fork");
+fn strict_superset_race_lands_accepted_with_the_residue_present() {
+    let root = temp_dir("superset");
     let dir_b = root.join("wb");
     let writer_a = open_at(root.clone(), &root.join("wa"), 1);
     let writer_b = open_at(root.clone(), &dir_b, 2);
     let codec = codec();
     let braid = note_braid(&codec);
-
-    std::fs::write(dir_b.join("marker"), b"fork").expect("plant marker");
 
     assert!(matches!(
         writer_a
@@ -800,16 +767,8 @@ fn subsumed_strict_superset_forks_and_discards() {
     let Commit::Accepted { generation, .. } = outcome else {
         panic!("a strictly contained loss reports the winner's outcome");
     };
-    assert_eq!(generation, 1, "one slot covers two local commits");
-
-    let counters = writer_b.counters();
-    assert_eq!(counters.subsumptions, 1);
-    assert_eq!(counters.re_judgments, 0);
-    assert_eq!(counters.republishes, 0);
-    assert!(
-        !dir_b.join("marker").exists(),
-        "the store forked and the disposable law rebuilt the directory"
-    );
+    assert_eq!(generation, 1, "accepted at the current generation");
+    assert_eq!(writer_b.losses(), 1);
 
     writer_b.with_db(|db| {
         db.read(|instance| {
@@ -823,12 +782,8 @@ fn subsumed_strict_superset_forks_and_discards() {
         .expect("read");
     });
     let batches = verify_log(&root);
-    assert_eq!(
-        batches[&braid].len(),
-        1,
-        "a subsumed loss publishes nothing"
-    );
-    assert_whole(&writer_b, "the forked-and-rebuilt loser");
+    assert_eq!(batches[&braid].len(), 1, "the log never gains a no-op slot");
+    assert_whole(&writer_b, "the rebuilt loser");
     assert_eq!(writer_digest(&writer_b), converged_digest(&root));
 }
 
@@ -864,8 +819,7 @@ fn conflicting_loss_produces_the_serial_verdict() {
             .any(|violation| matches!(violation, Violation::Functionality { .. })),
         "the double-booking is refused with the typed FD violation"
     );
-    assert_eq!(writer_b.counters().re_judgments, 1);
-    assert_eq!(writer_b.counters().republishes, 0);
+    assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
     let batches = verify_log(&root);
     assert_eq!(batches[&braid].len(), 1, "a rejection publishes nothing");
@@ -882,7 +836,7 @@ fn conflicting_loss_produces_the_serial_verdict() {
 }
 
 #[test]
-fn evaporating_republish_routes_conflict_and_publishes_nothing() {
+fn evaporating_loss_rejudges_to_the_net_noop_and_publishes_nothing() {
     let root = temp_dir("evaporate");
     let writer_a = open_at(root.clone(), &root.join("wa"), 1);
     let codec = codec();
@@ -913,11 +867,9 @@ fn evaporating_republish_routes_conflict_and_publishes_nothing() {
         Commit::Accepted { generation: 2, .. }
     ));
 
-    // The loser shares one commute-cell F key (note 1, insert×insert)
-    // and its other op is base-redundant: strict disjointness must
-    // route it to the conflict arm, and the re-judgment must land the
-    // engine's no-op — nothing published, `Accepted` at the current
-    // generation.
+    // The loser shares one row with the winner and its other op is
+    // base-redundant: the re-judgment lands the engine's no-op —
+    // nothing published, `Accepted` at the current generation.
     let outcome = writer_b
         .commit(|batch| {
             batch.insert(NOTE, [note_row(1, "shared"), note_row(3, "base")]);
@@ -934,13 +886,7 @@ fn evaporating_republish_routes_conflict_and_publishes_nothing() {
     };
     assert_eq!(generation, 2, "the current generation, not a new slot");
     assert_eq!(durability, Durability::Published);
-    let counters = writer_b.counters();
-    assert_eq!(counters.re_judgments, 1, "the conflict arm re-judged");
-    assert_eq!(
-        counters.republishes, 0,
-        "a net no-op republish would be the no-op-slot refusal's business"
-    );
-    assert_eq!(counters.disjoint_verdicts, 0);
+    assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
     let batches = verify_log(&root);
     assert_eq!(batches[&braid].len(), 2, "the log never gains a no-op slot");
@@ -950,7 +896,7 @@ fn evaporating_republish_routes_conflict_and_publishes_nothing() {
 }
 
 #[test]
-fn stale_pending_resolves_through_catch_up_plus_one_tip_attempt() {
+fn stale_pending_resolves_through_re_open_with_one_race_at_tip() {
     let root = temp_dir("stale");
     let dir = root.join("w");
     let crashed = match Writer::open_hooked(
@@ -986,18 +932,10 @@ fn stale_pending_resolves_through_catch_up_plus_one_tip_attempt() {
     let recovered = open_at(root.clone(), &dir, 5);
     assert_eq!(recovered.backlog(), None, "resolved at open");
     assert_eq!(recovered.vector()[&braid], 41, "catch-up plus our slot");
-    let counters = recovered.counters();
     assert_eq!(
-        counters.republishes, 1,
-        "exactly one tip attempt after the catch-up"
-    );
-    assert_eq!(
-        counters.re_judgments, 0,
-        "zero historical losses re-judged: the pairwise tests ran disjoint"
-    );
-    assert_eq!(
-        counters.disjoint_verdicts, 40,
-        "every intermediate winner passed the pairwise test"
+        recovered.losses(),
+        1,
+        "the re-open IS the catch-up: one loss at the stale slot, one race at tip"
     );
 
     let batches = verify_log(&root);
@@ -1076,12 +1014,30 @@ fn slot_race_livelock_surfaces_contention_with_pending_kept() {
 }
 
 #[test]
-fn hot_key_livelock_surfaces_contention_with_raw_determinants() {
+fn hot_key_livelock_surfaces_contention_with_the_violation_payload() {
+    // Racer units sized so the sixteenth loss is the first whose
+    // re-judgment the ceiling convicts: the terminal re-judgment is
+    // the engine's capacity rejection, and its violation is the
+    // HotKey payload.
+    const RACER_UNITS: u64 = 55;
+    const LOSER_UNITS: u64 = 50;
+    let racer_fill: u64 = (0..16).map(|seq| RACER_UNITS + seq).sum();
+    assert!(racer_fill <= CEILING, "the racers' own replay stays legal");
+    assert!(racer_fill - (RACER_UNITS + 15) + LOSER_UNITS <= CEILING);
+    assert!(racer_fill + LOSER_UNITS > CEILING);
+
     let root = temp_dir("hotkey");
     let codec = codec();
     let braid = venue_braid(&codec);
-    let (store, planter) =
-        RacingStore::new(root.clone(), braid, 0, Competitor::Bookings { venue: 1 });
+    let (store, planter) = RacingStore::new(
+        root.clone(),
+        braid,
+        0,
+        Competitor::Bookings {
+            venue: 1,
+            base_units: RACER_UNITS,
+        },
+    );
     let writer = open_writer(store, &root.join("w"), 7);
 
     assert!(matches!(
@@ -1098,10 +1054,10 @@ fn hot_key_livelock_surfaces_contention_with_raw_determinants() {
 
     let err = writer
         .commit(|batch| {
-            batch.insert(BOOKING, [booking_row(1, 5)]);
+            batch.insert(BOOKING, [booking_row(1, LOSER_UNITS)]);
             Ok(())
         })
-        .expect_err("conflicts exhausted the bound");
+        .expect_err("the racers turned the terminal re-judgment into a rejection");
     let Error::Contention { braid: got, cause } = err else {
         panic!("Contention expected, got {err:?}");
     };
@@ -1109,14 +1065,17 @@ fn hot_key_livelock_surfaces_contention_with_raw_determinants() {
     let ContentionCause::HotKey { statement, values } = cause else {
         panic!("HotKey expected, got {cause:?}");
     };
-    assert_eq!(statement, Some(BOOKING_CAPACITY));
-    assert_eq!(
-        values.as_ref(),
-        &[Value::U64(1)],
-        "the loser owns its raw determinant values"
+    assert_eq!(statement, BOOKING_CAPACITY, "the violation names itself");
+    assert!(
+        values.contains(&Value::U64(1)),
+        "the offending fact's raw values carry the parent determinant: {values:?}"
     );
-    assert_eq!(writer.backlog(), Some(braid));
-    assert_whole(&writer, "the hot-key loser with its pending term");
+    assert_eq!(
+        writer.backlog(),
+        None,
+        "a rejected terminal re-judgment clears the pending"
+    );
+    assert_whole(&writer, "the hot-key loser after the rejection");
     assert_eq!(planter.plants(), 16);
 }
 
@@ -1143,10 +1102,11 @@ fn dropped_response_after_landed_create_resolves_by_get_verify() {
         }
     ));
     assert_eq!(writer.backlog(), None);
-    let counters = writer.counters();
-    assert_eq!(counters.re_judgments, 0);
-    assert_eq!(counters.republishes, 0);
-    assert_eq!(counters.subsumptions, 0);
+    assert_eq!(
+        writer.losses(),
+        0,
+        "the GET-verify absorption is not a loss"
+    );
 
     let batches = verify_log(&root);
     let slots = &batches[&braid];
@@ -1157,7 +1117,7 @@ fn dropped_response_after_landed_create_resolves_by_get_verify() {
 }
 
 #[test]
-fn dropped_response_on_a_lost_slot_routes_the_loser_algebra() {
+fn dropped_response_on_a_lost_slot_takes_the_one_path() {
     let root = temp_dir("drop_lost");
     let store = DropResponses::new(root.clone(), u64::MAX);
     let writer = open_writer(store, &root.join("w"), 9);
@@ -1174,15 +1134,13 @@ fn dropped_response_on_a_lost_slot_routes_the_loser_algebra() {
             batch.insert(NOTE, [note_row(51, "ours")]);
             Ok(())
         })
-        .expect("the probe proves the loss and the loser algebra runs");
+        .expect("the probe proves the loss and the one path runs");
     assert!(matches!(outcome, Commit::Accepted { generation: 2, .. }));
-    let counters = writer.counters();
     assert_eq!(
-        counters.disjoint_verdicts, 1,
-        "the probe's Lost fed intersect"
+        writer.losses(),
+        1,
+        "the probe proved the loss and the one path re-judged once"
     );
-    assert_eq!(counters.re_judgments, 0);
-    assert_eq!(counters.republishes, 1);
 
     let batches = verify_log(&root);
     let slots = &batches[&braid];
@@ -1209,9 +1167,9 @@ struct Ledger {
 }
 
 /// The mostly-disjoint fleet: `n` in-process writers over one prefix,
-/// each booking its own rows on one braid. Every loss is fully
-/// key-disjoint, so the whole run must resolve through the republish
-/// fast path — zero re-judgments fleet-wide is asserted, not hoped.
+/// each booking its own rows on one braid. Every loss re-judges at the
+/// re-opened tip and republishes; the gates are structural — chains,
+/// digests, and exactly-once acks — because structure is truth.
 #[allow(clippy::too_many_lines)]
 fn mostly_disjoint_fleet(n: u64) {
     const ROUNDS: u64 = 6;
@@ -1259,11 +1217,6 @@ fn mostly_disjoint_fleet(n: u64) {
                             other => panic!("flush did not land: {other:?}"),
                         }
                     }
-                    assert_eq!(
-                        writer.counters().re_judgments,
-                        0,
-                        "a mostly-disjoint fleet never re-judges"
-                    );
                     assert_whole(&writer, "a fleet writer at rest");
                     writer.quiesce();
                     ledger
@@ -1550,121 +1503,40 @@ fn hot_capacity_parent_fleet_prices_the_slack_serially() {
     converged_digest(&root);
 }
 
-/// The wire length of a rendered footprint section: the count word
-/// plus the per-class entry shapes of 20.
-fn section_len(entries: &[Entry]) -> usize {
-    4 + entries
-        .iter()
-        .map(|entry| match entry {
-            Entry::Fact { .. } => 34,
-            Entry::Key { .. } => 35,
-            Entry::Capacity {
-                mode: CapacityMode::ChildDelta(_),
-                ..
-            } => 44,
-            Entry::Containment { .. } | Entry::Capacity { .. } => 36,
-        })
-        .sum::<usize>()
+/// Parks the first log-slot create on the note braid until the gate
+/// opens, holding the commit core busy while the venue callers queue —
+/// the deterministic packing lever.
+struct HoldNotePut {
+    inner: FsStore,
+    gate: std::sync::Arc<AtomicBool>,
+    tripped: AtomicBool,
 }
 
-#[test]
-fn lying_winner_is_caught_by_recomputation_never_the_carried_section() {
-    let root = temp_dir("liar");
-    let writer = open_at(root.clone(), &root.join("w"), 12);
-    let codec = codec();
-    let braid = kitchen_braid(&codec);
+impl ObjectStore for HoldNotePut {
+    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+        self.inner.get(key)
+    }
 
-    // The lying batch: the true ops carry the conflicting recipe
-    // insert plus an unrelated step, but the spliced footprint section
-    // is derived from the step alone — it understates the recipe's K
-    // and F entries, the exact steering a hostile writer would use to
-    // push every loser onto the republish path.
-    let true_ops = vec![
-        insert(RECIPE, recipe_row(7, "winner")),
-        insert(STEP, step_row(90, "dangling")),
-    ];
-    let subset_ops = vec![insert(STEP, step_row(90, "dangling"))];
-    let mut publisher = TestPublisher::attach(root.clone());
-    let (slot, honest) = publisher.encode(braid, &true_ops, 5);
-    let (_, small) = publisher.encode(braid, &subset_ops, 5);
-    let honest_batch = codec.decode(&honest).expect("decode honest bytes");
-    let small_batch = codec.decode(&small).expect("decode subset bytes");
-    let mut lying = honest[..honest.len() - section_len(&honest_batch.footprint)].to_vec();
-    lying.extend_from_slice(&small[small.len() - section_len(&small_batch.footprint)..]);
-    let lying_batch = codec.decode(&lying).expect("the lie parses");
-    assert_eq!(lying_batch.ops.len(), 2, "the ops survived the splice");
-    assert_eq!(
-        lying_batch.footprint, small_batch.footprint,
-        "the carried section understates the ops"
-    );
-    publisher.publish_bytes(braid, slot, &lying, 5);
+    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+        self.inner.get_if_changed(key, etag)
+    }
 
-    let loser_ops = vec![insert(RECIPE, recipe_row(7, "loser"))];
-    let loser_fp = footprint(codec.vocabulary(), &loser_ops).expect("loser footprint");
-    // A loser that trusted the carried section would read Disjoint and
-    // republish into a slot every replica then refuses.
-    assert_eq!(
-        intersect(
-            codec.vocabulary(),
-            &loser_fp,
-            &loser_ops,
-            &subset_ops,
-            &BTreeMap::new(),
-        )
-        .expect("intersect the carried claim"),
-        LoserDecision::Disjoint,
-        "the carried section claims disjointness"
-    );
-    // Recomputation from the fetched ops sees the shared determinant.
-    assert!(
-        matches!(
-            intersect(
-                codec.vocabulary(),
-                &loser_fp,
-                &loser_ops,
-                &lying_batch.ops,
-                &BTreeMap::new(),
-            )
-            .expect("intersect the recomputation"),
-            LoserDecision::Conflict(_)
-        ),
-        "recomputation catches the lie before intersecting"
-    );
+    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+        if key.contains("log/c00000002/") && !self.tripped.swap(true, Ordering::SeqCst) {
+            while !self.gate.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        self.inner.put_create(key, bytes)
+    }
 
-    let err = writer
-        .commit(|batch| {
-            batch.insert(RECIPE, [recipe_row(7, "loser")]);
-            Ok(())
-        })
-        .expect_err("the lying slot is corruption-class, never a republish");
-    assert!(
-        matches!(err, Error::Wedged { braid: wedged } if wedged == braid),
-        "the braid wedges at the tripwire: {err:?}"
-    );
-    assert_eq!(writer.wedged_braids(), vec![braid]);
+    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+        self.inner.put_swap(key, bytes, etag)
+    }
 
-    // Nothing republished behind the lie.
-    let store = FsStore::new(root.clone());
-    assert!(
-        store.get(&log_key("", braid, 2)).expect("get").is_none(),
-        "no loser trusted the carried section"
-    );
-    // The fleet-wide tripwire: a fresh replica refuses the slot and
-    // wedges the braid rather than serving the lie.
-    let opened = Replica::open(
-        FsStore::new(root.clone()),
-        "",
-        &root.join("tripwire"),
-        theory(),
-    )
-    .expect("open replica");
-    let Opened::Ready(replica) = opened else {
-        panic!("the replica serves its other braids");
-    };
-    assert!(
-        replica.wedged().contains_key(&braid),
-        "every replica catches the same lie at replay"
-    );
+    fn delete(&self, key: &str) -> StoreResult<()> {
+        self.inner.delete(key)
+    }
 }
 
 #[test]
@@ -1674,19 +1546,14 @@ fn packed_drain_delete_cures_the_solo_violation() {
     // drain is one transaction by law, and the engine judges the
     // composite's final state.
     let root = temp_dir("drain");
-    let options = Options {
-        writer_id: 13,
-        ack: AckMode::Published,
-        linger: Duration::from_millis(300),
+    let gate = std::sync::Arc::new(AtomicBool::new(false));
+    let store = HoldNotePut {
+        inner: FsStore::new(root.clone()),
+        gate: std::sync::Arc::clone(&gate),
+        tripped: AtomicBool::new(false),
     };
-    let writer = match Writer::open(
-        FsStore::new(root.clone()),
-        "",
-        &root.join("w"),
-        theory(),
-        options,
-    )
-    .expect("open writer")
+    let writer = match Writer::open(store, "", &root.join("w"), theory(), Options::new(13))
+        .expect("open writer")
     {
         WriterOpened::Ready(writer) => writer,
         WriterOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
@@ -1710,22 +1577,36 @@ fn packed_drain_delete_cures_the_solo_violation() {
         Commit::Accepted { generation: 2, .. }
     ));
 
-    let barrier = std::sync::Barrier::new(2);
+    let start = std::sync::Barrier::new(2);
     let (cure, insert_outcome) = std::thread::scope(|scope| {
+        let holder = scope.spawn(|| {
+            start.wait();
+            writer.commit(|batch| {
+                batch.insert(NOTE, [note_row(9_000, "hold the core")]);
+                Ok(())
+            })
+        });
+        start.wait();
+        // The holder reaches its slot PUT and parks with the core held.
+        std::thread::sleep(Duration::from_millis(50));
         let cure_task = scope.spawn(|| {
-            barrier.wait();
             writer.commit(|batch| {
                 batch.delete(BOOKING, [booking_row(1, CEILING - 1)]);
                 Ok(())
             })
         });
         let insert_task = scope.spawn(|| {
-            barrier.wait();
             writer.commit(|batch| {
                 batch.insert(BOOKING, [booking_row(1, 50)]);
                 Ok(())
             })
         });
+        // Both venue callers queue behind the busy core, then the gate
+        // opens and the next drain picks them together.
+        std::thread::sleep(Duration::from_millis(150));
+        gate.store(true, Ordering::SeqCst);
+        let hold = holder.join().expect("join holder").expect("holder commit");
+        assert!(matches!(hold, Commit::Accepted { .. }));
         (
             cure_task.join().expect("join").expect("commit"),
             insert_task.join().expect("join").expect("commit"),
@@ -1897,9 +1778,11 @@ fn feral_uniqueness_storm_zero_duplicates() {
 
 /// The Feral association storm: one target-delete racing 64 concurrent
 /// source-inserts per round — their experiment orphaned up to 6,400
-/// rows; this gate is zero orphans and serial verdicts throughout. The
-/// race runs at the exact Feral width of 64 inserters plus the
-/// deleter, for the full 100 rounds.
+/// rows; this gate is zero orphans and serial verdicts throughout, and
+/// the non-vacuity counter proves the delete actually won rounds
+/// instead of losing every race by accident. The race runs at the
+/// exact Feral width of 64 inserters plus the deleter, for the full
+/// 100 rounds.
 #[test]
 #[allow(clippy::too_many_lines)]
 fn feral_association_storm_zero_orphans() {
@@ -1917,6 +1800,7 @@ fn feral_association_storm_zero_orphans() {
                 let dir = root.join("deleter");
                 let writer = open_at(root.clone(), &dir, 500);
                 writer.set_checkpoint_cadence(32, u64::MAX);
+                let mut delete_wins = 0u64;
                 for r in 0..ROUNDS {
                     // Seed the round's target before the race opens.
                     let mut seeded = false;
@@ -1942,7 +1826,8 @@ fn feral_association_storm_zero_orphans() {
                         batch.delete(RECIPE, [recipe_row(80_000 + r, "base")]);
                         Ok(())
                     }) {
-                        Ok(Commit::Accepted { .. }) | Err(Error::Contention { .. }) => {}
+                        Ok(Commit::Accepted { .. }) => delete_wins += 1,
+                        Err(Error::Contention { .. }) => {}
                         Ok(Commit::Rejected(violations)) => {
                             assert!(
                                 violations.iter().any(|violation| matches!(
@@ -1966,6 +1851,7 @@ fn feral_association_storm_zero_orphans() {
                 }
                 assert_whole(&writer, "the storm deleter");
                 writer.quiesce();
+                delete_wins
             })
         };
         let handles: Vec<_> = (1..=INSERTERS)
@@ -2010,7 +1896,11 @@ fn feral_association_storm_zero_orphans() {
                 })
             })
             .collect();
-        deleter.join().expect("deleter thread");
+        let delete_wins = deleter.join().expect("deleter thread");
+        assert!(
+            delete_wins > 0,
+            "non-vacuity: at least one target delete won its round"
+        );
         for handle in handles {
             handle.join().expect("inserter thread");
         }

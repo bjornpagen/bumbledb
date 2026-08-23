@@ -1,5 +1,5 @@
-//! The alloc-discipline pin for the codec and the footprint: both
-//! allocate output construction only, so their allocation counts are
+//! The alloc-discipline pin for the codec: encode and decode allocate
+//! output construction only, so their allocation counts are
 //! deterministic per input and bounded by stated budgets — measured on
 //! the fixture below and pinned; a hunt may lower them, they must not
 //! rise. One test function only: the counting allocator is
@@ -12,22 +12,16 @@ use bumbledb::alloc_counter::{self, CountingAllocator};
 use bumbledb::schema::RelationId;
 use bumbledb::{Interval, Value};
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::footprint::footprint;
 
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-/// Measured exactly on this fixture: 6 = the candidate and net-row
-/// scratch plus the entry, delta, and profile-free output buffers.
-const FOOTPRINT_ALLOC_BUDGET: u64 = 6;
+/// Measured exactly on this fixture: the wire buffer's growth alone.
+const ENCODE_ALLOC_BUDGET: u64 = 6;
 
-/// Measured exactly on this fixture: the wire buffer and the footprint
-/// derivation it embeds.
-const ENCODE_ALLOC_BUDGET: u64 = 13;
-
-/// Measured exactly on this fixture: ops, rows, boxed row storage, and
-/// the entry vector — decode's outputs and nothing else.
-const DECODE_ALLOC_BUDGET: u64 = 10;
+/// Measured exactly on this fixture: ops, rows, and boxed row storage
+/// — decode's outputs and nothing else.
+const DECODE_ALLOC_BUDGET: u64 = 9;
 
 fn fixture_ops() -> Vec<Op> {
     let booking = |slot: u64, customer: u64, room: u64, qty: u64| -> Box<[Value]> {
@@ -69,10 +63,9 @@ fn window(work: impl FnOnce()) -> u64 {
 }
 
 #[test]
-fn codec_and_footprint_allocation_is_deterministic_and_budgeted() {
+fn codec_allocation_is_deterministic_and_budgeted() {
     let descriptor = support::schema("booking");
-    let codec =
-        Codec::new(&descriptor, support::corpus_fingerprint("booking")).expect("vocabulary");
+    let codec = Codec::new(&descriptor, support::corpus_fingerprint("booking"));
     let ops = fixture_ops();
     let header = BatchHeader {
         fingerprint: *codec.fingerprint(),
@@ -86,20 +79,7 @@ fn codec_and_footprint_allocation_is_deterministic_and_budgeted() {
     // Warm every path once so lazy runtime setup stays out of the
     // window.
     let bytes = codec.encode(&header, &ops).expect("encode");
-    footprint(codec.vocabulary(), &ops).expect("footprint");
     codec.decode(&bytes).expect("decode");
-
-    let first = window(|| {
-        footprint(codec.vocabulary(), &ops).expect("footprint");
-    });
-    let second = window(|| {
-        footprint(codec.vocabulary(), &ops).expect("footprint");
-    });
-    assert_eq!(first, second, "footprint allocation is deterministic");
-    assert!(
-        first <= FOOTPRINT_ALLOC_BUDGET,
-        "footprint window {first} within {FOOTPRINT_ALLOC_BUDGET}"
-    );
 
     let first = window(|| {
         codec.encode(&header, &ops).expect("encode");
