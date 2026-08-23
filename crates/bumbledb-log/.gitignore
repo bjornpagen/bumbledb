@@ -1,0 +1,4 @@
+# The standalone leaf crate's own build tree (the root /target/ ignore
+# does not reach a workspace-excluded crate; bumbledb-c owns the same
+# pin locally — this crate follows it).
+/target/
