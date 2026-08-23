@@ -9,9 +9,12 @@
 #[path = "lane_a_support/mod.rs"]
 mod support;
 
+use bumbledb::{Interval, Value};
+use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::braids::braids;
-use bumbledb_log::codec::Codec;
+use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::footprint::footprint;
+use bumbledb_log::sidecar::{Chain, ChainEntry};
 use serde_json::Value as Json;
 
 fn corpus_files(section: &str) -> Vec<(String, Json)> {
@@ -254,6 +257,322 @@ fn braids_corpus_matches_the_derivation() {
             ),
             fixture["serialAt"],
             "{stem}: serial-at statements"
+        );
+    }
+}
+
+/// A chain golden: batch bytes beside the fetch context — the key the
+/// object came from and the replica's chain position — and the verdict
+/// the chain discipline must pronounce, shared with the TypeScript
+/// suite through the sidecar's cause names.
+struct ChainCase {
+    name: &'static str,
+    schema: &'static str,
+    fetched: u32,
+    slot: u64,
+    position: ChainEntry,
+    bytes: Vec<u8>,
+    expect: ChainExpect,
+}
+
+enum ChainExpect {
+    Advance,
+    Cause(&'static str),
+}
+
+fn chain_header(
+    codec: &Codec,
+    braid_raw: u32,
+    slot_gen: u64,
+    prev: [u8; 32],
+    ts: u64,
+) -> BatchHeader {
+    BatchHeader {
+        fingerprint: *codec.fingerprint(),
+        braid: codec.braids().parse(braid_raw).expect("fixture braid"),
+        braid_gen: slot_gen,
+        prev,
+        writer: 7,
+        timestamp: ts,
+    }
+}
+
+fn kitchen_insert() -> Op {
+    Op {
+        kind: OpKind::Insert,
+        relation: bumbledb::RelationId(0),
+        rows: vec![Box::from([
+            Value::Bool(true),
+            Value::U64(11),
+            Value::I64(-4),
+            Value::String("chained".into()),
+            Value::FixedBytes(Box::from([7, 8, 9])),
+            Value::IntervalU64(Interval::new(3, 9).expect("interval")),
+            Value::IntervalI64(Interval::new(-2, 2).expect("interval")),
+            Value::IntervalU64(Interval::fixed(20u64, 5).expect("fixed interval")),
+            Value::IntervalI64(Interval::fixed(-20i64, 5).expect("fixed interval")),
+        ])],
+    }
+}
+
+fn audit_insert() -> Op {
+    Op {
+        kind: OpKind::Insert,
+        relation: bumbledb::RelationId(3),
+        rows: vec![Box::from([Value::U64(1), Value::String("ledger".into())])],
+    }
+}
+
+const CHAIN_TS: u64 = 1_755_801_600_000;
+
+/// The chain case table: one advance and the three proved mismatch
+/// causes, the slot cause split into its generation and braid halves —
+/// the braid half is the wrong-key object a hostile or confused store
+/// could serve, refused before any apply on both implementations.
+fn chain_cases(kitchen: &Codec, booking: &Codec) -> Vec<ChainCase> {
+    vec![
+        ChainCase {
+            name: "ok_chain_advance",
+            schema: "kitchen",
+            fetched: 0,
+            slot: 1,
+            position: ChainEntry::GENESIS,
+            bytes: kitchen
+                .encode(
+                    &chain_header(kitchen, 0, 1, [0u8; 32], CHAIN_TS),
+                    &[kitchen_insert()],
+                )
+                .expect("encode"),
+            expect: ChainExpect::Advance,
+        },
+        ChainCase {
+            name: "r_chain_prev",
+            schema: "kitchen",
+            fetched: 0,
+            slot: 1,
+            position: ChainEntry::GENESIS,
+            bytes: kitchen
+                .encode(
+                    &chain_header(kitchen, 0, 1, [0x55; 32], CHAIN_TS),
+                    &[kitchen_insert()],
+                )
+                .expect("encode"),
+            expect: ChainExpect::Cause("prev"),
+        },
+        ChainCase {
+            name: "r_chain_slot_gen",
+            schema: "kitchen",
+            fetched: 0,
+            slot: 1,
+            position: ChainEntry::GENESIS,
+            bytes: kitchen
+                .encode(
+                    &chain_header(kitchen, 0, 2, [0u8; 32], CHAIN_TS),
+                    &[kitchen_insert()],
+                )
+                .expect("encode"),
+            expect: ChainExpect::Cause("slot"),
+        },
+        ChainCase {
+            name: "r_chain_slot_braid",
+            schema: "booking",
+            fetched: 0,
+            slot: 1,
+            position: ChainEntry::GENESIS,
+            bytes: booking
+                .encode(
+                    &chain_header(booking, 3, 1, [0u8; 32], CHAIN_TS),
+                    &[audit_insert()],
+                )
+                .expect("encode"),
+            expect: ChainExpect::Cause("slot"),
+        },
+        ChainCase {
+            name: "r_chain_timestamp",
+            schema: "kitchen",
+            fetched: 0,
+            slot: 2,
+            position: ChainEntry {
+                g: 1,
+                prev: [0x66; 32],
+                ts: 200_000,
+            },
+            bytes: kitchen
+                .encode(
+                    &chain_header(kitchen, 0, 2, [0x66; 32], 100_000),
+                    &[kitchen_insert()],
+                )
+                .expect("encode"),
+            expect: ChainExpect::Cause("timestamp"),
+        },
+    ]
+}
+
+fn chain_sidecar(case: &ChainCase, codec: &Codec) -> Json {
+    let braid = codec.braids().parse(case.fetched).expect("fetched braid");
+    let mut sidecar = serde_json::json!({
+        "schema": case.schema,
+        "fingerprint": support::hex(codec.fingerprint()),
+        "braid": braid.to_string(),
+        "slot": case.slot.to_string(),
+        "chain": {
+            "g": case.position.g.to_string(),
+            "prev": support::hex(&case.position.prev),
+            "ts": case.position.ts.to_string(),
+        },
+    });
+    let object = sidecar.as_object_mut().expect("object");
+    match case.expect {
+        ChainExpect::Advance => {
+            object.insert("expect".into(), Json::String("ok".into()));
+        }
+        ChainExpect::Cause(label) => {
+            object.insert("expect".into(), Json::String("chainMismatch".into()));
+            object.insert("cause".into(), Json::String(label.into()));
+            object.insert("writer".into(), Json::String("7".into()));
+        }
+    }
+    sidecar
+}
+
+fn cause_name(cause: &ChainCause) -> &'static str {
+    match cause {
+        ChainCause::Slot { .. } => "slot",
+        ChainCause::Prev { .. } => "prev",
+        ChainCause::Timestamp { .. } => "timestamp",
+    }
+}
+
+fn temp_root(tag: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("f7_parity_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).expect("create test root");
+    path
+}
+
+/// Writes the fixture pair under bless, or holds the disk files to the
+/// case table byte for byte otherwise.
+fn pin_chain_fixture(dir: &std::path::Path, case: &ChainCase, sidecar: &Json) {
+    let bin_path = dir.join(format!("{}.bin", case.name));
+    let json_path = dir.join(format!("{}.json", case.name));
+    if support::bless() {
+        std::fs::write(&bin_path, &case.bytes).expect("write bin");
+        let mut text = serde_json::to_string_pretty(sidecar).expect("render sidecar");
+        text.push('\n');
+        std::fs::write(&json_path, text).expect("write sidecar");
+        return;
+    }
+    assert_eq!(
+        std::fs::read(&bin_path).expect("chain bin present"),
+        case.bytes,
+        "case {}: bin bytes pinned",
+        case.name
+    );
+    let disk: Json =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).expect("chain sidecar present"))
+            .expect("sidecar parses");
+    assert_eq!(&disk, sidecar, "case {}: sidecar pinned", case.name);
+}
+
+/// The chain corpus, generated from the case table and pinned to disk
+/// like the batch corpus, then driven whole through `apply` over a
+/// fresh store: the advance fixture lands `Advanced` at generation one,
+/// and every mismatch fixture surfaces `ChainMismatch` carrying the
+/// sidecar's cause name, the fetched braid, the slot, and the writer —
+/// the identity the TypeScript `verifyChain` is held to over the same
+/// files.
+#[test]
+fn chain_corpus_pins_the_three_causes() {
+    let schemas = support::load_schemas();
+    let dir = support::corpus_dir().join("chain");
+    if support::bless() {
+        std::fs::create_dir_all(&dir).expect("chain dir");
+    }
+    let kitchen =
+        Codec::new(&schemas["kitchen"], support::corpus_fingerprint("kitchen")).expect("codec");
+    let booking =
+        Codec::new(&schemas["booking"], support::corpus_fingerprint("booking")).expect("codec");
+
+    let cases = chain_cases(&kitchen, &booking);
+    let mut seen = Vec::new();
+    let mut mismatch_names = std::collections::BTreeSet::new();
+    for case in &cases {
+        let codec = if case.schema == "kitchen" {
+            &kitchen
+        } else {
+            &booking
+        };
+        let sidecar = chain_sidecar(case, codec);
+        pin_chain_fixture(&dir, case, &sidecar);
+        seen.push(format!("{}.bin", case.name));
+        seen.push(format!("{}.json", case.name));
+
+        let braid = codec.braids().parse(case.fetched).expect("fetched braid");
+        // The chain discipline refuses before the store is touched, so
+        // every mismatch case runs over a kitchen-theory scratch store;
+        // only the advance case — itself a kitchen batch — writes to it.
+        // (The booking fixture schema is codec vocabulary, not an
+        // engine-admissible theory: its containment target carries no
+        // backing key statement.)
+        let db = bumbledb::Db::create(&temp_root(case.name).join("db"), schemas["kitchen"].clone())
+            .expect("create")
+            .expect("theory admits empty store");
+        let mut chain = Chain::genesis(codec.braids());
+        chain.entries.insert(braid, case.position);
+        let applied = apply(&db, &mut chain, codec, braid, case.slot, &case.bytes, 0)
+            .expect("apply infrastructure");
+        match case.expect {
+            ChainExpect::Advance => {
+                assert_eq!(
+                    applied,
+                    Applied::Advanced { generation: 1 },
+                    "case {}: the clean chain advances",
+                    case.name
+                );
+            }
+            ChainExpect::Cause(expected) => {
+                let Applied::Refused(ApplyRefusal::ChainMismatch {
+                    cause,
+                    braid: refused_braid,
+                    slot,
+                    writer,
+                }) = applied
+                else {
+                    panic!(
+                        "case {}: expected a chain mismatch, got {applied:?}",
+                        case.name
+                    );
+                };
+                assert_eq!(cause_name(&cause), expected, "case {}: cause", case.name);
+                assert_eq!(refused_braid, braid, "case {}: fetched braid", case.name);
+                assert_eq!(slot, case.slot, "case {}: slot", case.name);
+                assert_eq!(writer, 7, "case {}: writer", case.name);
+                mismatch_names.insert(expected);
+            }
+        }
+    }
+
+    assert_eq!(
+        mismatch_names.into_iter().collect::<Vec<_>>(),
+        ["prev", "slot", "timestamp"],
+        "all three proved causes are pinned"
+    );
+    if !support::bless() {
+        let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+            .expect("chain dir present")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .into_string()
+                    .expect("name")
+            })
+            .collect();
+        on_disk.sort();
+        seen.sort();
+        assert_eq!(
+            on_disk, seen,
+            "chain corpus holds exactly the table's cases"
         );
     }
 }

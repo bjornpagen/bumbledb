@@ -1,0 +1,14 @@
+{
+  "braid": "c00000000",
+  "cause": "slot",
+  "chain": {
+    "g": "0",
+    "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+    "ts": "0"
+  },
+  "expect": "chainMismatch",
+  "fingerprint": "013f5b4dd0ee08b17565a9cfb2e5abab162b7cddfa3b73d122f3f16f8582dc80",
+  "schema": "booking",
+  "slot": "1",
+  "writer": "7"
+}
