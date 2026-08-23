@@ -16,6 +16,7 @@ import Bumbledb.Exec.Plan
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
 import Bumbledb.Txn.DeltaRestriction
+import Bumbledb.Txn.Footprint
 import Bumbledb.Decide
 import Bumbledb.Oracle
 import Bumbledb.Admission
