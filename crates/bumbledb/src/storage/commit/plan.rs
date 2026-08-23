@@ -293,6 +293,14 @@ pub(crate) fn plan_commit<'d>(
     let mut delete_scratch = DeleteScratch::default();
     let mut insert_scratch = InsertScratch::default();
 
+    // The host-order-independence law: deletes then inserts each apply
+    // in canonical (relation, fact_hash) order. The delta is net set
+    // arithmetic and row ids assign in this sorted order, so the order
+    // ops entered the batch cannot reach stored bytes; the one
+    // order-sensitive input, pending intern ids inside the fact bytes,
+    // is owned by the first-use mint law (`WriteDelta::intern`) and
+    // pinned with it (pinned here:
+    // `op_order_inside_a_batch_cannot_influence_stored_bytes`).
     let mut delete_facts: Vec<(RelationId, &[u8; 32], &[u8])> = delta.deletes().collect();
     delete_facts.sort_unstable_by(|(a_rel, a_hash, _), (b_rel, b_hash, _)| {
         (a_rel, a_hash).cmp(&(b_rel, b_hash))

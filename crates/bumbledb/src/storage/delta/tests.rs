@@ -789,3 +789,35 @@ fn a_cancelled_delete_reinsert_pair_dirties_nothing() {
         "the reinsert cancelled the delete — nothing is removed from R"
     );
 }
+
+/// The mint law's pin (`WriteDelta::intern`): identical intern sequences
+/// against identical stores mint identical pending ids, ids assign in
+/// first-use order, and a repeat returns the first-use id without
+/// advancing the counter.
+#[test]
+fn identical_batches_against_identical_stores_mint_identical_intern_ids() {
+    let mut minted: Vec<Vec<InternId>> = Vec::new();
+    for name in ["delta-mint-twin-a", "delta-mint-twin-b"] {
+        let dir = TempDir::new(name);
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let ids: Vec<InternId> = ["b", "a", "b", "c"]
+            .iter()
+            .map(|value| delta.intern_str(&view, value).expect("intern"))
+            .collect();
+        assert_eq!(ids[0], ids[2], "a repeat returns the first-use id");
+        assert_eq!(
+            ids[1].raw(),
+            ids[0].raw() + 1,
+            "the second novel string takes the next id"
+        );
+        assert_eq!(ids[3].raw(), ids[1].raw() + 1, "a repeat advances nothing");
+        minted.push(ids);
+    }
+    assert_eq!(
+        minted[0], minted[1],
+        "identical batches against identical stores mint identical ids"
+    );
+}

@@ -155,6 +155,14 @@ impl<C: CatalogWrite> Applier<'_, '_, C> {
         Ok(())
     }
 
+    /// The fresh-in-command law: a fresh-keyed insert lands at exactly
+    /// the row id carried in the fact bytes — the plan read it from the
+    /// fresh field, and replay never consults the Q sequence — so every
+    /// store applying the same command bytes lands the same row. An
+    /// occupied landing is an ordinary functionality rejection citing
+    /// the auto key (`Conflict::Scalar`), never an infrastructure error
+    /// (pinned: `a_fresh_keyed_insert_lands_at_the_carried_row_id` and
+    /// `duplicate_fresh_id_across_deltas_aborts_with_the_auto_key`).
     fn resolve_landing(&mut self, op: &InsertOp<'_>) -> Result<Landing> {
         let rel = op.core.relation;
         match op.fresh_row {

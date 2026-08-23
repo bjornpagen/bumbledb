@@ -170,4 +170,41 @@ mod tests {
             "one fact set, two backends, one catalog content"
         );
     }
+
+    /// The host-order pin: with the batch's intern first-use sequence
+    /// held fixed (every string committed beforehand), the same ops in
+    /// two orders land byte-identical catalogs — the canonical
+    /// `(relation, fact_hash)` plan sort owns apply order, so op order
+    /// inside the batch cannot reach stored bytes.
+    #[test]
+    fn op_order_inside_a_batch_cannot_influence_stored_bytes() {
+        let dir_a = TempDir::new("digest-order-a");
+        let dir_b = TempDir::new("digest-order-b");
+        let a = create(&dir_a);
+        let b = create(&dir_b);
+        seed(&a);
+        seed(&b);
+        let before = a.catalog_digest().expect("digest");
+
+        a.write(|tx| {
+            tx.insert_dyn(NUM, [&num(2)])?;
+            tx.insert_dyn(NUM, [&num(3)])?;
+            tx.delete_dyn(NAMED, [&named("x")])?;
+            Ok(())
+        })
+        .expect("forward order")
+        .unwrap();
+        b.write(|tx| {
+            tx.delete_dyn(NAMED, [&named("x")])?;
+            tx.insert_dyn(NUM, [&num(3)])?;
+            tx.insert_dyn(NUM, [&num(2)])?;
+            Ok(())
+        })
+        .expect("reversed order")
+        .unwrap();
+
+        let after_a = a.catalog_digest().expect("digest");
+        assert_ne!(before, after_a, "the batch changed content");
+        assert_eq!(after_a, b.catalog_digest().expect("digest"));
+    }
 }

@@ -559,3 +559,48 @@ fn a_decode_failure_on_decoration_keeps_commit_rejected() {
         "{violations:?}"
     );
 }
+
+/// The fresh-in-command law's pin (`Applier::resolve_landing`): the row
+/// lands at exactly the id carried in the fact bytes — the F entry sits
+/// at that row id, with no reserve call anywhere — and two stores
+/// applying the same command bytes commit byte-identical catalogs. The
+/// rejection half lives beside it:
+/// `duplicate_fresh_id_across_deltas_aborts_with_the_auto_key`.
+#[test]
+fn a_fresh_keyed_insert_lands_at_the_carried_row_id() {
+    use crate::storage::catalog::CatalogRead as _;
+
+    let schema = doc_schema();
+    let command = doc_fact(&schema, 7, 1);
+    let mut stores: Vec<Vec<(Vec<u8>, Vec<u8>)>> = Vec::new();
+    for name in ["fresh-carried-id-a", "fresh-carried-id-b"] {
+        let dir = TempDir::new(name);
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.insert(&view, DOC, &command).expect("insert");
+            drop(view);
+            commit(delta, &env).expect("commit").expect("admitted");
+        }
+        {
+            let rtxn = env.read_txn().expect("txn");
+            let catalog = rtxn.catalog();
+            let landed = catalog
+                .fetch_fact(DOC, 7)
+                .expect("fetch")
+                .expect("the row landed at the carried id");
+            assert_eq!(landed, command.as_slice());
+            assert_eq!(
+                catalog.fetch_fact(DOC, 0).expect("fetch"),
+                None,
+                "no generated row id was consulted"
+            );
+        }
+        stores.push(committed_data(&env));
+    }
+    assert_eq!(
+        stores[0], stores[1],
+        "one command bytes, two stores, one committed state"
+    );
+}

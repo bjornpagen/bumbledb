@@ -41,6 +41,14 @@ impl WriteDelta<'_> {
         Ok(found)
     }
 
+    /// The mint law: pending intern ids assign in first-use order — a
+    /// novel string takes the running next-id at its first sight and
+    /// every repeat returns that same id — so identical intern sequences
+    /// against identical committed dictionaries mint identical ids on
+    /// every store. Replication replays a batch's ops in their recorded
+    /// order, which pins the first-use sequence and therefore the ids
+    /// (pinned:
+    /// `identical_batches_against_identical_stores_mint_identical_intern_ids`).
     fn intern(&mut self, view: &ReadTxn<'_>, raw: &[u8]) -> Result<InternId> {
         // never a second LMDB get.
         if let Some(id) = self.resolve(view, raw)? {
