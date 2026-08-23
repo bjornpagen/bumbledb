@@ -60,7 +60,7 @@ if [ -z "$asserted" ] || [ "$rows" -ne "$asserted" ]; then
   fail=1
 fi
 
-docs=(lean/README.md lean/conformance/README.md docs/cookbook.md ts/COOKBOOK.md proposals/README.md RULINGS.md REPRESENTATION-FIRST.md)
+docs=(lean/README.md lean/conformance/README.md docs/cookbook.md ts/COOKBOOK.md proposals/README.md)
 if [ "${#docs[@]}" -eq 0 ]; then
   echo "spec-census: FAIL — lane (c) scanned zero markdown files (vacuous pass)" >&2
   fail=1
@@ -293,7 +293,6 @@ purged_docs=(
   docs/cookbook.md
   ts/PUBLISHING.md
   README.md
-  RULINGS.md
 )
 purged_allow='purged|add-back|Add-back'
 

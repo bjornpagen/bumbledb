@@ -27,8 +27,7 @@ harness-only knob (`set_derived_budget`, `admit_measured`,
 ruling and fully intact: `abandon()`, `ParamSet`/`inSet`,
 `LiteralSet::Many`, the whole interval/Allen family, and the entire TS
 type tier. The normative `docs/architecture/` set is deleted — the code
-is the spec, `RULINGS.md` carries the open ledger, and the census
-enforces the one-owner law. **The C ABI bumps to generation 4**: the
+is the spec and the census enforces the one-owner law. **The C ABI bumps to generation 4**: the
 D1 deletions renumbered `bdb_error_kind` and `bdb_find_term_kind`, so
 generation-3 hosts must recompile against the regenerated header.
 Storage stays format **8** — no migration; existing stores open

@@ -451,9 +451,8 @@ representation rather than separate query engines.
 
 ## Architecture
 
-The laws live in the code at the site each governs. Decision records and
-OPEN triggers live in [`RULINGS.md`](RULINGS.md). The representation
-doctrine is [`REPRESENTATION-FIRST.md`](REPRESENTATION-FIRST.md). Worked
+The laws live in the code at the site each governs; decision history
+lives in git. Worked
 schemas are [`docs/cookbook.md`](docs/cookbook.md). Measurement notes are
 [`docs/reference/apple-silicon-performance.md`](docs/reference/apple-silicon-performance.md).
 
