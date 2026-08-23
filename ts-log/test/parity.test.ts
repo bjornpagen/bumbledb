@@ -277,31 +277,9 @@ interface ChainFixture {
 	readonly writer?: string
 }
 
-/** The corpus regenerates as header+ops when the Rust lane lands its
- *  cut; a fixture still carrying a footprint sidecar is the prior wire
- *  generation and cannot decode under this grammar. */
-function corpusIsHeaderOps(): boolean {
-	for (const file of fs.readdirSync(path.join(corpusRoot, "batch"))) {
-		if (!file.endsWith(".json")) {
-			continue
-		}
-		const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as Record<string, unknown>
-		if ("footprint" in fixture) {
-			return false
-		}
-	}
-	return true
-}
-
 if (!present) {
 	describe("parity goldens", function suite() {
 		test("skipped: crates/bumbledb-log/conformance/corpus is not in the tree", { skip: true }, function absent() {})
-	})
-} else if (!corpusIsHeaderOps()) {
-	describe("parity goldens", function suite() {
-		test("skipped: the corpus is the pre-cut wire generation; the Rust lane regenerates it as header+ops", {
-			skip: true
-		}, function stale() {})
 	})
 } else {
 	const schemasRaw = JSON.parse(fs.readFileSync(path.join(corpusRoot, "schemas.json"), "utf8")) as {
