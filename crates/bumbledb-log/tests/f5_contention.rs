@@ -1193,3 +1193,353 @@ fn dropped_response_on_a_lost_slot_routes_the_loser_algebra() {
         .expect("read");
     });
 }
+
+/// One writer's ledger from a fleet run: what it acked, and what it
+/// still holds pending after `Err::Contention`.
+struct Ledger {
+    acked: Vec<Box<[Value]>>,
+    submitted: Vec<Box<[Value]>>,
+    contentions: u64,
+}
+
+/// The mostly-disjoint fleet: `n` in-process writers over one prefix,
+/// each booking its own rows on one braid. Every loss is fully
+/// key-disjoint, so the whole run must resolve through the republish
+/// fast path — zero re-judgments fleet-wide is asserted, not hoped.
+#[allow(clippy::too_many_lines)]
+fn mostly_disjoint_fleet(n: u64) {
+    const ROUNDS: u64 = 6;
+    let root = temp_dir("fleet");
+    let ledgers: Vec<Ledger> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..n)
+            .map(|i| {
+                let root = root.clone();
+                scope.spawn(move || {
+                    let dir = root.join(format!("w{i}"));
+                    let writer = open_at(root.clone(), &dir, 100 + i);
+                    let mut ledger = Ledger {
+                        acked: Vec::new(),
+                        submitted: Vec::new(),
+                        contentions: 0,
+                    };
+                    for j in 0..ROUNDS {
+                        let row = note_row(i * 10_000 + j, "fleet");
+                        ledger.submitted.push(row.clone());
+                        let outcome = writer.commit(|batch| {
+                            batch.insert(NOTE, [row.clone()]);
+                            Ok(())
+                        });
+                        match outcome {
+                            Ok(Commit::Accepted { .. }) => ledger.acked.push(row),
+                            Ok(Commit::Rejected(violations)) => {
+                                panic!("a disjoint booking never rejects: {violations:?}")
+                            }
+                            Err(Error::Contention { .. }) => ledger.contentions += 1,
+                            Err(error) => panic!("fleet commit failed: {error}"),
+                        }
+                    }
+                    // Publication retries on the next commit: drain any
+                    // retained pending so the ledger closes.
+                    let mut flushes = 0u64;
+                    while writer.backlog().is_some() {
+                        flushes += 1;
+                        let row = note_row(i * 10_000 + 900 + flushes, "flush");
+                        ledger.submitted.push(row.clone());
+                        match writer.commit(|batch| {
+                            batch.insert(NOTE, [row.clone()]);
+                            Ok(())
+                        }) {
+                            Ok(Commit::Accepted { .. }) => ledger.acked.push(row),
+                            other => panic!("flush did not land: {other:?}"),
+                        }
+                    }
+                    assert_eq!(
+                        writer.counters().re_judgments,
+                        0,
+                        "a mostly-disjoint fleet never re-judges"
+                    );
+                    assert_whole(&writer, "a fleet writer at rest");
+                    writer.quiesce();
+                    ledger
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("fleet thread"))
+            .collect()
+    });
+
+    let codec = codec();
+    let braid = note_braid(&codec);
+    let batches = verify_log(&root);
+    converged_digest(&root);
+
+    // Every acked commit appears exactly once — and, because every
+    // batch here was eventually published, every submitted row does.
+    // Rows key by their debug rendering: raw values render uniquely
+    // and the engine's `Value` carries no ordering.
+    let mut published: BTreeMap<String, u64> = BTreeMap::new();
+    for batch in &batches[&braid] {
+        for op in &batch.ops {
+            assert_eq!(op.kind, OpKind::Insert);
+            for row in &op.rows {
+                *published.entry(format!("{row:?}")).or_insert(0) += 1;
+            }
+        }
+    }
+    assert!(
+        published.values().all(|count| *count == 1),
+        "no row is ever published twice"
+    );
+    let mut acked_total = 0u64;
+    let mut contentions = 0u64;
+    let mut submitted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for ledger in &ledgers {
+        contentions += ledger.contentions;
+        for row in &ledger.submitted {
+            submitted.insert(format!("{row:?}"));
+        }
+        for row in &ledger.acked {
+            acked_total += 1;
+            assert_eq!(
+                published.get(&format!("{row:?}")),
+                Some(&1),
+                "every acked commit appears exactly once"
+            );
+        }
+    }
+    assert!(
+        published.keys().all(|row| submitted.contains(row)),
+        "nothing reaches the log that no writer submitted"
+    );
+    // A commit that surfaced `Err::Contention` is honestly unacked:
+    // either it applied and was retained — republished by a later
+    // drain, so its row appears once — or the backlog ahead of it
+    // exhausted the bound first and its ops never entered a store at
+    // all. Both are within the contract; a duplicate or an unsubmitted
+    // row never is.
+    let published_total = u64::try_from(published.len()).expect("count fits");
+    assert!(
+        published_total >= acked_total && published_total <= acked_total + contentions,
+        "the log holds the acked commits plus at most the retained ones \
+         ({acked_total} acked, {contentions} contended, {published_total} published)"
+    );
+}
+
+#[test]
+fn fleet_of_two_mostly_disjoint_converges() {
+    mostly_disjoint_fleet(2);
+}
+
+#[test]
+fn fleet_of_four_mostly_disjoint_converges() {
+    mostly_disjoint_fleet(4);
+}
+
+#[test]
+fn fleet_of_eight_mostly_disjoint_converges() {
+    mostly_disjoint_fleet(8);
+}
+
+#[test]
+fn hot_key_fleet_yields_one_winner_and_serial_rejections_per_round() {
+    const WRITERS: u64 = 4;
+    const ROUNDS: u64 = 6;
+    let root = temp_dir("hotfleet");
+    let barrier = std::sync::Barrier::new(usize::try_from(WRITERS).expect("fits"));
+    let per_writer: Vec<Vec<Commit<()>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|i| {
+                let root = root.clone();
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let dir = root.join(format!("w{i}"));
+                    let writer = open_at(root.clone(), &dir, 200 + i);
+                    let mut outcomes = Vec::new();
+                    for r in 0..ROUNDS {
+                        barrier.wait();
+                        let outcome = writer
+                            .commit(|batch| {
+                                batch.insert(
+                                    RECIPE,
+                                    [recipe_row(40_000 + r, &format!("writer {i}"))],
+                                );
+                                Ok(())
+                            })
+                            .expect("a conflict resolves to a verdict, never an Err");
+                        outcomes.push(outcome);
+                    }
+                    assert_whole(&writer, "a hot-key fleet writer");
+                    assert_eq!(
+                        writer_digest(&writer),
+                        converged_digest(&root),
+                        "every store here applied in log order"
+                    );
+                    writer.quiesce();
+                    outcomes
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("fleet thread"))
+            .collect()
+    });
+
+    for r in 0..usize::try_from(ROUNDS).expect("fits") {
+        let mut accepted = 0u64;
+        let mut rejected = 0u64;
+        for outcomes in &per_writer {
+            match &outcomes[r] {
+                Commit::Accepted { .. } => accepted += 1,
+                Commit::Rejected(violations) => {
+                    assert!(
+                        violations
+                            .iter()
+                            .any(|violation| matches!(violation, Violation::Functionality { .. })),
+                        "losers get the typed FD violation"
+                    );
+                    rejected += 1;
+                }
+            }
+        }
+        assert_eq!(accepted, 1, "exactly one winner per round");
+        assert_eq!(rejected, WRITERS - 1, "serial rejections for the rest");
+    }
+
+    let codec = codec();
+    let braid = kitchen_braid(&codec);
+    let batches = verify_log(&root);
+    assert_eq!(
+        u64::try_from(batches[&braid].len()).expect("fits"),
+        ROUNDS,
+        "one slot per round: losers publish nothing"
+    );
+    let mut determinants: BTreeMap<u64, u64> = BTreeMap::new();
+    for batch in &batches[&braid] {
+        for op in &batch.ops {
+            for row in &op.rows {
+                let Value::U64(id) = row[0] else {
+                    panic!("recipe determinant is u64")
+                };
+                *determinants.entry(id).or_insert(0) += 1;
+            }
+        }
+    }
+    assert!(
+        determinants.values().all(|count| *count == 1),
+        "zero duplicates: one row per hot determinant"
+    );
+}
+
+#[test]
+fn hot_capacity_parent_fleet_prices_the_slack_serially() {
+    const WRITERS: u64 = 4;
+    const ROUNDS: u64 = 5;
+    let root = temp_dir("capfleet");
+    let setup = open_at(root.clone(), &root.join("setup"), 300);
+    assert!(matches!(
+        setup
+            .commit(|batch| {
+                batch.insert(VENUE, [Box::from([Value::U64(1)]) as Box<[Value]>]);
+                Ok(())
+            })
+            .expect("venue setup"),
+        Commit::Accepted { generation: 1, .. }
+    ));
+
+    let barrier = std::sync::Barrier::new(usize::try_from(WRITERS).expect("fits"));
+    let per_writer: Vec<Vec<(u64, Commit<()>)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..WRITERS)
+            .map(|i| {
+                let root = root.clone();
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let dir = root.join(format!("w{i}"));
+                    let writer = open_at(root.clone(), &dir, 310 + i);
+                    let mut outcomes = Vec::new();
+                    for r in 0..ROUNDS {
+                        barrier.wait();
+                        // Distinct units per (writer, round) so set
+                        // semantics never collapses two bookings into
+                        // one row; all near 100 so the ceiling admits
+                        // roughly half the demand.
+                        let units = 90 + r * WRITERS + i;
+                        let outcome = writer
+                            .commit(|batch| {
+                                batch.insert(BOOKING, [booking_row(1, units)]);
+                                Ok(())
+                            })
+                            .expect("a capacity race resolves to a verdict");
+                        outcomes.push((units, outcome));
+                    }
+                    assert_whole(&writer, "a hot-parent fleet writer");
+                    writer.quiesce();
+                    outcomes
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("fleet thread"))
+            .collect()
+    });
+
+    let mut accepted_units = 0u64;
+    let mut accepted = 0u64;
+    let mut rejected = 0u64;
+    for outcomes in &per_writer {
+        for (units, outcome) in outcomes {
+            match outcome {
+                Commit::Accepted { .. } => {
+                    accepted += 1;
+                    accepted_units += units;
+                }
+                Commit::Rejected(violations) => {
+                    assert!(
+                        violations
+                            .iter()
+                            .any(|violation| matches!(violation, Violation::Capacity { .. })),
+                        "over-slack bookings get the typed capacity violation"
+                    );
+                    rejected += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        accepted_units <= CEILING,
+        "the accepted total respects the ceiling: {accepted_units}"
+    );
+    assert!(accepted >= 1, "the first bookings fit");
+    assert!(
+        rejected >= 1,
+        "demand doubled the ceiling, so rejections exist"
+    );
+
+    let codec = codec();
+    let braid = venue_braid(&codec);
+    let batches = verify_log(&root);
+    let mut logged_units = 0u64;
+    for batch in &batches[&braid] {
+        for op in &batch.ops {
+            if op.relation != BOOKING {
+                continue;
+            }
+            for row in &op.rows {
+                let Value::U64(units) = row[1] else {
+                    panic!("booking units are u64")
+                };
+                logged_units += units;
+            }
+        }
+    }
+    assert_eq!(
+        logged_units, accepted_units,
+        "every acked booking appears exactly once and nothing else reached the log"
+    );
+    // The verifying replica replays every slot accepted — the serial
+    // verdicts and the log agree.
+    converged_digest(&root);
+}
