@@ -231,6 +231,7 @@ pub struct Replica<T: Theory + Clone, S: ObjectStore> {
     provenance: Provenance,
     manifest_etag: Etag,
     floor: Option<([u8; 32], Checkpoint)>,
+    audited_floor: Option<[u8; 32]>,
     ckpt_cache: BTreeMap<[u8; 32], Checkpoint>,
     passes: u64,
     heartbeat_every: u64,
@@ -265,6 +266,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             provenance: Provenance::Bootstrap,
             manifest_etag: Etag(String::new()),
             floor: None,
+            audited_floor: None,
             ckpt_cache: BTreeMap::new(),
             passes: 0,
             heartbeat_every: HEARTBEAT_EVERY,
@@ -333,6 +335,9 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             CatchUpEnd::Tips => {
                 let generation = self.db().generation()?.value();
                 if generation == self.chain.sum() + self.applied_pending {
+                    if let Some(refusal) = self.audit_reached_floor()? {
+                        return Ok(Refreshed::Refused(refusal));
+                    }
                     return Ok(Refreshed::Vector(self.chain.vector()));
                 }
             }
@@ -527,11 +532,45 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             CatchUpEnd::Gap | CatchUpEnd::RejectedInOpen => return Ok(AttemptEnd::Discard),
         }
         let generation = self.db().generation()?.value();
-        if generation == self.chain.sum() + self.applied_pending {
-            Ok(AttemptEnd::Whole)
-        } else {
-            Ok(AttemptEnd::Discard)
+        if generation != self.chain.sum() + self.applied_pending {
+            return Ok(AttemptEnd::Discard);
         }
+        if let Some(refusal) = self.audit_reached_floor()? {
+            return Ok(AttemptEnd::Refused(refusal));
+        }
+        Ok(AttemptEnd::Whole)
+    }
+
+    /// The replay-reaching half of the checkpoint content claim: a
+    /// store standing at exactly the current checkpoint's vector by its
+    /// own count compares its computed catalog digest against the
+    /// carried claim and refuses a mismatch as corruption-class, naming
+    /// the publisher. The seed path verifies the same claim over the
+    /// downloaded bytes, so between the two paths a checkpoint is
+    /// audited from independent directions while its history is still
+    /// replayable. A passing digest is remembered — the claim is
+    /// immutable, so one comparison per checkpoint is the whole cost.
+    fn audit_reached_floor(&mut self) -> Result<Option<OpenRefusal>, Fault> {
+        let Some((digest, doc)) = &self.floor else {
+            return Ok(None);
+        };
+        if self.audited_floor == Some(*digest)
+            || self.applied_pending != 0
+            || doc.vector() != self.chain.vector()
+        {
+            return Ok(None);
+        }
+        let computed = self.db().catalog_digest()?;
+        if computed == doc.catalog {
+            self.audited_floor = Some(*digest);
+            return Ok(None);
+        }
+        Ok(Some(OpenRefusal::CatalogMismatch {
+            digest: *digest,
+            writer: doc.writer,
+            carried: doc.catalog,
+            computed,
+        }))
     }
 
     /// Mounts the local state: pre-existing directory, checkpoint seed,
@@ -609,6 +648,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                 computed,
             })));
         }
+        self.audited_floor = Some(digest);
         self.db = Some(db);
         self.chain = Chain {
             entries: doc
