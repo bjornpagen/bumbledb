@@ -23,7 +23,7 @@ is the centerpiece; [90-rollout.md](90-rollout.md) is the fleet dispatch.
 
 | Doc | Contract |
 | --- | --- |
-| [00-product.md](00-product.md) | What it is, the laws, the four deployment cases, non-goals |
+| [00-product.md](00-product.md) | What it is, the laws, the five deployment cases, non-goals |
 | [10-protocol.md](10-protocol.md) | Braids, keys, manifest + vector, log slots, checkpoints, leases, PITR, gc |
 | [15-conflict-algebra.md](15-conflict-algebra.md) | Footprints over raw values, the four commutativity matrices, the loser algebra, the reservations idiom (escrow deleted), L6–L10 |
 | [20-command-codec.md](20-command-codec.md) | The batch wire format (v2), footprint section, determinism laws, IDL refusal |

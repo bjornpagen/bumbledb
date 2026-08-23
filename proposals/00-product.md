@@ -90,7 +90,7 @@ re-judgment, fork-discard, and every cross-braid interaction; what it
 keeps is a total order per braid, which is exactly what makes verdicts
 serial and replay deterministic. Reads and rejections touch nothing.
 
-## The four deployment cases (each names its consumer)
+## The five deployment cases (each names its consumer)
 
 1. **Next.js on Vercel Fluid** — replica singleton per instance (Fluid
    shares module state; native modules supported; `/tmp` 500 MB,
@@ -106,6 +106,18 @@ serial and replay deterministic. Reads and rejections touch nothing.
    tenant; the control-plane tenant carries shared reference data;
    cross-tenant analytics is the heap arm (scan → builder → `admit` →
    query). Consumer: the eventual multi-tenant deployment of 1/3.
+5. **Local fleet** — N writer processes, one machine, one `FsStore`
+   prefix; each process a replica+writer with its own LMDB dir; no
+   network anywhere in the loop. The degenerate-serial case (10) worn
+   proudly: one-braid theories serialize slot claims on a rename and the
+   loser algebra absorbs the rest. Consumer: primer-spec's parallel
+   scope loops — an insert-only, content-keyed theory (no deletes, no
+   capacities) that lives entirely in the commute cells of 15's
+   matrices, whose one reachable conflict (concurrent double-mint of
+   identical content under a declared FD) re-judges into reuse, and
+   whose host retry policy is an unbounded repair loop, which is
+   exactly the "retry is host policy" contract. One commit = one
+   admitted document; the braid chain is the generation ledger.
 
 ## Performance envelope (vendor facts verified; measured pins from 80 supersede this section)
 

@@ -70,9 +70,14 @@ verb.
 ## Implementations shipped in v1
 
 1. **`FsStore`** — local directory. Create-only = `O_CREAT|O_EXCL` temp +
-   rename; CAS = etag-file compare under an flock. Exists for 80's
-   conformance lanes (crash matrix, contention lane run in-process) and
-   for case-2 local sync. No network dependency in the test suite.
+   rename; CAS = etag-file compare under an flock. **Production tier,
+   not a test double**: it is the whole backend of deployment case 5
+   (the local fleet — primer-spec's parallel scope loops), the macOS
+   sync target of case 2, and the store 80's conformance lanes (crash
+   matrix, contention lane) run against in-process. Both language
+   drivers ship it at parity: every lane that runs on `S3Store` runs on
+   `FsStore`, in Rust and in TS, or the gap is reported. No network
+   dependency in the test suite — or in case 5's production loop.
 2. **`S3Store`** — S3/Express/R2/OCI via one implementation, since all
    four speak SigV4 + the conditional headers.
 

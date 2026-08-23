@@ -94,10 +94,47 @@ error names the hot determinant; the remedies are a reservation relation
 on the hot capacity, or resident mode). No Next.js wrapper is shipped; a
 wrapper would be a second way to write three lines.
 
+## The local-fleet recipe (deployment case 5; documented example)
+
+```ts
+// one process per scope loop; all processes share one FsStore prefix
+const replica = await openReplica({
+	store: fsStore("/data/primer/log"),      // the five verbs over a directory
+	prefix: "world/v1",
+	dir: `/data/primer/replicas/${scopeName}`, // per-process LMDB — never shared
+	theory: Explanation,
+})
+const writer = openWriter(replica)
+
+// one pass = refresh, render, emit, lower, one commit
+await replica.refresh()
+const out = await writer.commit((batch) => {
+	batch.insert(Explanation, growth.explanations)   // ids from batch.reserve
+	batch.insert(Case, growth.cases)
+	// …the admitted document's growth, one batch, one slot
+	return growth.summary
+})
+// rejected ⇒ the host re-renders against the moved world and re-lowers —
+// a K-conflict double-mint resolves to the winner's row on the next pass.
+```
+
+The recipe records what makes the case easy: an insert-only theory never
+reaches a delete cell of 15's matrices; content-keyed determinants make
+concurrent scope loops footprint-disjoint in the common case (republish,
+not re-judge); a one-braid theory serializes slot claims on a rename,
+which at document-per-minutes commit rates is free. Each process owns
+its LMDB directory outright — the one-env-per-path law is satisfied by
+construction, not by handle registries.
+
 ## Dependency ruling
 
 `aws4fetch` only (~4 KB SigV4 over platform `fetch`); R2/OCI ride the same
-signer; `fs` store on Node `fs` for dev and tests. No AWS SDK. Blake3 via
+signer. The `fs` store on Node `fs` is **tier-1, not a dev double** — it
+is deployment case 5's production backend (00), implements the same
+create-only (`wx` open + rename) and etag-file CAS discipline as the
+Rust `FsStore`, and runs every conformance lane the S3 store runs (80);
+a lane that passes on one and not the other is a reported gap. No AWS
+SDK. Blake3 via
 the engine package's existing native binding (the napi module already
 links blake3 — expose a doc-hidden hash entry rather than adding a JS
 blake3 dependency; that exposure rides the SDK, not the engine crate).
