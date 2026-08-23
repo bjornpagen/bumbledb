@@ -64,7 +64,8 @@ commutativity matrices' cell coordinate, not part of the key, so two
 batches inserting one byte-identical row SHARE its F key and are
 outside the hypothesis: the second batch's op would evaporate against
 the first's effect, breaking op-effect independence — L6's
-evaporation conclusion is false without the exclusion. Under full
+evaporation conclusion is false without the exclusion, mechanized as
+`Countermodels.commute_cell_exclusion_load_bearing`. Under full
 disjointness the W rider ("shared W parents additionally pass the
 interval test") holds vacuously: no W parent is shared.
 
@@ -73,7 +74,8 @@ interval test") holds vacuously: no W parent is shared.
 L7 as proved: a batch ACCEPTED at its base is accepted at the
 winner-moved base, with the identical net effect — the verdict the
 loser algebra republishes and the publish law reads. The
-rejected-verdict converse is refused, with this countermodel: base
+rejected-verdict converse is refused, with this countermodel
+(mechanized as `Countermodels.footprint_rejection_not_stable`): base
 holds one φ-source row and its ψ-target supporter; σ deletes the
 source (no C emission — the silence above), δ deletes the supporter
 (`support−`). Footprints disjoint in every class, yet δ is rejected

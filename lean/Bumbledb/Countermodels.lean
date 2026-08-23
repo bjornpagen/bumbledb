@@ -7,6 +7,7 @@ import Bumbledb.Exec.SemiNaive
 import Bumbledb.Exec.Plan
 import Bumbledb.Txn
 import Bumbledb.Txn.DeltaRestriction
+import Bumbledb.Txn.Footprint
 import Bumbledb.Admission
 
 /-!
@@ -137,6 +138,28 @@ part of the spec.
  property of any committed state — it is host discipline (the
  `write_from` witness loop), exactly
  `Txn.derived_soundness_vs_freshness`'s other half.
+
+## residents (the footprint algebra's two strictness pins)
+
+* `footprint_rejection_not_stable` — the acceptance form of
+ `Txn.Footprint.L7`, forced: over the parent/child containment, a
+ winner deleting the one needing source row and a loser deleting the
+ one supporting target row have fully disjoint footprints (the
+ source-delete emits no C entry — a withdrawn demand can only
+ relax a containment), yet the loser is REJECTED at the shared base
+ and ACCEPTED at the winner-moved base. Verdict stability therefore
+ cannot include the rejected arm; the protocol never spends it
+ (a rejected batch returns to its host and never publishes), and L7
+ carries the loser's own acceptance as a hypothesis.
+
+* `commute_cell_exclusion_load_bearing` — full key disjointness is
+ deliberately stronger than "no CONFLICT cell": two byte-identical
+ inserts of one row — the F matrix's own commute cell, and the ONLY
+ key such a batch's footprint carries — break op-effect
+ independence, the second batch's op evaporating against the
+ first's effect. `Txn.Footprint.L6`'s evaporation conclusion is
+ false on the pair, which is why footprint-key sharing is mode-blind
+ and commute cells are excluded.
 
 ## resident
 
@@ -797,6 +820,163 @@ theorem stale_but_sound :
   refine ⟨rfl, ?_⟩
   intro f hf _
   exact absurd hf.1 child_ne_parent
+
+/-! ## The footprint strictness countermodels (the conflict algebra)
+
+The same parent/child theory, read as two concurrent batches over the
+shared base `pcInst`: the winner deletes the one needing source row,
+the loser deletes the one supporting target row. Their footprints are
+disjoint in every class — a source-delete emits nothing in the C
+class — so the pair sits squarely inside
+`Txn.Footprint.KeyDisjoint`, and the loser's verdict FLIPS from
+rejected to accepted across the winner: the rejected arm of verdict
+stability is refused, and `Txn.Footprint.L7` is the acceptance form.
+The second pin: a batch inserting one row (paired with itself, the
+byte-identical concurrent insert) shares exactly one same-mode F
+key — the F matrix's own commute cell — and breaks evaporation
+independence, so the disjointness hypothesis must exclude commute
+cells too. -/
+
+/-- The winner: delete the one needing source row (the child). -/
+def srcDrop : Txn.Delta :=
+  ⟨fun _ => fun _ => False, fun R f => R = childRel ∧ f = linkFact⟩
+
+/-- The loser: delete the one supporting target row (the parent) —
+the C class's `support−`. -/
+def supDrop : Txn.Delta :=
+  ⟨fun _ => fun _ => False, fun R f => R = parentRel ∧ f = linkFact⟩
+
+/-- The winner's whole footprint is one F key: its source-delete
+emits no C entry (a withdrawn demand), the theory declares no key or
+capacity statement, and the delete touches one row of one relation. -/
+theorem srcDrop_footprint (k : Txn.Footprint.FKey)
+    (hk : k ∈ Txn.Footprint.footprint pcTheory srcDrop) :
+    k = .F childRel linkFact := by
+  cases k with
+  | F R f =>
+    rcases hk with h | h
+    · exact nomatch h
+    · rw [h.1, h.2]
+  | K R X det =>
+    obtain ⟨hst, -⟩ := hk
+    exact nomatch List.mem_singleton.mp hst
+  | C src tgt det =>
+    obtain ⟨hst, hc⟩ := hk
+    have h := List.mem_singleton.mp hst
+    injection h with h1 h2
+    subst h1
+    subst h2
+    rcases hc with ⟨f, hf, -, -⟩ | ⟨g, hg, -, -⟩
+    · exact nomatch hf
+    · rcases hg with h' | h'
+      · exact nomatch h'
+      · exact absurd h'.1.symm child_ne_parent
+  | W tgt wt w src det =>
+    obtain ⟨hst, -⟩ := hk
+    exact nomatch List.mem_singleton.mp hst
+
+/-- **The rejected arm of verdict stability is refused.** The two
+deletes are footprint-disjoint in every class, the winner's state
+holds (its delete emptied the demand), the loser is REJECTED at the
+shared base (its delete strands the surviving demand) — and ACCEPTED
+at the winner-moved base, where the demand is gone. Judge equality
+across a disjoint winner is therefore an acceptance-only fact:
+`Txn.Footprint.L7` carries the loser's own acceptance as a
+hypothesis, and the loser algebra never republishes a rejection. -/
+theorem footprint_rejection_not_stable :
+    Txn.Footprint.KeyDisjoint pcTheory srcDrop supDrop ∧
+    holds pcTheory (srcDrop.applyTo pcInst) ∧
+    ¬ holds pcTheory (supDrop.applyTo pcInst) ∧
+    holds pcTheory (supDrop.applyTo (srcDrop.applyTo pcInst)) := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · intro k hks hkd
+    have hk := srcDrop_footprint k hks
+    subst hk
+    rcases hkd with h | h
+    · exact nomatch h
+    · exact child_ne_parent h.1
+  · intro st hst
+    cases List.mem_singleton.mp hst
+    refine ⟨rfl, ?_⟩
+    intro f hf _
+    rcases hf with ⟨hf1, hf2⟩ | hf1
+    · exact absurd ⟨rfl, hf1⟩ hf2
+    · exact nomatch hf1
+  · intro h
+    have hj := h pcStatement (List.mem_singleton.mpr rfl)
+    obtain ⟨g, hg, -, -⟩ := hj.2 linkFact
+      (Or.inl ⟨rfl, fun hpc => child_ne_parent hpc.1⟩)
+      (Selection.empty_satisfies _)
+    rcases hg with ⟨hg1, hg2⟩ | hg1
+    · exact hg2 ⟨rfl, hg1⟩
+    · exact nomatch hg1
+  · intro st hst
+    cases List.mem_singleton.mp hst
+    refine ⟨rfl, ?_⟩
+    intro f hf _
+    rcases hf with ⟨hf1, -⟩ | hf1
+    · rcases hf1 with ⟨hf2, hf3⟩ | hf2
+      · exact absurd ⟨rfl, hf2⟩ hf3
+      · exact nomatch hf2
+    · exact nomatch hf1
+
+/-- A relation no statement consults — the twin insert's home, so its
+footprint carries nothing but the one F key. -/
+def freeRel : RelId := ⟨2⟩
+
+/-- One insert of one row, played against itself: the byte-identical
+concurrent insert — the F matrix's commute cell ("second no-ops"). -/
+def twinInsert : Txn.Delta :=
+  ⟨fun R f => R = freeRel ∧ f = linkFact, fun _ => fun _ => False⟩
+
+/-- The twin insert's whole footprint is its one F key: the touched
+relation carries no key, containment, or capacity statement. -/
+theorem twinInsert_footprint (k : Txn.Footprint.FKey)
+    (hk : k ∈ Txn.Footprint.footprint pcTheory twinInsert) :
+    k = .F freeRel linkFact := by
+  cases k with
+  | F R f =>
+    rcases hk with h | h
+    · rw [h.1, h.2]
+    · exact nomatch h
+  | K R X det =>
+    obtain ⟨hst, -⟩ := hk
+    exact nomatch List.mem_singleton.mp hst
+  | C src tgt det =>
+    obtain ⟨hst, hc⟩ := hk
+    have h := List.mem_singleton.mp hst
+    injection h with h1 h2
+    subst h1
+    subst h2
+    rcases hc with ⟨f, hf, -, -⟩ | ⟨g, hg, -, -⟩
+    · exact absurd hf.1 (by decide)
+    · rcases hg with h' | h'
+      · exact absurd h'.1 (by decide)
+      · exact nomatch h'
+  | W tgt wt w src det =>
+    obtain ⟨hst, -⟩ := hk
+    exact nomatch List.mem_singleton.mp hst
+
+/-- **The commute-cell exclusion is load-bearing.** The twin-insert
+pair shares exactly one key — its own same-mode F key, the cell the
+F matrix commutes — so it fails `Txn.Footprint.KeyDisjoint`; and it
+MUST: against a base without the row, the second batch's insert
+evaporates on the first's effect, refuting the evaporation
+conclusion of `Txn.Footprint.L6` on this pair. Full key disjointness
+is deliberately stronger than "no CONFLICT cell". -/
+theorem commute_cell_exclusion_load_bearing :
+    (∀ k, k ∈ Txn.Footprint.footprint pcTheory twinInsert →
+      k = .F freeRel linkFact) ∧
+    ¬ Txn.Footprint.KeyDisjoint pcTheory twinInsert twinInsert ∧
+    twinInsert.touches freeRel linkFact ∧
+    ¬ (linkFact ∈ twinInsert.applyTo staleInst freeRel ↔
+        linkFact ∈ staleInst freeRel) := by
+  refine ⟨twinInsert_footprint, ?_, Or.inl ⟨rfl, rfl⟩, ?_⟩
+  · intro h
+    exact h (.F freeRel linkFact) (Or.inl ⟨rfl, rfl⟩)
+      (Or.inl ⟨rfl, rfl⟩)
+  · intro h
+    exact absurd (h.mp (Or.inr ⟨rfl, rfl⟩)).1 (by decide)
 
 /-! ## The delta-restriction premise countermodel (wave 2)
 
