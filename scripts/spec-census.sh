@@ -210,12 +210,16 @@ done < <(grep -nE -- '\bsnapshots?\b' "${api_snapshot_rustdoc[@]}" || true)
 # ---- (g): zero-dyn engine (audit/27) --------------------------------
 # Production src of the engine crates. `dyn` is legal only on
 # `Error::source` and the `ErrorDescriptor` mirror that feeds Display.
+# The log driver (crates/bumbledb-log/src) is on the roster with ZERO
+# exemptions: the exemption lines below name engine paths only, so any
+# `dyn` in the log driver fails outright.
 
 engine_src=(
   crates/bumbledb/src
   crates/bumbledb-theory/src
   crates/bumbledb-query/src
   crates/bumbledb-macros/src
+  crates/bumbledb-log/src
 )
 
 dyn_exempt_hits=0
@@ -364,7 +368,7 @@ lane_i_allow=''
         fail=1
       fi
     done <<< "$extracted"
-  done < <(find crates/*/src ts/src ts/crate lean \
+  done < <(find crates/*/src ts/src ts/crate ts-log/src lean \
              \( -name '*.rs' -o -name '*.ts' -o -name '*.lean' \) \
              ! -path '*/.lake/*' ! -path '*/target/*' ! -path '*/node_modules/*' \
              | sort)
@@ -374,8 +378,40 @@ if [ "$lane_i_scanned" -eq 0 ]; then
   fail=1
 fi
 
+# ---- (j): one-owner protocol constants ---------------------------------
+# Every named constant of the log protocol has exactly one defining site
+# per language: other files cite the name, never restate the value.
+
+one_owner_rust=(
+  LOSS_BOUND
+  DRAIN_MAX_WRITES
+  DRAIN_MAX_BYTES
+  LEASE_WIDTH
+  CHECKPOINT_EVERY_SUM
+  CHECKPOINT_EVERY_BYTES
+)
+for name in "${one_owner_rust[@]}"; do
+  count=$(grep -rE "const ${name}[[:space:]]*:" crates/bumbledb-log/src --include='*.rs' | wc -l | tr -d ' ')
+  if [ "$count" -ne 1 ]; then
+    echo "spec-census: FAIL — lane (j) constant '$name' has $count defining sites in crates/bumbledb-log/src (one owner required)" >&2
+    fail=1
+  fi
+done
+
+one_owner_ts=(
+  LEASE_WIDTH
+  LOSS_BOUND
+)
+for name in "${one_owner_ts[@]}"; do
+  count=$(grep -rE "const ${name}[[:space:]]*=" ts-log/src --include='*.ts' | wc -l | tr -d ' ')
+  if [ "$count" -ne 1 ]; then
+    echo "spec-census: FAIL — lane (j) constant '$name' has $count defining sites in ts-log/src (one owner required)" >&2
+    fail=1
+  fi
+done
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned, purged store-and-value tokens absent outside history"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (log driver at zero), purged store-and-value tokens absent outside history, one-owner constants single-sited"

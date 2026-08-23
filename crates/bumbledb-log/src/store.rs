@@ -69,11 +69,7 @@ impl fmt::Display for StoreError {
     }
 }
 
-impl std::error::Error for StoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
-    }
-}
+impl std::error::Error for StoreError {}
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
