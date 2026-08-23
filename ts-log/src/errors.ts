@@ -124,23 +124,11 @@ function contentionOf(error: Error): ContentionData | undefined {
 	return contentionData.get(error)
 }
 
-const storeMarked = new WeakSet<Error>()
-
+/** Every store failure wraps the exported sentinel itself, so
+ *  `errors.is(e, ErrStore)` matches by identity; the vendor error's
+ *  message rides the detail verbatim. */
 function wrapStore(inner: Error, detail: string): Error {
-	const error = errors.wrap(inner, `${ErrStore.message}: ${detail}`)
-	storeMarked.add(error)
-	return error
-}
-
-function isStoreFailure(error: Error): boolean {
-	let cursor: Error | undefined = error
-	while (cursor !== undefined) {
-		if (cursor === ErrStore || storeMarked.has(cursor)) {
-			return true
-		}
-		cursor = cursor.cause instanceof Error ? cursor.cause : undefined
-	}
-	return false
+	return errors.wrap(ErrStore, `${detail}: ${inner.message}`)
 }
 
 export type { ChainCause, ChainMismatchData, ContentionCause, ContentionData, RefusalCause }
@@ -154,7 +142,6 @@ export {
 	ErrReplayDiverged,
 	ErrSpanningCommit,
 	ErrStore,
-	isStoreFailure,
 	refusalOf,
 	refuse,
 	refuseChain,
