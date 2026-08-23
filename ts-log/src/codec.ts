@@ -338,27 +338,29 @@ interface ChainPosition {
 
 /**
  * The chain discipline (20 apply, step 1): one identity, three proved
- * causes — the header's slot vs the key it was fetched from, its `prev`
- * vs the chain head, its timestamp vs the head's. Corruption-class; the
- * header names the misbehaving writer.
+ * causes — the header's slot identity (braid and generation, both
+ * halves of the key the object was fetched from), its `prev` vs the
+ * chain head, its timestamp vs the head's. Corruption-class; the header
+ * names the misbehaving writer, and the refusal data names the fetched
+ * braid.
  */
-function verifyChain(header: BatchHeader, slot: bigint, chain: ChainPosition): void {
-	if (header.braidGen !== slot) {
+function verifyChain(header: BatchHeader, braid: string, slot: bigint, chain: ChainPosition): void {
+	if (header.braid !== braid || header.braidGen !== slot) {
 		refuseChain(
-			{ cause: "slot", braid: header.braid, slot, writer: header.writer },
-			`braid ${header.braid}: header generation ${header.braidGen} ≠ slot ${slot}`
+			{ cause: "slot", braid, slot, writer: header.writer },
+			`braid ${braid}: header slot identity ${header.braid}/${header.braidGen} ≠ the fetched key's ${braid}/${slot}`
 		)
 	}
 	if (header.prev !== chain.prev) {
 		refuseChain(
-			{ cause: "prev", braid: header.braid, slot, writer: header.writer },
-			`braid ${header.braid} slot ${slot}: prev does not cite the predecessor`
+			{ cause: "prev", braid, slot, writer: header.writer },
+			`braid ${braid} slot ${slot}: prev does not cite the predecessor`
 		)
 	}
 	if (header.timestamp < chain.ts) {
 		refuseChain(
-			{ cause: "timestamp", braid: header.braid, slot, writer: header.writer },
-			`braid ${header.braid} slot ${slot}: timestamp regresses below the predecessor`
+			{ cause: "timestamp", braid, slot, writer: header.writer },
+			`braid ${braid} slot ${slot}: timestamp regresses below the predecessor`
 		)
 	}
 }

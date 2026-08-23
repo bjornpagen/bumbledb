@@ -231,18 +231,20 @@ describe("the command codec", function suite() {
 	test("the chain discipline: slot, prev, and timestamp causes", function chain() {
 		const header = headerOf()
 		const good = { g: 1n, prev: ZERO, ts: 0n }
-		verifyChain(header, 1n, good)
+		verifyChain(header, header.braid, 1n, good)
 		for (const [probe, cause] of [
-			[{ slot: 2n, chain: good }, "slot"],
-			[{ slot: 1n, chain: { ...good, prev: "1".repeat(64) } }, "prev"],
-			[{ slot: 1n, chain: { ...good, ts: header.timestamp + 1n } }, "timestamp"]
+			[{ braid: header.braid, slot: 2n, chain: good }, "slot"],
+			[{ braid: `${header.braid.slice(0, -1)}9`, slot: 1n, chain: good }, "slot"],
+			[{ braid: header.braid, slot: 1n, chain: { ...good, prev: "1".repeat(64) } }, "prev"],
+			[{ braid: header.braid, slot: 1n, chain: { ...good, ts: header.timestamp + 1n } }, "timestamp"]
 		] as const) {
 			const caught = errors.trySync(function checkIt() {
-				verifyChain(header, probe.slot, probe.chain)
+				verifyChain(header, probe.braid, probe.slot, probe.chain)
 			})
 			assert.ok(caught.error && errors.is(caught.error, ErrChainMismatch))
 			const data = chainMismatchOf(caught.error)
 			assert.equal(data?.cause, cause)
+			assert.equal(data?.braid, probe.braid)
 			assert.equal(data?.writer, header.writer)
 		}
 	})

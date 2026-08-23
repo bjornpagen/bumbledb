@@ -232,7 +232,7 @@ async function applySlot<Rels extends SchemaRelations>(
 ): Promise<SlotApply> {
 	const decoded = decodeBatch(core.descriptor, bytes)
 	const entry = chainEntry(core, braid)
-	verifyChain(decoded.header, slot, { g: entry.g, prev: entry.prev, ts: entry.ts })
+	verifyChain(decoded.header, braid, slot, { g: entry.g, prev: entry.prev, ts: entry.ts })
 	const recomputed = computeFootprint(core.descriptor, decoded.ops).entries
 	if (!footprintSectionsEqual(recomputed, decoded.footprint)) {
 		throw errors.wrap(ErrFootprintMismatch, `braid ${braid} slot ${slot} writer ${decoded.header.writer}`)

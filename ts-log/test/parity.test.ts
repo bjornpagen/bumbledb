@@ -7,11 +7,12 @@ import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { fromHex, toHex } from "#bytes.ts"
 import type { BatchHeader } from "#codec.ts"
-import { decodeBatch, encodeBatch } from "#codec.ts"
+import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { LogDescriptor } from "#descriptor.ts"
 import { descriptorOf, withFingerprint } from "#descriptor.ts"
-import { ErrRefused, refusalOf } from "#errors.ts"
-import type { BatchOp } from "#footprint.ts"
+import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
+import type { BatchOp, FootprintEntry } from "#footprint.ts"
+import { footprintOf } from "#footprint.ts"
 import type { LogValue } from "#value.ts"
 
 /**
@@ -265,6 +266,41 @@ interface BatchFixture {
 		readonly relation: number
 		readonly rows: readonly (readonly CorpusValue[])[]
 	}>
+	readonly footprint?: ReadonlyArray<Record<string, unknown>>
+}
+
+interface ChainFixture {
+	readonly schema: string
+	readonly fingerprint: string
+	readonly braid: string
+	readonly slot: string
+	readonly chain: { readonly g: string; readonly prev: string; readonly ts: string }
+	readonly expect: "ok" | "chainMismatch"
+	readonly cause?: "prev" | "slot" | "timestamp"
+	readonly writer?: string
+}
+
+/** The sidecar rendering of a footprint entry, shared with the Rust suite. */
+function renderEntry(entry: FootprintEntry): Record<string, unknown> {
+	switch (entry.class) {
+		case "F":
+			return { class: "F", fid: toHex(entry.key), mode: entry.mode }
+		case "K":
+			return { class: "K", statement: entry.statement, key: toHex(entry.key) }
+		case "C":
+			return { class: "C", statement: entry.statement, key: toHex(entry.key), mode: entry.mode }
+		case "W":
+			if (entry.mode === "child") {
+				return {
+					class: "W",
+					statement: entry.statement,
+					key: toHex(entry.key),
+					mode: "childDelta",
+					delta: entry.delta.toString()
+				}
+			}
+			return { class: "W", statement: entry.statement, key: toHex(entry.key), mode: entry.mode }
+	}
 }
 
 if (!present) {
@@ -366,8 +402,50 @@ if (!present) {
 					}
 				})
 				assert.deepEqual(decoded.ops, ops, `${stem}: ops`)
+				assert.ok(fixture.footprint !== undefined, `${stem}: ok sidecars carry the footprint golden`)
+				assert.deepEqual(decoded.footprint.map(renderEntry), fixture.footprint, `${stem}: carried footprint`)
+				assert.deepEqual(
+					footprintOf(descriptor, decoded.ops).map(renderEntry),
+					fixture.footprint,
+					`${stem}: footprintOf recomputation`
+				)
 				const encoded = encodeBatch(descriptor, header, ops)
 				assert.equal(toHex(encoded), toHex(bytes), `${stem}: byte-exact re-encode`)
+			})
+		}
+	})
+
+	describe("parity goldens: the chain corpus", function suite() {
+		for (const file of fs.readdirSync(path.join(corpusRoot, "chain"))) {
+			if (!file.endsWith(".json")) {
+				continue
+			}
+			const stem = file.slice(0, -5)
+			test(`chain/${stem}`, function golden() {
+				const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "chain", file), "utf8")) as ChainFixture
+				const bytes = new Uint8Array(fs.readFileSync(path.join(corpusRoot, "chain", `${stem}.bin`)))
+				const descriptor = descriptors.get(fixture.schema)
+				assert.ok(descriptor !== undefined, `fixture cites schema ${fixture.schema}`)
+				const decoded = decodeBatch(withFingerprint(descriptor, fixture.fingerprint), bytes)
+				const position = {
+					g: BigInt(fixture.chain.g),
+					prev: fixture.chain.prev,
+					ts: BigInt(fixture.chain.ts)
+				}
+				const run = errors.trySync(function checkIt() {
+					verifyChain(decoded.header, fixture.braid, BigInt(fixture.slot), position)
+				})
+				if (fixture.expect === "ok") {
+					assert.equal(run.error, undefined, `${stem}: the clean chain passes`)
+					return
+				}
+				assert.ok(run.error, `${stem}: expected a chain mismatch`)
+				assert.ok(errors.is(run.error, ErrChainMismatch), `${stem}: expected ErrChainMismatch`)
+				const data = chainMismatchOf(run.error)
+				assert.equal(data?.cause, fixture.cause, `${stem}: cause`)
+				assert.equal(data?.braid, fixture.braid, `${stem}: fetched braid`)
+				assert.equal(data?.slot, BigInt(fixture.slot), `${stem}: slot`)
+				assert.equal(data?.writer, BigInt(fixture.writer ?? ""), `${stem}: writer`)
 			})
 		}
 	})
