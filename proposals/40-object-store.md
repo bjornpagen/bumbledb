@@ -70,7 +70,16 @@ verb.
 ## Implementations shipped in v1
 
 1. **`FsStore`** — local directory. Create-only = `O_CREAT|O_EXCL` temp +
-   rename; CAS = etag-file compare under an flock. **Production tier,
+   rename; CAS = etag-file compare under an flock. `Created` and
+   `Swapped` return only after fsync of the object file and its parent
+   directory: 00 law 1 says an acked commit *exists*, and at power loss
+   a filesystem "exists" means nothing less — the sidecar's write
+   discipline (50), applied at the store. **One machine is
+   load-bearing, not descriptive**: `O_EXCL` and flock are the
+   arbitration primitives, and network filesystems historically weaken
+   both — an `FsStore` prefix on a network mount is a misdeployment; no
+   syscall can prove a mount local, so the refusal lives here in the
+   vendor row instead. **Production tier,
    not a test double**: it is the whole backend of deployment case 5
    (the local fleet — primer-spec's parallel scope loops), the macOS
    sync target of case 2, and the store 80's conformance lanes (crash
