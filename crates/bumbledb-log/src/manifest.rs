@@ -285,7 +285,9 @@ impl Checkpoint {
     }
 
     /// Strict parse against the derived braid set: unknown ids refuse,
-    /// and the set must match the decomposition exactly.
+    /// entries must ascend in the render's canonical braid order (which
+    /// leaves a duplicate no place to stand), and the set must match
+    /// the decomposition exactly.
     pub fn parse(bytes: &[u8], braids: &Braids) -> Result<Self, CheckpointError> {
         let mal = |at| CheckpointError::Malformed { at };
         let mut text = Text::new(bytes);
@@ -309,9 +311,10 @@ impl Checkpoint {
             text.lit("\",\"ts\":").map_err(mal)?;
             let ts = text.u64().map_err(mal)?;
             text.lit("}").map_err(mal)?;
-            if map.insert(braid, Head { g, hash, ts }).is_some() {
+            if map.last_key_value().is_some_and(|(last, _)| *last >= braid) {
                 return Err(mal(text.at()));
             }
+            map.insert(braid, Head { g, hash, ts });
         }
         text.lit("},\"catalog\":\"").map_err(mal)?;
         let catalog = text.hex32().map_err(mal)?;
