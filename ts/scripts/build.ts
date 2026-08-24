@@ -6,7 +6,13 @@ import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as errors from "@superbuilders/errors"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
-import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORM } from "./platform.ts"
+import {
+	deriveDevTwinManifest,
+	isPublishPlatform,
+	localPlatformTarget,
+	nativeArtifactName,
+	PUBLISH_PLATFORMS
+} from "./platform.ts"
 
 const LOCAL_PLATFORM = localPlatformTarget(process.platform, process.arch)
 
@@ -14,10 +20,10 @@ function build(): void {
 	const packageRoot = fileURLToPath(new URL("..", import.meta.url))
 	const distDir = path.join(packageRoot, "dist")
 	const crateManifest = path.join(packageRoot, "crate", "Cargo.toml")
-	const publishPackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORM)
+	const shapePackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORMS[0])
 	const localPackageDir = path.join(packageRoot, "npm", LOCAL_PLATFORM)
 
-	const version = assertVersionLockstep(packageRoot, publishPackageDir, crateManifest)
+	const version = assertVersionLockstep(packageRoot, crateManifest)
 	console.log(
 		`bumbledb build: version ${version} (main == platform == napi crate == engine == C ABI; the platform pin injects at pack)`
 	)
@@ -34,7 +40,7 @@ function build(): void {
 		throw errors.new(`cargo build exited with status ${cargo.status}`)
 	}
 
-	ensureLocalPlatformPackage(publishPackageDir, localPackageDir)
+	ensureLocalPlatformPackage(shapePackageDir, localPackageDir)
 	const artifact = path.join(packageRoot, "crate", "target", "release", nativeArtifactName(process.platform))
 	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
 	fs.copyFileSync(artifact, nodeBinary)
@@ -61,7 +67,7 @@ function build(): void {
 
 /**
  * The version-lockstep gate: the main manifest's `version` is the single
- * source. The PUBLISH platform manifest, the napi crate, the engine crate,
+ * source. Every PUBLISH platform manifest, the napi crate, the engine crate,
  * `bumbledb-c`, and the other workspace members must equal it EXACTLY.
  * The FFI ABI is not semver-stable — a main package may only ever resolve
  * its own-version binary; `engineVersion` and `bdb_version` bake
@@ -94,10 +100,8 @@ function assertCargoLockstep(manifestPath: string, version: string, label: strin
 	}
 }
 
-function assertVersionLockstep(packageRoot: string, publishPackageDir: string, crateManifest: string): string {
+function assertVersionLockstep(packageRoot: string, crateManifest: string): string {
 	const main = readJson(path.join(packageRoot, "package.json"))
-	const platform = readJson(path.join(publishPackageDir, "package.json"))
-	const platformName = `@bjornpagen/bumbledb-${PUBLISH_PLATFORM}`
 
 	const version = main.version
 	if (typeof version !== "string" || version === "") {
@@ -108,13 +112,17 @@ function assertVersionLockstep(packageRoot: string, publishPackageDir: string, c
 			"the repo package.json carries optionalDependencies — the platform pin lives only in the PACKED manifest (scripts/pin.ts injects it at prepack; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
 		)
 	}
-	if (platform.version !== version) {
-		throw errors.new(
-			`version lockstep broken: main is ${version} but ${platformName} package.json is ${String(platform.version)}`
-		)
-	}
-	if (platform.name !== platformName) {
-		throw errors.new(`platform package.json name is ${String(platform.name)}, expected ${platformName}`)
+	for (const platform of PUBLISH_PLATFORMS) {
+		const platformName = `@bjornpagen/bumbledb-${platform}`
+		const manifest = readJson(path.join(packageRoot, "npm", platform, "package.json"))
+		if (manifest.version !== version) {
+			throw errors.new(
+				`version lockstep broken: main is ${version} but ${platformName} package.json is ${String(manifest.version)}`
+			)
+		}
+		if (manifest.name !== platformName) {
+			throw errors.new(`platform package.json name is ${String(manifest.name)}, expected ${platformName}`)
+		}
 	}
 
 	const repoRoot = path.join(packageRoot, "..")
@@ -168,32 +176,33 @@ function readJson(file: string): Record<string, unknown> {
 
 /**
  * Guarantees the LOCAL platform package dir exists with a loadable manifest.
- * On the publish platform this is the committed `npm/darwin-arm64` tree and
- * nothing is written. On any other build host (a linux checkout) the dir is
- * SYNTHESIZED — a dev-tree-only, gitignored manifest DERIVED from the
- * committed publish manifest: only `name`, `description`, `os`, and `cpu`
- * are rewritten for the host; every other field (`version`, `main`,
- * `files`, `engines`, `repository`, `publishConfig`, …) is inherited BY
- * CONSTRUCTION, so the twin can never drift from the publish shape field
- * by field (the old hand-written literal had already drifted). The LICENSE
+ * On a shipped platform this is the committed `npm/<target>` tree and
+ * nothing is written. On any other build host (a compile-allowlisted
+ * checkout outside the publish set) the dir is SYNTHESIZED — a
+ * dev-tree-only, gitignored manifest DERIVED from a committed publish
+ * manifest: only `name`, `description`, `os`, and `cpu` are rewritten for
+ * the host; every other field (`version`, `main`, `files`, `engines`,
+ * `repository`, `publishConfig`, …) is inherited BY CONSTRUCTION, so the
+ * twin can never drift from the publish shape field by field. The LICENSE
  * rides along, so the by-name link, the smoke-load, and the tarball proof
  * all exercise the exact shape a published platform package would have.
- * Publishing is untouched: the publish runbook names `./npm/darwin-arm64`
- * explicitly and this dir never enters the registry.
+ * Publishing is untouched: the publish runbook names each shipped
+ * `./npm/<target>` explicitly and a synthesized twin never enters the
+ * registry.
  */
-function ensureLocalPlatformPackage(publishPackageDir: string, localPackageDir: string): void {
+function ensureLocalPlatformPackage(shapePackageDir: string, localPackageDir: string): void {
 	fs.mkdirSync(localPackageDir, { recursive: true })
-	if (LOCAL_PLATFORM === PUBLISH_PLATFORM) {
+	if (isPublishPlatform(LOCAL_PLATFORM)) {
 		return
 	}
 	const manifest = deriveDevTwinManifest(
-		readJson(path.join(publishPackageDir, "package.json")),
+		readJson(path.join(shapePackageDir, "package.json")),
 		LOCAL_PLATFORM,
 		process.platform,
 		process.arch
 	)
 	fs.writeFileSync(path.join(localPackageDir, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`)
-	fs.copyFileSync(path.join(publishPackageDir, "LICENSE"), path.join(localPackageDir, "LICENSE"))
+	fs.copyFileSync(path.join(shapePackageDir, "LICENSE"), path.join(localPackageDir, "LICENSE"))
 }
 
 /**
@@ -284,16 +293,18 @@ function verifyInjectedPin(packageRoot: string, version: string): void {
 		if (packed.error) {
 			throw errors.wrap(packed.error, "parse the packed package.json")
 		}
-		const platformName = `@bjornpagen/bumbledb-${PUBLISH_PLATFORM}`
-		const optional = packed.data.optionalDependencies
-		const pin =
-			typeof optional === "object" && optional !== null
-				? (optional as Record<string, unknown>)[platformName]
-				: undefined
-		if (pin !== version) {
-			throw errors.new(
-				`the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
-			)
+		const optional =
+			typeof packed.data.optionalDependencies === "object" && packed.data.optionalDependencies !== null
+				? (packed.data.optionalDependencies as Record<string, unknown>)
+				: {}
+		for (const platform of PUBLISH_PLATFORMS) {
+			const platformName = `@bjornpagen/bumbledb-${platform}`
+			const pin = optional[platformName]
+			if (pin !== version) {
+				throw errors.new(
+					`the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
+				)
+			}
 		}
 		assertPackedImports(packed.data)
 	} finally {

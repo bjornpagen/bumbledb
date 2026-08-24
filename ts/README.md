@@ -13,11 +13,12 @@ their parameter and result types from how those values are used.
 
 ## Platform support
 
-The TypeScript package currently ships a native binary for **darwin-arm64**
-(macOS on Apple Silicon). The optional
-`@bjornpagen/bumbledb-darwin-arm64` package is selected automatically during
-installation. On another platform, importing the package returns an error
-that identifies the running platform and the available binary.
+The TypeScript package currently ships native binaries for **darwin-arm64**
+(macOS on Apple Silicon) and **linux-arm64** (Amazon Linux 2023, glibc 2.34).
+The matching optional `@bjornpagen/bumbledb-<platform>` package is selected
+automatically during installation. On another platform, importing the
+package returns an error that identifies the running platform and the
+available binaries.
 
 ## Install
 

@@ -169,23 +169,24 @@ That break left the wire, manifest, and fingerprint UNTOUCHED: zero
 fingerprint pins moved (the cross-host lock and the T5 cookbook goldens
 stayed byte-identical to the 0.3.0 tree).
 
-## The two packages
+## The three packages
 
 | Package | Contents | `os`/`cpu` |
 | --- | --- | --- |
 | `@bjornpagen/bumbledb` | pure JS + `.d.ts` (no binary) | none (installs everywhere) |
 | `@bjornpagen/bumbledb-darwin-arm64` | only `bumbledb.node` | `darwin` / `arm64` |
+| `@bjornpagen/bumbledb-linux-arm64` | only `bumbledb.node` | `linux` / `arm64` (AL2023) |
 
-The PUBLISHED main manifest declares the platform package as an
+The PUBLISHED main manifest declares every shipped platform package as an
 `optionalDependency` pinned EXACT to its own version — but the REPO manifest
-carries NO pin: `scripts/pin.ts` injects it at `prepack` and removes it at
-`postpack` (the napi prepublish pattern), so every tarball `pnpm pack` /
-`pnpm publish` produces carries the pin while the committed tree stays
+carries NO pin: `scripts/pin.ts` injects them at `prepack` and removes them
+at `postpack` (the napi prepublish pattern), so every tarball `pnpm pack` /
+`pnpm publish` produces carries the pins while the committed tree stays
 registry-independent. This kills the sdk lane's bootstrap circle
 permanently: a lockfile can never pin the CURRENT unpublished version, so a
 committed pin put every release in a red-CI window (`--frozen-lockfile`
 refused the unresolvable exact pin) until a post-publish lockfile
-regeneration — now impossible to need. npm/pnpm install the platform
+regeneration — now impossible to need. npm/pnpm install a platform
 package only on a matching host; the main package's loader
 (`src/native.ts`) resolves it by name at runtime and throws a typed
 unsupported-platform error everywhere else.
@@ -197,7 +198,7 @@ layout. The build (`assertVersionLockstep` in `scripts/build.ts`) fails if
 any of these diverge:
 
 1. `ts/package.json` `version`
-2. `ts/npm/darwin-arm64/package.json` `version`
+2. every `ts/npm/<shipped>/package.json` `version` (`darwin-arm64`, `linux-arm64`)
 3. `ts/crate/Cargo.toml` `version` (`engineVersion()` bakes
    `CARGO_PKG_VERSION` into the shipped binary)
 4. every engine-workspace member, parsed from the root `Cargo.toml`
@@ -390,6 +391,7 @@ node --input-type=module -e "import { Db } from '@bjornpagen/bumbledb'; console.
 ```
 
 The optional platform dep resolves automatically and the loader binds the
-addon. On any non-darwin-arm64 host the install still SUCCEEDS (the main
-package is pure JS), but the first load throws the typed unsupported-platform
-error naming the running platform-arch and that only `darwin-arm64` ships.
+addon. On a host outside the shipped set (`darwin-arm64`, `linux-arm64`)
+the install still SUCCEEDS (the main package is pure JS), but the first
+load throws the typed unsupported-platform error naming the running
+platform-arch and the shipped set.

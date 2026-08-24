@@ -6,7 +6,7 @@ import {
 	deriveDevTwinManifest,
 	localPlatformTarget,
 	nativeArtifactName,
-	PUBLISH_PLATFORM
+	PUBLISH_PLATFORMS
 } from "../scripts/platform.ts"
 
 describe("the build's local-platform derivation", function suite() {
@@ -49,27 +49,38 @@ describe("the build's local-platform derivation", function suite() {
 })
 
 describe("the shipped set, single-sourced", function suite() {
-	test("the loader's SHIPPED_PLATFORMS is the build's PUBLISH_PLATFORM", function shippedSetLockstep() {
-		assert.equal(SHIPPED_PLATFORMS, PUBLISH_PLATFORM)
+	test("the loader's SHIPPED_PLATFORMS is the build's PUBLISH_PLATFORMS", function shippedSetLockstep() {
+		assert.deepEqual([...SHIPPED_PLATFORMS], [...PUBLISH_PLATFORMS])
 	})
 
-	test("the .gitignore carve-out names the publish platform", function gitignoreCarveOut() {
+	test("the .gitignore carve-outs name every publish platform", function gitignoreCarveOut() {
 		const gitignore = fs.readFileSync(new URL("../.gitignore", import.meta.url), "utf8")
-		assert.ok(
-			gitignore.includes(`!npm/${PUBLISH_PLATFORM}/`),
-			"the committed platform-manifest carve-out must track PUBLISH_PLATFORM"
-		)
-		assert.ok(
-			gitignore.includes(`npm/${PUBLISH_PLATFORM}/bumbledb.node`),
-			"the binary re-ignore must track PUBLISH_PLATFORM"
-		)
+		for (const platform of PUBLISH_PLATFORMS) {
+			assert.ok(
+				gitignore.includes(`!npm/${platform}/`),
+				`the committed platform-manifest carve-out must track ${platform}`
+			)
+			assert.ok(gitignore.includes(`npm/${platform}/bumbledb.node`), `the binary re-ignore must track ${platform}`)
+		}
+	})
+
+	test("every shipped platform has a committed publish manifest", function publishManifests() {
+		for (const platform of PUBLISH_PLATFORMS) {
+			const manifest = JSON.parse(
+				fs.readFileSync(new URL(`../npm/${platform}/package.json`, import.meta.url), "utf8")
+			) as { name: string; os: string[]; cpu: string[] }
+			const [os, cpu] = platform.split("-")
+			assert.equal(manifest.name, `@bjornpagen/bumbledb-${platform}`)
+			assert.deepEqual(manifest.os, [os])
+			assert.deepEqual(manifest.cpu, [cpu])
+		}
 	})
 })
 
 describe("the dev-twin manifest derives from the publish manifest", function suite() {
 	test("every field except name/description/os/cpu is inherited by construction", function fieldInheritance() {
 		const publish = JSON.parse(
-			fs.readFileSync(new URL(`../npm/${PUBLISH_PLATFORM}/package.json`, import.meta.url), "utf8")
+			fs.readFileSync(new URL(`../npm/${PUBLISH_PLATFORMS[0]}/package.json`, import.meta.url), "utf8")
 		) as Record<string, unknown>
 		const twin = deriveDevTwinManifest(publish, "linux-x64", "linux", "x64")
 		assert.equal(twin.name, "@bjornpagen/bumbledb-linux-x64")

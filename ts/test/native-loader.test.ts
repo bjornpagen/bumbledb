@@ -16,7 +16,7 @@ import { loadNativeBinding } from "#native.ts"
 
 const foreign =
 	process.platform === "linux" && process.arch === "x64"
-		? { platform: "linux", arch: "arm64" }
+		? { platform: "win32", arch: "x64" }
 		: { platform: "linux", arch: "x64" }
 
 describe("the native loader's platform resolution", function suite() {
@@ -32,7 +32,8 @@ describe("the native loader's platform resolution", function suite() {
 					new RegExp(`${foreign.platform}-${foreign.arch}`),
 					"the message names the requested platform-arch"
 				)
-				assert.match(error.message, /darwin-arm64/, "the message names the shipped set")
+				assert.match(error.message, /darwin-arm64/, "the message names darwin-arm64 in the shipped set")
+				assert.match(error.message, /linux-arm64/, "the message names linux-arm64 in the shipped set")
 				return true
 			}
 		)

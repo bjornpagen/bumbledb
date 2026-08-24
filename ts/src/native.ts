@@ -410,7 +410,7 @@ interface Native {
 	ownedExecute(prepared: PreparedHandle, instance: OwnedHandle, params: readonly QueryParam[]): FactValue[][]
 }
 
-const SHIPPED_PLATFORMS = "darwin-arm64"
+const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64"] as const
 
 const requireNative = createRequire(import.meta.url)
 
@@ -425,7 +425,7 @@ function loadNativeBinding(platform: string, arch: string): NativeBinding {
 	if (present.error) {
 		throw errors.wrap(
 			present.error,
-			`no native binary for ${platform}-${arch}: @bjornpagen/bumbledb ships ${SHIPPED_PLATFORMS} only`
+			`no native binary for ${platform}-${arch}: @bjornpagen/bumbledb ships ${SHIPPED_PLATFORMS.join(", ")} only`
 		)
 	}
 

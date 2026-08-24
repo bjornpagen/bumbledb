@@ -1,18 +1,22 @@
 import * as errors from "@superbuilders/errors"
 
 /**
- * The single platform this release PUBLISHES; its package dir is
- * `npm/<target>` and the build's version-lockstep gate pins it.
- * Deliberately a hand-written constant, never derived from the host:
+ * The platforms this release PUBLISHES; each package dir is
+ * `npm/<target>` and the build's version-lockstep gate pins every one.
+ * Deliberately a hand-written set, never derived from the host:
  * adding a shipped platform is an edit here plus its `npm/<target>`
  * manifest, a decision — building on a linux host must not silently grow
  * the publish set. The loader's `SHIPPED_PLATFORMS` message constant
  * (`src/native.ts` — src cannot import scripts, the packaging boundary)
- * and the `ts/.gitignore` carve-out spell the same target; the
+ * and the `ts/.gitignore` carve-outs spell the same set; the
  * single-source pin in `test/build-platform.test.ts` holds all three in
  * lockstep.
  */
-const PUBLISH_PLATFORM = "darwin-arm64"
+const PUBLISH_PLATFORMS = ["darwin-arm64", "linux-arm64"] as const
+
+function isPublishPlatform(target: string): boolean {
+	return (PUBLISH_PLATFORMS as readonly string[]).includes(target)
+}
 
 function deriveDevTwinManifest(
 	publishManifest: Record<string, unknown>,
@@ -57,4 +61,4 @@ function nativeArtifactName(platform: string): string {
 	return NATIVE_ARTIFACT[platform]
 }
 
-export { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORM }
+export { deriveDevTwinManifest, isPublishPlatform, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORMS }
