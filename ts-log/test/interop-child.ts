@@ -8,6 +8,7 @@
  *   read <root> <key...>             — get each key, report bytes hex and etag
  *   race-create <root> <id> <slots>  — contend on every slot after the go barrier
  *   race-swap <root> <id> <count>    — land <count> CAS increments on the counter
+ *   read s3 <prefix> <key...>        — same read over s3Store; vendor etag, not blake3
  */
 
 import * as fs from "node:fs"
@@ -16,7 +17,8 @@ import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
 import { storeKey } from "#keys.ts"
-import { fsStore } from "#store.ts"
+import type { ObjectStore } from "#store.ts"
+import { fsStore, s3Store } from "#store.ts"
 
 /** The shared corpus rule, implemented identically in the Rust test:
  *  body[j] of object i is (i * 31 + j * 7) mod 256. */
@@ -64,7 +66,8 @@ async function main(): Promise<void> {
 	if (role === undefined || root === undefined) {
 		throw errors.new("usage: interop-child.ts <role> <root> [args...]")
 	}
-	const store = fsStore(root)
+	const s3 = root === "s3"
+	const store: ObjectStore = s3 ? s3FromEnv(rest.shift() ?? "") : fsStore(root)
 
 	if (role === "write") {
 		for (let i = 0; i < CORPUS_SIZES.length; i++) {
@@ -84,7 +87,7 @@ async function main(): Promise<void> {
 			if (fetched === null) {
 				throw errors.new(`object ${key} is absent`)
 			}
-			if (fetched.etag !== blake3Hex(fetched.bytes)) {
+			if (!s3 && fetched.etag !== blake3Hex(fetched.bytes)) {
 				throw errors.new(`object ${key}: the reported etag is not the blake3 of the bytes`)
 			}
 			report({ role, key, hex: toHex(fetched.bytes), etag: fetched.etag })
@@ -106,7 +109,7 @@ async function main(): Promise<void> {
 				id,
 				slot: s,
 				outcome: outcome.tag,
-				etag: outcome.tag === "created" ? outcome.etag : blake3Hex(body)
+				etag: createdEtag(outcome, body, s3)
 			})
 		}
 		return
@@ -130,7 +133,7 @@ async function main(): Promise<void> {
 			const next = new TextEncoder().encode(String(value + 1))
 			const outcome = await store.putSwap(storeKey("race/counter"), next, current.etag)
 			if (outcome.tag === "swapped") {
-				if (outcome.etag !== blake3Hex(next)) {
+				if (!s3 && outcome.etag !== blake3Hex(next)) {
 					throw errors.new("a swapped etag is not the blake3 of the written bytes")
 				}
 				swapped += 1
@@ -143,6 +146,36 @@ async function main(): Promise<void> {
 	}
 
 	throw errors.new(`unknown role: ${role}`)
+}
+
+function createdEtag(outcome: { tag: string; etag?: string }, body: Uint8Array, s3: boolean): string {
+	if (outcome.tag === "created" && outcome.etag !== undefined) {
+		return outcome.etag
+	}
+	return s3 ? "" : blake3Hex(body)
+}
+
+function s3FromEnv(prefix: string): ObjectStore {
+	const bucket = process.env.BUMBLEDB_S3_SMOKE_BUCKET
+	const accessKeyId = process.env.AWS_ACCESS_KEY_ID
+	const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
+	if (bucket === undefined || accessKeyId === undefined || secretAccessKey === undefined) {
+		throw errors.new("s3 interop needs BUMBLEDB_S3_SMOKE_BUCKET and AWS keys")
+	}
+	const region = process.env.BUMBLEDB_S3_SMOKE_REGION ?? "us-east-1"
+	const endpoint = process.env.BUMBLEDB_S3_SMOKE_ENDPOINT
+	const sessionToken = process.env.AWS_SESSION_TOKEN
+	return s3Store({
+		region,
+		bucket,
+		credentials: {
+			accessKeyId,
+			secretAccessKey,
+			...(sessionToken === undefined ? {} : { sessionToken })
+		},
+		prefix,
+		...(endpoint === undefined ? {} : { endpoint })
+	})
 }
 
 await main()

@@ -167,31 +167,6 @@ fn braid_tip(store: &FsStore, braid: BraidId) -> u64 {
     g
 }
 
-/// The gated S3 smoke: no credentials means no lane, and the skip is
-/// loud rather than a silent green.
-#[test]
-fn s3_smoke_gated_skips_loudly_without_credentials() {
-    let required = [
-        "BUMBLEDB_S3_SMOKE_BUCKET",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-    ];
-    let missing: Vec<&str> = required
-        .iter()
-        .filter(|key| std::env::var(key).is_err())
-        .copied()
-        .collect();
-    assert!(
-        !missing.is_empty(),
-        "S3 credentials are present but this crate carries no S3Store yet; \
-         the smoke lane cannot run — wire it here the day the store lands"
-    );
-    eprintln!(
-        "SKIPPED f11 S3 smoke: credential-gated lane not run (missing {missing:?}); \
-         the FsStore pins are the recorded floor"
-    );
-}
-
 /// Per-braid commit latency floor on `FsStore`: one writer, sequential
 /// single-insert commits, one series per braid shape — statement-free
 /// (note), key + containment (recipe), keyed parent (venue).
