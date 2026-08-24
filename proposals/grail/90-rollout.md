@@ -74,9 +74,10 @@ all exercised the way a stranger would.
       authority collapsed onto internalDescriptor; parse-don't-validate
       closures (StoreKey and the brand sweep); writer.rs split;
       findings ledger in the receipt
-- [ ] N: internalDescriptor shipped; roster = {darwin-arm64,
+- [x] N: internalDescriptor shipped; roster = {darwin-arm64,
       linux-arm64} with widened pins and tests; 0.17.2 lockstep
-      prepared unpublished
+      prepared unpublished — 2ddbf4bb, 42e40ec2, 9c577672; receipt
+      below
 - [ ] C: bumbledb-log.yml green on both jobs with artifacts attached;
       ci.yml's linux legs moved into the amazonlinux:2023 container;
       no Ubuntu userspace builds or tests anything, anywhere
@@ -161,3 +162,36 @@ names, not a live `dnf` probe):
   (40 asserts it does; the step is `corepack enable pnpm`).
 - rustup is installed in-container via rustup.rs (`--default-toolchain
   none`); not a dnf package. Network required on the runner.
+
+## Lane N receipt
+
+internalDescriptor is exported. Lane B calls it:
+
+```
+import { internalDescriptor, lower } from "@bjornpagen/bumbledb"
+const sealed = internalDescriptor(lower(theory))
+```
+
+Napi: `descriptor(spec)` (doc-hidden). TS wrapper: `internalDescriptor(spec: SchemaSpec): SealedDescriptor` from `@bjornpagen/bumbledb` / `#native.ts`, the internalBlake3 precedent (bridged, `@internal`, undocumented). Return shape: `{ relations, statements, fingerprint }` — relations are the engine Manifest relations (ids, sealed field order, closed extension rows with resolved axioms); statements are structured `StatementDescriptor`s in engine materialization order (fresh keys, closed auto-keys, then declared, `==` already split); fingerprint is the hex of the real engine digest, equal to `dbFingerprint` of a store created from the same spec. No store opens. Spec errors throw the schema family.
+
+Landing hashes:
+
+- `2ddbf4bb3a8fab4571a86035fc4efbd668b95937` — internalDescriptor
+- `42e40ec271d55f09d79a103f4c2f5faa1ccfaa59` — roster {darwin-arm64, linux-arm64}
+- `9c57767294cd7387d2cbe24523a09f2fb102a6df` — lockstep 0.17.2 unpublished
+
+Deletion tally (5):
+
+1. The duplicated Manifest relation-object walk (one helper now serves dbManifest and the sealed export)
+2. The PUBLISH_PLATFORM singleton
+3. The host-conditional foreign picker that treated linux-arm64 as unshipped
+4. The 0.17.1 current-tree spellings
+5. The two-package runbook that could not name linux-arm64
+
+Suite at the lockstep commit: 403 green, `tsc --noEmit` clean, `biome check` clean. C ABI stays generation 4. linux-arm64 ships LICENSE + package.json (AL2023 baseline in the description); the `.node` is Lane C's artifact, not minted here.
+
+Deviations:
+
+- The lockstep gate compares engine workspace crates and bumbledb-c, so those version fields moved with the 0.17.1 precedent. ts-log's peer and crates/bumbledb-log were left for Lane B.
+- `cargo update --offline` in the isolated napi and C lockfiles tried to move third-party crates; those lockfiles were restored and only the workspace package versions rewritten, matching the 0.17.1 lockfile shape.
+- pnpm's pre-run dep check aborted without a TTY; the suite ran through `node scripts/build.ts`, `node --test`, `tsc --noEmit`, and `biome check` as the brief allows.
