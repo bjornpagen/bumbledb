@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use bumbledb::SchemaDescriptor;
+use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
 use bumbledb_log::store::{Create, ObjectStore, Poll, StoreKey, Swap};
@@ -272,6 +273,50 @@ fn s3_smoke_interop_rust_writes_ts_reads() {
         "vendor etag agrees across languages; not blake3"
     );
     store.delete(&key).expect("cleanup");
+}
+
+#[test]
+fn s3_smoke_duty_once() {
+    let Some(store) = smoke_store(&unique_prefix("duty")) else {
+        return;
+    };
+    let root = temp_dir("s3_duty");
+    let writer = open_writer(store.clone(), &root.join("w"));
+    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(NOTE, [note_row(3, "duty-s3")]);
+                Ok(())
+            })
+            .expect("commit"),
+        Commit::Accepted { .. }
+    ));
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(NOTE, [note_row(4, "duty-s3")]);
+                Ok(())
+            })
+            .expect("commit"),
+        Commit::Accepted { .. }
+    ));
+    writer.quiesce();
+    drop(writer);
+
+    let mut duty =
+        match Checkpointer::open(store, "", &root.join("d"), theory(), 91).expect("open duty") {
+            CheckpointerOpened::Ready(duty) => *duty,
+            CheckpointerOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
+        };
+    duty.set_checkpoint_cadence(2, u64::MAX);
+    match duty.run().expect("run") {
+        Ran::Ready {
+            compact: Compact::Published(_),
+            ..
+        } => {}
+        other => panic!("duty should compact on S3, got {other:?}"),
+    }
 }
 
 fn hex_of(bytes: &[u8]) -> String {

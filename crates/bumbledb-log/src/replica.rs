@@ -483,6 +483,49 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         &self.dir
     }
 
+    #[must_use]
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    #[must_use]
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    #[must_use]
+    pub const fn codec(&self) -> &Codec {
+        &self.codec
+    }
+
+    #[must_use]
+    pub const fn chain(&self) -> &Chain {
+        &self.chain
+    }
+
+    /// The current checkpoint's vector sum, or zero when the manifest
+    /// still says `checkpoint: null`.
+    #[must_use]
+    pub fn checkpoint_sum(&self) -> u64 {
+        self.floor.as_ref().map_or(0, |(_, doc)| doc.sum())
+    }
+
+    /// The current checkpoint's applied count for `braid`, or zero.
+    #[must_use]
+    pub fn checkpoint_g(&self, braid: BraidId) -> u64 {
+        self.floor
+            .as_ref()
+            .and_then(|(_, doc)| doc.braids.get(&braid).map(|head| head.g))
+            .unwrap_or(0)
+    }
+
+    /// Re-read the manifest pointer. A checkpointer that just published
+    /// adopts the floor it installed so the next cadence check is
+    /// against the new sum, not the pre-publish one.
+    pub fn pull_manifest(&mut self) -> Result<Option<OpenRefusal>, Fault> {
+        self.read_manifest()
+    }
+
     fn establish(&mut self) -> Result<Option<OpenRefusal>, Fault> {
         let mut scream = Scream::new("replica discard-and-re-pull");
         loop {

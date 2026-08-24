@@ -26,6 +26,10 @@ use crate::replica::{
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::{ObjectStore, Result as StoreResult};
 
+/// Retention window R in milliseconds. 10-protocol owns the ninety-day
+/// value; consumer: the duty binary's one sweep after the cadence check.
+pub const CHECKPOINT_RETAIN_MS: u64 = 90 * 24 * 60 * 60 * 1000;
+
 /// What one sweep deleted.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Sweep {

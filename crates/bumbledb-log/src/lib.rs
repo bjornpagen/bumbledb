@@ -1,10 +1,12 @@
 pub mod apply;
 pub mod braids;
+pub mod checkpointer;
 pub mod codec;
 pub mod gc;
 pub mod lease;
 pub mod manifest;
 pub mod replica;
+pub mod schema_file;
 pub mod sidecar;
 pub mod store;
 pub mod tenants;

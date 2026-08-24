@@ -62,10 +62,14 @@ pub const DRAIN_MAX_WRITES: u64 = 512;
 pub const DRAIN_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Checkpoint cadence, vector-sum arm: a checkpoint after this many
-/// applied batches since the current one.
+/// applied batches since the current one. 10-protocol owns the value;
+/// consumer: the writer's commit-path duty and the duty binary's one
+/// cadence check.
 pub const CHECKPOINT_EVERY_SUM: u64 = 256;
 
-/// Checkpoint cadence, log-volume arm.
+/// Checkpoint cadence, log-volume arm. 10-protocol owns the value;
+/// consumer: the writer's commit-path duty and the duty binary's one
+/// cadence check.
 pub const CHECKPOINT_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) const DATA_FILE: &str = "data.mdb";
