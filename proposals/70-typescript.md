@@ -1,10 +1,12 @@
 # 70 — The TypeScript package
 
 `@bjornpagen/bumbledb-log`. A thin peer of `@bjornpagen/bumbledb` (peer
-dependency, 0.17.x lockstep): the codec and the braid derivation
-mirrored byte-exactly, the five-verb store over `fetch` + `aws4fetch`,
-replica and writer composed from the engine SDK's existing verbs. No
-engine surface duplicated — the replica hands out the SDK's own `Db`.
+dependency `^0.17.2`; this package is `0.18.0`): the codec and the braid
+derivation mirrored byte-exactly, the five-verb store over
+`@aws-sdk/client-s3`, replica and writer composed from the engine SDK's
+existing verbs. No engine surface duplicated — the replica hands out the
+SDK's own `Db`. Node **>=24** is the floor (`engines`, the `.ts` test
+runner, Lambda `nodejs24.x`). Never 22.
 
 ## Surface
 
@@ -100,6 +102,25 @@ reservation relation on the hot capacity, or resident mode). No Next.js
 wrapper is shipped; a wrapper would be a second way to write three
 lines.
 
+## The Lambda recipe (documented example, not framework code)
+
+Non-normative. The working program is [`examples/lambda/`](../examples/lambda/)
+— an afternoon of reading, not a second source of protocol law, and not
+on the conformance path. One `nodejs24.x` arm64 function, one S3 bucket,
+one EventBridge schedule, one function URL, one duty Layer. Infra is
+Alchemy v2 Effect (`alchemy@2.0.0-beta.74` + `effect@rc`). The duty
+binary requires `--theory PATH` (the crate corpus `{relations,
+statements}` object whose fingerprint matches the handler theory). It
+ships as a LayerVersion (`layer/duty/bin/bumbledb-log-duty` extracts to
+`/opt/bin/bumbledb-log-duty`) because Rolldown has no `extraFiles`. IAM
+cannot be attached exactly as the deploy sketch wanted: Alchemy's
+Function always mints its own role and has no `roleArn`; yielding S3
+bindings always adds `s3:ListBucket` on the whole bucket. The example
+writes the intended prefix-only role as a document and records the
+three owner choices (accept the leak, wait for `roleArn`, or inject a
+user key). Until one of those three, a deploy with the derived role and
+no extra policy is `AccessDenied` on every store verb.
+
 ## The local-fleet recipe (deployment case 5; documented example)
 
 ```ts
@@ -135,15 +156,20 @@ construction, not by handle registries.
 
 ## Dependency ruling
 
-`aws4fetch` only (~4 KB SigV4 over platform `fetch`); R2/OCI ride the same
-signer. The `fs` store on Node `fs` is **tier-1, not a dev double** — it
+`@aws-sdk/client-s3` (AWS-owned) is the TS S3 signer; R2/OCI ride the
+same client (R2 needs `region: "auto"` and an endpoint). Credentials
+are static keys or a caller-owned refresh — not the SDK default
+provider chain. `memStore` is the third store: an in-process map,
+single-process honesty stated where declared, blake3 etags, the
+destination of every five-verb test that never touches a disk. The `fs`
+store on Node `fs` is **tier-1, not a dev double** — it
 is deployment case 5's production backend (00) and speaks the one
 on-disk protocol of 40 verbatim: `wx`-opened synced temp published with
 `fs.link`, computed blake3 etags, the pid-lockfile beside the key —
 one protocol, two conforming implementations, raced against each other
 in the interop conformance lane. It runs every lane the S3 store runs
 (80); a lane that passes on one and not the other is a reported gap.
-No AWS SDK. Blake3 rides
+Blake3 rides
 the engine package's existing native binding: the SDK's
 `internalBlake3` export (the napi module already links blake3), whose
 named consumers are the store's etags and the descriptor fingerprint —
