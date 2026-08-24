@@ -554,7 +554,7 @@ where
     }
 
     /// The braid holding an applied-but-unpublished batch, if any —
-    /// retained through `Contention`, republished before the next
+    /// retained through `Contention`, published before the next
     /// commit.
     #[must_use]
     pub fn backlog(&self) -> Option<BraidId> {

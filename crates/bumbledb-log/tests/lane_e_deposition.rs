@@ -90,7 +90,7 @@ fn a_deposed_resident_finishes_the_loss_and_drops_to_published_acks() {
     assert_eq!(
         resident.vector()[&braid],
         2,
-        "republished behind the winner"
+        "published behind the winner"
     );
     resident.with_db(|db| {
         db.read(|instance| {

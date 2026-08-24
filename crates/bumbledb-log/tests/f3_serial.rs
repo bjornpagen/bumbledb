@@ -597,10 +597,10 @@ fn capacity_floor_loser_rejudges_to_the_serial_rejection() {
 // --- the reservation family: spend and reclaim races ---
 
 #[test]
-fn reservation_spend_outraced_by_a_fill_republishes_at_the_tip() {
+fn reservation_spend_outraced_by_a_fill_publishes_at_the_tip() {
     // The winner books unrelated units with headroom to spare; the
-    // spend re-judges clean at the moved base and republishes.
-    let fixture = race("spend_republish");
+    // spend re-judges clean at the moved base and publishes.
+    let fixture = race("spend_publish");
     let pool_braid = braid(POOL);
     let outcome = fixture
         .writer
@@ -632,7 +632,7 @@ fn reservation_spend_outraced_by_a_fill_republishes_at_the_tip() {
     assert_eq!(
         accepted_generation(&outcome),
         4,
-        "the spend re-judges clean and republishes behind the winner"
+        "the spend re-judges clean and publishes behind the winner"
     );
     assert_eq!(fixture.writer.losses(), 1);
     fixture.writer.with_db(|db| {

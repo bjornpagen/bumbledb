@@ -678,7 +678,7 @@ fn pin_contention_curve_zipfian_hot_key() {
 
 /// The loss mix on a deterministic alternating two-writer workload:
 /// identical rows race into re-judged net no-ops, distinct notes into
-/// re-judged republishes, hot recipe determinants into serial
+/// re-judged publishes, hot recipe determinants into serial
 /// rejections — every shape one loss, one number.
 #[test]
 #[ignore = "measurement harness: run with --ignored --nocapture to record the pins"]

@@ -89,7 +89,7 @@ chain hash verified; every acked commit appears exactly once; all
 replicas converge (`catalog_digest`); a loss whose effects the winner
 already performed re-judges to the engine's net no-op and lands
 `Accepted` at the current generation with nothing published; a
-disjoint-shaped loss re-judges and republishes with a fresh header at
+disjoint-shaped loss re-judges and publishes with a fresh header at
 tip+1 passing every chain check; a conflicting loss produces the serial
 verdict; **the wholeness
 identity `generation ≡ Σ vector + |pending|` is asserted on every store after every
@@ -227,7 +227,7 @@ and cross-braid service claims do not merge before L9.
 
 Recorded, not asserted: per-braid commit latency (FsStore floor + gated
 S3/Express smoke); loss cost — one measured pin already ruled here: the
-deleted disjoint fast path's republish measured 67.2 ms end-to-end p50
+deleted disjoint fast path's publish measured 67.2 ms end-to-end p50
 against 64.3 ms for discard-and-re-judge, the fsync floor owning both,
 which is the measurement that licensed the one-path deletion;
 group-commit throughput ×

@@ -120,7 +120,7 @@ fn crashed_publisher_retains_pending_and_the_next_commit_publishes() {
             batch.insert(NOTE, [note_row(2, "later")]);
             Ok(())
         })
-        .expect("the next commit republishes the backlog first");
+        .expect("the next commit publishes the backlog first");
     assert!(matches!(second, Commit::Accepted { generation: 2, .. }));
     writer.quiesce();
     assert_eq!(writer.backlog(), None);

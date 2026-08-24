@@ -3,7 +3,7 @@
 //! ambiguous-PUT absorption, and the loss shapes — identical effects
 //! and strict supersets landing Accepted at the current generation
 //! through the re-judged net no-op, disjoint-shaped losses landing a
-//! re-judged republish with a fresh header at tip+1, conflicts landing
+//! re-judged publish with a fresh header at tip+1, conflicts landing
 //! the serial Rejected.
 
 mod lane_e_support;
@@ -362,7 +362,7 @@ fn conflict_loss_rejudges_to_the_serial_rejection() {
 }
 
 #[test]
-fn disjoint_loss_rejudges_and_republishes_at_tip_plus_one() {
+fn disjoint_loss_rejudges_and_publishes_at_tip_plus_one() {
     let root = temp_dir("disjoint");
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir, 11);
@@ -387,14 +387,14 @@ fn disjoint_loss_rejudges_and_republishes_at_tip_plus_one() {
     else {
         panic!("a disjoint-shaped loss lands");
     };
-    assert_eq!(generation, 2, "the re-judged republish lands at tip+1");
+    assert_eq!(generation, 2, "the re-judged publish lands at tip+1");
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
     let store = FsStore::new(root);
     let slot2 = store
         .get(&log_key("", braid, 2))
         .expect("get")
-        .expect("republished");
+        .expect("published");
     let batch = codec.decode(&slot2.bytes).expect("decode");
     assert_eq!(batch.header.writer, 11, "a fresh header of our own");
     assert_eq!(batch.header.braid_gen, 2);

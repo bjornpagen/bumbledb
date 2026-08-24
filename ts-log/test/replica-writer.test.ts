@@ -237,13 +237,13 @@ describe("replica and writer over the fs store", function suite() {
 		})
 		assert.ok(winner.tag === "accepted" && winner.generation === 2n)
 
-		const republished = await writerB.commit(function mint(batch) {
+		const published = await writerB.commit(function mint(batch) {
 			batch.insert(Booking, [booking(200n, 2n, "s2")])
 			return 0
 		})
-		assert.ok(republished.tag === "accepted")
-		assert.equal(republished.generation, 3n)
-		assert.equal(republished.durability, "published")
+		assert.ok(published.tag === "accepted")
+		assert.equal(published.generation, 3n)
+		assert.equal(published.durability, "published")
 
 		await a.refresh()
 		const slots = a.db.read(function readSlots(instance) {
@@ -259,7 +259,7 @@ describe("replica and writer over the fs store", function suite() {
 		await b[Symbol.asyncDispose]()
 	})
 
-	test("a subsumed-shaped loss re-judges to a net no-op: Accepted at the current generation, nothing published", async function subsumedLoss() {
+	test("a net-noop-shaped loss re-judges to a net no-op: Accepted at the current generation, nothing published", async function netNoopLoss() {
 		const { store, prefix, dir } = lane()
 		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })

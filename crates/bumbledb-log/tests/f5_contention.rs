@@ -8,7 +8,7 @@
 //! invariant the loss path must never bend. A loss whose effects the
 //! winner already performed re-judges to the engine's net no-op and
 //! lands `Accepted` at the current generation with nothing published;
-//! a disjoint-shaped loss re-judges and republishes with a fresh
+//! a disjoint-shaped loss re-judges and publishes with a fresh
 //! header at tip+1; a conflicting loss produces the serial verdict;
 //! the ambiguous-outcome GET-verify law resolves injected response
 //! drops; and both `Err::Contention` causes come from dedicated
@@ -635,7 +635,7 @@ impl ObjectStore for RacingStore {
 }
 
 #[test]
-fn disjoint_loss_rejudges_once_and_republishes_at_tip_plus_one() {
+fn disjoint_loss_rejudges_once_and_publishes_at_tip_plus_one() {
     let root = temp_dir("disjoint");
     let writer_a = open_at(root.clone(), &root.join("wa"), 1);
     let writer_b = open_at(root.clone(), &root.join("wb"), 2);
@@ -665,7 +665,7 @@ fn disjoint_loss_rejudges_once_and_republishes_at_tip_plus_one() {
     else {
         panic!("a disjoint loss lands");
     };
-    assert_eq!(generation, 2, "the re-judged republish lands at tip+1");
+    assert_eq!(generation, 2, "the re-judged publish lands at tip+1");
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
@@ -680,7 +680,7 @@ fn disjoint_loss_rejudges_once_and_republishes_at_tip_plus_one() {
     );
 
     assert_whole(&writer_a, "the slot winner");
-    assert_whole(&writer_b, "the republishing loser");
+    assert_whole(&writer_b, "the publishing loser");
     assert_eq!(
         writer_digest(&writer_b),
         converged_digest(&root),
@@ -989,7 +989,7 @@ fn slot_race_livelock_surfaces_contention_with_pending_kept() {
         .expect("read");
     });
 
-    // The planter is spent: the next commit republishes the retained
+    // The planter is spent: the next commit publishes the retained
     // batch at the tip before its own.
     let outcome = writer
         .commit(|batch| {
@@ -1168,7 +1168,7 @@ struct Ledger {
 
 /// The mostly-disjoint fleet: `n` in-process writers over one prefix,
 /// each booking its own rows on one braid. Every loss re-judges at the
-/// re-opened tip and republishes; the gates are structural — chains,
+/// re-opened tip and publishes; the gates are structural — chains,
 /// digests, and exactly-once acks — because structure is truth.
 #[allow(clippy::too_many_lines)]
 fn mostly_disjoint_fleet(n: u64) {
@@ -1273,7 +1273,7 @@ fn mostly_disjoint_fleet(n: u64) {
         "nothing reaches the log that no writer submitted"
     );
     // A commit that surfaced `Err::Contention` is honestly unacked:
-    // either it applied and was retained — republished by a later
+    // either it applied and was retained — published by a later
     // drain, so its row appears once — or the backlog ahead of it
     // exhausted the bound first and its ops never entered a store at
     // all. Both are within the contract; a duplicate or an unsubmitted

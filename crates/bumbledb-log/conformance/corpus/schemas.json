@@ -1,5 +1,5 @@
 {
-  "comment": "Fixture schema descriptors for the codec/footprint/braids goldens. Both implementations build these descriptors from this file; sidecars name a schema by key. Values: {\"bool\":b} {\"u64\":\"n\"} {\"i64\":\"n\"} {\"string\":s} {\"fixedBytes\":hex} {\"intervalU64\":[start,end]} {\"intervalI64\":[start,end]}. Types: \"bool\"|\"u64\"|\"i64\"|\"string\"|{\"fixedBytes\":len}|{\"interval\":element}|{\"fixedInterval\":{\"element\":e,\"width\":\"w\"}}. Selection bindings: [field,[literal,...]].",
+  "comment": "Fixture schema descriptors for the codec/braids goldens. Both implementations build these descriptors from this file; sidecars name a schema by key. Values: {\"bool\":b} {\"u64\":\"n\"} {\"i64\":\"n\"} {\"string\":s} {\"fixedBytes\":hex} {\"intervalU64\":[start,end]} {\"intervalI64\":[start,end]}. Types: \"bool\"|\"u64\"|\"i64\"|\"string\"|{\"fixedBytes\":len}|{\"interval\":element}|{\"fixedInterval\":{\"element\":e,\"width\":\"w\"}}. Selection bindings: [field,[literal,...]].",
   "schemas": {
     "kitchen": {
       "relations": [

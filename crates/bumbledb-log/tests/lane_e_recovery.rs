@@ -248,7 +248,7 @@ fn stale_writer_catches_up_through_history_then_attempts_at_tip() {
     log.publish(braid, &[insert(NOTE, note_row(101, "w2"))], 6);
 
     let recovered = reopen(root.clone(), &dir);
-    assert_eq!(recovered.backlog(), None, "republished at the tip");
+    assert_eq!(recovered.backlog(), None, "published at the tip");
     assert_eq!(recovered.vector()[&braid], 3);
     let store = FsStore::new(root);
     let slot3 = store

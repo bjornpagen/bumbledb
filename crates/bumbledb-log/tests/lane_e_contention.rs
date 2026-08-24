@@ -84,7 +84,7 @@ fn sixteen_disjoint_losses_surface_slot_race_and_keep_pending() {
         .expect("read");
     });
 
-    // The racer is spent; the next commit republishes the retained
+    // The racer is spent; the next commit publishes the retained
     // batch first, then lands its own.
     let outcome = writer
         .commit(|batch| {

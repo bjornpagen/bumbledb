@@ -119,8 +119,7 @@ extra field — the same slot in both modes, not a resident specialty):
      the racing-identical-effects case, absorbed by the publish law) →
      `Accepted{durability: Published}` at the current generation with
      nothing published; rejected → the serial `Rejected`. There is no
-     subsumption test, no disjointness test, and no
-     republish-without-re-judgment: a loser whose effects the winner
+     second path beside the one: a loser whose effects the winner
      performed re-judges to the engine's no-op commit and the publish
      law already answers it, a fully disjoint loser re-judges to the
      identical verdict and effects, and the measured latency of the
@@ -281,7 +280,7 @@ over the ordinary insert. The deletion record rides with the idiom: the
 grant-object escrow design (CAS-claimed grant objects with wall-clock
 TTLs and a check-skipping fast path) was deleted as unsound — the
 engine cannot see grants, so a grant-ignorant winner can consume
-promised slack and the holder's unchecked republish poisons the log;
+promised slack and the holder's unchecked publish poisons the log;
 O'Neil's escrow rights, Indigo's reservations, and Homeostasis's
 treaties all became side-cars with their own conservation, revocation,
 and fencing machinery, and rows-judged-by-the-theory is the shape that

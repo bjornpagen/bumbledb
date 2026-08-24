@@ -1,6 +1,6 @@
 /**
- * Little-endian byte primitives shared by the codec, the footprint keys,
- * and the fingerprint mirror. Every multi-byte integer on the batch wire
+ * Little-endian byte primitives shared by the codec and the
+ * fingerprint mirror. Every multi-byte integer on the batch wire
  * is little-endian; the fingerprint's canonical literal encoding is the
  * engine's big-endian order-preserving form — both live here so no third
  * spelling can appear.

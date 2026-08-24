@@ -1,10 +1,10 @@
 /**
  * The driver's raw-value vocabulary and its two canonical encodings:
- * the command codec's tagged little-endian form (20's tag table, the one
- * shared tagged-value encoding the footprint keys also hash), and the
- * engine's big-endian order-preserving literal form the fingerprint
- * mirror reproduces. Values here are always RAW — strings as UTF-8,
- * never intern ids — which is what makes footprint keys state-independent.
+ * the command codec's tagged little-endian form (the tag table the
+ * batch wire already declared), and the engine's big-endian
+ * order-preserving literal form the fingerprint mirror reproduces.
+ * Values here are always RAW — strings as UTF-8, never intern ids —
+ * so a key hashed from a raw value cannot depend on a catalog.
  */
 
 import type { ValueTypeSpec } from "@bjornpagen/bumbledb"
