@@ -33,3 +33,8 @@ is the centerpiece; [90-rollout.md](90-rollout.md) is the fleet dispatch.
 | [70-typescript.md](70-typescript.md) | The TS surface, the mirrored pure pair, temporal law, error identities |
 | [80-conformance.md](80-conformance.md) | The lanes: determinism, braid convergence, serial verdicts, crash matrices, contention, PITR, parity, pins, fuzz, interop, multi-process |
 | [90-rollout.md](90-rollout.md) | The build lanes (incl. the Lean lane), order, gates, checklist |
+
+The active pass: [grail/](grail/README.md) — two use cases (embedded
+library, AWS Lambda arm64), the beauty pass, and the deployment MVP.
+Normative for the pass, senior to this set for its duration, deleted
+whole at its close.
