@@ -1,0 +1,83 @@
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+import { key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { openReplica, openWriter, s3Store } from "@bjornpagen/bumbledb-log"
+
+const exec = promisify(execFile)
+
+const Note = relation("note", { id: u64, body: str })
+const Notes = schema("Notes", { Note }, [key(Note, ["id"])])
+
+const bucket = process.env.BUCKET ?? ""
+const prefix = process.env.PREFIX ?? "log"
+const region = process.env.AWS_REGION ?? "us-east-1"
+
+const store = s3Store({
+	region,
+	bucket,
+	prefix,
+	credentials: {
+		accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
+		secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
+		...(process.env.AWS_SESSION_TOKEN === undefined || process.env.AWS_SESSION_TOKEN.length === 0
+			? {}
+			: { sessionToken: process.env.AWS_SESSION_TOKEN })
+	}
+})
+
+const openedAt = performance.now()
+const ready = openReplica({ store, prefix: "", dir: "/tmp/store", theory: Notes }).then(function withWriter(replica) {
+	console.log(`open ${Math.round(performance.now() - openedAt)}`)
+	return { replica, writer: openWriter(replica) }
+})
+
+function json(value: unknown): string {
+	return JSON.stringify(value, function replacer(_key, item: unknown) {
+		return typeof item === "bigint" ? String(item) : item
+	})
+}
+
+export default async function handler(event: unknown): Promise<{ statusCode: number; body: string }> {
+	if (typeof event === "object" && event !== null && "duty" in event && event.duty === true) {
+		const ran = await exec("/opt/bin/bumbledb-log-duty", [
+			"--once",
+			"--store",
+			"s3",
+			"--bucket",
+			bucket,
+			"--dir",
+			"/tmp/duty",
+			"--theory",
+			"/opt/bin/theory.json",
+			"--region",
+			region,
+			"--s3-prefix",
+			prefix
+		])
+		return { statusCode: 200, body: json({ stdout: ran.stdout, stderr: ran.stderr }) }
+	}
+
+	const { replica, writer } = await ready
+	await replica.refresh()
+	const http = event as { requestContext?: { http?: { method?: string } }; body?: string | null }
+	if ((http.requestContext?.http?.method ?? "GET") === "POST") {
+		const payload = JSON.parse(http.body ?? "{}") as { id?: string; body?: string }
+		const started = performance.now()
+		const out = await writer.commit(function record(batch) {
+			const id = BigInt(payload.id ?? `${Date.now()}`)
+			batch.insert(Note, [{ id, body: payload.body ?? "" }])
+			return id
+		})
+		console.log(`commit ${Math.round(performance.now() - started)}`)
+		return { statusCode: 200, body: json(out) }
+	}
+
+	return {
+		statusCode: 200,
+		body: json(
+			replica.db.read(function scan(instance) {
+				return instance.scan(Note)
+			})
+		)
+	}
+}
