@@ -1,8 +1,9 @@
 # 80 — Conformance and gates
 
 Determinism is a pinned oracle agreement; crashes are an iteration over
-reified protocol steps; the conflict algebra is adversarially exercised
-cell by cell; every law is a test. All lanes run on `FsStore` — no cloud
+reified protocol steps; every statement family's contention is raced
+against a plain serial execution; every law is a test. All lanes run on
+`FsStore` — no cloud
 account in the suite; `S3Store` gets a credential-gated smoke lane
 (skipped-with-reason otherwise).
 
@@ -12,52 +13,44 @@ Random command sequences from the bench corpus generator, three arrivals
 compared at every probed vector: **direct** apply; **replayed** through
 the log; **checkpoint-hopped** (checkpoint mid-sequence, restore, replay
 tail). Gate: `catalog_digest` triple-equality across ≥ 100 generated
-worlds. A disagreement is a trophy. Lane candidate (recorded): a fourth
+worlds, with the hop arm asserting it actually executed — a silently
+skipped hop is a failure, not a pass. A disagreement is a trophy. Lane candidate (recorded): a fourth
 oracle from the chase literature — on ground instances, engine refusal
 coincides with failure of the naive chase over the final state (every
 applicable EGD step is a failure step; TGD satisfaction is trigger
 absence), so a ~200-line reference chase is an independent semantics
 check on the judgment itself.
 
-## Lane 2 — commutativity (L8 as a running oracle)
+## Lane 2 — braid convergence (L9 as a running oracle)
 
-Generate footprint-**disjoint** pairs (A, B) on one braid (the generator
-filters with `footprint(descriptor, ops)`): apply A;B on one store and
-B;A on another.
-Gate: equal `catalog_digest` and equal verdicts. Then the braid corollary:
-random interleavings of multi-braid histories all converge. This lane is
+Random multi-braid histories under seeded interleavings all converge to
+one `catalog_digest` and one generation — L9's executable shadow, and
+the lane's whole content. The order-quotient digest (30) is what makes
+the gate sound: two replay orders of independent commits land one
+digest by construction, so convergence is byte-testable. Recorded scope
+note: the generated corpus keeps its rows string-free so intern
+minting — store-state-relative by the aliasing ruling — stays out of
+the instrument; the digest itself is sound for string-carrying fixtures
+too. This lane is
 the executable shadow of the Lean theorem — both must exist; neither
 substitutes for the other.
 
-## Lane 3 — the conflict matrix, adversarially, cell by cell
+## Lane 3 — the serial-verdict lane
 
-For **every cell** of 15's four matrices, a hand fixture pair (A, B) built
-on a shared base:
+For each statement family, a hand-fixture pair races on a shared base
+and the loser's re-judgment must produce exactly the serial verdict,
+cross-checked against a plain serial execution of the same two batches
+on a fresh store — the verdict IS a serial execution, performed:
 
-- **Commute cells**: both orders accepted; digests equal; the loser
-  algebra resolves without re-judgment — the subsumed arm where the pair
-  shares its effects (F insert×insert on one fid), the republish arm
-  everywhere else — pinned by a counter on the re-judgment entry staying
-  at zero.
-- **CONFLICT cells**: the loser algebra re-judges and produces exactly
-  the serial verdict — the double-booking fixture rejects with the FD
-  violation; the dangling-reference fixture rejects the `need` loser or
-  the `support−` loser per order; the capacity fixture's worst-case
-  interval endpoints are matched against both bounds, floor and ceiling,
-  widened and unwidened.
-- The W-class quantitative boundary: worst-case interval endpoints
-  exactly at slack (commute) and slack + 1 (conflict), for unit and
-  weighted children, `parent±` rows included — plus the evaporation
-  fixtures: a batch whose delete evaporates against the winner (its
-  effective delta above its published Δ) must go CONFLICT at the bound
-  and commute with headroom; the reservation spend/reclaim pair runs
-  both arms; a naive point-Δ test must fail this cell (the fixture
-  exists to keep the interval law honest).
+- the double-booking FD rejection;
+- the dangling-reference verdict per order (target-delete vs
+  source-insert, each direction);
+- the capacity ceiling and floor rejections;
+- the reservation spend and reclaim races;
+- the byte-equal absorption of an ambiguous PUT.
 
-Every cell cites its matrix coordinates in the test name. A new statement
-class cannot ship without extending this lane (the fixture table is an
-exhaustive match over the footprint classes — a missing cell fails to
-compile, the house roster discipline).
+Small, total over the statement families, named by scenario. A new
+statement class cannot ship without extending this lane.
 
 ## Lane 4 — the crash matrices (protocol steps as data)
 
@@ -76,7 +69,8 @@ crash between PendingWrite and ApplyLocal resurrects an unjudged batch,
 and its recovery arms (Rejected → clear; born-no-op → clear) are
 exercised by dedicated fixtures; no phantom survives (a
 locally-committed batch either reaches the log — its own slot, or a
-subsuming winner's — or is discarded with the directory, never silently
+winner's slot that already carries its effects — or is discarded with
+the directory, never silently
 divergent); every crash-window re-application lands in the engine's
 no-op arm (`COMMIT_NOOP` observed via the trace, generation unmoved,
 identity exact); recovery converges in one pass. The double-apply lane
@@ -84,60 +78,60 @@ runs here too: every batch in a generated history applied twice at every
 prefix — digest unchanged, generation unchanged, vector correct (L10 as
 an executable oracle). A forgotten crash case is a missing enum arm.
 
-## Lane 5 — contention and the loser algebra
+## Lane 5 — contention under the one loss path
 
-N writers (2/4/8) over one `FsStore`, mixed workloads: mostly-disjoint
-(booking different slots) and adversarial (hot key, hot capacity parent).
-Gates: per-braid logs gap-free, each slot created once, every `prev`
+Writer fleets of 2/4/8 over one `FsStore`, mixed workloads:
+mostly-disjoint (booking different rows) and adversarial (hot key, hot
+capacity parent). Every gate is structural — chain contents, digests,
+outcomes — never a counter on a dead routing arm:
+per-braid logs gap-free, each slot created once, every `prev`
 chain hash verified; every acked commit appears exactly once; all
-replicas converge (`catalog_digest`); subsumed losses publish nothing,
-report the winner's generation, and hit both engine-decided arms
-(identical effects → in-place survive via `COMMIT_NOOP`; strict superset
-→ fork-discard) under dedicated fixtures; disjoint losses never re-judge
-(counter-pinned) and republish with re-addressed headers that pass every
-chain check; conflicting losses produce serial verdicts; **the wholeness
+replicas converge (`catalog_digest`); a loss whose effects the winner
+already performed re-judges to the engine's net no-op and lands
+`Accepted` at the current generation with nothing published; a
+disjoint-shaped loss re-judges and republishes with a fresh header at
+tip+1 passing every chain check; a conflicting loss produces the serial
+verdict; **the wholeness
 identity `generation ≡ Σ vector + |pending|` is asserted on every store after every
-fixture in this lane** — it is the invariant the loser algebra must
+fixture in this lane** — it is the invariant the loss path must
 never bend; the ambiguous-outcome GET-verify law (40) resolves injected
-response drops; bounded-retry surfaces `Err::Contention` under a fixture
-designed to livelock.
+response drops; the loss bound surfaces `Err::Contention` under a
+fixture designed to livelock. One counter remains in the writer —
+losses, which equals re-judgments by construction — and no fixture pins
+any other.
 
 Adversarial additions, each with its published baseline to beat:
 
-- **The lying winner**: a fixture writer publishes a batch whose
-  footprint section understates its ops; the loser must catch it by
-  recomputation before intersecting (15) — the fixture fails if any loser
-  trusts a carried section.
-- **The Feral storms**, at their exact parameters: 64 writers × 100
-  rounds inserting one hot determinant (their uniqueness experiment:
-  70–6,300 duplicates leaked; ours gates **zero** duplicates, one
-  Accepted, 63 typed FD rejections per round); target-delete + 64
-  concurrent source-inserts × 100 (their association experiment: up to
-  6,400 orphans; ours gates zero orphans, serial verdicts throughout);
+- **The Feral storms**: the uniqueness storm at the exact Feral width
+  of 64 writers on one hot determinant (their experiment leaked
+  70–6,300 duplicates; ours gates **zero** duplicates, one Accepted,
+  63 typed FD rejections per round), the round count scaled 100 → 16
+  under the recorded wall-clock license (63 discard-and-rebuild
+  re-judgments per round); target-delete + 64 concurrent source-inserts
+  at the full 100 rounds (their association experiment: up to
+  6,400 orphans; ours gates zero orphans, serial verdicts throughout),
+  with a non-vacuity counter proving the delete actually won rounds;
   Zipfian 0.99 key skew for the hot-key curve.
 - **Packed-vs-solo verdicts**: the drain-composition fixture (one
   caller's delete cures another's violation) pins the drain-is-one-
   transaction law of 60 — the composite accepts where solo rejects, and
   the fixture asserts that this is the documented outcome, not a
   surprise.
-- **The evaporating republish** (the adversary trace that forced 15's
-  strict-disjointness): a loser sharing one commute-cell F key with the
-  winner, its other ops base-redundant — must route to the conflict arm,
-  re-judge to a net no-op, publish nothing, and report Accepted at the
-  current generation; a point-set implementation that republishes it
-  must fail this fixture on the no-op-slot refusal (20) and the identity
-  gate.
 - **The stale-pending recovery**: a writer 40 slots behind the tip
-  resolves its pending through catch-up replay plus one tip attempt —
-  zero historical losses counted against the bound; the `SlotRace` and
-  `HotKey` causes of `Err::Contention` each produced by a dedicated
-  livelock fixture; an open ending in `Err::Contention` keeps its
-  pending, serves reads, and passes the wholeness identity with the
-  pending term.
+  resolves its pending through re-open — which IS its catch-up — plus
+  ONE race at tip; zero historical losses counted against the bound
+  because a historical loss is structurally uncountable; the `SlotRace`
+  and `HotKey` causes of `Err::Contention` each produced by a dedicated
+  livelock fixture, the `HotKey` payload sourced from the terminal
+  re-judgment's own violation; an open ending in `Err::Contention`
+  keeps its pending, serves reads, and passes the wholeness identity
+  with the pending term.
 - **The lying checkpoint**: a fixture checkpoint whose `.mdb` contains
   one extra row at the correct generation with honestly copied heads —
   refused at fresh open by the `catalog` claim (10), and refused by a
-  replay-reaching store's comparison.
+  replay-reaching store's comparison. (The lying *winner* fixture died
+  with its subject: the wire carries no claim left to lie in, and a
+  hostile batch can only be what its ops decode to.)
 
 ## Lane 6 — PITR, gc, and the vector
 
@@ -155,17 +149,17 @@ while the same 404 above it reads as the tip — both directions pinned; a
 hibernated-replica fixture (vector far behind a gc'd horizon) must
 refuse rather than serve stale reads as fresh.
 
-## Lane 7 — parity goldens (Rust ⇄ TS, the protocol trio)
+## Lane 7 — parity goldens (Rust ⇄ TS, the mirrored pair)
 
-Checked-in corpora for the three pure functions: `encode/decodeBatch`
+Checked-in corpora for the pure functions, regenerated as header + ops:
+`encode/decodeBatch`
 (every op kind, every tag, boundary values, every refusal — bad magic,
-version 1, flags ≠ 0, wrong fingerprint, wrong braid relation, unsorted
-footprint, kind 3, `ChainMismatch` in all three causes (prev, slot,
-timestamp), a delta on a non-W entry [must be unparseable, not refused]),
-`footprintOf` (every class and mode via the per-class suffixes, the W
-deltas and their per-key merging, closed-statement emptiness), `braidsOf`
+version 1, flags ≠ 0, wrong fingerprint, wrong braid relation, kind 3,
+`ChainMismatch` in all three causes (prev, slot,
+timestamp)) and `braidsOf`
 (multi-component schemas, mirror statements, closed relations excluded,
-singleton = serial degenerate). Byte-exact both directions; refusals
+singleton = serial degenerate, serial-at-statements as typed data).
+Byte-exact both directions; refusals
 carry the same typed identity.
 
 ## Lane 8 — engine-guarantee pins (30)
@@ -179,44 +173,72 @@ against the trace names, since the whole recovery design stands on it).
 ## Lane 9 — fuzz
 
 The batch decoder (offset-free sequential — prove it): arbitrary bytes
-and golden mutations; no panic, no overflow, every rejection typed. Same
-harness over the manifest parser and the footprint recomputation
-comparator.
+and golden mutations; no panic, no overflow, every rejection typed, the
+trailing-bytes refusal landing at the exact end of the accepted prefix.
+The same harness shape runs over the manifest, checkpoint, and
+chain-sidecar parsers, where an accepted mutant must be a **canonical
+fixpoint**: parse-then-render reproduces the exact input bytes.
+
+## Born lanes (the two the store unification demanded)
+
+- **Cross-language interop**: one `FsStore` prefix, both drivers — Rust
+  writes / TS reads byte-for-byte, TS writes / Rust reads, and a mixed
+  fleet of real Node child processes and Rust threads races one prefix
+  with create-only exclusivity asserted (exactly one Created per slot,
+  every CAS linearized, etags agreeing on every object). The lane that
+  makes "one protocol" a fact instead of a sentence.
+- **Multi-process TS**: real child processes over one `fsStore` prefix
+  — disjoint content ⇒ every ack exactly once in a gap-free chain; a
+  shared determinant ⇒ one winner and N−1 typed FD rejections; a child
+  killed mid-commit ⇒ the fleet converges and the restarted process
+  resolves its pending through the one recovery path. The single most
+  load-bearing property for deployment case 5, previously untested
+  outside one Node process.
 
 ## Law gates (census tier)
 
-Zero-dyn extends to `bumbledb-log`'s own code; TS temporal gate (every
-exported async awaits a store verb); codec/footprint alloc windows
-(output buffers only); `spec-census.sh` gains the protocol tokens
-(manifest fields, op kinds, footprint classes, error identities) across
-Rust/TS/docs — and the Lean names L6–L10 once they land, wired like
+Zero-dyn extends to `bumbledb-log`'s own code at zero exemptions; TS
+temporal gate (every
+exported async awaits a store verb); codec alloc windows
+(output buffers only); comment hygiene sweeps the driver sources both
+languages; `spec-census.sh` carries the protocol tokens
+(manifest fields, op kinds, error identities) across
+Rust/TS/docs and the Lean names L9 and L10, wired like
 L1–L5. One more census tier, learned from this doc set's own review:
-**every law and constant has one owning file** (the publish law and
-cadence in 10, the algebra and its constants in 15, the drain in 60, the
-lease width in 10); the census greps for second full statements and
+**every law and constant has one owning file and one defining site per
+language** (the publish law and cadence in 10, the drain caps and loss
+bound in 60, the
+lease width in 10, the waitFor poll cadence beside its owner); the
+census greps for second full statements and second spellings and
 fails on them — other files cite, never restate.
 
 ## Lean gates
 
-L6–L10 exist under their stated names, build, and are cited from the
-driver's revalidation, republish, and recovery sites the way the engine
-cites `DeltaRestriction`. Lane 2 (executable commutativity) and Lane 3
-(matrix) are CI-required alongside them; the optimism path
-(republish-without-re-judgment) does not merge before L7; the recovery
-design (no intent field, no forced cases) does not merge before L10.
+L9 and L10 exist under their stated names in
+`lean/Bumbledb/Txn/Braids.lean`, build in the obligation ledger at 104
+rows, and are cited from the driver's braid derivation and recovery
+sites the way the engine
+cites `DeltaRestriction`. Lane 2 (braid convergence) and Lane 3
+(serial verdicts) are CI-required alongside them; the recovery
+design (no intent field, no forced cases) does not merge before L10,
+and cross-braid service claims do not merge before L9.
 
 ## Performance pins (attribution-first; replaces 00's envelope)
 
 Recorded, not asserted: per-braid commit latency (FsStore floor + gated
-S3/Express smoke); disjoint-loss cost (intersection + PUT) vs conflict
-cost (re-judge) vs the old discard baseline; group-commit throughput ×
+S3/Express smoke); loss cost — one measured pin already ruled here: the
+deleted disjoint fast path's republish measured 67.2 ms end-to-end p50
+against 64.3 ms for discard-and-re-judge, the fsync floor owning both,
+which is the measurement that licensed the one-path deletion;
+group-commit throughput ×
 braid count; cold-open vs checkpoint size with parallel braid replay;
 probe cost per idle pass. Three more, stolen from the genre's own
 figures: the **contention curve** (throughput and re-judge rate vs
 hot-key skew, Zipfian 0→0.999 — Aria's Fig. 11 shape; their 39 %-of-
-uniform at 0.999 is the number the W arithmetic and reservations exist
-to beat); the **conflict ratio** (share of commits resolving as
-subsumed / republish / re-judge / reject — the one number RedBlue and
+uniform at 0.999 is the number reservations exist
+to beat); the **loss ratio** (share of commits resolving as clean
+publish / re-judged Accepted / serial reject — the one number RedBlue
+and
 Homeostasis both lead with); and the **crossover point** (contention at
 which loss-rate × re-judge cost exceeds a resident writer's group-commit
 throughput on that braid — the recorded basis for the 16-loss bound and
