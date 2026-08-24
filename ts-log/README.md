@@ -4,11 +4,10 @@ Braided object-store replication for [bumbledb](https://github.com/bjornpagen/bu
 a thin peer of `@bjornpagen/bumbledb` (peer dependency, 0.17.x lockstep).
 The package is three things:
 
-1. **The pure protocol trio**, mirrored byte-exactly against the Rust
-   driver and pinned by cross-language goldens: `encodeBatch`/`decodeBatch`
-   (the BDBL v2 command codec), `footprintOf(descriptor, ops)` (the
-   conflict algebra's raw-value footprints), and `braidsOf(descriptor)`
-   (the schema's own shard map, as data — with
+1. **The mirrored pure pair**, byte-exact against the Rust driver and
+   pinned by cross-language goldens: `encodeBatch`/`decodeBatch` (the
+   BDBL v2 command codec — a batch is header + ops, nothing else) and
+   `braidsOf(descriptor)` (the schema's own shard map, as data — with
    `serialAtStatementsOf` naming the degenerate-serial statements beside it).
 2. **The five-verb object store** — `get`, `getIfChanged`, `putCreate`,
    `putSwap`, `delete` — with `fsStore` as the tier-1 local-directory
@@ -22,7 +21,7 @@ The package is three things:
 
 Async ⟺ network: `openReplica`, `refresh`, `waitFor`, `commit`,
 `commitSplit`, and disposal await store verbs; everything on
-`replica.db`, the `batch.*` recorders, and the pure trio are synchronous.
+`replica.db`, the `batch.*` recorders, and the pure pair are synchronous.
 
 ## The Vercel recipe (documented example, not framework code)
 
@@ -47,12 +46,18 @@ if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
   pair a flow has seen; `replica.waitFor(vector)` refreshes until the
   local vector dominates it. The committing instance always reads its
   own writes without waiting. A singleton map is the single-braid form.
-- **The `ErrContention` runbook**: the error carries its cause —
-  `{ kind: "hot-key", statement, determinants }` names the hot
-  determinant's raw values; the remedies are a reservation relation on
-  the hot capacity (an ordinary weighted child row, 15's schema idiom)
-  or resident mode. `{ kind: "slot-race", tip }` means fully-disjoint
-  writers out-raced the bound: a hot braid wanting group commit.
+- **The `ErrContention` runbook**: the error carries its cause, sourced
+  from the terminal re-judgment itself — `{ kind: "hot-key", statement,
+  determinants }` names the statement and carries the offending facts'
+  raw values from the engine's own violation; the remedies are a
+  reservation relation on the hot capacity (an ordinary weighted child
+  row — the schema idiom) or resident mode. `{ kind: "slot-race", tip }`
+  means the terminal losses were accepted but out-raced: an operational
+  signal to shard the theory into more braids or move the hot braid to
+  a resident Rust writer, whose group commit batches the queue. This
+  package ships no group commit of its own; the recorded reopen trigger
+  is a measured TS deployment at Turso-density write rates where a
+  deliberate batching delay would amortize many writers into one PUT.
 
 ## The local-fleet recipe (deployment case 5)
 
@@ -79,21 +84,25 @@ const out = await writer.commit((batch) => {
 // a K-conflict double-mint resolves to the winner's row on the next pass.
 ```
 
-What makes the case easy: an insert-only theory never reaches a delete
-cell of the conflict matrices; content-keyed determinants make
-concurrent scope loops footprint-disjoint in the common case (republish,
-not re-judge); a one-braid theory serializes slot claims on a create,
-which at document-per-minutes commit rates is free. Each process owns
-its local replica directory outright.
+What makes the case easy: an insert-only theory has no delete races to
+lose; content-keyed determinants keep concurrent scope loops off each
+other's obligations, so a lost slot re-judges to the same accepted
+verdict at the moved base; a one-braid theory serializes slot claims on
+a link publication, which at document-per-minutes commit rates is free.
+Each process owns its local replica directory outright.
 
-**`fsStore`'s discipline, stated**: every verb on a key serializes under
-an O_EXCL lockfile in `<root>/.locks` whose body is the owner's pid; a
-lock whose pid is dead is broken and retaken. One machine is
-load-bearing, not descriptive — pid liveness and O_EXCL are the
-arbitration primitives, and network filesystems weaken both; an
-`fsStore` prefix on a network mount is a misdeployment. `putCreate` and
-`putSwap` resolve only after fsync of the object file and its parent
-directory.
+**`fsStore`'s discipline, stated** — the one on-disk protocol the Rust
+`FsStore` also speaks, raced against it in the interop conformance
+lane: `putCreate` writes an exclusive synced temp and publishes it with
+`fs.link` (EEXIST is the honest `exists`); etags are the blake3 of the
+content, computed on every read and never stored; `putSwap` serializes
+under a pid-lockfile beside the key, published with the same
+temp-plus-link discipline, and a lock whose owner pid is dead is broken
+and retaken. One machine is load-bearing, not descriptive — pid
+liveness and link exclusivity are the arbitration primitives, and
+network filesystems weaken both; an `fsStore` prefix on a network mount
+is a misdeployment. `putCreate` and `putSwap` resolve only after fsync
+of the object file and its parent directory.
 
 ## Error identity
 
@@ -101,8 +110,10 @@ Exported sentinel values on the SDK idiom, checked with `errors.is`,
 never by message strings: `ErrRefused` (typed per cause — batch shape,
 version, fingerprint, manifest shape, checkpoint braid-set drift),
 `ErrSpanningCommit`, `ErrGapDetected`, `ErrReplayDiverged`,
-`ErrFootprintMismatch`, `ErrChainMismatch` (cause `"prev" | "slot" |
+`ErrChainMismatch` (cause `"prev" | "slot" |
 "timestamp"`), `ErrContention` (cause `hot-key` or `slot-race`),
-`ErrStore` (the vendor channel). There is deliberately no
+`ErrStore` (the vendor channel, present in every wrapped store
+failure's cause chain so the `errors.is` match is by identity). There
+is deliberately no
 `ErrAlreadyApplied`: the state it would name is absorbed by idempotent
 replay and never surfaces.

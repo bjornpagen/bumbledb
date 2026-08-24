@@ -1,7 +1,7 @@
 # 70 — The TypeScript package
 
 `@bjornpagen/bumbledb-log`. A thin peer of `@bjornpagen/bumbledb` (peer
-dependency, 0.17.x lockstep): the codec and the footprint/braid functions
+dependency, 0.17.x lockstep): the codec and the braid derivation
 mirrored byte-exactly, the five-verb store over `fetch` + `aws4fetch`,
 replica and writer composed from the engine SDK's existing verbs. No
 engine surface duplicated — the replica hands out the SDK's own `Db`.
@@ -11,7 +11,7 @@ engine surface duplicated — the replica hands out the SDK's own `Db`.
 ```ts
 import {
 	openReplica, openWriter, openTenants,
-	braidsOf, footprintOf, encodeBatch, decodeBatch,   // the pure protocol trio (+1)
+	braidsOf, serialAtStatementsOf, encodeBatch, decodeBatch,   // the mirrored pure pair (+ the braid map's typed sibling)
 } from "@bjornpagen/bumbledb-log"
 
 // ── Replica ───────────────────────────────────────────────────────────────
@@ -41,13 +41,17 @@ const out = await writer.commit((batch) => {
 // value, not a constructor secret. A spanning batch is a typed refusal on
 // commit; writer.commitSplit(body) is the explicit verb, returning the
 // per-braid outcome vector — splitness is chosen at the call site, never
-// inferred. Contention is absorbed by the loser algebra; bounded retries
-// surface as ErrContention carrying the raw determinant values of the hot
-// key (an operational signal, not an outcome arm).
+// inferred. Contention is absorbed by the one loss path; at the bound,
+// ErrContention's hot-key arm carries the statement and the offending
+// facts' raw values from the terminal re-judgment's own violation —
+// engine-produced, an operational signal, not an outcome arm.
 
 // ── Tenants ───────────────────────────────────────────────────────────────
-const tenants = openTenants({ store, root, budgetBytes: 400_000_000, maxOpen: 32 })  // 50's 400 MB gate
+const tenants = openTenants({ store, root, dir, theory, budgetBytes: 400_000_000, maxOpen: 32 })
 const t = await tenants.get(tenantId)       // a Replica; "_shared" pinned
+// budgetBytes is 50's 400 MB gate, advisory and measured once at each
+// tenant's open — a replica that grows after admission is not re-weighed
+// until it is evicted and re-opened; dir and theory ride to each openReplica.
 
 // ── Introspection (pure; no I/O) ──────────────────────────────────────────
 braidsOf(Ledger)                            // ReadonlyMap<RelationName, Braid> — the
@@ -64,17 +68,17 @@ choosing the verb.
 
 Async ⟺ network: `open*`, `refresh`, `waitFor`, `commit`, disposal.
 Everything on `replica.db` keeps the engine's sync data-plane law;
-`batch.*` recorders and `braidsOf`/`footprintOf` are pure and sync. The
-gate test asserts every exported async function awaits a store verb on
-some path.
+`batch.*` recorders and `braidsOf`/`serialAtStatementsOf` are pure and
+sync. The gate test asserts every exported async function awaits a
+store verb on some path.
 
 ## Mirrored pure functions (the parity-critical set)
 
-Three functions must be byte-equal with Rust, pinned by the goldens (80):
-`encodeBatch`/`decodeBatch` (20), `footprintOf(descriptor, ops)` (15), and
-`braidsOf(descriptor)` (10). All three are pure, take the descriptor the
-SDK already lowers, and touch no I/O — they are the protocol; the rest of
-the package is plumbing around them.
+The mirrored pair must be byte-equal with Rust, pinned by the goldens
+(80): `encodeBatch`/`decodeBatch` (20) and `braidsOf(descriptor)` (10),
+with `serialAtStatementsOf` riding the same derivation. Both are pure,
+take the descriptor the SDK already lowers, and touch no I/O — they are
+the protocol; the rest of the package is plumbing around them.
 
 ## The Vercel recipe (documented example, not framework code)
 
@@ -90,9 +94,11 @@ if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
 
 The recipe documents the `/tmp` budget gate (≤ 400 MB), `waitFor` for
 cross-instance read-your-writes, and the `ErrContention` runbook (the
-error names the hot determinant; the remedies are a reservation relation
-on the hot capacity, or resident mode). No Next.js wrapper is shipped; a
-wrapper would be a second way to write three lines.
+hot-key arm names the statement and carries the offending facts' raw
+values from the re-judgment's own violation; the remedies are a
+reservation relation on the hot capacity, or resident mode). No Next.js
+wrapper is shipped; a wrapper would be a second way to write three
+lines.
 
 ## The local-fleet recipe (deployment case 5; documented example)
 
@@ -118,11 +124,12 @@ const out = await writer.commit((batch) => {
 // a K-conflict double-mint resolves to the winner's row on the next pass.
 ```
 
-The recipe records what makes the case easy: an insert-only theory never
-reaches a delete cell of 15's matrices; content-keyed determinants make
-concurrent scope loops footprint-disjoint in the common case (republish,
-not re-judge); a one-braid theory serializes slot claims on a rename,
-which at document-per-minutes commit rates is free. Each process owns
+The recipe records what makes the case easy: an insert-only theory has
+no delete races to lose; content-keyed determinants keep concurrent
+scope loops off each other's obligations, so a lost slot re-judges to
+the same accepted verdict at the moved base; a one-braid theory
+serializes slot claims on a link publication, which at
+document-per-minutes commit rates is free. Each process owns
 its LMDB directory outright — the one-env-per-path law is satisfied by
 construction, not by handle registries.
 
@@ -130,25 +137,30 @@ construction, not by handle registries.
 
 `aws4fetch` only (~4 KB SigV4 over platform `fetch`); R2/OCI ride the same
 signer. The `fs` store on Node `fs` is **tier-1, not a dev double** — it
-is deployment case 5's production backend (00), implements the same
-create-only (`wx` open + rename) and etag-file CAS discipline as the
-Rust `FsStore`, and runs every conformance lane the S3 store runs (80);
-a lane that passes on one and not the other is a reported gap. No AWS
-SDK. Blake3 via
-the engine package's existing native binding (the napi module already
-links blake3 — expose a doc-hidden hash entry rather than adding a JS
-blake3 dependency; that exposure rides the SDK, not the engine crate).
+is deployment case 5's production backend (00) and speaks the one
+on-disk protocol of 40 verbatim: `wx`-opened synced temp published with
+`fs.link`, computed blake3 etags, the pid-lockfile beside the key —
+one protocol, two conforming implementations, raced against each other
+in the interop conformance lane. It runs every lane the S3 store runs
+(80); a lane that passes on one and not the other is a reported gap.
+No AWS SDK. Blake3 rides
+the engine package's existing native binding: the SDK's
+`internalBlake3` export (the napi module already links blake3), whose
+named consumers are the store's etags and the descriptor fingerprint —
+no JS blake3 dependency exists.
 
 ## Error identity
 
 Exported values on the SDK idiom: `ErrRefused` (version, fingerprint,
 manifest shape, checkpoint braid-set drift — typed per cause),
 `ErrSpanningCommit` (naming the braids; the `commit`-vs-`commitSplit`
-boundary), `ErrGapDetected`, `ErrReplayDiverged`, `ErrFootprintMismatch`,
+boundary), `ErrGapDetected`, `ErrReplayDiverged`,
 `ErrChainMismatch` (cause: `"prev" | "slot" | "timestamp"` — one
 identity, three proved causes, mirroring 20), `ErrContention` (cause sum
-mirroring 60: `{ kind: "hot-key", statement, determinants }` when
-conflicts exhausted the bound, `{ kind: "slot-race", tip }` when
-fully-disjoint racers did), `ErrStore` (the vendor channel). There is deliberately no `ErrAlreadyApplied` — the state it
+mirroring 60: `{ kind: "hot-key", statement, determinants }` sourced
+from the terminal re-judgment's violation, `{ kind: "slot-race", tip }`
+when accepted-but-outraced losses exhausted the bound), `ErrStore` (the
+vendor channel, present in every wrapped store failure's cause chain so
+`errors.is` matches by identity). There is deliberately no `ErrAlreadyApplied` — the state it
 would name is absorbed by idempotent replay (20) and never surfaces. No
 message-string matching anywhere.
