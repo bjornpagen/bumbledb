@@ -9,22 +9,22 @@ not appear:
 ```rust
 pub trait ObjectStore: Send + Sync {
     /// GET. Ok(None) on 404.
-    fn get(&self, key: &str) -> Result<Option<Fetched>>;
+    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>>;
 
     /// GET with If-None-Match: <etag>. Ok(Unchanged) on 304 — the cheap
     /// manifest poll.
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> Result<Poll>;
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll>;
 
     /// PUT with If-None-Match: "*". Ok(Created(etag)) or Ok(Exists) on 412.
     /// The log-slot arbitration primitive.
-    fn put_create(&self, key: &str, bytes: &[u8]) -> Result<Create>;
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create>;
 
     /// PUT with If-Match: <etag>. Ok(Swapped(etag)) or Ok(Moved) on 412.
     /// The manifest CAS primitive.
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> Result<Swap>;
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap>;
 
     /// DELETE (unconditional). The gc verb's tool.
-    fn delete(&self, key: &str) -> Result<()>;
+    fn delete(&self, key: &StoreKey) -> Result<()>;
 }
 
 pub struct Fetched { pub bytes: Vec<u8>, pub etag: Etag }
@@ -106,19 +106,23 @@ verb.
 
 ## Storage-class and availability ruling
 
-The `S3Store` constructor takes two targets: a hot class for `log/*`
-(Express One Zone directory bucket or R2) and a standard class for
-`ckpt/*` + `manifest.json`. Express's trade is recorded honestly: 11-nines
-durability but **single-AZ availability (99.95 % SLA)** — a zone event
-pauses writes (acks stall; nothing is lost; replicas keep serving). Both
-per-verb targets speak the same five verbs, so the split is configuration,
-not code. Write availability through a zone event is a **recorded v2**
-(dual-PUT to a second zone's bucket, cost ≈ one standard PUT), refused
-for v1 because it is not yet a design: the second bucket has no named
-reader, no failover read rule, and an async second write whose silent
-failure is a representable divergence — exactly the unspecified-machinery
-shape this file exists to refuse. Trigger: a deployment that measures a
-zone event it cannot ride out on pause-and-resume.
+The `S3Store` constructor takes **one** target: endpoint, region, bucket,
+credentials, key prefix. `ckpt/*`, `log/*`, and the manifest ride that
+one storage class. The dual-class split (a hot class for `log/*` —
+Express One Zone or R2 — and a standard class for `ckpt/*` +
+`manifest.json`) is configuration that arrives with its measured
+trigger, not a second constructor now. Express's trade is recorded
+honestly: 11-nines durability but **single-AZ availability (99.95 %
+SLA)** — a zone event pauses writes (acks stall; nothing is lost;
+replicas keep serving). Write availability through a zone event is a
+**recorded v2** (dual-PUT to a second zone's bucket, cost ≈ one
+standard PUT), refused for v1 because it is not yet a design: the
+second bucket has no named reader, no failover read rule, and an async
+second write whose silent failure is a representable divergence —
+exactly the unspecified-machinery shape this file exists to refuse.
+Trigger: a deployment that measures a zone event it cannot ride out on
+pause-and-resume, or a measured commit-latency need standard-class S3
+misses.
 
 ## The dependency ruling
 

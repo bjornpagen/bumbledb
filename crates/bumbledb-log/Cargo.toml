@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 bumbledb = { path = "../bumbledb" }
 blake3 = "1.8.5"
+object_store = { version = "0.14.1", features = ["aws"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time"] }
 
 [dev-dependencies]
 bumbledb = { path = "../bumbledb", features = ["trace"] }

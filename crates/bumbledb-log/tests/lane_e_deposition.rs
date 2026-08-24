@@ -87,11 +87,7 @@ fn a_deposed_resident_finishes_the_loss_and_drops_to_published_acks() {
         None,
         "the loss finished as an ordinary loser"
     );
-    assert_eq!(
-        resident.vector()[&braid],
-        2,
-        "published behind the winner"
-    );
+    assert_eq!(resident.vector()[&braid], 2, "published behind the winner");
     resident.with_db(|db| {
         db.read(|instance| {
             assert!(instance.contains_dyn(NOTE, &note_row(10, "usurper"))?);

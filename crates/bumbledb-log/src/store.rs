@@ -3,6 +3,7 @@
 //! failure (network, 5xx, auth, io) and nothing else.
 
 pub mod fs;
+pub mod s3;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
