@@ -11,6 +11,9 @@ importers:
       '@superbuilders/errors':
         specifier: ^4.0.2
         version: 4.0.2(typescript@7.0.2)
+      aws4fetch:
+        specifier: ^1.0.20
+        version: 1.0.20
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.4
@@ -213,6 +216,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  aws4fetch@1.0.20:
+    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
+
   typescript@7.0.2:
     resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
     engines: {node: '>=16.20.0'}
@@ -325,6 +331,8 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  aws4fetch@1.0.20: {}
 
   typescript@7.0.2:
     optionalDependencies:

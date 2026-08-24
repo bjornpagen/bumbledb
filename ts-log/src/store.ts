@@ -279,5 +279,7 @@ function fsStore(root: string): ObjectStore {
 	}
 }
 
+export type { S3Config, S3Credentials } from "#store-s3.ts"
+export { s3Store } from "#store-s3.ts"
 export type { Create, Etag, Fetched, ObjectStore, Poll, Swap }
 export { etag, fsStore }
