@@ -26,11 +26,8 @@ import { Ledger, Vocab } from "#test/fixtures.ts"
 
 /**
  * The exact CrossHost theory the engine SDK pins against the Rust
- * fingerprint (ts/test/fingerprint.test.ts): if our pure-TS canonical
- * encoding mirror produces this hash, the whole descriptor parse —
- * sealed fields, closed extensions, materialized statement order, side
- * selections, handle resolution, capacity windows — agrees with the
- * engine byte for byte.
+ * fingerprint: the sealed digest must be this hash, because the
+ * descriptor is the engine's own truth, not a second encoding.
  */
 const PIN = "588df888bd1f1a21057dbf0742af1d1223cc5c2e28ce265f803af989611f1418"
 
@@ -97,7 +94,7 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 	mirrors(on(SavingsTerms, ["account", "rate_bps"]), on(AuditTrail, ["account", "rate_bps"]))
 ])
 
-describe("the fingerprint mirror", function suite() {
+describe("the sealed fingerprint", function suite() {
 	test("the CrossHost theory hashes to the engine's cross-host pin", function pinned() {
 		assert.equal(descriptorOf(CrossHost).fingerprint, PIN)
 	})

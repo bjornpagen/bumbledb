@@ -9,7 +9,7 @@ import { fromHex, toHex } from "#bytes.ts"
 import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Descriptor } from "#descriptor.ts"
-import { braid, descriptorOf, withFingerprint } from "#descriptor.ts"
+import { assembleFromSpec, braid, withFingerprint } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
 import { generation } from "#keys.ts"
 import type { Value } from "#value.ts"
@@ -288,7 +288,7 @@ if (!present) {
 	}
 	const descriptors = new Map<string, Descriptor>()
 	for (const [name, corpus] of Object.entries(schemasRaw.schemas)) {
-		descriptors.set(name, descriptorOf(specOf(corpus)))
+		descriptors.set(name, assembleFromSpec(specOf(corpus)))
 	}
 
 	function pinned(fixture: BatchFixture): Descriptor {

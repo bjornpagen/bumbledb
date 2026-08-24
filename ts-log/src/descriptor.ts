@@ -1,11 +1,8 @@
 /**
- * The parsed protocol descriptor: the SDK's lowered `SchemaSpec` resolved
- * once — names to dense ids, handles to row ids, statements materialized
- * in the engine's own order (fresh auto-keys first, closed auto-keys,
- * then declared statements with `==` split into two containments) — so
- * every pure function downstream reads ids, never names. Braid
- * derivation and the schema fingerprint mirror live on the same parse:
- * one boundary, parsed in full, cached per theory value.
+ * The parsed protocol descriptor: one thin parse of the engine's sealed
+ * truth — relation ids, sealed field order, resolved closed rows,
+ * materialized statements, and the real fingerprint — plus the braid
+ * map the protocol derives from that truth. Cached per theory value.
  */
 
 import type {
@@ -13,20 +10,21 @@ import type {
 	LiteralSetSpec,
 	LiteralSpec,
 	SchemaSpec,
+	SealedDescriptor,
+	SealedSide,
+	SealedStatement,
 	SideSpec,
 	StatementSpec,
-	ValueSpec,
-	ValueTypeSpec
+	ValueSpec
 } from "@bjornpagen/bumbledb"
-import { internalBlake3, lower } from "@bjornpagen/bumbledb"
+import { internalDescriptor, lower } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { ByteWriter, fromHex, toHex, utf8Encoder } from "#bytes.ts"
+import { fromHex } from "#bytes.ts"
 import type { Value } from "#value.ts"
-import { writeCanonicalLiteral } from "#value.ts"
 
 interface FieldInfo {
 	readonly name: string
-	readonly type: ValueTypeSpec
+	readonly type: SchemaSpec["relations"][number]["fields"][number]["valueType"]
 	readonly fresh: boolean
 	/** Set when the field's newtype names a closed relation's id class. */
 	readonly closedRef: string | undefined
@@ -128,7 +126,7 @@ function descriptorOf(theory: Theory): Descriptor {
 		return hit
 	}
 	const spec = isSpec(theory) ? theory : lower(theory)
-	const parsed = spec === theory ? parseSpec(spec) : (cache.get(spec) ?? parseSpec(spec))
+	const parsed = spec === theory ? fromSealed(spec) : (cache.get(spec) ?? fromSealed(spec))
 	cache.set(theory, parsed)
 	cache.set(spec, parsed)
 	return parsed
@@ -138,6 +136,193 @@ function braidHex(relationId: number): Braid {
 	return braid(`c${relationId.toString(16).padStart(8, "0")}`)
 }
 
+function asValue(raw: unknown): Value {
+	if (typeof raw === "boolean" || typeof raw === "bigint" || typeof raw === "string" || raw instanceof Uint8Array) {
+		return raw
+	}
+	if (typeof raw === "object" && raw !== null && "start" in raw && "end" in raw) {
+		const interval = raw as { start: unknown; end: unknown }
+		if (typeof interval.start === "bigint" && typeof interval.end === "bigint") {
+			return { start: interval.start, end: interval.end }
+		}
+	}
+	throw errors.new("sealed value is not a raw fact value")
+}
+
+function sideOf(side: SealedSide): SideInfo {
+	return {
+		relation: side.relation,
+		projection: side.projection,
+		selection: side.selection.map(function valuesOf(binding) {
+			return { field: binding.field, values: binding.values.map(asValue) }
+		})
+	}
+}
+
+function statementOf(statement: SealedStatement): StatementInfo {
+	switch (statement.kind) {
+		case "functionality":
+			return statement
+		case "containment":
+			return {
+				id: statement.id,
+				kind: "containment",
+				source: sideOf(statement.source),
+				target: sideOf(statement.target)
+			}
+		case "capacity":
+			return {
+				id: statement.id,
+				kind: "capacity",
+				target: sideOf(statement.target),
+				weight: statement.weight,
+				lo: statement.lo,
+				hi: statement.hi,
+				source: sideOf(statement.source)
+			}
+	}
+}
+
+function fromSealed(spec: SchemaSpec): Descriptor {
+	const sealed: SealedDescriptor = internalDescriptor(spec)
+	const specByName = new Map(
+		spec.relations.map(function byName(relation) {
+			return [relation.name, relation]
+		})
+	)
+	const closedOwners = new Set(
+		spec.relations
+			.filter(function closedOf(relation) {
+				return relation.closed !== undefined
+			})
+			.map(function nameOf(relation) {
+				return relation.name
+			})
+	)
+
+	const relations: RelationInfo[] = sealed.relations.map(function relationOf(relation) {
+		const declared = specByName.get(relation.name)
+		const closed = relation.extension !== undefined
+		const fields: FieldInfo[] = relation.fields.map(function fieldOf(field) {
+			if (field.name === "id" && closed) {
+				return { name: field.name, type: field.valueType, fresh: false, closedRef: relation.name }
+			}
+			const specField = declared?.fields.find(function named(candidate) {
+				return candidate.name === field.name
+			})
+			let closedRef: string | undefined
+			const newtype = specField?.newtype
+			if (newtype?.endsWith(".id")) {
+				const owner = newtype.slice(0, -3)
+				if (closedOwners.has(owner)) {
+					closedRef = owner
+				}
+			}
+			return {
+				name: field.name,
+				type: field.valueType,
+				fresh: specField?.fresh === true,
+				closedRef
+			}
+		})
+		const extension = relation.extension ?? []
+		const named = new Map(
+			relation.fields.map(function indexOf(field) {
+				return [field.name, field]
+			})
+		)
+		const rows = extension.map(function rowOf(row) {
+			const cells = new Map(
+				row.values.map(function cellOf(cell) {
+					return [cell.name, asValue(cell.value)]
+				})
+			)
+			return relation.fields.map(function cellValue(field) {
+				const hit = cells.get(field.name)
+				if (hit !== undefined) {
+					return hit
+				}
+				if (field.name === "id" && named.has("id")) {
+					return row.id
+				}
+				throw errors.new(`closed relation ${relation.name}: sealed row ${row.handle} missing field ${field.name}`)
+			})
+		})
+		return {
+			id: relation.id,
+			name: relation.name,
+			closed,
+			handles: extension.map(function handleOf(row) {
+				return row.handle
+			}),
+			fields,
+			rows
+		}
+	})
+
+	const byName = new Map<string, RelationInfo>()
+	for (const relation of relations) {
+		byName.set(relation.name, relation)
+	}
+
+	const statements = sealed.statements.map(statementOf)
+	const { braidOfRelation, braidMembers } = deriveBraids(relations, statements)
+
+	const serialAtStatements: SerialStatement[] = []
+	for (const statement of statements) {
+		if (statement.kind === "functionality" && statement.projection.length === 0) {
+			const braid = braidOfRelation.get(statement.relation)
+			if (braid !== undefined) {
+				serialAtStatements.push({ statement: statement.id, braid })
+			}
+		}
+		if (statement.kind === "capacity" && statement.target.projection.length === 0) {
+			const targetRelation = relations[statement.target.relation]
+			if (targetRelation !== undefined && !targetRelation.closed) {
+				const braid = braidOfRelation.get(statement.target.relation)
+				if (braid !== undefined) {
+					serialAtStatements.push({ statement: statement.id, braid })
+				}
+			}
+		}
+	}
+
+	const fingerprint = sealed.fingerprint
+	return {
+		relations,
+		relationByName: byName,
+		statements,
+		braidOfRelation,
+		braidMembers,
+		serialAtStatements,
+		fingerprint,
+		fingerprintBytes: fromHex(fingerprint)
+	}
+}
+
+/**
+ * The same descriptor under a pinned fingerprint — for stores whose
+ * identity is carried (a manifest, a conformance sidecar) rather than
+ * recomputed.
+ */
+function withFingerprint(descriptor: Descriptor, fingerprint: string): Descriptor {
+	return {
+		relations: descriptor.relations,
+		relationByName: descriptor.relationByName,
+		statements: descriptor.statements,
+		braidOfRelation: descriptor.braidOfRelation,
+		braidMembers: descriptor.braidMembers,
+		serialAtStatements: descriptor.serialAtStatements,
+		fingerprint,
+		fingerprintBytes: fromHex(fingerprint)
+	}
+}
+
+/**
+ * Assemble a descriptor from a SchemaSpec that is not a theory — the
+ * conformance corpus pins the codec and the braid map on shapes the
+ * engine seal refuses. Theories enter through descriptorOf.
+ */
 function rawValue(value: ValueSpec): Value {
 	switch (value.kind) {
 		case "bool":
@@ -227,7 +412,7 @@ function fieldOrdinal(relation: RelationInfo, name: string): number {
 	return ordinal
 }
 
-function sideOf(tables: SpecTables, side: SideSpec): SideInfo {
+function specSideOf(tables: SpecTables, side: SideSpec): SideInfo {
 	const relation = tables.byName.get(side.relation)
 	if (relation === undefined) {
 		throw errors.new(`statement cites unknown relation ${side.relation}`)
@@ -258,8 +443,8 @@ function capacityOf(
 	id: number,
 	statement: Extract<StatementSpec, { kind: "capacity" }>
 ): StatementInfo {
-	const target = sideOf(tables, statement.target)
-	const source = sideOf(tables, statement.source)
+	const target = specSideOf(tables, statement.target)
+	const source = specSideOf(tables, statement.source)
 	const sourceRelation = tables.byName.get(statement.source.relation)
 	const targetRelation = tables.byName.get(statement.target.relation)
 	if (sourceRelation === undefined || targetRelation === undefined) {
@@ -316,9 +501,7 @@ function capacityOf(
 	return { id, kind: "capacity", target, weight, lo, hi, source }
 }
 
-/** The `exact {n}` window: lo = hi = n; a non-literal n is grammar-refused upstream. */
-
-function parseSpec(spec: SchemaSpec): Descriptor {
+function assembleFromSpec(spec: SchemaSpec): Descriptor {
 	const prepass = new Map<string, { closed: boolean; handles: readonly string[] }>()
 	for (const relation of spec.relations) {
 		prepass.set(relation.name, {
@@ -398,8 +581,8 @@ function parseSpec(spec: SchemaSpec): Descriptor {
 				break
 			}
 			case "containment": {
-				const source = sideOf(tables, statement.source)
-				const target = sideOf(tables, statement.target)
+				const source = specSideOf(tables, statement.source)
+				const target = specSideOf(tables, statement.target)
 				statements.push({ id: statements.length, kind: "containment", source, target })
 				if (statement.bidirectional) {
 					statements.push({ id: statements.length, kind: "containment", source: target, target: source })
@@ -434,46 +617,14 @@ function parseSpec(spec: SchemaSpec): Descriptor {
 		}
 	}
 
-	let hashed: { readonly hex: string; readonly bytes: Uint8Array } | undefined
-	function fingerprintLazily(): { readonly hex: string; readonly bytes: Uint8Array } {
-		if (hashed === undefined) {
-			const bytes = fingerprintOf(relations, statements)
-			hashed = { hex: toHex(bytes), bytes }
-		}
-		return hashed
-	}
-
-	const descriptor: Descriptor = {
+	const fingerprint = "00".repeat(32)
+	return {
 		relations,
 		relationByName: byName,
 		statements,
 		braidOfRelation,
 		braidMembers,
 		serialAtStatements,
-		get fingerprint() {
-			return fingerprintLazily().hex
-		},
-		get fingerprintBytes() {
-			return fingerprintLazily().bytes
-		}
-	}
-	return descriptor
-}
-
-/**
- * The same descriptor under a pinned fingerprint — for stores whose
- * identity is carried (a manifest, a conformance sidecar) rather than
- * recomputed, e.g. when the mirror cannot hash a closed relation's
- * interned string axioms.
- */
-function withFingerprint(descriptor: Descriptor, fingerprint: string): Descriptor {
-	return {
-		relations: descriptor.relations,
-		relationByName: descriptor.relationByName,
-		statements: descriptor.statements,
-		braidOfRelation: descriptor.braidOfRelation,
-		braidMembers: descriptor.braidMembers,
-		serialAtStatements: descriptor.serialAtStatements,
 		fingerprint,
 		fingerprintBytes: fromHex(fingerprint)
 	}
@@ -544,199 +695,6 @@ function deriveBraids(
 	return { braidOfRelation, braidMembers }
 }
 
-/** `bumbledb-schema-v5` canonical bytes, mirrored from the engine's own encoder. */
-const FORMAT_VERSION_LABEL = "bumbledb-schema-v5"
-
-const VALUE_TYPE_TAG = { bool: 0, u64: 2, i64: 3, string: 4, fixedBytes: 5, interval: 6, fixedInterval: 7 } as const
-
-function putLen(out: ByteWriter, len: number): void {
-	out.u32le(len)
-}
-
-function putBytes(out: ByteWriter, raw: Uint8Array): void {
-	putLen(out, raw.length)
-	out.bytes(raw)
-}
-
-function putString(out: ByteWriter, text: string): void {
-	putBytes(out, utf8Encoder.encode(text))
-}
-
-function putValueType(out: ByteWriter, type: ValueTypeSpec): void {
-	switch (type.kind) {
-		case "bool": {
-			out.u8(VALUE_TYPE_TAG.bool)
-			return
-		}
-		case "u64": {
-			out.u8(VALUE_TYPE_TAG.u64)
-			return
-		}
-		case "i64": {
-			out.u8(VALUE_TYPE_TAG.i64)
-			return
-		}
-		case "string": {
-			out.u8(VALUE_TYPE_TAG.string)
-			return
-		}
-		case "fixedBytes": {
-			out.u8(VALUE_TYPE_TAG.fixedBytes)
-			out.u16le(type.len)
-			return
-		}
-		case "interval": {
-			if (type.width === undefined) {
-				out.u8(VALUE_TYPE_TAG.interval)
-				out.u8(type.element === "u64" ? 0 : 1)
-				return
-			}
-			out.u8(VALUE_TYPE_TAG.fixedInterval)
-			out.u8(type.element === "u64" ? 0 : 1)
-			out.u64le(type.width)
-			return
-		}
-	}
-}
-
-function putSide(out: ByteWriter, relations: readonly RelationInfo[], side: SideInfo): void {
-	out.u32le(side.relation)
-	putLen(out, side.projection.length)
-	for (const field of side.projection) {
-		out.u16le(field)
-	}
-	putLen(out, side.selection.length)
-	const relation = relations[side.relation]
-	if (relation === undefined) {
-		throw errors.new(`side cites unknown relation id ${side.relation}`)
-	}
-	for (const binding of side.selection) {
-		out.u16le(binding.field)
-		const field = relation.fields[binding.field]
-		if (field === undefined) {
-			throw errors.new(`selection cites unknown field ordinal ${binding.field}`)
-		}
-		putLen(out, binding.values.length)
-		for (const value of binding.values) {
-			if (typeof value === "string") {
-				putString(out, value)
-			} else {
-				writeCanonicalLiteral(out, field.type, value)
-			}
-		}
-	}
-}
-
-function fingerprintOf(relations: readonly RelationInfo[], statements: readonly StatementInfo[]): Uint8Array {
-	const out = new ByteWriter(1024)
-	putString(out, FORMAT_VERSION_LABEL)
-	putLen(out, relations.length)
-	for (const relation of relations) {
-		putString(out, relation.name)
-		putLen(out, relation.fields.length)
-		for (const field of relation.fields) {
-			putString(out, field.name)
-			putValueType(out, field.type)
-			out.u8(field.fresh ? 1 : 0)
-		}
-		if (!relation.closed) {
-			out.u8(0)
-		} else {
-			out.u8(1)
-			putLen(out, relation.rows.length)
-			relation.rows.forEach(function putRow(row, rowId) {
-				const handle = relation.handles[rowId]
-				if (handle === undefined) {
-					throw errors.new(`closed relation ${relation.name}: no handle for row ${rowId}`)
-				}
-				putString(out, handle)
-				const fact = new ByteWriter(64)
-				row.forEach(function putCell(value, ordinal) {
-					const field = relation.fields[ordinal]
-					if (field === undefined) {
-						throw errors.new(`closed relation ${relation.name}: no field at ordinal ${ordinal}`)
-					}
-					if (field.type.kind === "string") {
-						throw errors.new(
-							`closed relation ${relation.name} has a string ground axiom — the fingerprint mirror does not carry interned axiom columns`
-						)
-					}
-					writeCanonicalLiteral(fact, field.type, value)
-				})
-				putBytes(out, fact.finish())
-			})
-		}
-	}
-	putLen(out, statements.length)
-	for (const statement of statements) {
-		switch (statement.kind) {
-			case "functionality": {
-				out.u8(0)
-				out.u32le(statement.relation)
-				putLen(out, statement.projection.length)
-				for (const field of statement.projection) {
-					out.u16le(field)
-				}
-				break
-			}
-			case "containment": {
-				out.u8(1)
-				putSide(out, relations, statement.source)
-				putSide(out, relations, statement.target)
-				break
-			}
-			case "capacity": {
-				out.u8(4)
-				putSide(out, relations, statement.target)
-				switch (statement.weight.kind) {
-					case "unit": {
-						out.u8(0)
-						break
-					}
-					case "field": {
-						out.u8(1)
-						out.u16le(statement.weight.field)
-						break
-					}
-					case "duration": {
-						out.u8(2)
-						out.u16le(statement.weight.field)
-						break
-					}
-				}
-				out.u64le(statement.lo)
-				switch (statement.hi.kind) {
-					case "unbounded": {
-						out.u8(0)
-						break
-					}
-					case "lit": {
-						out.u8(1)
-						out.u8(0)
-						out.u64le(statement.hi.value)
-						break
-					}
-					case "targetField": {
-						out.u8(1)
-						out.u8(1)
-						out.u16le(statement.hi.field)
-						break
-					}
-					case "targetDuration": {
-						out.u8(1)
-						out.u8(2)
-						out.u16le(statement.hi.field)
-						break
-					}
-				}
-				putSide(out, relations, statement.source)
-				break
-			}
-		}
-	}
-	return new Uint8Array(internalBlake3(out.finish()))
-}
-
 export type {
 	Braid,
 	Descriptor,
@@ -749,4 +707,4 @@ export type {
 	Theory,
 	WeightInfo
 }
-export { braid, braidHex, descriptorOf, withFingerprint }
+export { assembleFromSpec, braid, braidHex, descriptorOf, withFingerprint }
