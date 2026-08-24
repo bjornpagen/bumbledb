@@ -5,6 +5,10 @@
 # rust-toolchain.toml owns the channel; `rustup show` from the checkout
 # root resolves it (the engine ci.yml precedent). cbindgen is pinned at
 # 0.29.4, matching crates/bumbledb-c/cbindgen.toml.
+#
+# The linux cell is ubuntu-latest-as-host under amazonlinux:2023
+# (grail/40): Amazon Linux is the userspace. No Ubuntu userspace
+# builds or tests this crate.
 
 name: c-abi
 
@@ -36,9 +40,38 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.os == 'ubuntu-latest' && fromJSON('{"image":"amazonlinux:2023"}') || fromJSON('null') }}
     timeout-minutes: 45
     steps:
+      - name: Install the Amazon Linux 2023 toolchain
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          dnf -y install \
+            gcc \
+            gcc-c++ \
+            make \
+            binutils \
+            git \
+            tar \
+            gzip \
+            xz \
+            unzip \
+            python3 \
+            sed \
+            gawk \
+            diffutils \
+            findutils \
+            ca-certificates \
+            curl \
+            nodejs22 \
+            nodejs22-npm
+          alternatives --set node /usr/bin/node-22
       - uses: actions/checkout@v5
+      - name: Install rustup
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install the repo Rust toolchain
         run: rustup show
       - uses: actions/cache@v5
@@ -48,9 +81,9 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin
             crates/bumbledb-c/target
-          key: c-abi-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-c/Cargo.lock', 'crates/bumbledb-c/cbindgen.toml') }}
+          key: c-abi-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-c/Cargo.lock', 'crates/bumbledb-c/cbindgen.toml') }}
           restore-keys: |
-            c-abi-${{ runner.os }}-
+            c-abi-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
       - name: Clippy
         working-directory: crates/bumbledb-c
         run: cargo clippy --all-targets -- -D warnings
