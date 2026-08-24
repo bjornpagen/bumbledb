@@ -45,8 +45,9 @@ jobs:
     steps:
       - name: Install the Amazon Linux 2023 toolchain
         if: matrix.os == 'ubuntu-latest'
+        # AL2023 ships curl-minimal; --allowerasing swaps it for curl.
         run: |
-          dnf -y install \
+          dnf -y install --allowerasing \
             gcc \
             gcc-c++ \
             make \
