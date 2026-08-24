@@ -65,9 +65,9 @@ all exercised the way a stranger would.
   and both shipped S3 stores with boxes B and C closed; 70 gains the
   Lambda recipe pointer; PUBLISHING already carries 0.17.2 from the
   ceremony); re-issue proposals/90 receipts; run the whole battery
-  (both suites, check.sh, lean.sh, census, both workflows green on the
-  tip); report the deletion tally; `git rm -r proposals/grail/` in the
-  closing commit whose message is the handoff.
+  (both suites, check.sh, lean.sh, census; workflows stay owner-green).
+  X-prep reports the deletion tally and does not delete this directory;
+  the owner `git rm -r proposals/grail/` after ceremony and E-deploy.
 
 ## Acceptance checklist (receipts land here)
 
@@ -80,22 +80,27 @@ all exercised the way a stranger would.
       linux-arm64} with widened pins and tests; 0.17.2 lockstep
       prepared unpublished — 2ddbf4bb, 42e40ec2, 9c577672; receipt
       below
-- [ ] C: bumbledb-log.yml green on both jobs with artifacts attached;
-      ci.yml's linux legs moved into the amazonlinux:2023 container;
-      no Ubuntu userspace builds or tests anything, anywhere
+- [ ] C: YAML landed (16ad4b15, af874773, leftover Node 24 0a03f9b0);
+      GitHub-hosted runners were not executed from this machine —
+      UNCHECKED until a real run is green with artifacts attached
 - [x] S: S3Store + official S3 client + memStore landed; Refresh kept
       with the census pin; Node floor 24; gated smokes loud-skipped on
       this machine (no credentials); receipt below
 - [x] D: duty binary, --once and resident modes, tested over FsStore,
       smoked over s3 (loud-skip on this machine) — 53fb9e8b; receipt
       below
-- [ ] CEREMONY: 0.17.2 (main + two platforms) and ts-log 0.18.0
-      published and tagged by the owner
-- [ ] E: example deployed once for real from the registry; the
-      function URL called from a Vercel host; duty fired by schedule;
-      cold-start and commit latencies recorded
-- [ ] X: numbered docs amended; receipts re-issued; battery whole;
-      proposals/grail/ deleted; handoff written
+- [ ] CEREMONY: owner-pending — publish 0.17.2 (three packages) and
+      ts-log 0.18.0 from PUBLISHING.md; this hop does not publish
+- [x] E-prep: example code landed — 9292a78c, b47e4bb0, 48a38e0b;
+      receipt below. No deploy
+- [ ] E: owner-pending — deploy-smoke from the registry after ceremony;
+      function URL, schedule fire, latency blanks. This hop does not
+      deploy
+- [x] X-prep: numbered 40/70/90 and PUBLISHING amended; receipts
+      re-issued; battery whole on this machine; proposals/grail/ kept
+      — 751e0de1, a6fecc75, 32f3baf4, e36ba78d; receipt below
+- [ ] X: owner-pending — `git rm -r proposals/grail/` after ceremony
+      and E-deploy; this hop does not delete the directory
 
 ## Lane C receipt
 
@@ -682,3 +687,126 @@ Paths this lane changed: `examples/lambda/**`,
 `crates/`, `ts/`, `ts-log/`, `.github/`, `lean/`,
 `night-2026-08-22/`, `docs/research/`, `docs/free-join-paper/`,
 numbered proposals except this grail receipt file.
+
+## Lane X-prep receipt
+
+Close-out minus the owner's steps. Numbered 40 and 70 now speak the
+shipped tree; numbered 90's B and C boxes close; PUBLISHING's 0.17.2
+artifact-download flow is one runbook, not two; this file's checklist
+is re-issued. `proposals/grail/` stays. CEREMONY and E-deploy stay
+unchecked.
+
+Landing hashes:
+
+- `751e0de1` — numbered 40: memStore, both S3 stores, boxes B and C
+  closed; Refresh, Node 24, runtime, dep-weight recorded
+- `a6fecc75` — numbered 70: Lambda recipe pointer, official client,
+  Node >=24, IAM gap, `--theory`, Layer
+- `32f3baf4` — PUBLISHING.md: `gh run download` of Lane C's two
+  artifacts, place linux-arm64, darwin built here, platforms then
+  main, then ts-log 0.18.0
+- `e36ba78d` — numbered 90: B and C closed; F10 Refresh pin; F11's
+  no-S3Store clause dies
+- this commit — this receipt
+
+Deletion tally this hop (8):
+
+1. The fetch-signer as a TypeScript dependency candidate in 40
+2. The two-store v1 roster that could not name memStore
+3. The fetch-signer as 70's five-verb store
+4. "No AWS SDK" as a refusal in 70
+5. Numbered 90's `S3Store` NOT-built standing gap
+6. Numbered 90's fetch-signer-NOT-built standing gap
+7. F10's ZERO-exemptions claim
+8. F11's no-S3Store clause
+
+Fleet deletion tally, itemized, B+N+C+S+D+E-prep+X = **57**:
+
+B (25): `LogValue`, `LogInterval`, `LogBatch`, `LogTheory`,
+`LogDescriptor`, `logValueOf`, `BatchOp`, `ChainPosition`,
+`PendingBatch`; `checkKey`; per-verb key re-validation; the codec's
+second braid grammar; primitive string keys; primitive
+etag/braid/generation on the TS public surfaces; the 2072-line
+`writer.rs` monolith; `footprint`, `republish*`, `subsume*`; the
+0.17.0 manifest spelling; the `^0.17.1` peer; the README's Log-era
+silence; `fingerprintOf`; the string-axiom refusal; the
+`bumbledb-schema-v5` re-encoder; the intern-id gap that refusal
+papered over.
+
+N (5): the duplicated Manifest relation-object walk; the
+`PUBLISH_PLATFORM` singleton; the host-conditional foreign picker;
+the 0.17.1 current-tree spellings; the two-package runbook that
+could not name linux-arm64.
+
+C (7): an Ubuntu userspace as a place that could have built the
+linux-arm64 artifacts; the check lane's Ubuntu userspace; the sdk
+lane's Ubuntu userspace; the c-abi lane's Ubuntu userspace; then
+the leftover `nodejs22`, `nodejs22-npm`, `/usr/bin/node-22`
+spellings in c-abi.yml (`0a03f9b0`).
+
+S (8): the fetch-signer (dep, import, every call); `objectUrl`;
+the three `nodejs22` / `node-22` install spellings in
+bumbledb-log.yml and both ci.yml linux cells; implicit
+`Runtime::new()`; the fsync tax on 22 test bodies; the f11 pin
+that failed when credentials were present.
+
+D (3): a Writer-shaped duty; a second pair of cadence literals; an
+unnamed ninety-day retention window.
+
+E-prep (1): Node 22 as a Lambda runtime this example could have
+picked.
+
+X (8): listed above.
+
+Battery on this machine, all green: `cargo fmt --check && cargo
+clippy --all-targets -- -D warnings && cargo test --manifest-path
+crates/bumbledb-log/Cargo.toml`; `scripts/check.sh`; `scripts/lean.sh`
+(277 cases, 0 disagreements, three-way comparator); `scripts/spec-census.sh`
+(104 ledger rows, 332 tokens, Refresh pin Error::source 3 +
+credential refresh 3); ts/ 403 + `tsc --noEmit` + `biome check`;
+ts-log/ 99 + `tsc --noEmit` + `biome check`. Workflows were not
+executed; C stays unchecked.
+
+Deviations:
+
+- C is UNCHECKED: YAML landed, leftover Node 24 landed, no real
+  GitHub run, no artifacts attached. Do not claim a runner we
+  never ran is green.
+- CEREMONY and E stay unchecked. Owner-pending notes sit on those
+  boxes.
+- `proposals/grail/` is not deleted. Owner deletes after ceremony
+  and E-deploy.
+- Live S3 smoke did not run (no credentials); both languages
+  loud-skipped.
+- grail/50 still says Node 22 — this hop amends numbered docs, not
+  other grail files.
+- Numbered 90 F10/F11 were amended because they still claimed zero
+  dyn exemptions and no S3Store.
+
+Box states: B [x] `5a58e2b9`. N [x] `3679f445`. C [ ] `c0c59fec` +
+leftover `0a03f9b0`. S [x] `d9e9438b`. D [x] `720e5b12`. CEREMONY
+[ ] owner. E-prep [x] `4d57918c`. E [ ] owner. X-prep [x] this
+commit. X [ ] owner.
+
+The three owner commands, no archaeology:
+
+1. Push: `git push origin HEAD`
+2. Ceremony, from `ts/PUBLISHING.md`: wait for a green
+   bumbledb-log.yml run; `gh run download <run-id> --name
+   bumbledb.linux-arm64.node` and `--name bumbledb-log-duty`; place
+   the `.node` at `ts/npm/linux-arm64/bumbledb.node`; keep duty for
+   the Layer; from `ts/` publish darwin-arm64 then linux-arm64 then
+   main 0.17.2; then from `ts-log/` publish 0.18.0 on peer `^0.17.2`;
+   tag. Interactive OTP. Never an agent.
+3. Example deploy, from `examples/lambda/README.md` (AWS, no
+   CLOUDFLARE_*): place `bumbledb-log-duty` at
+   `layer/duty/bin/bumbledb-log-duty` (`+x`); choose IAM 1 (accept
+   ListBucket leak) / 2 (wait for `roleArn`) / 3 (inject a user
+   key); `alchemy aws bootstrap`; `alchemy deploy` with
+   confirm-before-deploy.
+
+Paths this lane changed: `proposals/40-object-store.md`,
+`proposals/70-typescript.md`, `proposals/90-rollout.md`,
+`ts/PUBLISHING.md`, `proposals/grail/90-rollout.md` (this receipt).
+Did not touch `crates/`, `ts/src`, `ts-log/src`, `.github/`,
+`examples/lambda/` (already landed), `lean/`, other grail files.
