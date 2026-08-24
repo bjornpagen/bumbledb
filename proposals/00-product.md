@@ -4,20 +4,21 @@
 
 `bumbledb-log` makes a bumbledb store durable, replicated, backed up,
 point-in-time recoverable, and **concurrently writable** by representing
-two things as data in an object store: the store's **history** (per-braid
-command logs, checkpoints, one CAS manifest) and each commit's **conflict
-footprint** — the set of constraint obligations it touches, derived from
-the declared theory itself.
+the store's **history** as data in an object store: per-braid command
+logs, checkpoints, one CAS manifest.
 
-The second half is the product. Bumbledb's semantics are a closed,
-compiled constraint set — functionality, containment, capacity — and the
-engine's delta-restriction theorem already proves that a commit's validity
-depends only on the obligations it touches. `plan_commit` computes that
-enumeration on every commit today and throws it away. This design keeps
-it: **published, it is a commutativity certificate**. Two commits whose
-footprints don't collide provably cannot invalidate each other, in either
-order. Concurrency is not managed here; it is *extracted from the theory,
-with the extraction machine-checked* (15, Lean L6–L10).
+The braids are the product. Bumbledb's semantics are a closed, compiled
+constraint set — functionality, containment, capacity — and the schema's
+statement graph decomposes into connected components that provably never
+conflict: statements cannot span braids, so each braid carries an
+independent chain and cross-braid ordering is semantically invisible,
+machine-checked (L9). Concurrency is *derived from the declared theory*,
+not managed. Within a braid, contention resolves to serial truth: a CAS
+loser re-judges its recorded ops against the winner-current state and
+receives exactly the verdict a serial execution would have produced,
+with violations as data. Set semantics does the same to recovery:
+re-application is a proven no-op (L10), so recovery *is* replay-forward
+through the ordinary catch-up loop.
 
 Not a CRDT: CRDTs weaken to always-commuting operations and therefore
 cannot express an FD, an IND, or a ceiling. This keeps every invariant and
@@ -34,47 +35,44 @@ There is no server in the architecture. A resident writer is a deployment
    log object exists. Local LMDB state is a materialized view. (The
    `ack = local` resident mode trades this law for 1 ms acks, visibly —
    the outcome says `durability: LocalPending`, and the loss window is
-   capped by `max_pending`; 60.)
+   the one pending batch, at most one drain's worth, by construction;
+   60.)
 2. **Index = applied count, per braid; generation = the sum.** The
    schema's statement graph decomposes into connected components
    (braids); each braid has its own chain, indexed by its applied count,
    and the engine's single `GenerationId` equals the counts' sum —
    exactly, because only state-changing batches are ever published (law
-   7). Statements never span braids, so braids never conflict — by
+   6). Statements never span braids, so braids never conflict — by
    construction (L9).
-3. **Footprints are carried and checked.** Every batch publishes the
-   footprint the driver computed from raw values and the descriptor;
-   every replica recomputes it during replay and refuses a mismatch.
-4. **Losers keep their work.** A CAS loser whose effects the winner
-   already performed reports the winner's success (subsumption); a
-   *fully key-disjoint* loser republishes without re-judging (L7 —
-   footprint stability, whose hypothesis is strict on purpose, 15);
-   everything else re-judges the recorded ops, and the re-judged
-   rejection is exactly what **a** serial execution — the one the log
-   realized — would have said. Which racer
-   wins is run-dependent; that the outcome equals some serial history,
-   with violations as data, is not.
-5. **Replay is deterministic.** Same checkpoint + same braid prefixes ⇒
+3. **Losers keep their outcomes.** A CAS loser's outcome equals a serial
+   execution of the submitted transaction: `Accepted` at the realized
+   generation — including the net-no-op case, where the log already
+   holds its effects, via the publish law — or the serial `Rejected`
+   with violations as data. The loser re-judges its recorded ops at the
+   winner-current tip through the one loss path (60); which racer wins
+   is run-dependent, but that the outcome equals **a** serial history —
+   the one the log realized — is not.
+4. **Replay is deterministic.** Same checkpoint + same braid prefixes ⇒
    byte-identical catalog content (`catalog_digest`), any interleaving of
-   braid application (L8).
-6. **One way per question.** Slot arbitration: `If-None-Match` on the next
+   braid application (L9).
+5. **One way per question.** Slot arbitration: `If-None-Match` on the next
    log key. Tip discovery: forward probing. Checkpoint publication:
-   manifest CAS. Conflict detection: the four matrices of 15. Nothing
-   else.
-7. **The empty commit is not a commit.** A batch is published only if its
+   manifest CAS. Loss resolution: byte-equal absorption, else
+   discard-re-open-re-judge — the one path. Nothing else.
+6. **The empty commit is not a commit.** A batch is published only if its
    local application advanced the generation; the log never contains a
    no-op slot. Consequence: `engine generation ≡ Σ vector` on every
    honest store — the identity recovery leans on.
-8. **Recovery is replay.** Set-semantic net-disposition makes
+7. **Recovery is replay.** Set-semantic net-disposition makes
    re-application of an applied batch a proven no-op (L10), so every
    crash window heals by replaying forward through the ordinary catch-up
    loop. There is no recovery procedure, no intent field, no forced-case
    table; the one residual instrument is the wholeness identity
    `generation ≡ Σ vector + |applied pending|` (50), which decides
-   phantom detection, subsumption forks, born-no-op pendings, and
+   phantom detection, born-no-op pendings, and
    no-op-slot refusals alike — one compare, every verdict; its failure
    is a discard, never a repair.
-9. **Every read is a serial prefix.** A replica at any vector serves a
+8. **Every read is a serial prefix.** A replica at any vector serves a
    real admitted state satisfying every declared statement — the thing
    CRDT locals cannot promise (their reads are unconstrained by their own
    literature's admission). Freshness is the only staleness dimension:
@@ -84,18 +82,25 @@ There is no server in the architecture. A resident writer is a deployment
 
 Honesty about the residue: commits are not coordination-free in the
 CALM/Bailis sense and are not meant to be — every commit pays one
-conditional PUT on its braid slot, and disjoint concurrent writers on one
-braid still serialize their slot claims. What the algebra removes is
-re-judgment, fork-discard, and every cross-braid interaction; what it
-keeps is a total order per braid, which is exactly what makes verdicts
-serial and replay deterministic. Reads and rejections touch nothing.
+conditional PUT on its braid slot, concurrent writers on one braid
+serialize their slot claims, and a lost claim pays a cache-warm re-open
+plus one local re-judgment. What the braids remove is every cross-braid
+interaction; what the design keeps is a total order per braid, which is
+exactly what makes verdicts serial and replay deterministic. Reads and
+rejections touch nothing. This is the answer to feral concurrency
+control: Bailis measured production Rails fleets leaking 70–6,300
+duplicate keys and up to 6,400 orphans through application-level
+enforcement of exactly our three statement families — and the answer
+was never a conflict-avoidance fast path; it is typed serial verdicts,
+delivered through the only loss path there is
+(`docs/research/replication-prior-art/feral-sigmod15/`).
 
 ## The five deployment cases (each names its consumer)
 
 1. **Next.js on Vercel Fluid** — replica singleton per instance (Fluid
    shares module state; native modules supported; `/tmp` 500 MB,
    per-instance). Microsecond local reads; serverless commits with the
-   loser algebra absorbing races. Consumer: SaaS on Vercel.
+   one loss path absorbing races. Consumer: SaaS on Vercel.
 2. **Embedded macOS (Apple Silicon)** — the engine as today; the log as
    optional sync/backup (resident mode, the app is the writer). Consumer:
    desktop apps via napi or the C ABI.
@@ -109,14 +114,13 @@ serial and replay deterministic. Reads and rejections touch nothing.
 5. **Local fleet** — N writer processes, one machine, one `FsStore`
    prefix; each process a replica+writer with its own LMDB dir; no
    network anywhere in the loop. The degenerate-serial case (10) worn
-   proudly: one-braid theories serialize slot claims on a rename and the
-   loser algebra absorbs the rest. Consumer: primer-spec's parallel
+   proudly: one-braid theories serialize slot claims on a link and the
+   one loss path absorbs the rest. Consumer: primer-spec's parallel
    scope loops — an insert-only, content-keyed theory (no deletes, no
-   capacities) that lives entirely in the commute cells of 15's
-   matrices, whose one reachable conflict (concurrent double-mint of
-   identical content under a declared FD) re-judges into reuse, and
-   whose host retry policy is an unbounded repair loop, which is
-   exactly the "retry is host policy" contract. One commit = one
+   capacities) whose one reachable conflict (concurrent double-mint of
+   identical content under a declared FD) re-judges into the winner's
+   row, and whose host retry policy is an unbounded repair loop, which
+   is exactly the "retry is host policy" contract. One commit = one
    admitted document; the braid chain is the generation ledger.
 
 ## Performance envelope (vendor facts verified; measured pins from 80 supersede this section)
@@ -125,16 +129,23 @@ Standard S3 PUT p50 ≈ 20–60 ms; S3 Express One Zone single-digit ms, up to
 100K writes/s per directory bucket, ≈ $0.00113 per 1 000 PUTs; R2 supports
 the same conditionals with zero-egress pulls. Reads are always local.
 Commit throughput = per-braid serialization × braid count × group-commit
-batching; contention costs one intersection + one PUT when disjoint (the
-common case), and a cache-warm re-open plus one local re-judgment on a
-true conflict (checkpoints are content-addressed, so the re-open
-revalidates the local `.mdb` instead of re-downloading it).
+batching; a lost slot costs a cache-warm re-open plus one local
+re-judgment regardless of overlap (checkpoints are content-addressed,
+so the re-open revalidates the local `.mdb` instead of re-downloading
+it — the fsync floor dominates, measured in 80's loss-cost pin).
 
 ## Non-goals (v1)
 
 - No consensus, no leases-as-truth (id-leases are an avoidance layer;
   correctness never depends on them; capacity reservations are ordinary
-  rows judged by the ordinary theory — 15).
+  rows judged by the ordinary theory — 60).
+- No quantitative conflict avoidance: the interval algebra that once
+  routed losers around re-judgment was deleted whole by the one-path
+  ruling — its outcome was provably identical to the general path and
+  its measured latency higher. Reopen trigger: a real multi-writer
+  deployment on a network store measuring loss resolution as the
+  dominant term in commit latency under contention; the theory lives in
+  git history, and reopening is a design campaign, never a revert.
 - No schema migration (fingerprint mismatch refuses; migration is its own
   future PRD). Add/delete only.
 - No cross-braid atomicity: statements cannot relate braids, so partial
@@ -150,5 +161,6 @@ The demand curve for exactly this shape is measured, not believed: across
 67 production Rails codebases, declared invariants outnumber transactions
 37 to 1, and the declared set is almost entirely our three families —
 while feral enforcement of them leaks (70–6,300 duplicate keys, 6,400
-orphans in Bailis's experiments) precisely on the cells our matrices mark
-CONFLICT (`docs/research/replication-prior-art/feral-sigmod15/`).
+orphans in Bailis's experiments) precisely where concurrent writers
+share a determinant — the contention our serial verdicts refuse with a
+proof (`docs/research/replication-prior-art/feral-sigmod15/`).
