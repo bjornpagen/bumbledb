@@ -549,3 +549,136 @@ replica.rs,gc.rs,writer/mod.rs}`, `crates/bumbledb-log/Cargo.toml`,
 `proposals/grail/90-rollout.md` (this receipt). Did not touch
 `ts/`, `ts-log/`, `.github/`, `examples/lambda/`, `lean/`,
 `store*` beyond what the binary already consumes.
+
+## Lane E-prep receipt
+
+Code only. No deploy, no `alchemy deploy` / `plan` / `destroy` /
+`aws bootstrap`, no publish, no tag, no push. CEREMONY and E-deploy
+stay unchecked.
+
+Landing hashes:
+
+- `9292a78cf505772341c40d09c45c21280f4ef669` — `alchemy.run.ts` +
+  package pins
+- `b47e4bb031909be89da7b0ec31a724bca6296726` — handler + theory /
+  layer layout
+- `48a38e0b6b48a8fb0b968c423d18a51b823dbf12` — README honesty
+- this commit — this receipt
+
+Deletion tally (1):
+
+1. Node 22 as a Lambda runtime this example could have picked.
+   Owner ruling: Node >=24; Alchemy's union is only `nodejs22.x |
+   nodejs24.x` and its default is 22 — the program sets 24. 50's
+   "Node 22" line is left for Lane X (this lane may edit only this
+   file among grail docs). Node 26 is in preview; Alchemy cannot
+   type it.
+
+Keep-ledger:
+
+- One function, two event arms. 00-scope IN#7's "two Lambdas"
+  loses to 50 and the README: Scheduler `{ duty: true }` hits the
+  same Function URL handler. No second function, no custom runtime.
+- The IAM `Fn` role as the intended document: prefix
+  GetObject / PutObject / DeleteObject, no ListBucket. Unattached.
+- Standard-class S3; versioning omitted (not Suspended); no
+  lifecycle rules.
+- LayerVersion as the duty-binary representation. Rolldown has no
+  `extraFiles`; `layer/duty/bin/bumbledb-log-duty` extracts to
+  `/opt/bin/bumbledb-log-duty`.
+- Registry pins, not workspace/link: `@bjornpagen/bumbledb@0.17.2`,
+  `@bjornpagen/bumbledb-linux-arm64@0.17.2`,
+  `@bjornpagen/bumbledb-log@0.18.0`.
+- `alchemy@2.0.0-beta.74` + `effect@rc` (Effect 4 —
+  `effect@latest` is 3.22.1). Official flavor: Effect Stack, not
+  v1 async/await.
+- Refresh unused. Credentials are static from process env.
+- construct-outside-async: TS `s3Store` at module scope; duty
+  constructs `S3Store` in the child.
+- `architecture: "arm64"` (Alchemy default is x86_64).
+- Timeout `Duration.seconds(60)` (Alchemy default 3 s is too
+  short for `duty --once`).
+- The six named resources and no extras: bucket, role-as-intent,
+  Lambda, function URL, Scheduler, duty Layer. No VPC, no alarms.
+
+IAM REPORT (Alchemy 2.0.0-beta.74, live types):
+
+- `AWS.Lambda.Function` always mints its own role. No `roleArn`.
+- `S3.GetObject` (and Put / Delete) as a binding always adds
+  `s3:ListBucket` on the whole bucket and cannot prefix-scope.
+- This program does not yield those bindings. The handler uses
+  `s3Store`. The `Fn` role's inline `Prefix` policy is the
+  intended document and is not the execution role.
+- `Scheduler.every().toLambda` synthesizes a second invoke role
+  so Scheduler can call Lambda. AWS-required plumbing, not the
+  function execution role.
+
+Owner chooses later (not this lane, not deploy):
+
+1. Accept the derived Function role and the ListBucket leak.
+2. Wait for Alchemy `roleArn` (or an attach) so the intended
+   prefix-only role can be the execution role.
+3. Inject a separate IAM user key via env.
+
+Until one of those three, a deploy with the derived role and no
+extra policy is `AccessDenied` on every store verb.
+
+Duty argv the README tells the owner:
+
+```
+/opt/bin/bumbledb-log-duty \
+  --once --store s3 --bucket $BUCKET --dir /tmp/duty \
+  --theory /opt/bin/theory.json --region $AWS_REGION \
+  --s3-prefix $PREFIX
+```
+
+`--theory` is required. The file is the crate corpus object
+`{relations, statements}` matching D's `note` fixture (u64 id,
+string body, functionality on field 0). Optional unused:
+`--prefix` (empty; the store prefix already scopes), `--endpoint`,
+`--writer` (defaults to 0). Owner places the linux-arm64 duty
+binary at `layer/duty/bin/bumbledb-log-duty` (`+x`) before deploy.
+
+Typecheck: `alchemy.run.ts` is clean against
+`alchemy@2.0.0-beta.74` + `effect@4.0.0-rc.111`. Handler
+typecheck is a ceremony skip — `0.17.2` / `0.18.0` 404 on the
+registry (`@bjornpagen/bumbledb-linux-arm64` first). No live AWS
+account was required or used.
+
+Deviations from 50:
+
+- Node 24, not 22 (owner ruling; 50 still writes 22).
+- LayerVersion (50 said "binary as a packaged executable file";
+  Rolldown cannot extraFile; the Layer is the representation that
+  makes that sentence true).
+- `--theory` (D's gap fill; 50 said "bucket args").
+- Alchemy v2 Effect, not v1 `await alchemy(...)`.
+- Official `@aws-sdk/client-s3` via `@bjornpagen/bumbledb-log`
+  (owner killed aws4fetch).
+- Role is inline-policy intent, not attached. 50's "one IAM
+  role for the function, minimal, no ListBucket" is the document
+  we wrote and cannot bind.
+- `PREFIX=log` is the s3Store / `--s3-prefix` key prefix; the
+  replica protocol prefix is empty so keys are not `log/log/…`.
+- Stack output also names `intendedRoleArn` so the unattached
+  document is visible.
+- No deploy smoke, no Vercel call, no schedule fire, latency
+  blanks stay `(owner smoke)`.
+- Numbered 70 was not amended (X-prep).
+
+Blockers for X-prep / E-deploy:
+
+- CEREMONY must publish 0.17.2 (three packages) and ts-log
+  0.18.0 before this example can install from the registry.
+- Owner places `bumbledb-log-duty` in the layer path.
+- Owner chooses IAM (1) / (2) / (3) above.
+- Owner runs `alchemy aws bootstrap` (this lane did not).
+- Owner smoke fills the two latency blanks.
+- 50 still says Node 22 — X amends numbered docs, not this lane.
+- Do not check CEREMONY or E-deploy from this lane.
+
+Paths this lane changed: `examples/lambda/**`,
+`proposals/grail/90-rollout.md` (this receipt). Did not touch
+`crates/`, `ts/`, `ts-log/`, `.github/`, `lean/`,
+`night-2026-08-22/`, `docs/research/`, `docs/free-join-paper/`,
+numbered proposals except this grail receipt file.
