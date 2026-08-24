@@ -12,8 +12,8 @@ three things:
 2. **The five-verb object store** — `get`, `getIfChanged`, `putCreate`,
    `putSwap`, `delete` — taking a branded `StoreKey` parsed once by
    `storeKey`. `fsStore` is the tier-1 local-directory implementation;
-   `s3Store` is the five verbs over S3-compatible storage (`aws4fetch`
-   signs SigV4 as it ships; R2 rides region `auto`).
+   `s3Store` is the five verbs over S3-compatible storage (the official
+   `@aws-sdk/client-s3` client signs and talks; R2 rides region `auto`).
 3. **Replica and writer** composed from the engine SDK's existing verbs:
    `openReplica` hands out the SDK's own `Db`; `openWriter` adds the
    right to create log objects; `openTenants` is an LRU of per-tenant

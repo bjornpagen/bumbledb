@@ -7,7 +7,7 @@ import { internalBlake3 } from "@bjornpagen/bumbledb"
 import { toHex } from "#bytes.ts"
 import { storeKey } from "#keys.ts"
 import { fsStore } from "#store.ts"
-import { joinPrefix, objectUrl, s3Store } from "#store-s3.ts"
+import { joinPrefix, s3Store } from "#store-s3.ts"
 
 const SLOT = storeKey("log/c00000000/0000000000000001")
 const MANIFEST = storeKey("manifest.json")
@@ -118,24 +118,10 @@ describe("the five verbs over a directory", function suite() {
 	})
 })
 
-describe("s3Store URL assembly", function suite() {
+describe("s3Store construction", function suite() {
 	test("an empty prefix joins as the key alone", function emptyPrefix() {
 		assert.equal(joinPrefix("", "manifest.json"), "manifest.json")
 		assert.equal(joinPrefix("smoke/run", "log/c00000000/1"), "smoke/run/log/c00000000/1")
-	})
-
-	test("AWS virtual-host and R2 path-style are one function of endpoint presence", function urls() {
-		assert.equal(
-			objectUrl({ region: "us-east-1", bucket: "example" }, "manifest.json"),
-			"https://example.s3.us-east-1.amazonaws.com/manifest.json"
-		)
-		assert.equal(
-			objectUrl(
-				{ endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto", bucket: "example" },
-				"ckpt/digest.mdb"
-			),
-			"https://acct.r2.cloudflarestorage.com/example/ckpt/digest.mdb"
-		)
 	})
 
 	test("region auto without an endpoint is refused at construction", function autoNeedsEndpoint() {

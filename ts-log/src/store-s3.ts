@@ -1,13 +1,13 @@
 /**
- * `s3Store`: the five verbs over one S3-compatible target. `aws4fetch`
- * signs SigV4 exactly as it ships — no forked signer, no option
- * surface beyond endpoint, region, bucket, credentials, and key
- * prefix. One storage class for every key. The vendor ETag header
- * is the opaque token, carried verbatim.
+ * `s3Store`: the five verbs over one S3-compatible target. The official
+ * `@aws-sdk/client-s3` client signs and talks; this module maps HTTP
+ * outcomes onto the sums. One storage class for every key. The vendor
+ * ETag header is the opaque token, carried verbatim. R2 rides region
+ * `auto` and a required endpoint.
  */
 
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import * as errors from "@superbuilders/errors"
-import { AwsClient } from "aws4fetch"
 import { wrapStore } from "#errors.ts"
 import type { StoreKey } from "#keys.ts"
 import type { Etag, ObjectStore } from "#store.ts"
@@ -47,18 +47,6 @@ function joinPrefix(prefix: string, key: string): string {
 	return prefix.length === 0 ? key : `${prefix}/${key}`
 }
 
-function encodeKey(key: string): string {
-	return key.split("/").map(encodeURIComponent).join("/")
-}
-
-function objectUrl(config: { endpoint?: string; region: string; bucket: string }, key: string): string {
-	const encoded = encodeKey(key)
-	if (config.endpoint !== undefined) {
-		return `${config.endpoint.replace(/\/+$/, "")}/${encodeURIComponent(config.bucket)}/${encoded}`
-	}
-	return `https://${config.bucket}.s3.${config.region}.amazonaws.com/${encoded}`
-}
-
 async function resolveKeys(credentials: S3Credentials): Promise<StaticKeys> {
 	if (typeof credentials === "function") {
 		return await credentials()
@@ -66,19 +54,27 @@ async function resolveKeys(credentials: S3Credentials): Promise<StaticKeys> {
 	return credentials
 }
 
-function clientOf(region: string, keys: StaticKeys): AwsClient {
-	return new AwsClient({
-		accessKeyId: keys.accessKeyId,
-		secretAccessKey: keys.secretAccessKey,
-		service: "s3",
-		region,
-		...(keys.sessionToken === undefined ? {} : { sessionToken: keys.sessionToken })
-	})
+function httpStatus(error: unknown): number | undefined {
+	if (error === null || typeof error !== "object" || !("$metadata" in error)) {
+		return undefined
+	}
+	const metadata = error.$metadata
+	if (metadata === null || typeof metadata !== "object" || !("httpStatusCode" in metadata)) {
+		return undefined
+	}
+	const status = metadata.httpStatusCode
+	return typeof status === "number" ? status : undefined
 }
 
-function headerEtag(headers: Headers, op: string, key: StoreKey): Etag {
-	const raw = headers.get("etag")
-	if (raw === null || raw.length === 0) {
+function asError(error: unknown): Error {
+	if (error instanceof Error) {
+		return error
+	}
+	return errors.new(String(error))
+}
+
+function etagOf(raw: string | undefined, op: string, key: StoreKey): Etag {
+	if (raw === undefined || raw.length === 0) {
 		throw wrapStore(errors.new("vendor omitted ETag"), `${op} ${key}`)
 	}
 	return asEtag(raw)
@@ -89,109 +85,137 @@ function s3Store(config: S3Config): ObjectStore {
 		throw errors.new("region auto needs an endpoint")
 	}
 	const prefix = normalizePrefix(config.prefix)
-	const staticClient = typeof config.credentials === "function" ? null : clientOf(config.region, config.credentials)
+	const client = new S3Client({
+		region: config.region,
+		credentials: async function credentials() {
+			const keys = await resolveKeys(config.credentials)
+			return {
+				accessKeyId: keys.accessKeyId,
+				secretAccessKey: keys.secretAccessKey,
+				...(keys.sessionToken === undefined ? {} : { sessionToken: keys.sessionToken })
+			}
+		},
+		requestChecksumCalculation: "WHEN_REQUIRED",
+		responseChecksumValidation: "WHEN_REQUIRED",
+		...(config.endpoint === undefined ? {} : { endpoint: config.endpoint, forcePathStyle: true })
+	})
 
-	async function client(): Promise<AwsClient> {
-		if (staticClient !== null) {
-			return staticClient
-		}
-		return clientOf(config.region, await resolveKeys(config.credentials))
-	}
-
-	function urlOf(key: StoreKey): string {
-		return objectUrl(
-			{
-				region: config.region,
-				bucket: config.bucket,
-				...(config.endpoint === undefined ? {} : { endpoint: config.endpoint })
-			},
-			joinPrefix(prefix, key)
-		)
-	}
-
-	async function signed(
-		key: StoreKey,
-		op: string,
-		init: { method: string; headers?: Record<string, string>; body?: Uint8Array }
-	): Promise<Response> {
-		const signedClient = await client()
-		const ran = await errors.try(signedClient.fetch(urlOf(key), init))
-		if (ran.error) {
-			throw wrapStore(ran.error, `${op} ${key}`)
-		}
-		return ran.data
+	function objectKey(key: StoreKey): string {
+		return joinPrefix(prefix, key)
 	}
 
 	return {
 		async get(key) {
-			const response = await signed(key, "get", { method: "GET" })
-			if (response.status === 404) {
-				return null
+			const ran = await errors.try(
+				client.send(
+					new GetObjectCommand({
+						Bucket: config.bucket,
+						Key: objectKey(key)
+					})
+				)
+			)
+			if (ran.error) {
+				if (httpStatus(ran.error) === 404) {
+					return null
+				}
+				throw wrapStore(asError(ran.error), `get ${key}`)
 			}
-			if (!response.ok) {
-				throw wrapStore(errors.new(`GET ${response.status}`), `get ${key}`)
+			if (ran.data.Body === undefined) {
+				throw wrapStore(errors.new("vendor omitted body"), `get ${key}`)
 			}
-			const bytes = new Uint8Array(await response.arrayBuffer())
-			return { bytes, etag: headerEtag(response.headers, "get", key) }
+			return {
+				bytes: await ran.data.Body.transformToByteArray(),
+				etag: etagOf(ran.data.ETag, "get", key)
+			}
 		},
 
 		async getIfChanged(key, etag) {
-			const response = await signed(key, "getIfChanged", {
-				method: "GET",
-				headers: { "If-None-Match": etag }
-			})
-			if (response.status === 304) {
-				return { tag: "unchanged" }
+			const ran = await errors.try(
+				client.send(
+					new GetObjectCommand({
+						Bucket: config.bucket,
+						Key: objectKey(key),
+						IfNoneMatch: etag
+					})
+				)
+			)
+			if (ran.error) {
+				if (httpStatus(ran.error) === 304) {
+					return { tag: "unchanged" }
+				}
+				throw wrapStore(asError(ran.error), `getIfChanged ${key}`)
 			}
-			if (!response.ok) {
-				throw wrapStore(errors.new(`GET ${response.status}`), `getIfChanged ${key}`)
+			if (ran.data.Body === undefined) {
+				throw wrapStore(errors.new("vendor omitted body"), `getIfChanged ${key}`)
 			}
-			const bytes = new Uint8Array(await response.arrayBuffer())
 			return {
 				tag: "changed",
-				fetched: { bytes, etag: headerEtag(response.headers, "getIfChanged", key) }
+				fetched: {
+					bytes: await ran.data.Body.transformToByteArray(),
+					etag: etagOf(ran.data.ETag, "getIfChanged", key)
+				}
 			}
 		},
 
 		async putCreate(key, bytes) {
-			const response = await signed(key, "putCreate", {
-				method: "PUT",
-				headers: { "If-None-Match": "*" },
-				body: bytes
-			})
-			if (response.status === 412) {
-				return { tag: "exists" }
+			const ran = await errors.try(
+				client.send(
+					new PutObjectCommand({
+						Bucket: config.bucket,
+						Key: objectKey(key),
+						Body: bytes,
+						IfNoneMatch: "*"
+					})
+				)
+			)
+			if (ran.error) {
+				if (httpStatus(ran.error) === 412) {
+					return { tag: "exists" }
+				}
+				throw wrapStore(asError(ran.error), `putCreate ${key}`)
 			}
-			if (!response.ok) {
-				throw wrapStore(errors.new(`PUT ${response.status}`), `putCreate ${key}`)
-			}
-			return { tag: "created", etag: headerEtag(response.headers, "putCreate", key) }
+			return { tag: "created", etag: etagOf(ran.data.ETag, "putCreate", key) }
 		},
 
 		async putSwap(key, bytes, etag) {
-			const response = await signed(key, "putSwap", {
-				method: "PUT",
-				headers: { "If-Match": etag },
-				body: bytes
-			})
-			if (response.status === 412) {
-				return { tag: "moved" }
+			const ran = await errors.try(
+				client.send(
+					new PutObjectCommand({
+						Bucket: config.bucket,
+						Key: objectKey(key),
+						Body: bytes,
+						IfMatch: etag
+					})
+				)
+			)
+			if (ran.error) {
+				const status = httpStatus(ran.error)
+				if (status === 412 || status === 404) {
+					return { tag: "moved" }
+				}
+				throw wrapStore(asError(ran.error), `putSwap ${key}`)
 			}
-			if (!response.ok) {
-				throw wrapStore(errors.new(`PUT ${response.status}`), `putSwap ${key}`)
-			}
-			return { tag: "swapped", etag: headerEtag(response.headers, "putSwap", key) }
+			return { tag: "swapped", etag: etagOf(ran.data.ETag, "putSwap", key) }
 		},
 
 		async delete(key) {
-			const response = await signed(key, "delete", { method: "DELETE" })
-			if (response.status === 404 || response.ok) {
-				return
+			const ran = await errors.try(
+				client.send(
+					new DeleteObjectCommand({
+						Bucket: config.bucket,
+						Key: objectKey(key)
+					})
+				)
+			)
+			if (ran.error) {
+				if (httpStatus(ran.error) === 404) {
+					return
+				}
+				throw wrapStore(asError(ran.error), `delete ${key}`)
 			}
-			throw wrapStore(errors.new(`DELETE ${response.status}`), `delete ${key}`)
 		}
 	}
 }
 
 export type { S3Config, S3Credentials, StaticKeys }
-export { joinPrefix, objectUrl, s3Store }
+export { joinPrefix, s3Store }

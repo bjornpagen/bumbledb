@@ -37,8 +37,8 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"dependencies": {
-		"@superbuilders/errors": "^4.0.2",
-		"aws4fetch": "^1.0.20"
+		"@aws-sdk/client-s3": "^3.1116.0",
+		"@superbuilders/errors": "^4.0.2"
 	},
 	"peerDependencies": {
 		"@bjornpagen/bumbledb": "^0.17.2"

@@ -137,10 +137,13 @@ becomes a build-time problem. The engine workspace stays heed+blake3-pure —
 `bumbledb-log` is a separate crate outside that purity boundary, like
 `bumbledb-c`.
 
-TS side: `aws4fetch` (a ~4 KB SigV4 signer over platform `fetch`) rather
-than `@aws-sdk/client-s3`. Recorded reasoning: the TS driver needs exactly
-five HTTP verbs with signed conditional headers; the SDK's client stack
-buys nothing but cold-start weight on Vercel.
+TS side: `@aws-sdk/client-s3` (AWS-owned, maintained). The grail pass
+named `aws4fetch`; the owner killed that dependency — no commits in
+about two years, open issues on query canonicalization, header signing,
+`X-Amz-Content-Sha256`, empty-body POST, and streams — and the official
+client is the replacement. The five verbs still map to real HTTP
+preconditions (`If-None-Match`, `If-Match`, DELETE); the SDK must send
+those headers, not guess.
 
 ## Retry law
 
