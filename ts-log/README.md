@@ -1,8 +1,8 @@
 # @bjornpagen/bumbledb-log
 
 Braided object-store replication for [bumbledb](https://github.com/bjornpagen/bumbledb):
-a thin peer of `@bjornpagen/bumbledb` (peer dependency, 0.17.x lockstep).
-The package is three things:
+a thin peer of `@bjornpagen/bumbledb` (peer `^0.17.2`). The package is
+three things:
 
 1. **The mirrored pure pair**, byte-exact against the Rust driver and
    pinned by cross-language goldens: `encodeBatch`/`decodeBatch` (the
@@ -10,20 +10,24 @@ The package is three things:
    `braidsOf(descriptor)` (the schema's own shard map, as data — with
    `serialAtStatementsOf` naming the degenerate-serial statements beside it).
 2. **The five-verb object store** — `get`, `getIfChanged`, `putCreate`,
-   `putSwap`, `delete` — with `fsStore` as the tier-1 local-directory
-   implementation (deployment case 5's production backend, not a dev
-   double). The S3/R2/OCI store rides `aws4fetch` and is not yet in this
-   build (the dependency was unfetchable offline).
+   `putSwap`, `delete` — taking a branded `StoreKey` parsed once by
+   `storeKey`. `fsStore` is the tier-1 local-directory implementation.
 3. **Replica and writer** composed from the engine SDK's existing verbs:
    `openReplica` hands out the SDK's own `Db`; `openWriter` adds the
    right to create log objects; `openTenants` is an LRU of per-tenant
    replicas. No engine surface is duplicated.
 
+The exported vocabulary reads as English at the call site: `Value`,
+`Interval`, `Batch`, `Theory`, `Descriptor`, `Op`, `Pending`,
+`ChainEntry`, plus the branded scalars `StoreKey`, `Generation`,
+`Etag`, and `Braid` (`storeKey`, `generation`, `etag`, `braid` parse
+at the boundary; the verbs take the proof).
+
 Async ⟺ network: `openReplica`, `refresh`, `waitFor`, `commit`,
 `commitSplit`, and disposal await store verbs; everything on
 `replica.db`, the `batch.*` recorders, and the pure pair are synchronous.
 
-## The Vercel recipe (documented example, not framework code)
+## A Fluid host
 
 ```ts
 // lib/db.ts — module scope; Fluid shares this across the instance's requests
@@ -33,7 +37,7 @@ export const replica = await openReplica({ store: s3(env), prefix: "prod/main", 
 export const writer = openWriter(replica)
 
 // route handler
-const out = await writer.commit((b) => b.insert(Booking, [row]))
+const out = await writer.commit((batch) => batch.insert(Booking, [row]))
 if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
 ```
 
@@ -42,7 +46,7 @@ if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
   leaf-blob pattern keeps metadata stores in the tens of MB. Per-tenant
   fleets get the same gate through `openTenants({ budgetBytes, maxOpen })`.
 - **Cross-instance read-your-writes**: a commit returns
-  `(braid, generation)`; a session token is the pointwise max of every
+  `{ braid, generation }`; a session token is the pointwise max of every
   pair a flow has seen; `replica.waitFor(vector)` refreshes until the
   local vector dominates it. The committing instance always reads its
   own writes without waiting. A singleton map is the single-braid form.
@@ -54,15 +58,12 @@ if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
   row — the schema idiom) or resident mode. `{ kind: "slot-race", tip }`
   means the terminal losses were accepted but out-raced: an operational
   signal to shard the theory into more braids or move the hot braid to
-  a resident Rust writer, whose group commit batches the queue. This
-  package ships no group commit of its own; the recorded reopen trigger
-  is a measured TS deployment at Turso-density write rates where a
-  deliberate batching delay would amortize many writers into one PUT.
+  a resident Rust writer, whose group commit batches the queue.
 
-## The local-fleet recipe (deployment case 5)
+## A local fleet
 
 ```ts
-// one process per scope loop; all processes share one FsStore prefix
+// one process per scope loop; all processes share one fsStore prefix
 import { fsStore, openReplica, openWriter } from "@bjornpagen/bumbledb-log"
 
 const replica = await openReplica({
