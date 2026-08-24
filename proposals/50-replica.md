@@ -44,13 +44,20 @@ its honest general form:
 
 One integer comparison replaced a three-case decision procedure, because
 set semantics made the decision unnecessary rather than making it
-carefully. The same identity works mid-session: 60's loser algebra uses
-"did this apply move the generation?" to detect a subsumption fork at
-the instant it forms — one instrument, both tenses. During the open-phase catch-up (before the check has passed
-once) a rejected replay is *also* a discard, not `ReplayDiverged` — the
-phases exist so the corruption-class verdict is only ever pronounced on a
-store that has proven itself whole; there is no state in which the driver
-must guess which of the two it is looking at.
+carefully. The same identity works mid-session: the writer's publish
+law and its pending-recovery arms (60) read "did this apply move the
+generation?" off the identical instrument — one instrument, both
+tenses. **The open phase follows provenance**: a checkpoint-seeded or
+bootstrapped store is whole by construction — verified digest and
+seeded chain, or a fresh `Db::create` — so it is never in the open
+phase at all; only a pre-existing local directory is unproven, and only
+there is a rejected replay a discard rather than `ReplayDiverged`. The
+recorded reason the phase is provenance and not a
+has-the-check-passed-yet flag: a store whole by construction whose
+replay rejects holds a genuinely poisoned slot, and discarding it would
+re-pull the same bytes and reject again forever — the corruption-class
+wedge is the honest verdict, and the infinite-discard loop is the state
+the representation deletes.
 
 ## Lifecycle
 
@@ -74,16 +81,17 @@ must guess which of the two it is looking at.
    above the checkpoint vector — or when no checkpoint exists — the gc
    exemption law makes every slot durable, so probe `log/{braid}/{g+1}`
    … apply … until 404 = tip, honestly. Then the wholeness check
-   (`generation == Σ g`) and serve. Braid order is irrelevant (L8); the
+   (`generation == Σ g`) and serve. Braid order is irrelevant (L9); the
    loop interleaves round-robin so one hot braid cannot starve the
    others' freshness. **Read legality follows provenance**: a
-   checkpoint-seeded store is whole by construction — verified digest,
-   seeded chain — so reads are legal the moment it opens, while the tail
+   checkpoint-seeded or bootstrapped store is whole by construction —
+   verified digest and seeded chain, or a fresh create — so reads are
+   legal the moment it opens, while the tail
    replays (every vector is a valid admitted state; `wait_for` is the
    tool for callers that need a specific freshness, not a gate on
    everyone). A pre-existing local dir has *not* proven itself whole and
    serves nothing until the wholeness check passes — the open phase
-   exists precisely because that store might be torn, and 00 law 9
+   exists precisely because that store might be torn, and 00 law 8
    promises serial prefixes, not hopeful ones.
 
 ## Refresh and read-your-writes
@@ -148,9 +156,9 @@ scan the tenants you need into an `InstanceBuilder`, `admit`, query the
 | --- | --- |
 | Checkpoint digest mismatch | delete download, retry once (distinguishes a torn transfer from a corrupt object), then `Err` |
 | `GapDetected` (404 at or below the current checkpoint's vector) | discard dir, re-open from the current checkpoint |
-| `FootprintMismatch` / `ChainMismatch{Prev \| Slot \| Timestamp}` | corruption-class `Err` naming braid, slot, key, and writer; never retried |
-| Rejected replay during open-phase catch-up | discard dir, re-pull (a whole-store verdict has not been earned yet) |
-| Rejected replay after the wholeness check | `ReplayDiverged` — corruption-class; the publish law makes it impossible for honest writers |
+| `ChainMismatch{Prev \| Slot \| Timestamp}` | corruption-class `Err` naming braid, slot, key, and writer; never retried |
+| Rejected replay in a pre-existing dir's open-phase catch-up | discard dir, re-pull (a whole-store verdict has not been earned yet) |
+| Rejected replay on a checkpoint-seeded or bootstrapped store, or after the wholeness check | `ReplayDiverged` — corruption-class; the publish law makes it impossible for honest writers, and a discard here would re-pull the poisoned slot forever |
 | Net-no-op replay of a *first-applied* slot (after the apply, `generation < Σ chain[*].g + |pending|`) | publish-law violation in the log — corruption-class naming slot and writer; distinguished from the legitimate crash-window absorption, where the store was already one ahead and the identity lands exact |
 | Corruption-class refusal on one braid | that braid wedges read-only at its last good slot; **the other braids keep serving and accepting writes** — L9 is what makes partial service sound, and a one-braid poison never takes the store down |
 | `generation ≠ Σ vector` after full catch-up + pending resolution | discard dir, re-pull (cache, never truth) |
