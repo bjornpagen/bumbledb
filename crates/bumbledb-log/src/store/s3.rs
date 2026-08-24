@@ -18,7 +18,12 @@ use tokio::runtime::{Handle, Runtime};
 
 use super::{Create, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap};
 
-/// Static keys, or a function the store calls before each signed request.
+/// Static keys, or a caller-owned refresh the store invokes before
+/// each signed request. The refresh is `dyn` because the caller owns
+/// open-ended credential behavior (env, IMDS, SSO, secrets manager,
+/// host rotation); a generic on the store and a bare function pointer
+/// both refuse that. The boxed future is the foreign `CredentialProvider`
+/// shape, not a second house abstraction.
 pub enum S3Credentials {
     Static {
         access_key_id: String,

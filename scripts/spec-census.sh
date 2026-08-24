@@ -210,9 +210,9 @@ done < <(grep -nE -- '\bsnapshots?\b' "${api_snapshot_rustdoc[@]}" || true)
 # ---- (g): zero-dyn engine (audit/27) --------------------------------
 # Production src of the engine crates. `dyn` is legal only on
 # `Error::source` and the `ErrorDescriptor` mirror that feeds Display.
-# The log driver (crates/bumbledb-log/src) is on the roster with ZERO
-# exemptions: the exemption lines below name engine paths only, so any
-# `dyn` in the log driver fails outright.
+# The log driver (crates/bumbledb-log/src) is on the roster with one
+# pin: caller-owned credential behavior at a foreign async-trait
+# boundary; cold path. Any other `dyn` in the log driver fails.
 
 engine_src=(
   crates/bumbledb/src
@@ -222,7 +222,8 @@ engine_src=(
   crates/bumbledb-log/src
 )
 
-dyn_exempt_hits=0
+dyn_error_source_hits=0
+dyn_cred_refresh_hits=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   lineno=0
@@ -266,13 +267,21 @@ while IFS= read -r path; do
          [ "$trimmed" = "source: &'a (dyn std::error::Error + 'static)," ]
        }; then
       exempt=1
+      dyn_error_source_hits=$((dyn_error_source_hits + 1))
     elif [ "$path" = "crates/bumbledb/src/error/convert.rs" ] &&
          [ "$trimmed" = "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {" ]; then
       exempt=1
+      dyn_error_source_hits=$((dyn_error_source_hits + 1))
+    elif [ "$path" = "crates/bumbledb-log/src/store/s3.rs" ] && {
+         [ "$trimmed" = "Refresh(Arc<dyn Fn() -> io::Result<StaticKeys> + Send + Sync>)," ] ||
+         [ "$trimmed" = "refresh: Arc<dyn Fn() -> io::Result<StaticKeys> + Send + Sync>," ] ||
+         [ "$trimmed" = "Box<dyn std::future::Future<Output = object_store::Result<Arc<AwsCredential>>> + Send + 'a>," ]
+       }; then
+      # caller-owned credential behavior at a foreign async-trait boundary; cold path
+      exempt=1
+      dyn_cred_refresh_hits=$((dyn_cred_refresh_hits + 1))
     fi
-    if [ "$exempt" -eq 1 ]; then
-      dyn_exempt_hits=$((dyn_exempt_hits + 1))
-    else
+    if [ "$exempt" -ne 1 ]; then
       echo "spec-census: FAIL — engine dyn outside Error::source exemption: $path:$lineno: $line" >&2
       fail=1
     fi
@@ -280,8 +289,12 @@ while IFS= read -r path; do
 done < <(find "${engine_src[@]}" -type f -name '*.rs' \
   ! -name 'tests.rs' ! -path '*/tests/*' | sort)
 
-if [ "$dyn_exempt_hits" -ne 3 ]; then
-  echo "spec-census: FAIL — Error::source exemption drifted (expected 3 lines, found $dyn_exempt_hits)" >&2
+if [ "$dyn_error_source_hits" -ne 3 ]; then
+  echo "spec-census: FAIL — Error::source exemption drifted (expected 3 lines, found $dyn_error_source_hits)" >&2
+  fail=1
+fi
+if [ "$dyn_cred_refresh_hits" -ne 3 ]; then
+  echo "spec-census: FAIL — credential-refresh exemption drifted (expected 3 lines, found $dyn_cred_refresh_hits)" >&2
   fail=1
 fi
 
@@ -418,4 +431,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (log driver at zero), purged store-and-value tokens absent outside history, one-owner constants single-sited"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited"

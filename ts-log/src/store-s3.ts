@@ -18,6 +18,7 @@ interface StaticKeys {
 	readonly sessionToken?: string
 }
 
+/** Static keys, or a caller-owned refresh the store invokes before each signed request. */
 type S3Credentials = StaticKeys | (() => StaticKeys | Promise<StaticKeys>)
 
 interface S3Config {

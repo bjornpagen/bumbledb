@@ -134,6 +134,20 @@ describe("s3Store construction", function suite() {
 		})
 	})
 
+	test("the constructor accepts a refresh without calling it", function refreshArm() {
+		let called = false
+		const store = s3Store({
+			region: "us-east-1",
+			bucket: "example",
+			credentials() {
+				called = true
+				return { accessKeyId: "AKIAEXAMPLE", secretAccessKey: "secret" }
+			}
+		})
+		assert.equal(typeof store.get, "function")
+		assert.equal(called, false)
+	})
+
 	test("the constructor builds without touching the network", function constructs() {
 		const store = s3Store({
 			region: "us-east-1",

@@ -107,7 +107,7 @@ verb.
 ## Storage-class and availability ruling
 
 The `S3Store` constructor takes **one** target: endpoint, region, bucket,
-credentials, key prefix. `ckpt/*`, `log/*`, and the manifest ride that
+credentials (static keys or a caller-owned refresh), key prefix. `ckpt/*`, `log/*`, and the manifest ride that
 one storage class. The dual-class split (a hot class for `log/*` —
 Express One Zone or R2 — and a standard class for `ckpt/*` +
 `manifest.json`) is configuration that arrives with its measured
