@@ -34,7 +34,7 @@ op_count     u32 LE
 ops          …
 ```
 
-The version stays **2** across the pass that deleted the footprint
+The version stays **2** across the pass that deleted the carried
 section: no release ever shipped the sectioned format; it never existed
 outside this tree, so there is no reader to version against.
 

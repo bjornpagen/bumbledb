@@ -238,12 +238,12 @@ drain by the composite rejection's violations — the cited facts name
 the guilty subset — instead of one-by-one, engaging on a measured
 per-braid rejection-rate moving average, Aria's own trigger, since
 their data shows the fallback machinery costs more than it saves below
-~0.4 % aborts and wins 3× under skew.) There is no linger knob: a
-drain batches whatever is queued and never waits — the deleted knob's
+~0.4 % aborts and wins 3× under skew.) There is no wait-to-batch knob:
+a drain batches whatever is queued and never waits — the deleted knob's
 default was 0, its only nonzero behavior held the commit core through
 a sleep, and a knob whose honest range is one value is a false
 representation. The recorded reopen trigger for deliberate batching
-delay: Turso's production batching shows a few-ms linger amortizing
+delay: Turso's production batching shows a few-ms hold amortizing
 many writers into one Express PUT at tenant density
 (`docs/research/replication-prior-art/turso-notes.md`), and Calvin's
 epoch batching paid ~5 ms average delay for its global order — the
