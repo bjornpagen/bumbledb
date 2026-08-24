@@ -24,8 +24,8 @@ use bumbledb::{SchemaDescriptor, Value};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::manifest::{Manifest, ckpt_mdb_key, log_key, manifest_key};
 use bumbledb_log::replica::{Opened, Provenance, Refreshed, Replica};
-use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
+use bumbledb_log::store::{ObjectStore, StoreKey};
 use bumbledb_log::writer::{Commit, Error, Options, Writer, WriterOpened};
 use lane_e_support::{
     Competitor, NOTE, RECIPE, RacingStore, TestLog, VENUE, codec, insert, kitchen_braid,
@@ -308,7 +308,9 @@ fn pin_loss_cost_one_number() {
         .map(|i| {
             let key = format!("bench/{i}");
             let start = Instant::now();
-            put_store.put_create(&key, &bytes).expect("put");
+            put_store
+                .put_create(&StoreKey::of(&key), &bytes)
+                .expect("put");
             start.elapsed()
         })
         .collect();

@@ -9,8 +9,9 @@ import { fromHex, toHex } from "#bytes.ts"
 import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Descriptor } from "#descriptor.ts"
-import { descriptorOf, withFingerprint } from "#descriptor.ts"
+import { braid, descriptorOf, withFingerprint } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
+import { generation } from "#keys.ts"
 import type { Value } from "#value.ts"
 
 /**
@@ -357,8 +358,8 @@ if (!present) {
 				assert.ok(fixture.header !== undefined && fixture.ops !== undefined)
 				const header: BatchHeader = {
 					fingerprint: fixture.fingerprint,
-					braid: fixture.header.braid,
-					braidGen: BigInt(fixture.header.braidGen),
+					braid: braid(fixture.header.braid),
+					braidGen: generation(BigInt(fixture.header.braidGen)),
 					prev: fixture.header.prev,
 					writer: BigInt(fixture.header.writer),
 					timestamp: BigInt(fixture.header.timestamp)
@@ -395,12 +396,12 @@ if (!present) {
 				assert.ok(descriptor !== undefined, `fixture cites schema ${fixture.schema}`)
 				const decoded = decodeBatch(withFingerprint(descriptor, fixture.fingerprint), bytes)
 				const position = {
-					g: BigInt(fixture.chain.g),
+					g: generation(BigInt(fixture.chain.g)),
 					prev: fixture.chain.prev,
 					ts: BigInt(fixture.chain.ts)
 				}
 				const run = errors.trySync(function checkIt() {
-					verifyChain(decoded.header, fixture.braid, BigInt(fixture.slot), position)
+					verifyChain(decoded.header, braid(fixture.braid), generation(BigInt(fixture.slot)), position)
 				})
 				if (fixture.expect === "ok") {
 					assert.equal(run.error, undefined, `${stem}: the clean chain passes`)

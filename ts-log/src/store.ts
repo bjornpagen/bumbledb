@@ -21,53 +21,45 @@ import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
 import { wrapStore } from "#errors.ts"
+import type { StoreKey } from "#keys.ts"
+import { LOCK_SUFFIX } from "#keys.ts"
+
+declare const etagBrand: unique symbol
+type Etag = string & { readonly [etagBrand]: typeof etagBrand }
+
+function etag(raw: string): Etag {
+	return raw as Etag
+}
 
 interface Fetched {
 	readonly bytes: Uint8Array
-	readonly etag: string
+	readonly etag: Etag
 }
 
 type Poll = { readonly tag: "unchanged" } | { readonly tag: "changed"; readonly fetched: Fetched }
 
-type Create = { readonly tag: "created"; readonly etag: string } | { readonly tag: "exists" }
+type Create = { readonly tag: "created"; readonly etag: Etag } | { readonly tag: "exists" }
 
-type Swap = { readonly tag: "swapped"; readonly etag: string } | { readonly tag: "moved" }
+type Swap = { readonly tag: "swapped"; readonly etag: Etag } | { readonly tag: "moved" }
 
 interface ObjectStore {
 	/** GET; null on 404. */
-	get(key: string): Promise<Fetched | null>
+	get(key: StoreKey): Promise<Fetched | null>
 	/** GET with If-None-Match — the cheap manifest poll. */
-	getIfChanged(key: string, etag: string): Promise<Poll>
+	getIfChanged(key: StoreKey, etag: Etag): Promise<Poll>
 	/** PUT with If-None-Match: * — the log-slot arbitration primitive. */
-	putCreate(key: string, bytes: Uint8Array): Promise<Create>
+	putCreate(key: StoreKey, bytes: Uint8Array): Promise<Create>
 	/** PUT with If-Match — the manifest CAS primitive. */
-	putSwap(key: string, bytes: Uint8Array, etag: string): Promise<Swap>
+	putSwap(key: StoreKey, bytes: Uint8Array, etag: Etag): Promise<Swap>
 	/** DELETE, unconditional — the gc verb's tool. */
-	delete(key: string): Promise<void>
+	delete(key: StoreKey): Promise<void>
 }
-
-/** Suffix of the per-key pid-lockfile that serializes `putSwap`. */
-const LOCK_SUFFIX = ".lock"
 
 /** Ceiling of the jittered wait between probes of a live-held lock. */
 const LOCK_RETRY_MS = 10
 
-function contentEtag(bytes: Uint8Array): string {
-	return toHex(new Uint8Array(internalBlake3(bytes)))
-}
-
-function checkKey(key: string): void {
-	if (key.length === 0 || key.startsWith("/") || key.endsWith("/")) {
-		throw errors.new(`store key is not a slash path: ${key}`)
-	}
-	for (const segment of key.split("/")) {
-		if (segment.length === 0 || segment === "." || segment === "..") {
-			throw errors.new(`store key segment is illegal: ${key}`)
-		}
-		if (segment.endsWith(LOCK_SUFFIX)) {
-			throw errors.new(`store key collides with the lockfile suffix: ${key}`)
-		}
-	}
+function contentEtag(bytes: Uint8Array): Etag {
+	return etag(toHex(new Uint8Array(internalBlake3(bytes))))
 }
 
 function codeOf(error: Error): string | undefined {
@@ -173,8 +165,7 @@ async function releaseLock(lockPath: string): Promise<void> {
 function fsStore(root: string): ObjectStore {
 	const rootPath = path.resolve(root)
 
-	function objectPath(key: string): string {
-		checkKey(key)
+	function objectPath(key: StoreKey): string {
 		return path.join(rootPath, ...key.split("/"))
 	}
 
@@ -288,5 +279,5 @@ function fsStore(root: string): ObjectStore {
 	}
 }
 
-export type { Create, Fetched, ObjectStore, Poll, Swap }
-export { fsStore }
+export type { Create, Etag, Fetched, ObjectStore, Poll, Swap }
+export { etag, fsStore }

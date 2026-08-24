@@ -9,7 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use bumbledb_log::store::fs::{FsStore, content_etag};
-use bumbledb_log::store::{Create, ObjectStore, Swap};
+use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
 
 const ROLE_ENV: &str = "LANE_B_CHILD_ROLE";
 const BASE_ENV: &str = "LANE_B_BASE_DIR";
@@ -101,7 +101,7 @@ fn run_create_child(base: &Path, id: u64) {
     let store = store_at(base);
     wait_for_go(base);
     let outcome = store
-        .put_create(SLOT_KEY, &slot_body(id))
+        .put_create(&StoreKey::of(SLOT_KEY), &slot_body(id))
         .expect("put_create");
     let word = match outcome {
         Create::Created(_) => "created",
@@ -116,7 +116,7 @@ fn run_swap_child(base: &Path, id: u64) {
     // Moved before the contention loop even starts.
     let stale = content_etag(b"not the manifest at all");
     let lost = store
-        .put_swap(MANIFEST_KEY, b"usurper", &stale)
+        .put_swap(&StoreKey::of(MANIFEST_KEY), b"usurper", &stale)
         .expect("stale swap");
     assert_eq!(lost, Swap::Moved, "stale etag must lose as Moved");
 
@@ -125,7 +125,7 @@ fn run_swap_child(base: &Path, id: u64) {
     let mut moved = 0u64;
     while swapped < SWAPS_PER_WRITER {
         let current = store
-            .get(MANIFEST_KEY)
+            .get(&StoreKey::of(MANIFEST_KEY))
             .expect("get manifest")
             .expect("manifest present");
         let value: u64 = String::from_utf8(current.bytes)
@@ -134,7 +134,7 @@ fn run_swap_child(base: &Path, id: u64) {
             .expect("manifest decimal");
         let next = (value + 1).to_string();
         match store
-            .put_swap(MANIFEST_KEY, next.as_bytes(), &current.etag)
+            .put_swap(&StoreKey::of(MANIFEST_KEY), next.as_bytes(), &current.etag)
             .expect("put_swap")
         {
             Swap::Swapped(_) => swapped += 1,
@@ -190,7 +190,7 @@ fn slot_create_is_won_exactly_once_across_processes() {
     );
 
     let fetched = store_at(&base)
-        .get(SLOT_KEY)
+        .get(&StoreKey::of(SLOT_KEY))
         .expect("get slot")
         .expect("slot present");
     assert_eq!(
@@ -214,7 +214,7 @@ fn manifest_swaps_linearize_across_processes() {
     let store = store_at(&base);
     assert!(matches!(
         store
-            .put_create(MANIFEST_KEY, b"0")
+            .put_create(&StoreKey::of(MANIFEST_KEY), b"0")
             .expect("manifest birth"),
         Create::Created(_)
     ));
@@ -236,7 +236,7 @@ fn manifest_swaps_linearize_across_processes() {
     }
 
     let fetched = store
-        .get(MANIFEST_KEY)
+        .get(&StoreKey::of(MANIFEST_KEY))
         .expect("get manifest")
         .expect("manifest present");
     let total: u64 = String::from_utf8(fetched.bytes)

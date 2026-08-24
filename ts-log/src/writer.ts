@@ -16,9 +16,10 @@ import * as errors from "@superbuilders/errors"
 import { bytesEqual, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
-import type { RelationInfo } from "#descriptor.ts"
+import type { Braid, RelationInfo } from "#descriptor.ts"
 import { ErrSpanningCommit, throwContention } from "#errors.ts"
-import { idsKey, logKey } from "#keys.ts"
+import type { Generation } from "#keys.ts"
+import { generation, idsKey, logKey } from "#keys.ts"
 import type { Core, Replica } from "#replica.ts"
 import {
 	applyOps,
@@ -48,15 +49,20 @@ type Commit<Rels extends SchemaRelations, R> =
 	| {
 			readonly tag: "accepted"
 			readonly value: R
-			readonly braid: string
-			readonly generation: bigint
+			readonly braid: Braid
+			readonly generation: Generation
 			readonly durability: Durability
 	  }
 	| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
 
 type BraidOutcome<Rels extends SchemaRelations> =
-	| { readonly tag: "accepted"; readonly braid: string; readonly generation: bigint; readonly durability: Durability }
-	| { readonly tag: "rejected"; readonly braid: string; readonly violations: readonly Violation<Rels>[] }
+	| {
+			readonly tag: "accepted"
+			readonly braid: Braid
+			readonly generation: Generation
+			readonly durability: Durability
+	  }
+	| { readonly tag: "rejected"; readonly braid: Braid; readonly violations: readonly Violation<Rels>[] }
 
 interface CommitSplit<Rels extends SchemaRelations, R> {
 	readonly value: R
@@ -273,8 +279,8 @@ async function recordWithLeases<Rels extends SchemaRelations, R>(
 	throw errors.new("the id-lease pool could not satisfy the recording after 16 refills")
 }
 
-function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): Map<string, Op[]> {
-	const partitioned = new Map<string, Op[]>()
+function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): Map<Braid, Op[]> {
+	const partitioned = new Map<Braid, Op[]>()
 	for (const op of ops) {
 		const info = core.descriptor.relationByName.get(op.relation)
 		const braid = info === undefined ? undefined : core.descriptor.braidOfRelation.get(info.id)
@@ -295,10 +301,10 @@ function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: read
  *  the hot statement and carries the offending facts' raw values; an
  *  accepted-but-outraced terminal loss carries the racing tip. */
 function screamContention<Rels extends SchemaRelations>(
-	braid: string,
+	braid: Braid,
 	rejudged:
 		| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
-		| { readonly tag: "outraced"; readonly tip: bigint }
+		| { readonly tag: "outraced"; readonly tip: Generation }
 ): never {
 	if (rejudged.tag === "rejected") {
 		const violation = rejudged.violations[0]
@@ -397,7 +403,7 @@ async function publishPending<Rels extends SchemaRelations>(
 async function disciplineCommit<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState,
-	braid: string,
+	braid: Braid,
 	ops: readonly Op[]
 ): Promise<Commit<Rels, undefined>> {
 	const entry = chainEntry(core, braid)
@@ -407,14 +413,14 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 		{
 			fingerprint: core.descriptor.fingerprint,
 			braid,
-			braidGen: entry.g + 1n,
+			braidGen: generation(entry.g + 1n),
 			prev: entry.prev,
 			writer: state.writerId,
 			timestamp
 		},
 		ops
 	)
-	core.pending = { braid, gen: entry.g + 1n, bytes }
+	core.pending = { braid, gen: generation(entry.g + 1n), bytes }
 	core.pendingOps = ops
 	core.pendingApplied = false
 	await persistSidecar(core)
@@ -462,7 +468,7 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 				if (partitioned.size > 1) {
 					throw errors.wrap(ErrSpanningCommit, `the recorded ops span braids ${[...partitioned.keys()].join(", ")}`)
 				}
-				const [braid, ops] = [...partitioned.entries()][0] as [string, Op[]]
+				const [braid, ops] = [...partitioned.entries()][0] as [Braid, Op[]]
 				const outcome = await disciplineCommit(core, state, braid, ops)
 				if (outcome.tag === "rejected") {
 					return outcome

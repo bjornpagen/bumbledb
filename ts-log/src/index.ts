@@ -9,7 +9,7 @@
  */
 
 export type { Braid } from "#braids.ts"
-export { braidsOf, serialAtStatementsOf } from "#braids.ts"
+export { braid, braidsOf, serialAtStatementsOf } from "#braids.ts"
 export type { BatchHeader, ChainEntry, DecodedBatch, Op } from "#codec.ts"
 export { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 export type { Descriptor, SerialStatement, Theory } from "#descriptor.ts"
@@ -27,10 +27,12 @@ export {
 	ErrStore,
 	refusalOf
 } from "#errors.ts"
+export type { Generation, StoreKey } from "#keys.ts"
+export { generation, storeKey } from "#keys.ts"
 export type { OpenReplicaOptions, Replica } from "#replica.ts"
 export { openReplica } from "#replica.ts"
-export type { Create, Fetched, ObjectStore, Poll, Swap } from "#store.ts"
-export { fsStore } from "#store.ts"
+export type { Create, Etag, Fetched, ObjectStore, Poll, Swap } from "#store.ts"
+export { etag, fsStore } from "#store.ts"
 export type { OpenTenantsOptions, Tenants } from "#tenants.ts"
 export { openTenants } from "#tenants.ts"
 export type { Interval, Value } from "#value.ts"

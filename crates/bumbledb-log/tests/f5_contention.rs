@@ -32,7 +32,7 @@ use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreError, Swap,
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreError, StoreKey, Swap,
 };
 use bumbledb_log::writer::{
     Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
@@ -435,17 +435,17 @@ impl DropResponses {
 }
 
 impl ObjectStore for DropResponses {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         let created = self.inner.put_create(key, bytes)?;
-        if key.starts_with("log/")
+        if key.as_str().starts_with("log/")
             && self
                 .remaining
                 .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
@@ -463,11 +463,11 @@ impl ObjectStore for DropResponses {
         Ok(created)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }
@@ -558,10 +558,10 @@ impl RacingStore {
         )
     }
 
-    fn maybe_plant(&self, key: &str) {
+    fn maybe_plant(&self, key: &StoreKey) {
         let state = &self.state;
         let log_prefix = format!("log/{}/", state.braid);
-        if !key.starts_with(&log_prefix) {
+        if !key.as_str().starts_with(&log_prefix) {
             return;
         }
         if state
@@ -596,7 +596,7 @@ impl RacingStore {
             .expect("encode competitor");
         let slot_key = log_key("", state.braid, head.g + 1);
         assert_eq!(
-            slot_key, key,
+            &slot_key, key,
             "the planter plants exactly the contested slot"
         );
         assert!(matches!(
@@ -612,24 +612,24 @@ impl RacingStore {
 }
 
 impl ObjectStore for RacingStore {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         self.maybe_plant(key);
         self.inner.put_create(key, bytes)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }
@@ -1513,16 +1513,16 @@ struct HoldNotePut {
 }
 
 impl ObjectStore for HoldNotePut {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
-        if key.contains("log/c00000002/") && !self.tripped.swap(true, Ordering::SeqCst) {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
+        if key.as_str().contains("log/c00000002/") && !self.tripped.swap(true, Ordering::SeqCst) {
             while !self.gate.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1));
             }
@@ -1530,11 +1530,11 @@ impl ObjectStore for HoldNotePut {
         self.inner.put_create(key, bytes)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }

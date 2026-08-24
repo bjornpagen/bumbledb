@@ -11,7 +11,9 @@ use bumbledb_log::manifest::{
     manifest_key, publish_checkpoint,
 };
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
+use bumbledb_log::store::{
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+};
 use lane_d_support::{codec, kitchen_braid, note_braid, temp_dir};
 
 fn digest(seed: u8) -> [u8; 32] {
@@ -156,15 +158,22 @@ fn checkpoint_refuses_a_braid_the_schema_never_minted() {
 #[test]
 fn key_layout_matches_the_protocol() {
     let codec = codec();
-    assert_eq!(manifest_key(""), "manifest.json");
-    assert_eq!(manifest_key("t/acme"), "t/acme/manifest.json");
+    assert_eq!(manifest_key("").as_str(), "manifest.json");
+    assert_eq!(manifest_key("t/acme").as_str(), "t/acme/manifest.json");
     assert_eq!(
-        log_key("", kitchen_braid(&codec), 0x2a),
+        log_key("", kitchen_braid(&codec), 0x2a).as_str(),
         "log/c00000000/000000000000002a"
     );
-    assert!(ckpt_json_key("p", &digest(0x01)).starts_with("p/ckpt/"));
+    assert!(
+        ckpt_json_key("p", &digest(0x01))
+            .as_str()
+            .starts_with("p/ckpt/")
+    );
     assert_eq!(
-        ckpt_json_key("p", &digest(0x01)).split('.').next_back(),
+        ckpt_json_key("p", &digest(0x01))
+            .as_str()
+            .split('.')
+            .next_back(),
         Some("json")
     );
 }
@@ -257,20 +266,20 @@ struct SwapInterloper {
 }
 
 impl ObjectStore for SwapInterloper {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         self.inner.put_create(key, bytes)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        if key == manifest_key("") && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+        if key == &manifest_key("") && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             let plain = FsStore::new(self.root.clone());
             let codec = codec();
             let published = publish_checkpoint(
@@ -288,7 +297,7 @@ impl ObjectStore for SwapInterloper {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }

@@ -78,19 +78,29 @@ type StatementInfo =
 			readonly source: SideInfo
 	  }
 
+declare const braidBrand: unique symbol
+type Braid = string & { readonly [braidBrand]: typeof braidBrand }
+
+function braid(raw: string): Braid {
+	if (!/^c[0-9a-f]{8}$/.test(raw)) {
+		throw errors.new(`not a braid id: ${raw}`)
+	}
+	return raw as Braid
+}
+
 interface SerialStatement {
 	readonly statement: number
-	readonly braid: string
+	readonly braid: Braid
 }
 
 interface Descriptor {
 	readonly relations: readonly RelationInfo[]
 	readonly relationByName: ReadonlyMap<string, RelationInfo>
 	readonly statements: readonly StatementInfo[]
-	/** Ordinary relation id → braid id string (`c{smallest:08x}`). */
-	readonly braidOfRelation: ReadonlyMap<number, string>
-	/** Braid id string → member relation ids, ascending. */
-	readonly braidMembers: ReadonlyMap<string, readonly number[]>
+	/** Ordinary relation id → braid id (`c{smallest:08x}`). */
+	readonly braidOfRelation: ReadonlyMap<number, Braid>
+	/** Braid id → member relation ids, ascending. */
+	readonly braidMembers: ReadonlyMap<Braid, readonly number[]>
 	readonly serialAtStatements: readonly SerialStatement[]
 	readonly fingerprint: string
 	readonly fingerprintBytes: Uint8Array
@@ -124,8 +134,8 @@ function descriptorOf(theory: Theory): Descriptor {
 	return parsed
 }
 
-function braidHex(relationId: number): string {
-	return `c${relationId.toString(16).padStart(8, "0")}`
+function braidHex(relationId: number): Braid {
+	return braid(`c${relationId.toString(16).padStart(8, "0")}`)
 }
 
 function rawValue(value: ValueSpec): Value {
@@ -472,7 +482,7 @@ function withFingerprint(descriptor: Descriptor, fingerprint: string): Descripto
 function deriveBraids(
 	relations: readonly RelationInfo[],
 	statements: readonly StatementInfo[]
-): { braidOfRelation: Map<number, string>; braidMembers: Map<string, readonly number[]> } {
+): { braidOfRelation: Map<number, Braid>; braidMembers: Map<Braid, readonly number[]> } {
 	const parent = new Map<number, number>()
 	for (const relation of relations) {
 		if (!relation.closed) {
@@ -517,8 +527,8 @@ function deriveBraids(
 			list.push(id)
 		}
 	}
-	const braidOfRelation = new Map<number, string>()
-	const braidMembers = new Map<string, readonly number[]>()
+	const braidOfRelation = new Map<number, Braid>()
+	const braidMembers = new Map<Braid, readonly number[]>()
 	for (const [root, ids] of [...members.entries()].sort(function byRoot(a, b) {
 		return a[0] - b[0]
 	})) {
@@ -728,6 +738,7 @@ function fingerprintOf(relations: readonly RelationInfo[], statements: readonly 
 }
 
 export type {
+	Braid,
 	Descriptor,
 	FieldInfo,
 	HiInfo,
@@ -738,4 +749,4 @@ export type {
 	Theory,
 	WeightInfo
 }
-export { braidHex, descriptorOf, withFingerprint }
+export { braid, braidHex, descriptorOf, withFingerprint }

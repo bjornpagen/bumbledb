@@ -83,7 +83,10 @@ fn the_exemption_law_is_exact() {
     };
     assert_eq!(
         swept.log_deleted,
-        vec![log_key("", kitchen, 2), log_key("", kitchen, 1)],
+        vec![
+            log_key("", kitchen, 2).to_string(),
+            log_key("", kitchen, 1).to_string(),
+        ],
         "the walk deletes downward from the first old slot"
     );
     assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());

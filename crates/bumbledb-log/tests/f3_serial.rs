@@ -21,7 +21,9 @@ use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
+use bumbledb_log::store::{
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+};
 use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
 
 const SLOT: RelationId = RelationId(0);
@@ -709,17 +711,17 @@ struct AmbiguousOnce {
 }
 
 impl ObjectStore for AmbiguousOnce {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         let created = self.inner.put_create(key, bytes)?;
-        if key.starts_with("log/")
+        if key.as_str().starts_with("log/")
             && let Create::Created(_) = created
             && self.tripped.swap(1, Ordering::SeqCst) == 0
         {
@@ -728,11 +730,11 @@ impl ObjectStore for AmbiguousOnce {
         Ok(created)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }

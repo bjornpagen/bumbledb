@@ -4,7 +4,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import { idsKey, logKey } from "#keys.ts"
+import { braid as asBraid } from "#descriptor.ts"
+import { generation, idsKey, logKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
 import { fsStore } from "#store.ts"
 import { Holder, Ledger, Note } from "#test/fixtures.ts"
@@ -85,13 +86,14 @@ async function seedHolder(bucket: string, dir: string): Promise<void> {
 	await replica[Symbol.asyncDispose]()
 }
 
-async function assertGapFreeChain(bucket: string, braid: string, tip: bigint): Promise<void> {
+async function assertGapFreeChain(bucket: string, id: string, tip: bigint): Promise<void> {
 	const store = fsStore(bucket)
+	const home = asBraid(id)
 	for (let g = 1n; g <= tip; g++) {
-		const slot = await store.get(logKey(PREFIX, braid, g))
+		const slot = await store.get(logKey(PREFIX, home, generation(g)))
 		assert.ok(slot !== null, `slot ${g} of ${tip} is present: the chain is gap-free`)
 	}
-	const beyond = await store.get(logKey(PREFIX, braid, tip + 1n))
+	const beyond = await store.get(logKey(PREFIX, home, generation(tip + 1n)))
 	assert.equal(beyond, null, "nothing is published beyond the tip")
 }
 
@@ -141,7 +143,7 @@ describe("the TS multi-process lane", function suite() {
 			BigInt(acks.length),
 			"the converged replica holds every acked row exactly once"
 		)
-		assert.equal(verifier.vector.get(braid), BigInt(acks.length))
+		assert.equal(verifier.vector.get(asBraid(braid)), BigInt(acks.length))
 		await verifier[Symbol.asyncDispose]()
 	})
 
@@ -229,7 +231,7 @@ describe("the TS multi-process lane", function suite() {
 			notes,
 			"a fresh replica converges to the same state"
 		)
-		assert.equal(verifier.vector.get(braid), tip)
+		assert.equal(verifier.vector.get(asBraid(braid)), tip)
 		const store = fsStore(bucket)
 		const leaseTouched = await store.get(idsKey(PREFIX, 0, 0))
 		assert.equal(leaseTouched, null, "explicit ids drew no lease: the lane exercised only the commit path")

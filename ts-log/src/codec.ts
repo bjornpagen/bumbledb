@@ -9,9 +9,11 @@
 
 import * as errors from "@superbuilders/errors"
 import { ByteReader, ByteWriter, bytesEqual, fromHex, toHex, utf8Encoder } from "#bytes.ts"
-import type { Theory } from "#descriptor.ts"
+import type { Braid, Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
 import { refuse, refuseChain } from "#errors.ts"
+import type { Generation } from "#keys.ts"
+import { generation } from "#keys.ts"
 import type { TaggedRefusal, Value } from "#value.ts"
 import { readTagged, writeTagged } from "#value.ts"
 
@@ -27,8 +29,8 @@ interface Op {
 
 interface BatchHeader {
 	readonly fingerprint: string
-	readonly braid: string
-	readonly braidGen: bigint
+	readonly braid: Braid
+	readonly braidGen: Generation
 	readonly prev: string
 	readonly writer: bigint
 	readonly timestamp: bigint
@@ -39,12 +41,8 @@ interface DecodedBatch {
 	readonly ops: readonly Op[]
 }
 
-function braidIdOf(braid: string): number {
-	const match = /^c([0-9a-f]{8})$/.exec(braid)
-	if (match === null || match[1] === undefined) {
-		throw errors.new(`not a braid id: ${braid}`)
-	}
-	return Number.parseInt(match[1], 16)
+function braidIdOf(id: Braid): number {
+	return Number.parseInt(id.slice(1), 16)
 }
 
 /**
@@ -138,7 +136,7 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	if (members === undefined) {
 		refuse({ kind: "UnknownBraid", braid: braidId }, `batch braid ${braid} is not derived from this descriptor`)
 	}
-	const braidGen = reader.u64le("braid generation")
+	const braidGen = generation(reader.u64le("braid generation"))
 	const prev = toHex(reader.bytes(32, "prev"))
 	const writer = reader.u64le("writer")
 	const timestamp = reader.u64le("timestamp")
@@ -218,7 +216,7 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 }
 
 interface ChainEntry {
-	readonly g: bigint
+	readonly g: Generation
 	readonly prev: string
 	readonly ts: bigint
 }
@@ -231,7 +229,7 @@ interface ChainEntry {
  * names the misbehaving writer, and the refusal data names the fetched
  * braid.
  */
-function verifyChain(header: BatchHeader, braid: string, slot: bigint, chain: ChainEntry): void {
+function verifyChain(header: BatchHeader, braid: Braid, slot: Generation, chain: ChainEntry): void {
 	if (header.braid !== braid || header.braidGen !== slot) {
 		refuseChain(
 			{ cause: "slot", braid, slot, writer: header.writer },

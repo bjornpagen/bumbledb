@@ -13,15 +13,19 @@ import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
 import { utf8StrictDecoder } from "#bytes.ts"
 import type { ChainEntry } from "#codec.ts"
+import type { Braid } from "#descriptor.ts"
+import { braid } from "#descriptor.ts"
+import type { Generation } from "#keys.ts"
+import { generation } from "#keys.ts"
 
 interface Pending {
-	readonly braid: string
-	readonly gen: bigint
+	readonly braid: Braid
+	readonly gen: Generation
 	readonly bytes: Uint8Array
 }
 
 interface Sidecar {
-	readonly chain: ReadonlyMap<string, ChainEntry>
+	readonly chain: ReadonlyMap<Braid, ChainEntry>
 	readonly pending: Pending | null
 }
 
@@ -52,16 +56,16 @@ function parseSidecar(text: string): Sidecar {
 	if (parsed.v !== 2 || typeof parsed.chain !== "object" || parsed.chain === null) {
 		throw errors.new("sidecar is not a v2 chain file")
 	}
-	const chain = new Map<string, ChainEntry>()
-	for (const [braid, entry] of Object.entries(parsed.chain)) {
-		chain.set(braid, { g: BigInt(entry.g), prev: entry.prev, ts: BigInt(entry.ts) })
+	const chain = new Map<Braid, ChainEntry>()
+	for (const [name, entry] of Object.entries(parsed.chain)) {
+		chain.set(braid(name), { g: generation(BigInt(entry.g)), prev: entry.prev, ts: BigInt(entry.ts) })
 	}
 	const pending =
 		parsed.pending === null
 			? null
 			: {
-					braid: parsed.pending.braid,
-					gen: BigInt(parsed.pending.gen),
+					braid: braid(parsed.pending.braid),
+					gen: generation(BigInt(parsed.pending.gen)),
 					bytes: new Uint8Array(Buffer.from(parsed.pending.bytes, "base64"))
 				}
 	return { chain, pending }

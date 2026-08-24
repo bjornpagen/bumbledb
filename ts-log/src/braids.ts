@@ -5,11 +5,8 @@
  * the descriptor, pinned cross-language by the codec goldens.
  */
 
-import type { SerialStatement, Theory } from "#descriptor.ts"
-import { descriptorOf } from "#descriptor.ts"
-
-/** Braid id: `c{smallest RelationId:08x}`, scoped to the schema fingerprint. */
-type Braid = string
+import type { Braid, SerialStatement, Theory } from "#descriptor.ts"
+import { braid, descriptorOf } from "#descriptor.ts"
 
 /** The schema's own shard map: ordinary relation name → braid id. */
 function braidsOf(theory: Theory): ReadonlyMap<string, Braid> {
@@ -35,4 +32,4 @@ function serialAtStatementsOf(theory: Theory): readonly SerialStatement[] {
 }
 
 export type { Braid }
-export { braidsOf, serialAtStatementsOf }
+export { braid, braidsOf, serialAtStatementsOf }

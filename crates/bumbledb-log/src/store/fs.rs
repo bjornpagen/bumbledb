@@ -17,7 +17,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::{Create, Etag, Fetched, ObjectStore, Poll, Result, StoreError, Swap};
+use super::{
+    Create, Etag, Fetched, LOCK_SUFFIX, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
+};
 
 /// The one etag scheme: the blake3 of the object bytes, rendered
 /// lowercase hex. Derivable from content alone, so every read and every
@@ -33,9 +35,6 @@ pub struct FsStore {
     root: PathBuf,
 }
 
-/// Suffix of the per-key pid-lockfile that serializes `put_swap`.
-const LOCK_SUFFIX: &str = ".lock";
-
 /// Ceiling of the jittered wait between probes of a live-held lock.
 const LOCK_RETRY_MS: u64 = 10;
 
@@ -46,25 +45,8 @@ impl FsStore {
         Self { root: root.into() }
     }
 
-    /// Parse the key at the boundary: relative, slash-separated, no empty
-    /// or dot segments (so it can never escape the root), and no segment
-    /// wearing the lockfile suffix (so it can never collide with a lock).
-    fn object_path(&self, op: &'static str, key: &str) -> Result<PathBuf> {
-        let well_formed = !key.is_empty()
-            && !key.starts_with('/')
-            && !key.ends_with('/')
-            && key.split('/').all(|seg| {
-                !seg.is_empty() && seg != "." && seg != ".." && !seg.ends_with(LOCK_SUFFIX)
-            });
-        if well_formed {
-            Ok(self.root.join(key))
-        } else {
-            Err(StoreError {
-                op,
-                key: key.to_string(),
-                source: io::Error::new(io::ErrorKind::InvalidInput, "malformed object key"),
-            })
-        }
+    fn object_path(&self, key: &StoreKey) -> PathBuf {
+        self.root.join(key.as_str())
     }
 }
 
@@ -208,14 +190,14 @@ fn read_fetched(path: &Path) -> io::Result<Option<Fetched>> {
 }
 
 impl ObjectStore for FsStore {
-    fn get(&self, key: &str) -> Result<Option<Fetched>> {
-        let path = self.object_path("get", key)?;
-        read_fetched(&path).map_err(infra("get", key))
+    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>> {
+        let path = self.object_path(key);
+        read_fetched(&path).map_err(infra("get", key.as_str()))
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> Result<Poll> {
-        let path = self.object_path("get_if_changed", key)?;
-        match read_fetched(&path).map_err(infra("get_if_changed", key))? {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll> {
+        let path = self.object_path(key);
+        match read_fetched(&path).map_err(infra("get_if_changed", key.as_str()))? {
             Some(fetched) if fetched.etag == *etag => Ok(Poll::Unchanged),
             Some(fetched) => Ok(Poll::Changed(fetched)),
             None => Err(StoreError {
@@ -226,9 +208,9 @@ impl ObjectStore for FsStore {
         }
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> Result<Create> {
-        let path = self.object_path("put_create", key)?;
-        let temp = synced_temp(&path, bytes).map_err(infra("put_create", key))?;
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
+        let path = self.object_path(key);
+        let temp = synced_temp(&path, bytes).map_err(infra("put_create", key.as_str()))?;
         let published = publish_link(&temp, &path);
         let _ = fs::remove_file(&temp);
         let outcome = match published {
@@ -238,11 +220,11 @@ impl ObjectStore for FsStore {
             Ok(Publish::Occupied) => Ok(Create::Exists),
             Err(err) => Err(err),
         };
-        outcome.map_err(infra("put_create", key))
+        outcome.map_err(infra("put_create", key.as_str()))
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> Result<Swap> {
-        let path = self.object_path("put_swap", key)?;
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
+        let path = self.object_path(key);
         let run = || -> io::Result<Swap> {
             let _lock = KeyLock::acquire(&path)?;
             // Under the lock, the incumbent's etag is re-derived from the
@@ -260,18 +242,18 @@ impl ObjectStore for FsStore {
             }
             Ok(Swap::Swapped(content_etag(bytes)))
         };
-        run().map_err(infra("put_swap", key))
+        run().map_err(infra("put_swap", key.as_str()))
     }
 
-    fn delete(&self, key: &str) -> Result<()> {
-        let path = self.object_path("delete", key)?;
+    fn delete(&self, key: &StoreKey) -> Result<()> {
+        let path = self.object_path(key);
         let mut lockfile = path.clone().into_os_string();
         lockfile.push(LOCK_SUFFIX);
         for victim in [path, PathBuf::from(lockfile)] {
             match fs::remove_file(&victim) {
                 Ok(()) => {}
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                Err(err) => return Err(infra("delete", key)(err)),
+                Err(err) => return Err(infra("delete", key.as_str())(err)),
             }
         }
         Ok(())

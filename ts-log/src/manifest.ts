@@ -8,7 +8,11 @@
 
 import * as errors from "@superbuilders/errors"
 import { utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import type { Braid } from "#descriptor.ts"
+import { braid } from "#descriptor.ts"
 import { refuse } from "#errors.ts"
+import type { Generation } from "#keys.ts"
+import { generation } from "#keys.ts"
 
 interface Manifest {
 	readonly fingerprint: string
@@ -59,13 +63,13 @@ function parseManifest(bytes: Uint8Array): Manifest {
 }
 
 interface CheckpointHead {
-	readonly g: bigint
+	readonly g: Generation
 	readonly hash: string
 	readonly ts: bigint
 }
 
 interface CheckpointFacts {
-	readonly braids: ReadonlyMap<string, CheckpointHead>
+	readonly braids: ReadonlyMap<Braid, CheckpointHead>
 	readonly catalog: string
 	readonly writer: bigint
 	readonly prev: string | null
@@ -83,19 +87,19 @@ function parseCheckpoint(bytes: Uint8Array): CheckpointFacts {
 	if (typeof rawBraids !== "object" || rawBraids === null) {
 		refuse({ kind: "CheckpointShape" }, "checkpoint json carries no braids map")
 	}
-	const braids = new Map<string, CheckpointHead>()
-	for (const [braid, head] of Object.entries(rawBraids as Record<string, unknown>)) {
+	const braids = new Map<Braid, CheckpointHead>()
+	for (const [name, head] of Object.entries(rawBraids as Record<string, unknown>)) {
 		if (typeof head !== "object" || head === null) {
-			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${braid} head is not an object`)
+			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${name} head is not an object`)
 		}
 		const headRecord = head as Record<string, unknown>
 		const g = headRecord.g
 		const hash = headRecord.hash
 		const ts = headRecord.ts
 		if (typeof g !== "number" || typeof ts !== "number" || typeof hash !== "string" || !HEX64.test(hash)) {
-			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${braid} head is malformed`)
+			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${name} head is malformed`)
 		}
-		braids.set(braid, { g: BigInt(g), hash, ts: BigInt(ts) })
+		braids.set(braid(name), { g: generation(BigInt(g)), hash, ts: BigInt(ts) })
 	}
 	const catalog = record.catalog
 	const writer = record.writer

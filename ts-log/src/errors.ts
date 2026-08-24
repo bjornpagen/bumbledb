@@ -8,6 +8,8 @@
  */
 
 import * as errors from "@superbuilders/errors"
+import type { Braid } from "#descriptor.ts"
+import type { Generation } from "#keys.ts"
 
 /**
  * Typed refusal of a protocol object before any apply: batch shape,
@@ -54,7 +56,7 @@ type RefusalCause =
 	| { readonly kind: "UnknownOpKind"; readonly op: number; readonly opKind: number }
 	| { readonly kind: "UnknownRelation"; readonly op: number; readonly relation: number }
 	| { readonly kind: "ClosedRelation"; readonly op: number; readonly relation: number }
-	| { readonly kind: "OpRelationOutsideBraid"; readonly op: number; readonly relation: number; readonly braid: string }
+	| { readonly kind: "OpRelationOutsideBraid"; readonly op: number; readonly relation: number; readonly braid: Braid }
 	| { readonly kind: "TagMismatch"; readonly relation: string; readonly row: number; readonly field: string }
 	| { readonly kind: "BoolByte"; readonly relation: string; readonly row: number; readonly field: string }
 	| { readonly kind: "InvalidUtf8"; readonly relation: string; readonly row: number; readonly field: string }
@@ -66,14 +68,14 @@ type RefusalCause =
 	| { readonly kind: "CheckpointShape" }
 	| { readonly kind: "CheckpointBraids"; readonly carried: readonly string[]; readonly derived: readonly string[] }
 	| { readonly kind: "CheckpointDigest"; readonly expected: string; readonly computed: string }
-	| { readonly kind: "NoOpSlot"; readonly braid: string; readonly slot: bigint; readonly writer: bigint }
+	| { readonly kind: "NoOpSlot"; readonly braid: Braid; readonly slot: Generation; readonly writer: bigint }
 
 type ChainCause = "prev" | "slot" | "timestamp"
 
 interface ChainMismatchData {
 	readonly cause: ChainCause
-	readonly braid: string
-	readonly slot: bigint
+	readonly braid: Braid
+	readonly slot: Generation
 	readonly writer: bigint
 }
 
@@ -83,10 +85,10 @@ type ContentionCause =
 			readonly statement: string
 			readonly determinants: ReadonlyArray<Readonly<Record<string, unknown>>>
 	  }
-	| { readonly kind: "slot-race"; readonly tip: bigint }
+	| { readonly kind: "slot-race"; readonly tip: Generation }
 
 interface ContentionData {
-	readonly braid: string
+	readonly braid: Braid
 	readonly cause: ContentionCause
 }
 

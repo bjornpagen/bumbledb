@@ -109,7 +109,7 @@ pub fn gc<S: ObjectStore>(
                 old = true;
             }
             store.delete(&key)?;
-            sweep.log_deleted.push(key);
+            sweep.log_deleted.push(key.to_string());
         }
     }
 

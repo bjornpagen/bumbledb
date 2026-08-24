@@ -5,8 +5,9 @@ import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
 import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
-import { descriptorOf } from "#descriptor.ts"
+import { braid, descriptorOf } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
+import { generation } from "#keys.ts"
 import { Ledger } from "#test/fixtures.ts"
 
 const ZERO = "0".repeat(64)
@@ -26,8 +27,8 @@ const OFFSET = {
 function headerOf(): BatchHeader {
 	return {
 		fingerprint: descriptorOf(Ledger).fingerprint,
-		braid: "c00000000",
-		braidGen: 1n,
+		braid: braid("c00000000"),
+		braidGen: generation(1n),
 		prev: ZERO,
 		writer: 12345n,
 		timestamp: 1755801600000n
@@ -84,8 +85,8 @@ describe("the command codec", function suite() {
 			WideTheory,
 			{
 				fingerprint: descriptorOf(WideTheory).fingerprint,
-				braid: "c00000000",
-				braidGen: 1n,
+				braid: braid("c00000000"),
+				braidGen: generation(1n),
 				prev: ZERO,
 				writer: 1n,
 				timestamp: 0n
@@ -210,13 +211,13 @@ describe("the command codec", function suite() {
 
 	test("the chain discipline: slot, prev, and timestamp causes", function chain() {
 		const header = headerOf()
-		const good = { g: 1n, prev: ZERO, ts: 0n }
-		verifyChain(header, header.braid, 1n, good)
+		const good = { g: generation(1n), prev: ZERO, ts: 0n }
+		verifyChain(header, header.braid, generation(1n), good)
 		for (const [probe, cause] of [
-			[{ braid: header.braid, slot: 2n, chain: good }, "slot"],
-			[{ braid: `${header.braid.slice(0, -1)}9`, slot: 1n, chain: good }, "slot"],
-			[{ braid: header.braid, slot: 1n, chain: { ...good, prev: "1".repeat(64) } }, "prev"],
-			[{ braid: header.braid, slot: 1n, chain: { ...good, ts: header.timestamp + 1n } }, "timestamp"]
+			[{ braid: header.braid, slot: generation(2n), chain: good }, "slot"],
+			[{ braid: braid(`${header.braid.slice(0, -1)}9`), slot: generation(1n), chain: good }, "slot"],
+			[{ braid: header.braid, slot: generation(1n), chain: { ...good, prev: "1".repeat(64) } }, "prev"],
+			[{ braid: header.braid, slot: generation(1n), chain: { ...good, ts: header.timestamp + 1n } }, "timestamp"]
 		] as const) {
 			const caught = errors.trySync(function checkIt() {
 				verifyChain(header, probe.braid, probe.slot, probe.chain)

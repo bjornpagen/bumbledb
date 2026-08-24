@@ -15,7 +15,9 @@ use std::time::Duration;
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
+use bumbledb_log::store::{
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+};
 use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
 use lane_e_support::{
     NOTE, RECIPE, STEP, codec, kitchen_braid, note_row, recipe_row, step_row, temp_dir, theory,
@@ -44,16 +46,16 @@ impl HoldFirstPut {
 }
 
 impl ObjectStore for HoldFirstPut {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
-        if key.starts_with("log/") && !self.tripped.swap(true, Ordering::SeqCst) {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
+        if key.as_str().starts_with("log/") && !self.tripped.swap(true, Ordering::SeqCst) {
             while !self.gate.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1));
             }
@@ -61,11 +63,11 @@ impl ObjectStore for HoldFirstPut {
         self.inner.put_create(key, bytes)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }

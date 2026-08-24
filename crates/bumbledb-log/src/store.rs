@@ -8,6 +8,73 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
+/// Suffix of the per-key pid-lockfile. A segment wearing it cannot be a key.
+pub const LOCK_SUFFIX: &str = ".lock";
+
+/// A slash-path object key, parsed once. Empty segments, dot segments,
+/// a leading or trailing slash, and a segment wearing the lockfile
+/// suffix are unrepresentable — the verbs take the proof and never
+/// re-check.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StoreKey(String);
+
+/// A key spelling the parse refused.
+#[derive(Debug)]
+pub struct KeyError {
+    pub key: String,
+}
+
+impl fmt::Display for KeyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "store key is not a slash path: {}", self.key)
+    }
+}
+
+impl std::error::Error for KeyError {}
+
+impl StoreKey {
+    /// Parse at the boundary. Every later verb takes the proof.
+    pub fn parse(raw: &str) -> std::result::Result<Self, KeyError> {
+        let well_formed = !raw.is_empty()
+            && !raw.starts_with('/')
+            && !raw.ends_with('/')
+            && raw.split('/').all(|seg| {
+                !seg.is_empty() && seg != "." && seg != ".." && !seg.ends_with(LOCK_SUFFIX)
+            });
+        if well_formed {
+            Ok(Self(raw.to_string()))
+        } else {
+            Err(KeyError {
+                key: raw.to_string(),
+            })
+        }
+    }
+
+    /// Protocol and fixture assembly: a well-formed key is a
+    /// programming error to get wrong, not a runtime outcome.
+    #[must_use]
+    pub fn of(raw: &str) -> Self {
+        Self::parse(raw).unwrap_or_else(|err| panic!("{err}"))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for StoreKey {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for StoreKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// An object version tag as the store reports it. `FsStore` renders the
 /// blake3 of the object bytes as lowercase hex; HTTP stores carry the
 /// vendor's `ETag` header value verbatim.
@@ -77,22 +144,22 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 /// them appears. Consumers monomorphize over `S: ObjectStore`.
 pub trait ObjectStore: Send + Sync {
     /// GET. `Ok(None)` on 404.
-    fn get(&self, key: &str) -> Result<Option<Fetched>>;
+    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>>;
 
     /// GET with `If-None-Match: <etag>`. `Ok(Unchanged)` on 304 — the
     /// cheap manifest poll.
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> Result<Poll>;
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll>;
 
     /// PUT with `If-None-Match: "*"`. `Ok(Created(etag))` or `Ok(Exists)`
     /// on 412. The log-slot arbitration primitive.
-    fn put_create(&self, key: &str, bytes: &[u8]) -> Result<Create>;
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create>;
 
     /// PUT with `If-Match: <etag>`. `Ok(Swapped(etag))` or `Ok(Moved)` on
     /// 412. The manifest CAS primitive.
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> Result<Swap>;
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap>;
 
     /// DELETE (unconditional). The gc verb's tool.
-    fn delete(&self, key: &str) -> Result<()>;
+    fn delete(&self, key: &StoreKey) -> Result<()>;
 }
 
 /// What a follow-up GET proved about an ambiguous `put_create`.
@@ -128,7 +195,7 @@ pub enum SwapProbe {
 /// content — byte-equal means the operation succeeded.
 pub fn resolve_ambiguous_create<S: ObjectStore>(
     store: &S,
-    key: &str,
+    key: &StoreKey,
     attempted: &[u8],
 ) -> Result<CreateProbe> {
     match retry_read(|| store.get(key))? {
@@ -144,7 +211,7 @@ pub fn resolve_ambiguous_create<S: ObjectStore>(
 /// state to re-decide from.
 pub fn resolve_ambiguous_swap<S: ObjectStore>(
     store: &S,
-    key: &str,
+    key: &StoreKey,
     attempted: &[u8],
 ) -> Result<SwapProbe> {
     match retry_read(|| store.get(key))? {

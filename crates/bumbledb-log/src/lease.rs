@@ -14,7 +14,7 @@ use std::ops::Range;
 use bumbledb::schema::{FieldId, RelationId};
 
 use crate::manifest::Text;
-use crate::store::{Create, ObjectStore, Result as StoreResult, Swap};
+use crate::store::{Create, ObjectStore, Result as StoreResult, StoreKey, Swap};
 
 /// The lease width: one CAS increment claims this many ids.
 pub const LEASE_WIDTH: u64 = 4096;
@@ -22,13 +22,14 @@ pub const LEASE_WIDTH: u64 = 4096;
 /// The counter object key: `ids/{relation:08x}/{field:04x}` under the
 /// store prefix.
 #[must_use]
-pub fn ids_key(prefix: &str, relation: RelationId, field: FieldId) -> String {
+pub fn ids_key(prefix: &str, relation: RelationId, field: FieldId) -> StoreKey {
     let rest = format!("ids/{:08x}/{:04x}", relation.0, field.0);
-    if prefix.is_empty() {
+    let raw = if prefix.is_empty() {
         rest
     } else {
         format!("{prefix}/{rest}")
-    }
+    };
+    StoreKey::of(&raw)
 }
 
 /// Typed lease refusals. None of these retry: each names a disagreement

@@ -13,36 +13,37 @@
 use std::collections::BTreeMap;
 
 use crate::braids::{BraidId, Braids};
-use crate::store::{Create, ObjectStore, Result as StoreResult, Swap};
+use crate::store::{Create, ObjectStore, Result as StoreResult, StoreKey, Swap};
 
 /// The one accepted manifest and sidecar document version.
 pub const DOC_VERSION: u64 = 2;
 
-fn key(prefix: &str, rest: &str) -> String {
-    if prefix.is_empty() {
+fn key(prefix: &str, rest: &str) -> StoreKey {
+    let raw = if prefix.is_empty() {
         rest.to_string()
     } else {
         format!("{prefix}/{rest}")
-    }
+    };
+    StoreKey::of(&raw)
 }
 
 #[must_use]
-pub fn manifest_key(prefix: &str) -> String {
+pub fn manifest_key(prefix: &str) -> StoreKey {
     key(prefix, "manifest.json")
 }
 
 #[must_use]
-pub fn log_key(prefix: &str, braid: BraidId, slot: u64) -> String {
+pub fn log_key(prefix: &str, braid: BraidId, slot: u64) -> StoreKey {
     key(prefix, &format!("log/{braid}/{slot:016x}"))
 }
 
 #[must_use]
-pub fn ckpt_mdb_key(prefix: &str, digest: &[u8; 32]) -> String {
+pub fn ckpt_mdb_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
     key(prefix, &format!("ckpt/{}.mdb", hex32(digest)))
 }
 
 #[must_use]
-pub fn ckpt_json_key(prefix: &str, digest: &[u8; 32]) -> String {
+pub fn ckpt_json_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
     key(prefix, &format!("ckpt/{}.json", hex32(digest)))
 }
 
@@ -467,7 +468,7 @@ pub fn publish_checkpoint<S: ObjectStore>(
 /// byte-equal stands, anything else swaps under the read etag. The one
 /// consumer is the checkpoint document whose `prev` a CAS race
 /// re-renders.
-fn upsert<S: ObjectStore>(store: &S, key: &str, bytes: &[u8]) -> StoreResult<()> {
+fn upsert<S: ObjectStore>(store: &S, key: &StoreKey, bytes: &[u8]) -> StoreResult<()> {
     loop {
         match store.put_create(key, bytes)? {
             Create::Created(_) => return Ok(()),

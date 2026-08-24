@@ -11,7 +11,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
 use bumbledb_log::store::fs::{FsStore, content_etag};
-use bumbledb_log::store::{Create, ObjectStore, Swap};
+use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
 
 /// The shared corpus rule, implemented identically in the Node child:
 /// body[j] of object i is (i * 31 + j * 7) mod 256.
@@ -93,7 +93,9 @@ fn rust_writes_ts_reads_byte_for_byte() {
     let mut keys = Vec::new();
     for i in 0..CORPUS_SIZES.len() {
         let body = corpus_body(i);
-        let outcome = store.put_create(&corpus_key(i), &body).expect("create");
+        let outcome = store
+            .put_create(&StoreKey::of(&corpus_key(i)), &body)
+            .expect("create");
         assert_eq!(outcome, Create::Created(content_etag(&body)));
         keys.push(corpus_key(i));
     }
@@ -131,7 +133,7 @@ fn ts_writes_rust_reads_byte_for_byte() {
     for (i, report) in reports.iter().enumerate() {
         let body = corpus_body(i);
         let fetched = store
-            .get(&corpus_key(i))
+            .get(&StoreKey::of(&corpus_key(i)))
             .expect("get")
             .expect("object present");
         assert_eq!(fetched.bytes, body, "object {i}: byte-for-byte");
@@ -179,7 +181,7 @@ fn mixed_fleet_create_only_is_exclusive_per_slot() {
                 for s in 0..RACE_SLOTS {
                     let body = format!("rs-{id}-slot-{s}");
                     let outcome = store
-                        .put_create(&format!("race/slot-{s}"), body.as_bytes())
+                        .put_create(&StoreKey::of(&format!("race/slot-{s}")), body.as_bytes())
                         .expect("put_create");
                     outcomes.push((s, matches!(outcome, Create::Created(_)), body));
                 }
@@ -218,7 +220,7 @@ fn mixed_fleet_create_only_is_exclusive_per_slot() {
             "slot {slot}: exactly one Created across the fleet"
         );
         let fetched = store
-            .get(&format!("race/slot-{slot}"))
+            .get(&StoreKey::of(&format!("race/slot-{slot}")))
             .expect("get")
             .expect("slot present");
         let winner = winner_body[slot].clone().expect("winner recorded");
@@ -242,7 +244,9 @@ fn mixed_fleet_cas_linearizes() {
     let root = store_root(&base);
     let store = Arc::new(FsStore::new(&root));
     assert!(matches!(
-        store.put_create("race/counter", b"0").expect("birth"),
+        store
+            .put_create(&StoreKey::of("race/counter"), b"0")
+            .expect("birth"),
         Create::Created(_)
     ));
 
@@ -272,7 +276,7 @@ fn mixed_fleet_cas_linearizes() {
                 let mut swapped = 0u64;
                 while swapped < SWAPS_PER_CONTENDER {
                     let current = store
-                        .get("race/counter")
+                        .get(&StoreKey::of("race/counter"))
                         .expect("get")
                         .expect("counter present");
                     let value: u64 = String::from_utf8(current.bytes)
@@ -281,7 +285,11 @@ fn mixed_fleet_cas_linearizes() {
                         .expect("decimal");
                     let next = (value + 1).to_string();
                     if let Swap::Swapped(etag) = store
-                        .put_swap("race/counter", next.as_bytes(), &current.etag)
+                        .put_swap(
+                            &StoreKey::of("race/counter"),
+                            next.as_bytes(),
+                            &current.etag,
+                        )
                         .expect("swap")
                     {
                         assert_eq!(etag, content_etag(next.as_bytes()), "swap etag agrees");
@@ -307,7 +315,7 @@ fn mixed_fleet_cas_linearizes() {
     }
     let total: u64 = String::from_utf8(
         store
-            .get("race/counter")
+            .get(&StoreKey::of("race/counter"))
             .expect("get")
             .expect("counter present")
             .bytes,

@@ -21,7 +21,9 @@ use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
+use bumbledb_log::store::{
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+};
 use bumbledb_log::writer::{StepControl, StepHook, WriterStep};
 
 pub const RECIPE: RelationId = RelationId(0);
@@ -387,14 +389,14 @@ impl RacingStore {
         )
     }
 
-    fn maybe_plant(&self, key: &str) {
+    fn maybe_plant(&self, key: &StoreKey) {
         let state = &self.state;
         let log_prefix = if state.prefix.is_empty() {
             format!("log/{}/", state.braid)
         } else {
             format!("{}/log/{}/", state.prefix, state.braid)
         };
-        if !key.starts_with(&log_prefix) {
+        if !key.as_str().starts_with(&log_prefix) {
             return;
         }
         if state
@@ -426,7 +428,7 @@ impl RacingStore {
             .encode(&header, &ops)
             .expect("encode competitor");
         let slot_key = log_key(&state.prefix, state.braid, head.g + 1);
-        assert_eq!(slot_key, key, "racer plants exactly the contested slot");
+        assert_eq!(&slot_key, key, "racer plants exactly the contested slot");
         assert!(matches!(
             self.inner
                 .put_create(&slot_key, &bytes)
@@ -440,24 +442,24 @@ impl RacingStore {
 }
 
 impl ObjectStore for RacingStore {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         self.maybe_plant(key);
         self.inner.put_create(key, bytes)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }
@@ -479,17 +481,17 @@ impl AmbiguousOnce {
 }
 
 impl ObjectStore for AmbiguousOnce {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.inner.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         let created = self.inner.put_create(key, bytes)?;
-        if (key.contains("/log/") || key.starts_with("log/"))
+        if (key.as_str().contains("/log/") || key.as_str().starts_with("log/"))
             && let Create::Created(_) = created
             && self.tripped.swap(1, Ordering::SeqCst) == 0
         {
@@ -498,11 +500,11 @@ impl ObjectStore for AmbiguousOnce {
         Ok(created)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.inner.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.inner.delete(key)
     }
 }

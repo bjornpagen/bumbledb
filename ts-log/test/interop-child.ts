@@ -15,14 +15,15 @@ import * as path from "node:path"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
+import { storeKey } from "#keys.ts"
 import { fsStore } from "#store.ts"
 
 /** The shared corpus rule, implemented identically in the Rust test:
  *  body[j] of object i is (i * 31 + j * 7) mod 256. */
 const CORPUS_SIZES = [0, 1, 3, 256, 4096, 65536]
 
-function corpusKey(index: number): string {
-	return `interop/obj-${index}`
+function corpusKey(index: number) {
+	return storeKey(`interop/obj-${index}`)
 }
 
 function corpusBody(index: number): Uint8Array {
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
 
 	if (role === "read") {
 		for (const key of rest) {
-			const fetched = await store.get(key)
+			const fetched = await store.get(storeKey(key))
 			if (fetched === null) {
 				throw errors.new(`object ${key} is absent`)
 			}
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
 		await waitForGo(root)
 		for (let s = 0; s < Number.parseInt(slots, 10); s++) {
 			const body = new TextEncoder().encode(`ts-${id}-slot-${s}`)
-			const outcome = await store.putCreate(`race/slot-${s}`, body)
+			const outcome = await store.putCreate(storeKey(`race/slot-${s}`), body)
 			report({
 				role,
 				id,
@@ -121,13 +122,13 @@ async function main(): Promise<void> {
 		let moved = 0
 		const target = Number.parseInt(count, 10)
 		while (swapped < target) {
-			const current = await store.get("race/counter")
+			const current = await store.get(storeKey("race/counter"))
 			if (current === null) {
 				throw errors.new("the counter is absent")
 			}
 			const value = Number.parseInt(new TextDecoder().decode(current.bytes), 10)
 			const next = new TextEncoder().encode(String(value + 1))
-			const outcome = await store.putSwap("race/counter", next, current.etag)
+			const outcome = await store.putSwap(storeKey("race/counter"), next, current.etag)
 			if (outcome.tag === "swapped") {
 				if (outcome.etag !== blake3Hex(next)) {
 					throw errors.new("a swapped etag is not the blake3 of the written bytes")

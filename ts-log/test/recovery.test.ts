@@ -6,12 +6,14 @@ import { after, describe, test } from "node:test"
 import { readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { encodeBatch } from "#codec.ts"
-import { descriptorOf } from "#descriptor.ts"
+import { braid, descriptorOf } from "#descriptor.ts"
+import { generation, storeKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
 import { fsStore } from "#store.ts"
 import { Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
 
+const HOME = braid("c00000000")
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-recovery-"))
 
 after(function cleanup() {
@@ -47,15 +49,15 @@ describe("pending recovery (60)", function suite() {
 		const sidecar = await readSidecar(sidecarFile)
 		assert.ok(sidecar !== null)
 		const descriptor = descriptorOf(Ledger)
-		const entry = sidecar.chain.get("c00000000")
+		const entry = sidecar.chain.get(HOME)
 		assert.ok(entry !== undefined)
 		const ops: Op[] = [{ op: "insert", relation: "Holder", rows: [[2n, "bob"]] }]
 		const bytes = encodeBatch(
 			descriptor,
 			{
 				fingerprint: descriptor.fingerprint,
-				braid: "c00000000",
-				braidGen: entry.g + 1n,
+				braid: HOME,
+				braidGen: generation(entry.g + 1n),
 				prev: entry.prev,
 				writer: 42n,
 				timestamp: entry.ts + 1n
@@ -64,7 +66,7 @@ describe("pending recovery (60)", function suite() {
 		)
 		await writeSidecar(sidecarFile, {
 			chain: sidecar.chain,
-			pending: { braid: "c00000000", gen: entry.g + 1n, bytes }
+			pending: { braid: HOME, gen: generation(entry.g + 1n), bytes }
 		})
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -74,7 +76,7 @@ describe("pending recovery (60)", function suite() {
 			}),
 			2n
 		)
-		assert.equal(again.vector.get("c00000000"), 1n)
+		assert.equal(again.vector.get(HOME), 1n)
 
 		const writer = openWriter(again)
 		const out = await writer.commit(function more(batch) {
@@ -109,24 +111,24 @@ describe("pending recovery (60)", function suite() {
 		const sidecarFile = path.join(dir("a"), "chain.json")
 		const sidecar = await readSidecar(sidecarFile)
 		assert.ok(sidecar !== null)
-		const published = await store.get("prod/main/log/c00000000/0000000000000001")
+		const published = await store.get(storeKey("prod/main/log/c00000000/0000000000000001"))
 		assert.ok(published !== null)
 		const rewound = new Map(sidecar.chain)
-		rewound.set("c00000000", { g: 0n, prev: "0".repeat(64), ts: 0n })
+		rewound.set(HOME, { g: generation(0n), prev: "0".repeat(64), ts: 0n })
 		await writeSidecar(sidecarFile, {
 			chain: rewound,
-			pending: { braid: "c00000000", gen: 1n, bytes: published.bytes }
+			pending: { braid: HOME, gen: generation(1n), bytes: published.bytes }
 		})
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		assert.equal(again.vector.get("c00000000"), 1n)
+		assert.equal(again.vector.get(HOME), 1n)
 		assert.equal(
 			again.db.read(function count(instance) {
 				return instance.count(Holder)
 			}),
 			1n
 		)
-		const second = await store.get("prod/main/log/c00000000/0000000000000002")
+		const second = await store.get(storeKey("prod/main/log/c00000000/0000000000000002"))
 		assert.equal(second, null)
 		await again[Symbol.asyncDispose]()
 	})

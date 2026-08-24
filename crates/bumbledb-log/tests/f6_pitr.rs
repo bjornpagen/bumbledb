@@ -638,7 +638,10 @@ fn gc_deletes_exactly_the_retention_laws_set_per_braid() {
     };
     assert_eq!(
         swept.log_deleted,
-        vec![log_key("", kitchen, 2), log_key("", kitchen, 1)],
+        vec![
+            log_key("", kitchen, 2).to_string(),
+            log_key("", kitchen, 1).to_string(),
+        ],
         "exactly the law's set, walked downward per braid"
     );
     assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
@@ -685,10 +688,10 @@ fn gc_deletes_exactly_the_retention_laws_set_per_braid() {
     assert_eq!(
         swept.log_deleted,
         vec![
-            log_key("", kitchen, 4),
-            log_key("", kitchen, 3),
-            log_key("", notes, 2),
-            log_key("", notes, 1),
+            log_key("", kitchen, 4).to_string(),
+            log_key("", kitchen, 3).to_string(),
+            log_key("", notes, 2).to_string(),
+            log_key("", notes, 1).to_string(),
         ]
     );
     assert_eq!(swept.checkpoints_deleted, vec![hex32(&first_digest)]);

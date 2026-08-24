@@ -18,13 +18,14 @@ import type { ChainEntry, Pending } from "#chain.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
-import type { Descriptor, RelationInfo } from "#descriptor.ts"
+import type { Braid, Descriptor, RelationInfo } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { ErrGapDetected, ErrReplayDiverged, refuse } from "#errors.ts"
-import { checkpointJsonKey, checkpointMdbKey, logKey, manifestKey } from "#keys.ts"
+import type { Generation } from "#keys.ts"
+import { checkpointJsonKey, checkpointMdbKey, generation, logKey, manifestKey } from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
 import { parseCheckpoint, parseManifest, renderManifest } from "#manifest.ts"
-import type { ObjectStore } from "#store.ts"
+import type { Etag, ObjectStore } from "#store.ts"
 import type { Value } from "#value.ts"
 
 const ZERO_HASH = "0".repeat(64)
@@ -45,9 +46,9 @@ interface OpenReplicaOptions<Rels extends SchemaRelations> {
 
 interface Replica<Rels extends SchemaRelations> extends AsyncDisposable {
 	readonly db: Db<Rels>
-	readonly vector: ReadonlyMap<string, bigint>
-	refresh(braid?: string): Promise<ReadonlyMap<string, bigint>>
-	waitFor(vector: ReadonlyMap<string, bigint>): Promise<void>
+	readonly vector: ReadonlyMap<Braid, Generation>
+	refresh(braid?: Braid): Promise<ReadonlyMap<Braid, Generation>>
+	waitFor(vector: ReadonlyMap<Braid, Generation>): Promise<void>
 }
 
 interface Core<Rels extends SchemaRelations> {
@@ -57,11 +58,11 @@ interface Core<Rels extends SchemaRelations> {
 	readonly theory: Schema<Rels>
 	readonly descriptor: Descriptor
 	db: Db<Rels>
-	chain: Map<string, ChainEntry>
+	chain: Map<Braid, ChainEntry>
 	pending: Pending | null
 	pendingOps: readonly Op[] | null
 	pendingApplied: boolean
-	manifestEtag: string | null
+	manifestEtag: Etag | null
 	checkpoint: CheckpointFacts | null
 	checkpointDigest: string | null
 	passes: number
@@ -117,15 +118,15 @@ function storePath<Rels extends SchemaRelations>(core: Core<Rels>): string {
 	return path.join(core.dir, core.storeName)
 }
 
-function zeroChain(descriptor: Descriptor): Map<string, ChainEntry> {
-	const chain = new Map<string, ChainEntry>()
-	for (const braid of descriptor.braidMembers.keys()) {
-		chain.set(braid, { g: 0n, prev: ZERO_HASH, ts: 0n })
+function zeroChain(descriptor: Descriptor): Map<Braid, ChainEntry> {
+	const chain = new Map<Braid, ChainEntry>()
+	for (const id of descriptor.braidMembers.keys()) {
+		chain.set(id, { g: generation(0n), prev: ZERO_HASH, ts: 0n })
 	}
 	return chain
 }
 
-function chainEntry<Rels extends SchemaRelations>(core: Core<Rels>, braid: string): ChainEntry {
+function chainEntry<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid): ChainEntry {
 	const entry = core.chain.get(braid)
 	if (entry === undefined) {
 		throw errors.new(`braid ${braid} is not derived from this theory`)
@@ -225,8 +226,8 @@ type SlotApply = { readonly tag: "applied"; readonly generation: bigint } | { re
  */
 async function applySlot<Rels extends SchemaRelations>(
 	core: Core<Rels>,
-	braid: string,
-	slot: bigint,
+	braid: Braid,
+	slot: Generation,
 	bytes: Uint8Array,
 	phase: ApplyPhase
 ): Promise<SlotApply> {
@@ -256,7 +257,7 @@ async function applySlot<Rels extends SchemaRelations>(
  * The gc floor rule (10): below the current checkpoint's vector a 404 is
  * a collected hole, at or above it the honest tip.
  */
-function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: string, next: bigint): boolean {
+function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, next: Generation): boolean {
 	if (core.checkpoint === null) {
 		return false
 	}
@@ -269,11 +270,11 @@ function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: string, n
 
 async function catchUpBraid<Rels extends SchemaRelations>(
 	core: Core<Rels>,
-	braid: string,
+	braid: Braid,
 	phase: ApplyPhase
 ): Promise<"tip" | "discard"> {
 	for (;;) {
-		const next = chainEntry(core, braid).g + 1n
+		const next = generation(chainEntry(core, braid).g + 1n)
 		const fetched = await core.store.get(logKey(core.prefix, braid, next))
 		if (fetched === null) {
 			if (holeAt(core, braid, next)) {
@@ -322,7 +323,7 @@ function wholenessHolds<Rels extends SchemaRelations>(core: Core<Rels>): boolean
 async function adoptManifest<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	bytes: Uint8Array,
-	etag: string
+	etag: Etag
 ): Promise<void> {
 	const manifest = parseManifest(bytes)
 	if (manifest.fingerprint !== core.descriptor.fingerprint) {
@@ -589,7 +590,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 			core.chain = new Map(sidecar.chain)
 			for (const braid of descriptor.braidMembers.keys()) {
 				if (!core.chain.has(braid)) {
-					core.chain.set(braid, { g: 0n, prev: ZERO_HASH, ts: 0n })
+					core.chain.set(braid, { g: generation(0n), prev: ZERO_HASH, ts: 0n })
 				}
 			}
 			core.pending = sidecar.pending
@@ -663,14 +664,14 @@ async function readdressPending<Rels extends SchemaRelations>(
 		{
 			fingerprint: core.descriptor.fingerprint,
 			braid,
-			braidGen: entry.g + 1n,
+			braidGen: generation(entry.g + 1n),
 			prev: entry.prev,
 			writer: writerId,
 			timestamp
 		},
 		ops
 	)
-	core.pending = { braid, gen: entry.g + 1n, bytes }
+	core.pending = { braid, gen: generation(entry.g + 1n), bytes }
 	core.pendingOps = ops
 	core.pendingApplied = true
 	await persistSidecar(core)
@@ -680,15 +681,15 @@ function maxBigint(a: bigint, b: bigint): bigint {
 	return a > b ? a : b
 }
 
-function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<string, bigint> {
-	const vector = new Map<string, bigint>()
-	for (const [braid, entry] of core.chain) {
-		vector.set(braid, entry.g)
+function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<Braid, Generation> {
+	const vector = new Map<Braid, Generation>()
+	for (const [id, entry] of core.chain) {
+		vector.set(id, entry.g)
 	}
 	return vector
 }
 
-function dominates(have: ReadonlyMap<string, bigint>, want: ReadonlyMap<string, bigint>): boolean {
+function dominates(have: ReadonlyMap<Braid, Generation>, want: ReadonlyMap<Braid, Generation>): boolean {
 	for (const [braid, generation] of want) {
 		if ((have.get(braid) ?? -1n) < generation) {
 			return false
@@ -697,7 +698,7 @@ function dominates(have: ReadonlyMap<string, bigint>, want: ReadonlyMap<string, 
 	return true
 }
 
-async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid?: string): Promise<void> {
+async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid?: Braid): Promise<void> {
 	core.passes += 1
 	if (core.passes % HEARTBEAT_PASSES === 0) {
 		await refreshManifest(core, false)
@@ -726,7 +727,7 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 		get vector() {
 			return vectorOf(core)
 		},
-		async refresh(braid?: string) {
+		async refresh(braid?: Braid) {
 			return withGate(core, async function refreshBody() {
 				if (core.closed) {
 					throw errors.new("replica is disposed")

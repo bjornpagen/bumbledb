@@ -5,9 +5,15 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
 import { readSidecar, writeSidecar } from "#chain.ts"
+import { braid } from "#descriptor.ts"
 import { ErrContention } from "#errors.ts"
+import { generation, storeKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
 import { fsStore } from "#store.ts"
+
+const HOME = braid("c00000000")
+const NOTES = braid("c00000002")
+
 import { Booking, Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
 
@@ -62,7 +68,7 @@ describe("replica and writer over the fs store", function suite() {
 			})
 		})
 		assert.deepEqual(names, ["ada"])
-		assert.equal(b.vector.get("c00000000"), 1n)
+		assert.equal(b.vector.get(HOME), 1n)
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
@@ -83,7 +89,7 @@ describe("replica and writer over the fs store", function suite() {
 		assert.equal(out.tag, "rejected")
 		assert.ok(out.tag === "rejected")
 		assert.equal(out.violations[0]?.kind, "functionality")
-		assert.equal(a.vector.get("c00000000"), 1n)
+		assert.equal(a.vector.get(HOME), 1n)
 		await a[Symbol.asyncDispose]()
 	})
 
@@ -99,7 +105,7 @@ describe("replica and writer over the fs store", function suite() {
 			await a[Symbol.asyncDispose]()
 		}
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		assert.equal(again.vector.get("c00000000"), 1n)
+		assert.equal(again.vector.get(HOME), 1n)
 		assert.equal(
 			again.db.read(function count(instance) {
 				return instance.count(Holder)
@@ -128,11 +134,11 @@ describe("replica and writer over the fs store", function suite() {
 		const sidecar = await readSidecar(sidecarFile)
 		assert.ok(sidecar !== null)
 		const rewound = new Map(sidecar.chain)
-		rewound.set("c00000000", { g: 0n, prev: "0".repeat(64), ts: 0n })
+		rewound.set(HOME, { g: generation(0n), prev: "0".repeat(64), ts: 0n })
 		await writeSidecar(sidecarFile, { chain: rewound, pending: null })
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		assert.equal(again.vector.get("c00000000"), 2n)
+		assert.equal(again.vector.get(HOME), 2n)
 		assert.equal(
 			again.db.read(function count(instance) {
 				return instance.count(Holder)
@@ -157,12 +163,12 @@ describe("replica and writer over the fs store", function suite() {
 		const sidecar = await readSidecar(sidecarFile)
 		assert.ok(sidecar !== null)
 		const torn = new Map(sidecar.chain)
-		torn.set("c00000002", { g: 5n, prev: "1".repeat(64), ts: 0n })
+		torn.set(NOTES, { g: generation(5n), prev: "1".repeat(64), ts: 0n })
 		await writeSidecar(sidecarFile, { chain: torn, pending: null })
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		assert.equal(again.vector.get("c00000000"), 1n)
-		assert.equal(again.vector.get("c00000002"), 0n)
+		assert.equal(again.vector.get(HOME), 1n)
+		assert.equal(again.vector.get(NOTES), 0n)
 		assert.equal(
 			again.db.read(function count(instance) {
 				return instance.count(Holder)
@@ -274,7 +280,7 @@ describe("replica and writer over the fs store", function suite() {
 		assert.equal(absorbed.generation, 1n)
 		assert.equal(absorbed.durability, "published")
 
-		const second = await store.get("prod/main/log/c00000000/0000000000000002")
+		const second = await store.get(storeKey("prod/main/log/c00000000/0000000000000002"))
 		assert.equal(second, null)
 		assert.equal(
 			b.db.read(function count(instance) {
@@ -329,7 +335,7 @@ describe("replica and writer over the fs store", function suite() {
 			})
 			assert.ok(out.tag === "accepted")
 		}
-		assert.equal(a.vector.get("c00000000"), 41n)
+		assert.equal(a.vector.get(HOME), 41n)
 
 		const stale = await writerB.commit(function mint(batch) {
 			batch.insert(Holder, [{ id: 999n, name: "zed" }])
@@ -338,8 +344,8 @@ describe("replica and writer over the fs store", function suite() {
 		assert.ok(stale.tag === "accepted", "forty historical losses count nothing against the live bound")
 		assert.equal(stale.generation, 42n, "exactly one race at the tip: the re-judged batch lands at tip+1")
 		assert.equal(stale.durability, "published")
-		assert.equal(b.vector.get("c00000000"), 42n)
-		const beyond = await store.get("prod/main/log/c00000000/000000000000002b")
+		assert.equal(b.vector.get(HOME), 42n)
+		const beyond = await store.get(storeKey("prod/main/log/c00000000/000000000000002b"))
 		assert.equal(beyond, null, "no slot beyond the single republication exists")
 		assert.equal(
 			b.db.read(function count(instance) {
@@ -372,7 +378,7 @@ describe("replica and writer over the fs store", function suite() {
 		})
 		assert.equal(rotations.length, 1)
 		assert.notEqual(rotations[0], "store-corpse-1")
-		assert.equal(again.vector.get("c00000000"), 1n)
+		assert.equal(again.vector.get(HOME), 1n)
 		await again[Symbol.asyncDispose]()
 	})
 

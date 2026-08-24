@@ -11,7 +11,9 @@ use std::sync::Arc;
 use bumbledb::Theory;
 
 use crate::replica::{Fault, OpenRefusal, Opened, Replica};
-use crate::store::{Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, Swap};
+use crate::store::{
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+};
 
 /// The pinned control-plane tenant.
 pub const SHARED_TENANT: &str = "_shared";
@@ -27,23 +29,23 @@ impl<S> Clone for Shared<S> {
 }
 
 impl<S: ObjectStore> ObjectStore for Shared<S> {
-    fn get(&self, key: &str) -> StoreResult<Option<Fetched>> {
+    fn get(&self, key: &StoreKey) -> StoreResult<Option<Fetched>> {
         self.0.get(key)
     }
 
-    fn get_if_changed(&self, key: &str, etag: &Etag) -> StoreResult<Poll> {
+    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> StoreResult<Poll> {
         self.0.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &str, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
         self.0.put_create(key, bytes)
     }
 
-    fn put_swap(&self, key: &str, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
         self.0.put_swap(key, bytes, etag)
     }
 
-    fn delete(&self, key: &str) -> StoreResult<()> {
+    fn delete(&self, key: &StoreKey) -> StoreResult<()> {
         self.0.delete(key)
     }
 }
