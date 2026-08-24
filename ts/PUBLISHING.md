@@ -262,9 +262,20 @@ cd ts
 #    bdb_abi_version() answers 4 (unchanged: an added JS export is not
 #    an ABI event).
 
-# 2. Place Lane C's linux artifacts from the amazonlinux:2023 CI run:
-#    ts/npm/linux-arm64/bumbledb.node, and keep bumbledb-log-duty beside
-#    the example bundle (not an npm package — it ships inside the Lambda).
+# 2. Download Lane C's linux-arm64 artifacts from a green
+#    bumbledb-log.yml run (amazonlinux:2023 on ubuntu-24.04-arm). The
+#    two artifact names are `bumbledb.linux-arm64.node` and
+#    `bumbledb-log-duty`. This hop never ran that workflow; the owner
+#    waits for a real GitHub run with both artifacts attached.
+#
+#    gh run download <run-id> --name bumbledb.linux-arm64.node --dir /tmp/grail-artifacts
+#    gh run download <run-id> --name bumbledb-log-duty --dir /tmp/grail-artifacts
+#    cp /tmp/grail-artifacts/bumbledb.linux-arm64.node ts/npm/linux-arm64/bumbledb.node
+#
+#    The duty binary is not an npm package — it ships inside the Lambda
+#    Layer. Keep it for examples/lambda/layer/duty/bin/bumbledb-log-duty
+#    (mode +x) before the example deploy. Darwin is built on this
+#    machine in step 3; linux-arm64 is placed, never rebuilt here.
 #    Verify the packed linux-arm64 tarball is exactly LICENSE +
 #    bumbledb.node + package.json.
 
@@ -318,7 +329,7 @@ minutes) refuses any just-published package for ~24h, so consumers who do not
 exclude `@bjornpagen/*` (this repo does, in `ts/pnpm-workspace.yaml`) cannot
 install a fresh release until a day after publish.
 
-## First publish of @bjornpagen/bumbledb-log (after the SDK lands)
+## First publish of @bjornpagen/bumbledb-log 0.18.0 (after the SDK lands)
 
 The log driver publishes AFTER the three 0.17.2 SDK packages verify in
 the registry — its peerDependency is `^0.17.2`, unresolvable a minute
