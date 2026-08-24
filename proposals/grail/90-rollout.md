@@ -70,10 +70,11 @@ all exercised the way a stranger would.
 
 ## Acceptance checklist (receipts land here)
 
-- [ ] B: deep read complete; renames landed whole (0.18.0); descriptor
+- [x] B: deep read complete; renames landed whole (0.18.0); descriptor
       authority collapsed onto internalDescriptor; parse-don't-validate
       closures (StoreKey and the brand sweep); writer.rs split;
-      findings ledger in the receipt
+      findings ledger in the receipt — 3a128011, 21b333d4, dc5f7b6f,
+      d051165b, 520403db, 205729f5; receipt below
 - [x] N: internalDescriptor shipped; roster = {darwin-arm64,
       linux-arm64} with widened pins and tests; 0.17.2 lockstep
       prepared unpublished — 2ddbf4bb, 42e40ec2, 9c577672; receipt
@@ -195,3 +196,104 @@ Deviations:
 - The lockstep gate compares engine workspace crates and bumbledb-c, so those version fields moved with the 0.17.1 precedent. ts-log's peer and crates/bumbledb-log were left for Lane B.
 - `cargo update --offline` in the isolated napi and C lockfiles tried to move third-party crates; those lockfiles were restored and only the workspace package versions rewritten, matching the 0.17.1 lockfile shape.
 - pnpm's pre-run dep check aborted without a TTY; the suite ran through `node scripts/build.ts`, `node --test`, `tsc --noEmit`, and `biome check` as the brief allows.
+
+## Lane B receipt
+
+Six landing hashes, both suites green after every one (ts-log 87;
+rust `cargo fmt --check && cargo clippy --all-targets -- -D warnings
+&& cargo test --manifest-path crates/bumbledb-log/Cargo.toml` whole).
+Descriptor collapse is LANDED, not WAITING-ON-N — N's
+`internalDescriptor` was already in `ts/src` (`2ddbf4bb`) when this
+lane reached that item.
+
+Landing hashes:
+
+- `3a128011360b8d186607e49ccebd38e3d6be0394` — naming law: Log-prefix
+  stutter dies (`LogValue`/`LogInterval`/`LogBatch`/`LogTheory`/
+  `LogDescriptor`/`logValueOf`/`BatchOp`/`ChainPosition`/`PendingBatch`)
+- `21b333d4e1ca884bbf2943e58db8ca8b07453b16` — parse-don't-validate:
+  branded `StoreKey`/`Generation`/`Etag`/`Braid`; verbs take the proof
+- `dc5f7b6f10a6519e6c63b85be8edac0d99a91eb3` — `writer.rs` (2072)
+  becomes the `writer/` family (batch, discipline, drain, loss,
+  pending, duty, open)
+- `d051165b2db325bac5efb9842d591c4674118f79` — pre-one-path vocabulary
+  dies (footprint, republish*, subsume*)
+- `520403dbecad8543b1e7584cd10e23238efe9f1d` — ts-log 0.18.0, peer
+  `^0.17.2`, README rewritten to the new names
+- `205729f54c6c8e02f1bf017f2bb949b183ccfe3a` — descriptor collapse onto
+  `internalDescriptor`
+
+Deletion tally, itemized (25 named units across the six commits):
+
+1–9. `LogValue`, `LogInterval`, `LogBatch`, `LogTheory`,
+   `LogDescriptor`, `logValueOf`, `BatchOp`, `ChainPosition`,
+   `PendingBatch`
+10–14. `checkKey`; per-verb key re-validation; the codec's second
+   `/^c([0-9a-f]{8})$/` braid grammar; primitive string keys on the
+   five verbs; primitive etag/braid/generation on the TS public
+   surfaces
+15. The 2072-line `writer.rs` monolith (1 file)
+16–18. `footprint`, `republish*`, `subsume*` (intersect, linger,
+   `max_pending` were already unrepresentable)
+19–21. The 0.17.0 manifest spelling; the `^0.17.1` peer; the
+   README's Log-era silence about the brands
+22–25. `fingerprintOf`; the string-axiom refusal; the
+   `bumbledb-schema-v5` re-encoder; the intern-id gap that refusal
+   papered over
+
+Deep-read findings (fixed or recorded):
+
+- Fixed: empty-prefix key assembly produced a leading slash on `""`
+  (illegal); now matches Rust (omit the slash).
+- Fixed: two braid parses (codec regex vs `braidHex`) collapsed onto
+  `braid`/`braidHex`.
+- Fixed: `checkKey` discarded the proof; `StoreKey` is parsed once.
+- Fixed: Log-prefix stutter; one vocabulary across languages.
+- Fixed: pre-one-path words on the owned surfaces and the numbered
+  writer/conformance docs those surfaces spoke.
+- Fixed: `writer.rs` monolith split along the real seams.
+- Fixed: theory fingerprint mirror; `descriptorOf` is engine truth.
+- Keep: TS `DecodedBatch` vs Rust `codec::Batch` — more precise noun
+  wins; do not export two `Batch` types from `index.ts`.
+- Keep: TS `Op.op` (`"insert" | "delete"`) vs Rust `Op.kind` —
+  tagged-union idiom vs enum.
+- Keep: Rust generation stays `u64` — a newtype that only wraps u64
+  is a stutter; TS `Generation` is the bigint range proof.
+- Keep: `Sweep.log_deleted: Vec<String>` — a display list after
+  delete consumed the proof.
+- Keep: `Etag` is wrap-only (HTTP vendors carry tags verbatim); no
+  grammar.
+- Keep: `replica.ts` (~796) unsplit. The seams (apply/catch-up,
+  manifest, store lifecycle, pending recovery, open+handle) are real
+  as function clusters but they share one `Core` and one gate;
+  splitting would add import surface without making a state
+  unrepresentable. The temporal-gate test reads `replica.ts` by
+  filename.
+- Keep: `assembleFromSpec` — the conformance corpus is not a theory
+  (containments onto unkeyed projections, empty serial statements);
+  the engine seal refuses it. Fixture-only, not exported from
+  `index.ts`. Production `descriptorOf` never calls it.
+
+Deviations from grail/10:
+
+- `descriptor.ts` is 710 lines, not a thin file, because
+  `assembleFromSpec` remains for corpus goldens. The deleted
+  authority is the fingerprint mirror, not the fixture assembler.
+- `replica.ts` reviewed and kept whole (split-only-if-seams-demand).
+- `crates/bumbledb-log` crate version stays 0.17.0 — the mandated
+  floor named ts-log 0.18.0, not the Rust crate.
+- Numbered 40/70 were not amended for `StoreKey`: they did not show
+  `get(key: string)`. 60 and 80 were amended where they still spoke
+  republish/subsume as current vocabulary.
+
+WAITING-ON-N: no. Collapse landed in `205729f5`.
+
+Paths this lane changed: `ts-log/src/**`, `ts-log/test/**`,
+`ts-log/package.json`, `ts-log/README.md`,
+`crates/bumbledb-log/src/{store.rs,store/fs.rs,gc.rs,lease.rs,manifest.rs,tenants.rs,writer.rs→writer/**}`,
+`crates/bumbledb-log/tests/**` (wrappers and call sites),
+`crates/bumbledb-log/conformance/corpus/schemas.json`,
+`crates/bumbledb-log/Cargo.lock` (path-dep 0.17.2 re-pin),
+`proposals/60-writer.md`, `proposals/80-conformance.md`,
+`proposals/grail/90-rollout.md` (this receipt). Did not touch `ts/`,
+`.github/`, `duty.rs`, `examples/lambda/`, `lean/`.
