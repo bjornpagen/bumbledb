@@ -21,7 +21,7 @@ pin moves. ts-log 0.18.0's peer becomes `^0.17.2`.
 
 ## The Rust S3 store — box B closes, because its consumer now exists
 
-The duty Lambda must compact (Rust-only) and speak to the bucket — it
+The duty binary must compact (Rust-only) and speak to the bucket — it
 is the Rust cloud consumer whose absence kept `S3Store` out of scope.
 It lands per proposals/40 as written: over the `object_store` crate,
 SigV4, the conditional headers, the retry/GET-verify law already in
@@ -35,14 +35,15 @@ close together (30 owns C).
 `crates/bumbledb-log/src/bin/duty.rs` (~100 lines over existing
 machinery), two modes from one body:
 
-- `--once` — the Lambda mode: open the prefix as a checkpointer
-  (replica + checkpoint/gc rights, no commits, no leases), refresh,
-  run ONE cadence check (vector-sum delta or log bytes, the constants
-  10-protocol owns), compact + publish under the checkpoint order if
-  crossed, run the gc retention law, exit 0. EventBridge fires it on a
-  schedule; idempotent by the checkpoint order and content addressing,
-  so overlapping invocations are benign races the protocol already
-  absorbs.
+- `--once` — one cadence check and exit: open the prefix as a
+  checkpointer (replica + checkpoint/gc rights, no commits, no
+  leases), refresh, check the cadence (vector-sum delta or log bytes,
+  the constants 10-protocol owns), compact + publish under the
+  checkpoint order if crossed, run the gc retention law, exit 0. This
+  is the arm the app Lambda's duty event runs (50 wires the
+  EventBridge schedule to it); idempotent by the checkpoint order and
+  content addressing, so overlapping runs are benign races the
+  protocol already absorbs.
 - default — the resident loop for case-5 machines (the same body,
   slept on a cadence), which is the recorded Rust-sidecar deviation
   made runnable for the local fleet too.

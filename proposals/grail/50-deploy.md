@@ -5,6 +5,12 @@ working deployment, smoke-run once during the pass, never wired into
 conformance, and owned by whoever deploys it. It exists so the owner's
 deployment is an afternoon of reading, not archaeology.
 
+It installs from the REGISTRY, not the tree — which is why the rollout
+(90) puts the owner's 0.17.2 / 0.18.0 publish ceremony before this
+lane: the deploy smoke doubles as the end-to-end registry proof
+(loader roster, pack-time pins, peer ranges, exactly as a stranger
+would meet them).
+
 ## The resources (one Alchemy program)
 
 - **One S3 bucket** — the log. Standard class; versioning off (the

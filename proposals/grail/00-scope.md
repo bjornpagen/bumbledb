@@ -12,9 +12,10 @@ The product is TWO use cases, and nothing else:
    disposable local cache reused across warm invocations, one S3 bucket
    is the log, commits race slots exactly as designed, and a Next.js
    app on Vercel calls the function URL. Vercel itself never loads a
-   native module. Checkpoint and gc duty is a SECOND, tiny Lambda —
-   the Rust duty binary on provided.al2023 — fired by an EventBridge
-   schedule.
+   native module. Checkpoint and gc duty is the SAME function's second
+   event arm: an EventBridge schedule invokes it with a duty event,
+   and the handler execs the bundled Rust duty binary — one function,
+   no custom runtime.
 
 Amazon Linux is law: every linux artifact is built in an
 `amazonlinux:2023` arm64 userspace and its glibc (2.34) is the
@@ -28,14 +29,16 @@ does not load where it deploys.
 2. **linux-arm64 platform package** + roster widening + SDK **0.17.2**
    with `internalDescriptor` (20). Consumer: the app Lambda.
 3. **The Rust `S3Store`** (20/30) — box B closes because its consumer
-   now exists: the duty Lambda. Single storage class.
+   now exists: the duty binary. Single storage class.
 4. **The TS aws4fetch store** (30) — box C closes. Consumer: the app
    Lambda's writer. Plus `memStore` (use case 1's test tier).
 5. **The duty binary with `--once`** (20) — one cadence check per
    invocation; the scheduled Lambda's whole body. Consumer: bounded
    logs, fast cold opens, enforced retention with zero residents.
 6. **The CI lane** (40) — arm runner, amazonlinux:2023 build container,
-   linux battery, artifacts for owner publish.
+   linux battery, artifacts for owner publish — AND the amazonlinux
+   law applied whole: ci.yml's existing linux legs move into the same
+   container, so no Ubuntu userspace tests anything after this pass.
 7. **The Alchemy example** (50) — bucket + IAM + two Lambdas + schedule
    + function URL, non-normative, smoke-run once.
 8. **Publish prep only** — SDK 0.17.2 (three packages) and ts-log
@@ -53,9 +56,10 @@ does not load where it deploys.
 - **S3 Express One Zone dual-class**: configuration once the store
   exists. Trigger: a measured commit-latency need standard-class S3
   misses.
-- **TS-native checkpoint duty**: the duty Lambda IS the recorded
-  Rust-sidecar deviation, serverless-shaped. Trigger: a deployment
-  that cannot run a second Lambda.
+- **TS-native checkpoint duty**: the bundled duty binary IS the
+  recorded Rust-sidecar deviation, serverless-shaped. Trigger: a
+  deployment that cannot bundle or exec a native binary beside its
+  handler.
 - **Vercel-side replicas** (true case 1 — functions embedding the
   library): would need Vercel-platform binaries and buys nothing while
   reads can ride the function URL. Trigger: a measured read-latency
