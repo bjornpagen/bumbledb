@@ -1,7 +1,7 @@
 {
 	"name": "@bjornpagen/bumbledb-log",
 	"version": "0.17.0",
-	"description": "Braided object-store replication for bumbledb: the command codec, the conflict algebra's footprints, and replica/writer over five store verbs",
+	"description": "Braided object-store replication for bumbledb: the command codec, theory-derived braids, and replica/writer over five store verbs",
 	"type": "module",
 	"exports": {
 		".": {

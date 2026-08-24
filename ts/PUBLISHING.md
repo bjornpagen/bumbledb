@@ -11,6 +11,21 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
+`0.17.1` is the `internalBlake3` release over `0.17.0` — one export, one
+consumer. The engine-linked blake3 hash crosses the FFI as
+`internalBlake3(data: Uint8Array): Uint8Array` (the `#internal`-doc'd
+seam `30-engine-seams.md` blesses by name), and its consumer is
+`@bjornpagen/bumbledb-log`'s store tier: computed object etags, the
+descriptor digest, and the chain hashes all spend it, which is what
+keeps the export alive under the consumer-roster law. Nothing else
+moved: the C ABI stays **generation 4** (`bdb_abi_version()` is
+unchanged — an added JS export is not an ABI event), storage stays
+format **8**, and no fingerprint pin moved. This release exists to
+unblock `@bjornpagen/bumbledb-log`'s first publish, whose
+peerDependency is `^0.17.1`; the publish command sequence is the
+standing one below, and the log package's own first-publish steps
+follow it.
+
 `0.17.0` is the purge release, and the first published version after
 `0.15.0` (`0.16.0` was completed but never published; its changes ship
 here). The engine surface was re-derived from its consumers: every
@@ -203,24 +218,25 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits every spelling, then the build enforces the match. All
-spellings are `0.17.0` in this tree; `pnpm run build` asserts the lockstep
+spellings are `0.17.1` in this tree; `pnpm run build` asserts the lockstep
 on every run.
 
-## Runbook (0.16.0, darwin-arm64 host, owner)
+## Runbook (0.17.1, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.17.0 (the build asserts it — the
+# 1. The lockstep is already set to 0.17.1 (the build asserts it — the
 #    platform pin is NOT a repo field, it injects at pack time):
-#    - ts/package.json                    "version": "0.17.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.17.0"
-#    - ts/crate/Cargo.toml                version = "0.17.0"
-#    - crates/bumbledb/Cargo.toml         version = "0.17.0"
-#    - crates/bumbledb-c/Cargo.toml       version = "0.17.0"
+#    - ts/package.json                    "version": "0.17.1"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.17.1"
+#    - ts/crate/Cargo.toml                version = "0.17.1"
+#    - crates/bumbledb/Cargo.toml         version = "0.17.1"
+#    - crates/bumbledb-c/Cargo.toml       version = "0.17.1"
 #    - workspace members (bench, macros, query, query-macros, theory)
-#    bdb_abi_version() answers 4 (the 0.17.0 tag renumbering).
+#    bdb_abi_version() answers 4 (the 0.17.0 tag renumbering; 0.17.1
+#    adds a JS export, which is not an ABI event).
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -242,12 +258,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.17.0 version
-pnpm view @bjornpagen/bumbledb@0.17.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.17.1 version
+pnpm view @bjornpagen/bumbledb@0.17.1 version
 
 # 6. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.17.0 <release-commit> -m "bumbledb 0.17.0" && git push origin v0.17.0
+#    git tag -a v0.17.1 <release-commit> -m "bumbledb 0.17.1" && git push origin v0.17.1
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -268,6 +284,36 @@ Note the release-age lag: pnpm 11's default `minimumReleaseAge` (1440
 minutes) refuses any just-published package for ~24h, so consumers who do not
 exclude `@bjornpagen/*` (this repo does, in `ts/pnpm-workspace.yaml`) cannot
 install a fresh release until a day after publish.
+
+## First publish of @bjornpagen/bumbledb-log (after the SDK lands)
+
+The log driver publishes THIRD, and only after both 0.17.1 SDK packages
+verify in the registry — its peerDependency is `^0.17.1`, unresolvable a
+minute earlier. It is a platformless package: pure TypeScript source
+(`files` ships `src/` + README, `exports` points at `src/index.ts`), no
+napi half, no platform sibling, no pack-time pin injection — so the
+whole ceremony is the verification trio and one publish. `ts-log/`'s
+manifest already carries `publishConfig.access: "public"` and
+`"private": false`; the repo-local `file:../ts` engine link lives in
+`devDependencies`, which npm does not publish, so the published manifest
+names only the peer range.
+
+```sh
+# From the ts-log/ package root, after step 5 above answers 0.17.1 twice.
+cd ts-log
+pnpm install          # resolves the ^0.17.1 peer against the registry now
+pnpm test             # node --test, the ONE test spelling
+pnpm run typecheck
+pnpm run lint
+pnpm publish --no-git-checks   # interactive OTP, same as the SDK pair
+
+# Verify:
+pnpm view @bjornpagen/bumbledb-log@0.17.0 version
+```
+
+The package's own version is `0.17.0` — the log driver is not in the
+engine lockstep; it rides its peer range instead, and `assertVersionLockstep`
+never reads it.
 
 ## Post-publish: the primer cutover lands
 
