@@ -44,7 +44,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",
-		"@bjornpagen/bumbledb": "file:../ts",
+		"@bjornpagen/bumbledb": "link:../ts",
 		"@types/node": "26.1.1",
 		"typescript": "7.0.2"
 	},
