@@ -101,8 +101,22 @@ verb.
    drivers ship it at parity: every lane that runs on `S3Store` runs on
    `FsStore`, in Rust and in TS, or the gap is reported. No network
    dependency in the test suite — or in case 5's production loop.
-2. **`S3Store`** — S3/Express/R2/OCI via one implementation, since all
-   four speak SigV4 + the conditional headers.
+2. **`S3Store` / `s3Store`** — S3/Express/R2/OCI via one constructor in
+   each language, since all four speak SigV4 + the conditional headers.
+   Rust ships `S3Store` over `object_store` (receipt box B). TypeScript
+   ships `s3Store` over `@aws-sdk/client-s3` (receipt box C). Same five
+   verbs, same retry/GET-verify law, same one-target constructor. The
+   vendor ETag rides the opaque token verbatim. Both gated smokes share
+   one env contract.
+3. **`MemStore` / `memStore`** — the third store: the five verbs over
+   one in-process map. Etags are blake3 of the bytes, the same mint
+   `FsStore` uses; the brand is the contract, not the hash algorithm.
+   Create-only and CAS are trivially atomic under single-process
+   semantics — which is the honest scope statement, declared where the
+   type lives. No persistence, no cross-process claim, no configuration.
+   Its consumer is every store-semantic and retry-law test that never
+   touches a disk (those bodies migrated off `FsStore` tempdirs) and
+   every library user's unit tests. Multiprocess stays on disk.
 
 ## Storage-class and availability ruling
 
@@ -137,13 +151,46 @@ becomes a build-time problem. The engine workspace stays heed+blake3-pure —
 `bumbledb-log` is a separate crate outside that purity boundary, like
 `bumbledb-c`.
 
-TS side: `@aws-sdk/client-s3` (AWS-owned, maintained). The grail pass
-named `aws4fetch`; the owner killed that dependency — no commits in
-about two years, open issues on query canonicalization, header signing,
-`X-Amz-Content-Sha256`, empty-body POST, and streams — and the official
-client is the replacement. The five verbs still map to real HTTP
-preconditions (`If-None-Match`, `If-Match`, DELETE); the SDK must send
-those headers, not guess.
+ACCEPT `object_store` + `tokio` as unconditional crate deps. One way to
+build the crate; no feature matrix. The embedded use case's TS consumers
+never compile this crate. Reopen: an embedded Rust consumer that
+measures the build cost.
+
+Keep a multi-thread Tokio runtime. The writer's publisher and the duty
+thread call store verbs on other OS threads; a current-thread runtime
+cannot drive two `block_on` callers. Construct `S3Store` outside an
+async context — `Handle::try_current` at `new()` is a typed refusal.
+Reopen: a consumer that only ever calls verbs from one thread and
+measures the extra workers as cost.
+
+TS side: `@aws-sdk/client-s3` (AWS-owned, maintained). The five verbs
+map to real HTTP preconditions (`If-None-Match`, `If-Match`, DELETE);
+the SDK sends those headers, this module does not guess. Node **>=24**
+is the floor everywhere the TypeScript store ships or tests (`engines`
+in `ts/`, `ts/npm/*`, and `ts-log`; the `.ts` test runner and build
+scripts; AL2023 CI cells install `nodejs24`; Lambda is `nodejs24.x`).
+Never 22.
+
+Both-language credentials are one sum: static keys (id, secret,
+optional session token) | a caller-owned refresh callback. This is not
+the SDK default provider chain and not a generic on the store. Rust
+spells the refresh arm as `dyn` (the enum arm, the `RefreshProvider`
+field, and the boxed future `CredentialProvider` forces) — three exact
+lines pinned in the census on the `Error::source` precedent, reason
+attached: caller-owned credential behavior at a foreign async-trait
+boundary; cold path. Zero other log-driver dyns.
+
+## Receipt boxes
+
+- [x] B: Rust `S3Store` over `object_store` — the duty binary is the
+      cloud consumer whose absence kept the store out of scope. Five
+      verbs, one storage class, retry/GET-verify, gated smoke.
+      Landing `f6c338e0`. Refresh kept `bc7ef05b`. Multi-thread runtime
+      `44e69915`. Smoke `ff097be2`.
+- [x] C: TS `s3Store` over `@aws-sdk/client-s3` — the app Lambda's
+      writer is the consumer. Same five verbs and one constructor.
+      Official-client landing `7ada883d`. `memStore` `6de97425`. Node
+      floor 24 `06f767f2`. Smoke `ff097be2`.
 
 ## Retry law
 
