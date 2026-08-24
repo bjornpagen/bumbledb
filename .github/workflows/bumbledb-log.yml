@@ -82,7 +82,13 @@ jobs:
           restore-keys: |
             log-al2023-arm64-cargo-
       - name: Activate the pinned pnpm
-        run: corepack enable pnpm
+        # AL2023's nodejs24 does not ship corepack (official Node via
+        # setup-node does; this job stays on the dnf userspace so the
+        # napi .node is minted against glibc 2.34). nodejs24-npm can
+        # install corepack; corepack then activates the packageManager pin.
+        run: |
+          npm install -g corepack
+          corepack enable pnpm
       - name: Resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
