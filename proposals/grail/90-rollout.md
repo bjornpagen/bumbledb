@@ -91,3 +91,73 @@ all exercised the way a stranger would.
       cold-start and commit latencies recorded
 - [ ] X: numbered docs amended; receipts re-issued; battery whole;
       proposals/grail/ deleted; handoff written
+
+## Lane C receipt
+
+YAML landed; GitHub-hosted runners were not executed from this
+machine, so the C checkbox stays unchecked until a real run is green
+with artifacts attached.
+
+Landing hashes:
+
+- `16ad4b1572c7a0c510f7ca57e6f15afc6e723a05` — `bumbledb-log.yml`
+  (linux-arm64 on `ubuntu-24.04-arm` + `amazonlinux:2023`; darwin
+  owns only the bumbledb-log crate and the ts-log suite; artifacts
+  `bumbledb.linux-arm64.node` and `bumbledb-log-duty`; S3 smoke
+  loud-skips unless `BUMBLEDB_S3_SMOKE_BUCKET`, `AWS_ACCESS_KEY_ID`,
+  and `AWS_SECRET_ACCESS_KEY` are set)
+- `af87477368a2abf47b3db43e93c2d67f82773f8d` — the law applied
+  whole: ci.yml check/sdk linux cells and c-abi.yml's linux cell
+  keep `ubuntu-latest` as the host kernel and run every build/test
+  step inside `amazonlinux:2023`
+
+Deletion tally (4):
+
+1. An Ubuntu userspace as a place that could have built the
+   linux-arm64 artifacts (unrepresentable in bumbledb-log.yml)
+2. The check lane's Ubuntu userspace
+3. The sdk lane's Ubuntu userspace
+4. The c-abi lane's Ubuntu userspace
+
+What moved into amazonlinux:2023: ci.yml `check` linux, ci.yml
+`sdk` linux, c-abi.yml linux, and the new linux-arm64 job. lean
+and miri stay macos-latest (already not Ubuntu). darwin jobs stay
+macos-latest.
+
+S3 smoke gate: both bumbledb-log.yml jobs; loud skip naming the
+missing variables; the crate's current `s3_smoke` test still
+refuses when credentials are present (Lane S wires the store).
+
+Un-containerizable linux legs: none. Darwin cannot be Amazon
+Linux and is not Ubuntu.
+
+Deviations and unverified packages (docker was not available on
+this machine; the dnf map is from AWS AL2023 docs + reasonable
+names, not a live `dnf` probe):
+
+- Path filters on bumbledb-log.yml add `crates/bumbledb/**`,
+  `crates/bumbledb-theory/**`, and `rust-toolchain.toml` so the
+  deploy artifacts rebuild when their Rust inputs move. 40 named
+  only crates/bumbledb-log, ts-log, ts, and the workflow itself.
+- c-abi.yml is containerized even though 40 names only ci.yml,
+  because "no Ubuntu userspace anywhere" is the acceptance line.
+- linux-arm64 uses dnf `nodejs22` as 40 writes; ts/ and ts-log
+  `engines` pin `node >=24`; the sdk linux cell keeps
+  `actions/setup-node` at 24 inside the container so that battery
+  does not change language. AL2023 also ships `nodejs24` per AWS
+  docs — unused here.
+- `crates/bumbledb-log/src/bin/duty.rs` is not in the tree (Lane
+  D). The linux-arm64 job will fail at `cargo build --bin duty`
+  until that binary lands. Not skipped.
+- dnf package map used: `gcc`, `gcc-c++`, `make`, `binutils`,
+  `git`, `tar`, `gzip`, `xz`, `unzip`, `python3` (check.sh
+  `flame.py` selftest, stdlib-only), `sed`, `gawk` (check.sh
+  `filtered_test`), `diffutils` (c-abi cbindgen diff),
+  `findutils`, `ca-certificates`, `curl`, `nodejs22`,
+  `nodejs22-npm`, then `alternatives --set node /usr/bin/node-22`.
+  Unverified against a live image: `nodejs22-npm`, `binutils`,
+  `xz`, `unzip`, `sed`, `gawk`, `diffutils`, `findutils`, the
+  `alternatives` path, and whether `nodejs22` ships `corepack`
+  (40 asserts it does; the step is `corepack enable pnpm`).
+- rustup is installed in-container via rustup.rs (`--default-toolchain
+  none`); not a dnf package. Network required on the runner.
