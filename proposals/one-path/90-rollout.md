@@ -121,9 +121,42 @@ amendment once against final shapes. X closes.
       gone. lean.sh green twice, the second run concurrent with lanes
       R/T mid-flight: census 104 rows / 332 tokens, corpus 277 cases at
       0 disagreements, three-way comparator green.
-- [ ] P: one on-disk protocol, two conforming implementations; interop
+- [x] P: one on-disk protocol, two conforming implementations; interop
       lane green both directions; TS multi-process lane green;
-      flock/libc/unsafe/.etag/random-etags deleted
+      flock/libc/unsafe/.etag/random-etags deleted. Landed at 38c0e68d
+      (the unified protocol in both stores: link-published create-only,
+      computed blake3 etags, the pid-lockfile published with the same
+      temp-plus-link discipline so the empty-body crash window is
+      unrepresentable; deletions — the flock call, the
+      allow(unsafe_code)+SAFETY block, the libc dependency, the .etag
+      sidecar write path and its delete half, the TS random-token etag
+      scheme, the rename publication, the .locks/ layout, the
+      ten-second lock deadline with its fabricated error, the per-verb
+      serialization on the four non-mutating verbs), a065797c (the
+      interop lane: lane_b_interop.rs shelling node against
+      ts-log/test/interop-child.ts — byte-for-byte both directions,
+      mixed-fleet create-only exclusivity, CAS linearized to the exact
+      sum, etags agreeing everywhere), 26fd9025 (the TS multi-process
+      lane: real child processes — disjoint acks exactly once in a
+      gap-free chain, one winner and N−1 typed FD rejections on the
+      shared determinant, SIGKILL mid-commit converging through the
+      one recovery path), and f467eca4 (T's deferred parity re-run
+      discharged from both sides; the stale-generation loud-skip
+      deleted with its dead state). Recorded deviations: the Rust pid
+      probe shells the system kill utility because unsafe_code = deny
+      forbids a direct syscall and std exposes no signal primitive —
+      its exit code cannot distinguish a foreign-owner EPERM from
+      ESRCH, which the one-machine one-deployment ruling absorbs while
+      the TS probe distinguishes them verbatim; both stores refuse
+      keys wearing the .lock suffix at the parse boundary, the state a
+      key-lock collision would need; the lock-retry cadence is a named
+      constant (LOCK_RETRY_MS) with one defining site per language but
+      is not entered in census lane (j)'s roster, which this lane does
+      not own. Gates green whole: fmt, clippy -D warnings, the full
+      crate suite including both lane_b suites and the interop lane;
+      ts-log tsc, biome, and the full suite including the two born
+      lanes; spec-census OK at 104 rows / 332 tokens with the log
+      driver's zero-dyn scan at zero and one-owner constants intact.
 - [ ] DOC: 15 deleted, disposition executed; 00/10/20/30/40/50/60/70/80
       amended once each; no doc-vs-code disagreement stands in either
       direction
