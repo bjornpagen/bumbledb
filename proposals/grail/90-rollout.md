@@ -440,3 +440,24 @@ Paths this lane changed: `crates/bumbledb-log/src/store.rs`,
 (one census token path: `Writer::clear_pending` now lives in
 `writer/discipline.rs` after B's split). Did not touch `ts/src`,
 `duty.rs`, `examples/lambda/`, `c-abi.yml`.
+
+## Lane C leftover
+
+Lane S raised bumbledb-log.yml and both ci.yml linux cells to
+nodejs24 and left `c-abi.yml` on nodejs22. That cell now matches:
+`nodejs24`, `nodejs24-npm`, `alternatives --set node
+/usr/bin/node-24`. After this commit no Ubuntu-or-AL2023 workflow
+installs Node 22.
+
+Landing hash: this commit (c-abi.yml + this note). Named deletions:
+the three c-abi.yml spellings `nodejs22`, `nodejs22-npm`,
+`/usr/bin/node-22`.
+
+Leftovers this hop could not touch:
+
+- grail/40 still writes `nodejs22` — context-only; Lane X amends
+  numbered docs
+- this file's original Lane C receipt still records the old dnf
+  map — historical, not a live install
+- grail/50 still names Node 22 for Lambda — E-prep
+- ci.yml's `R22` is a ruling number, not a Node version
