@@ -86,8 +86,9 @@ all exercised the way a stranger would.
 - [x] S: S3Store + official S3 client + memStore landed; Refresh kept
       with the census pin; Node floor 24; gated smokes loud-skipped on
       this machine (no credentials); receipt below
-- [ ] D: duty binary, --once and resident modes, tested over FsStore,
-      smoked over s3
+- [x] D: duty binary, --once and resident modes, tested over FsStore,
+      smoked over s3 (loud-skip on this machine) — 53fb9e8b; receipt
+      below
 - [ ] CEREMONY: 0.17.2 (main + two platforms) and ts-log 0.18.0
       published and tagged by the owner
 - [ ] E: example deployed once for real from the registry; the
@@ -461,3 +462,90 @@ Leftovers this hop could not touch:
   map — historical, not a live install
 - grail/50 still names Node 22 for Lambda — E-prep
 - ci.yml's `R22` is a ruling number, not a Node version
+
+## Lane D receipt
+
+The duty binary landed. `--once` and the resident loop share one
+body. The prefix opens as a checkpointer: replica plus compact,
+checkpoint-order publish, and the retention sweep — no commits, no
+leases. Cadence is `CHECKPOINT_EVERY_SUM` / `CHECKPOINT_EVERY_BYTES`.
+Retention is `CHECKPOINT_RETAIN_MS` (ninety days), one owner, census
+lane (j). S3Store is constructed outside async from static env keys.
+
+Landing hashes:
+
+- `53fb9e8bad8ddc1f1dedfe7b4a6bc518aa8ef259` — `duty` binary, the
+  `Checkpointer` body, the theory-file parse, FsStore tests, the S3
+  duty smoke behind Lane S's gate, `CHECKPOINT_RETAIN_MS`
+
+Deletion tally (3):
+
+1. A Writer-shaped duty (commits and leases on the sidecar)
+2. A second pair of cadence literals
+3. An unnamed ninety-day retention window
+
+Keep-ledger:
+
+- The theory file. 20 named `--once` and the bucket args and did
+  not name how a standalone process obtains a theory. Replica open
+  requires one. The file is the crate's existing corpus schema
+  object (`{relations, statements}`), parsed once at the boundary
+  into a descriptor. Reopen: a host that cannot write that object.
+- `serde_json` as a crate dependency (it was a dev-dep). The
+  theory-file parse is the consumer.
+- Refresh unused. Lambda/`--once` is static keys from
+  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / optional
+  `AWS_SESSION_TOKEN`. Reopen: a duty that must rotate.
+- Resident sleep defaults to five minutes (`--sleep-ms`). That is
+  50's schedule starting point, not a protocol constant.
+- `--writer` defaults to 0. The checkpoint document still carries
+  a publisher id.
+
+`duty.rs` is 221 lines (argv parse, store construct, the loop).
+The body itself is `Checkpointer::run` over existing replica,
+`publish_checkpoint`, and `gc`.
+
+Smoke status: loud-skip on this machine (all three required vars
+absent). Test `s3_smoke_duty_once` is named `s3_smoke*` so CI
+`cargo test … s3_smoke` matches. It never fails without credentials.
+
+Close gates on this tree: `scripts/spec-census.sh` green (104
+ledger rows; `CHECKPOINT_RETAIN_MS` single-sited; zero-dyn
+exemption unchanged); `scripts/check.sh` green; `scripts/lean.sh`
+green (277 conformance cases, three-way comparator). A green
+suite with a red census is a red tree — this close is green on
+all three.
+
+Deviations:
+
+- 20/`--once` and 50's "bucket args" did not name `--theory`,
+  `--dir`, `--store`, `--root`, `--writer`, or `--sleep-ms`. Those
+  flags are the parse; `--theory` is the gap fill above.
+- `duty.rs` is 221 lines, not ~100: the parse is the extra, not a
+  second compact path.
+- Live S3 duty smoke did not run (no credentials).
+
+Blockers for E-prep (the handler `execFile`s the bundled binary
+with `--once`):
+
+- Exact argv: `duty --once --store s3 --bucket $BUCKET --dir DIR
+  --theory PATH [--prefix P] [--region R] [--endpoint E]
+  [--s3-prefix KEY] [--writer N]`
+- `--theory PATH` is the corpus schema object matching the app
+  theory's fingerprint. There is no other way to open.
+- Credentials are static from the process env, not the default
+  provider chain and not a role. Refresh is unused.
+- Construct is in the child process (sync `main`), so the
+  construct-outside-async law holds without the handler's help.
+- Node on the function must be >=24 (engines). grail/50 still
+  says Node 22 — E picks the newest AL2023 runtime Lambda offers.
+- Do not check CEREMONY or E-deploy from this lane.
+
+Paths this lane changed: `crates/bumbledb-log/src/bin/duty.rs`,
+`crates/bumbledb-log/src/{checkpointer.rs,schema_file.rs,lib.rs,
+replica.rs,gc.rs,writer/mod.rs}`, `crates/bumbledb-log/Cargo.toml`,
+`crates/bumbledb-log/tests/{duty.rs,s3_smoke.rs}`,
+`scripts/spec-census.sh` (`CHECKPOINT_RETAIN_MS`),
+`proposals/grail/90-rollout.md` (this receipt). Did not touch
+`ts/`, `ts-log/`, `.github/`, `examples/lambda/`, `lean/`,
+`store*` beyond what the binary already consumes.
