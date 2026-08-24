@@ -1,0 +1,24 @@
+{
+	"name": "bumbledb-lambda-example",
+	"private": true,
+	"description": "Non-normative Alchemy example: one arm64 Lambda, one S3 log, one schedule",
+	"type": "module",
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@bjornpagen/bumbledb": "0.17.2",
+		"@bjornpagen/bumbledb-linux-arm64": "0.17.2",
+		"@bjornpagen/bumbledb-log": "0.18.0",
+		"alchemy": "2.0.0-beta.74",
+		"effect": "rc"
+	},
+	"devDependencies": {
+		"@types/node": "24.10.13",
+		"typescript": "5.9.3"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "pnpm@11.9.0"
+}
