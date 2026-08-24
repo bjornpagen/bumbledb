@@ -5,7 +5,8 @@
 At driver initialization the schema descriptor's statement graph —
 ordinary relations as nodes; an edge wherever a containment or capacity
 statement relates two of them (FDs are self-loops; closed relations and
-closed-target statements contribute nothing, per 15) — decomposes into
+closed-target statements contribute nothing: sealed rows never change,
+and closed-target checks are delta-local) — decomposes into
 connected components: **braids**. The braid id is the smallest
 `RelationId` in the component, rendered `c{id:08x}`, and is scoped to the
 schema fingerprint: braid identity across fingerprints is migration's
@@ -17,6 +18,15 @@ survives as the special case, not a mode.
 
 Statements never span braids, so braids never conflict (L9): each has an
 independent chain, and cross-braid ordering is semantically invisible.
+
+One degeneracy is reified as data rather than warned about: a capacity
+or key statement whose determinant projection is *empty* names a single
+global group — every commit under it contends on one obligation, and
+the braid degenerates to a serial log at that statement (Homeostasis's
+Delivery transaction, a treaty forced to renegotiate on every run, is
+the canonical prior misery). The braid derivation returns these
+serial-at-statements as a typed field beside the braid map; the schema
+author reads data, not a log line.
 
 Recorded v2 refinement, with prior art: the data-exchange dependency
 graph (Fagin et al., Def 3.7) is built over *positions* — (relation,
@@ -41,7 +51,7 @@ store; a tenant is a prefix (`<root>/t/<tenant>/…`, control-plane at
 ```
 
 There is no escrow prefix: capacity reservations are ordinary rows in the
-log, not protocol objects (15).
+log, not protocol objects (60).
 
 Checkpoints are content-addressed. The earlier `ckpt/{vector-sum}` naming
 had a reachable collision — two writers on different braids can hit
@@ -108,19 +118,21 @@ under either choice. The manifest is never updated per commit.
 `log/{braid}/{g}` is created with `If-None-Match: *` and is immutable
 forever. Exactly one writer wins each slot. `Exists` resolves by
 **fetch-and-compare first**: byte-equal means *we* created it earlier (an
-ambiguous PUT retried — 40's law, absorbed here rather than special-cased);
-unequal means we lost, and the loser algebra runs (15): recompute the
-winner's footprint from its ops, intersect, then subsume (drop),
-republish (fully key-disjoint), or re-judge (anything else). Both batches share base g−1 in that
+ambiguous PUT retried — 40's law, absorbed here rather than
+special-cased); unequal means we lost, and every loss takes the one
+path (60): discard the local directory, re-open through the replica to
+the current tip, re-judge the recorded ops in one `db.write`, then
+publish on accepted-and-state-changing, report `Accepted` at the
+current generation on accepted-net-no-op (the publish law below), or
+return the serial `Rejected`. Both batches share base g−1 in that
 braid — a fact the `prev` chain hash now *proves* per object rather than
 assumes (20): a batch built on the wrong base is `ChainMismatch` at every
-replica, refusable before any apply. The batch carries its footprint
-section; replicas recompute and refuse mismatches.
+replica, refusable before any apply.
 
 **The publish law.** A batch is published only if its local application
 advanced the generation. Rejections never reach the network; net-no-op
-commits (all effects already present — e.g. a loser fully subsumed by the
-winner) never reach it either. Consequence: every log slot is a
+commits (all effects already present — e.g. a loser whose re-judgment
+found its effects already in the log) never reach it either. Consequence: every log slot is a
 state-changing commit, so `engine generation ≡ Σ vector` on every honest
 store at rest after catch-up (50 states the general form, with the
 applied-pending term) — the identity the whole recovery story leans on
@@ -171,7 +183,12 @@ CAS leaves unreferenced `gc` fodder, never a dangling pointer. Restore
 verification: blake3(`.mdb`) = digest, opened generation = Σ `g`,
 fingerprint match — refusals, never warnings. Publication races are
 benign (the manifest CAS applies the checkpoint order above; losing
-checkpoint objects are `gc` fodder).
+checkpoint objects are `gc` fodder) — and `prev` is proven by the CAS
+that installs it: on a `Moved` CAS where the candidate still
+supersedes, the checkpoint json re-renders with `prev` = the incumbent
+actually being replaced and re-uploads before the retry, so every
+retained checkpoint is reachable from the manifest by construction,
+never by hope.
 
 ## Fresh-id leases
 
@@ -202,7 +219,8 @@ leases into sequences later.
   on one line; we restore to a lattice). Restore = walk the checkpoint
   backlink chain from the manifest to the first checkpoint whose vector
   is `≤ v` pointwise, open it, then replay each braid to its target —
-  braid order irrelevant (L8).
+  braid order irrelevant (L9: cross-braid application order is
+  semantically invisible).
 - By-time restore maps a wall-clock instant through the batch timestamps:
   per braid, the largest g with `ts ≤ T`. Timestamps are clamped monotone
   per braid at publish (20) and refused otherwise, so the mapped set is a
@@ -238,10 +256,9 @@ Nothing else — no LIST consistency, no multi-key atomicity, no append.
 | Event | Outcome |
 | --- | --- |
 | Crash anywhere in a commit or catch-up | recovery **is** the apply loop: resolve `pending` (60), then replay forward; re-application of anything already applied is the engine's no-op arm (L10) — there is no separate recovery procedure to get wrong |
-| CAS `Exists` on a log slot | fetch and compare: equal bytes ⇒ ours (ambiguous PUT absorbed); else the loser algebra (15): subsume, republish, or re-judge |
+| CAS `Exists` on a log slot | fetch and compare: equal bytes ⇒ ours (ambiguous PUT absorbed); else the one loss path (60): discard, re-open to tip, re-judge the recorded ops — publish, `Accepted` at the current generation, or the serial `Rejected` |
 | Manifest CAS 412 | re-read, apply the checkpoint order (greater sum replaces; otherwise incumbent stays), retry |
 | `generation ≠ Σ vector` after full catch-up + pending resolution | phantom or torn store — discard the directory, re-pull (cache, never truth) |
-| Footprint recompute ≠ published section | `FootprintMismatch` — corruption-class, never retried |
 | Chain discipline violated (`prev` ≠ predecessor hash, header gen ≠ key slot, or ts < predecessor's) | `ChainMismatch{Prev \| Slot \| Timestamp}` — one identity, three proved causes; corruption-class, naming braid, slot, and writer (the header carries the writer id) |
 | Batch rejected during steady-state replay | `ReplayDiverged` — corruption-class (the publish law + determinism make it impossible for honest writers) |
 | 404 at `vector+1` with `vector+1 ≤` the current checkpoint's `vector[braid]` | `GapDetected` (gc'd tail) — discard, re-open from the current checkpoint; the same 404 above that vector (or with no checkpoint yet) is the tip, by the gc exemption law |
