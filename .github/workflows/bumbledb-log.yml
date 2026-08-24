@@ -1,0 +1,237 @@
+# The log program's CI lane (grail/40). Path-filtered like c-abi.yml:
+# this workflow owns crates/bumbledb-log and ts-log the way c-abi.yml
+# owns the leaf crate. The linux-arm64 job is the ONE builder for the
+# two linux artifacts (the napi .node and the duty binary): the
+# GitHub-hosted arm64 runner is the host kernel, amazonlinux:2023 is
+# the userspace, glibc 2.34 is Lambda's floor. No step on that job
+# executes in the host's Ubuntu userspace. Publishing stays owner
+# ceremony — the runner uploads artifacts and stops.
+name: bumbledb-log
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/bumbledb-log/**"
+      - "crates/bumbledb/**"
+      - "crates/bumbledb-theory/**"
+      - "ts-log/**"
+      - "ts/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/bumbledb-log.yml"
+  pull_request:
+    paths:
+      - "crates/bumbledb-log/**"
+      - "crates/bumbledb/**"
+      - "crates/bumbledb-theory/**"
+      - "ts-log/**"
+      - "ts/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/bumbledb-log.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    container: amazonlinux:2023
+    timeout-minutes: 60
+    steps:
+      - name: Install the Amazon Linux 2023 toolchain
+        run: |
+          dnf -y install \
+            gcc \
+            gcc-c++ \
+            make \
+            binutils \
+            git \
+            tar \
+            gzip \
+            xz \
+            unzip \
+            python3 \
+            sed \
+            gawk \
+            diffutils \
+            findutils \
+            ca-certificates \
+            curl \
+            nodejs22 \
+            nodejs22-npm
+          alternatives --set node /usr/bin/node-22
+      - uses: actions/checkout@v5
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/bumbledb-log/target
+            ts/crate/target
+          key: log-al2023-arm64-cargo-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-log/Cargo.lock', 'ts/crate/Cargo.lock') }}
+          restore-keys: |
+            log-al2023-arm64-cargo-
+      - name: Activate the pinned pnpm
+        run: corepack enable pnpm
+      - name: Resolve the pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ts
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: log-al2023-arm64-pnpm-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
+          restore-keys: |
+            log-al2023-arm64-pnpm-
+      - name: Install ts/ (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: Put ts/ node_modules/.bin on PATH
+        run: echo "$GITHUB_WORKSPACE/ts/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Build the napi .node
+        run: node scripts/build.ts
+        working-directory: ts
+      - name: Build the duty binary
+        run: cargo build --release --manifest-path crates/bumbledb-log/Cargo.toml --bin duty
+      - name: bumbledb-log fmt
+        working-directory: crates/bumbledb-log
+        run: cargo fmt --all --check
+      - name: bumbledb-log clippy
+        working-directory: crates/bumbledb-log
+        run: cargo clippy --all-targets -- -D warnings
+      - name: bumbledb-log test
+        working-directory: crates/bumbledb-log
+        run: cargo test
+      - name: ts/ suite
+        working-directory: ts
+        run: node --test 'test/**/*.test.ts'
+      - name: Install ts-log/ (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+        working-directory: ts-log
+      - name: Put ts-log/ node_modules/.bin on PATH
+        run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: ts-log suite
+        working-directory: ts-log
+        run: |
+          tsc --noEmit
+          biome check .
+          node --test 'test/**/*.test.ts'
+      - name: Stage the linux-arm64 artifacts
+        run: |
+          mkdir -p /tmp/grail-artifacts
+          cp ts/npm/linux-arm64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-arm64.node
+          cp crates/bumbledb-log/target/release/duty /tmp/grail-artifacts/bumbledb-log-duty
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bumbledb.linux-arm64.node
+          path: /tmp/grail-artifacts/bumbledb.linux-arm64.node
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bumbledb-log-duty
+          path: /tmp/grail-artifacts/bumbledb-log-duty
+          if-no-files-found: error
+      - name: Gated S3 smoke
+        env:
+          BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
+          BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
+          BUMBLEDB_S3_SMOKE_ENDPOINT: ${{ secrets.BUMBLEDB_S3_SMOKE_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=
+          [ -n "${BUMBLEDB_S3_SMOKE_BUCKET:-}" ] || missing="$missing BUMBLEDB_S3_SMOKE_BUCKET"
+          [ -n "${AWS_ACCESS_KEY_ID:-}" ] || missing="$missing AWS_ACCESS_KEY_ID"
+          [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] || missing="$missing AWS_SECRET_ACCESS_KEY"
+          if [ -n "$missing" ]; then
+            echo "SKIPPED S3 smoke: credential-gated lane not run (missing$missing)"
+            exit 0
+          fi
+          echo "S3 smoke credentials present; running the crate's gated smoke"
+          cargo test --manifest-path crates/bumbledb-log/Cargo.toml s3_smoke -- --nocapture
+
+  darwin:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Activate the pinned pnpm
+        run: corepack enable pnpm
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/bumbledb-log/target
+            ts/crate/target
+          key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-log/Cargo.lock', 'ts/crate/Cargo.lock') }}
+          restore-keys: |
+            log-darwin-cargo-
+      - name: Resolve the pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ts
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: log-darwin-pnpm-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
+          restore-keys: |
+            log-darwin-pnpm-
+      - name: bumbledb-log fmt
+        working-directory: crates/bumbledb-log
+        run: cargo fmt --all --check
+      - name: bumbledb-log clippy
+        working-directory: crates/bumbledb-log
+        run: cargo clippy --all-targets -- -D warnings
+      - name: bumbledb-log test
+        working-directory: crates/bumbledb-log
+        run: cargo test
+      - name: Install ts/ (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: Put ts/ node_modules/.bin on PATH
+        run: echo "$GITHUB_WORKSPACE/ts/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Build the napi .node (ts-log's dependency, not the ts/ suite)
+        run: node scripts/build.ts
+        working-directory: ts
+      - name: Install ts-log/ (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+        working-directory: ts-log
+      - name: Put ts-log/ node_modules/.bin on PATH
+        run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: ts-log suite
+        working-directory: ts-log
+        run: |
+          tsc --noEmit
+          biome check .
+          node --test 'test/**/*.test.ts'
+      - name: Gated S3 smoke
+        env:
+          BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
+          BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
+          BUMBLEDB_S3_SMOKE_ENDPOINT: ${{ secrets.BUMBLEDB_S3_SMOKE_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=
+          [ -n "${BUMBLEDB_S3_SMOKE_BUCKET:-}" ] || missing="$missing BUMBLEDB_S3_SMOKE_BUCKET"
+          [ -n "${AWS_ACCESS_KEY_ID:-}" ] || missing="$missing AWS_ACCESS_KEY_ID"
+          [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] || missing="$missing AWS_SECRET_ACCESS_KEY"
+          if [ -n "$missing" ]; then
+            echo "SKIPPED S3 smoke: credential-gated lane not run (missing$missing)"
+            exit 0
+          fi
+          echo "S3 smoke credentials present; running the crate's gated smoke"
+          cargo test --manifest-path crates/bumbledb-log/Cargo.toml s3_smoke -- --nocapture
