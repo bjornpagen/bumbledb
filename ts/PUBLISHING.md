@@ -15,23 +15,27 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.17.2` is the `internalDescriptor` and two-platform release over
-`0.17.1` — one export, one roster widening. The engine's own sealed
-descriptor crosses the FFI as `internalDescriptor(spec): SealedDescriptor`
-(the `#internal`-doc'd sibling of `internalBlake3`), and its consumer is
+`0.18.0` is the one-number release over `0.17.1` — `0.17.2` died
+unpublished. Every published package spells the same semver: the engine
+SDK, both platform binaries, and `@bjornpagen/bumbledb-log`. The
+prepared-and-never-shipped `0.17.2` tree already carried the
+`internalDescriptor` export and the two-platform shipped set, but left
+the log driver at package `0.18.0` on peer `^0.17.2`; that split is
+gone. The engine's own sealed descriptor still crosses the FFI as
+`internalDescriptor(spec): SealedDescriptor` (the `#internal`-doc'd
+sibling of `internalBlake3`), and its consumer is
 `@bjornpagen/bumbledb-log`'s descriptor parse: relation ids, sealed
 fields, closed rosters, materialized statements, and the real fingerprint
 so the driver's 741-line re-derivation and fingerprint-mirror string-axiom
-refusal delete rather than get a second fix. The shipped set widens from
-the darwin-arm64 singleton to `{darwin-arm64, linux-arm64}`; the linux
-artifact is built in `amazonlinux:2023` (glibc 2.34) and placed by the
-owner from the CI run into `ts/npm/linux-arm64/` before publish. Nothing
-else moved: the C ABI stays **generation 4** (`bdb_abi_version()` is
-unchanged — an added JS export is not an ABI event), storage stays
-format **8**, and no fingerprint pin moved. The lockstep is prepared
-unpublished in this tree; the publish command sequence is the standing
-one below, and the log package's 0.18.0 steps follow it with peer
-`^0.17.2`.
+refusal delete rather than get a second fix. The shipped set is
+`{darwin-arm64, linux-arm64}`; the linux artifact is built in
+`amazonlinux:2023` (glibc 2.34) and placed by the owner from the CI run
+into `ts/npm/linux-arm64/` before publish. Nothing else moved: the C ABI
+stays **generation 4** (`bdb_abi_version()` is unchanged — an added JS
+export is not an ABI event), storage stays format **8**, and no
+fingerprint pin moved. The lockstep is prepared unpublished in this
+tree; the publish command sequence is the standing one below, and the
+log package's steps follow it with peer `^0.18.0`.
 
 `0.17.1` is the `internalBlake3` release over `0.17.0` — one export, one
 consumer. The engine-linked blake3 hash crosses the FFI as
@@ -241,23 +245,23 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits every spelling, then the build enforces the match. All
-spellings are `0.17.2` in this tree; `pnpm run build` asserts the lockstep
+spellings are `0.18.0` in this tree; `pnpm run build` asserts the lockstep
 on every run.
 
-## Runbook (0.17.2, darwin-arm64 host, owner)
+## Runbook (0.18.0, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.17.2 (the build asserts it — the
+# 1. The lockstep is already set to 0.18.0 (the build asserts it — the
 #    platform pins are NOT repo fields, they inject at pack time):
-#    - ts/package.json                    "version": "0.17.2"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.17.2"
-#    - ts/npm/linux-arm64/package.json    "version": "0.17.2"
-#    - ts/crate/Cargo.toml                version = "0.17.2"
-#    - crates/bumbledb/Cargo.toml         version = "0.17.2"
-#    - crates/bumbledb-c/Cargo.toml       version = "0.17.2"
+#    - ts/package.json                    "version": "0.18.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.18.0"
+#    - ts/npm/linux-arm64/package.json    "version": "0.18.0"
+#    - ts/crate/Cargo.toml                version = "0.18.0"
+#    - crates/bumbledb/Cargo.toml         version = "0.18.0"
+#    - crates/bumbledb-c/Cargo.toml       version = "0.18.0"
 #    - workspace members (bench, macros, query, query-macros, theory)
 #    bdb_abi_version() answers 4 (unchanged: an added JS export is not
 #    an ABI event).
@@ -301,13 +305,13 @@ pnpm publish --no-git-checks ./npm/linux-arm64
 pnpm publish --no-git-checks
 
 # 6. Verify the three versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.17.2 version
-pnpm view @bjornpagen/bumbledb-linux-arm64@0.17.2 version
-pnpm view @bjornpagen/bumbledb@0.17.2 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.18.0 version
+pnpm view @bjornpagen/bumbledb-linux-arm64@0.18.0 version
+pnpm view @bjornpagen/bumbledb@0.18.0 version
 
 # 7. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.17.2 <release-commit> -m "bumbledb 0.17.2" && git push origin v0.17.2
+#    git tag -a v0.18.0 <release-commit> -m "bumbledb 0.18.0" && git push origin v0.18.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -331,8 +335,8 @@ install a fresh release until a day after publish.
 
 ## First publish of @bjornpagen/bumbledb-log 0.18.0 (after the SDK lands)
 
-The log driver publishes AFTER the three 0.17.2 SDK packages verify in
-the registry — its peerDependency is `^0.17.2`, unresolvable a minute
+The log driver publishes AFTER the three 0.18.0 SDK packages verify in
+the registry — its peerDependency is `^0.18.0`, unresolvable a minute
 earlier. It is a platformless package: pure TypeScript source
 (`files` ships `src/` + README, `exports` points at `src/index.ts`), no
 napi half, no platform sibling, no pack-time pin injection — so the
@@ -343,9 +347,9 @@ manifest already carries `publishConfig.access: "public"` and
 names only the peer range.
 
 ```sh
-# From the ts-log/ package root, after step 6 above answers 0.17.2 thrice.
+# From the ts-log/ package root, after step 6 above answers 0.18.0 thrice.
 cd ts-log
-pnpm install          # resolves the ^0.17.2 peer against the registry now
+pnpm install          # resolves the ^0.18.0 peer against the registry now
 pnpm test             # node --test, the ONE test spelling
 pnpm run typecheck
 pnpm run lint
