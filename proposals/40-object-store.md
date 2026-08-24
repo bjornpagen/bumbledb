@@ -47,7 +47,7 @@ in our code (dependency internals exempt, per the engine's census law).
 | S3 Express One Zone | yes (directory buckets) | yes | single-digit-ms; the latency-tier ruling for serverless writers |
 | Cloudflare R2 | yes (S3-API extension) | yes | zero-egress checkpoint pulls; test wildcard-etag behavior (known dev-tool parity bugs) |
 | OCI Object Storage | native if-none-match | native if-match | case-3 target; resident mode doesn't even need CAS |
-| Local filesystem | rename-based create-only | lockfile+rename CAS | the test/conformance impl; also the macOS sync target |
+| Local filesystem | link(2) create-only | pid-lockfile CAS | one on-disk protocol, two conforming implementations (Rust and TS), raced against each other in conformance; also the macOS sync target |
 
 ## Protocol consumers of the five verbs (nothing else is permitted)
 
@@ -62,20 +62,34 @@ n + width; `Moved` ⇒ re-read and retry — unbounded on purpose, with the
 recorded reason in 10: lease traffic is width-times rarer than slot
 traffic, so the counter has no contention to valve). `gc`: `delete`.
 Capacity
-reservations consume **no verbs** — they are rows in the log (15). This
+reservations consume **no verbs** — they are rows in the log (60). This
 map is exhaustive on purpose; a consumer missing from it (the original
 draft omitted checkpoint uploads) is the same design error as a sixth
 verb.
 
 ## Implementations shipped in v1
 
-1. **`FsStore`** — local directory. Create-only = `O_CREAT|O_EXCL` temp +
-   rename; CAS = etag-file compare under an flock. `Created` and
+1. **`FsStore`** — local directory, ONE on-disk protocol specified here
+   and spoken by both language implementations. **Create-only** = write
+   to an `O_CREAT|O_EXCL` temp file, fsync it, publish with `link(2)`
+   to the final key path, fsync the parent directory — link is chosen
+   over rename because POSIX rename replaces an existing destination
+   and therefore cannot arbitrate exclusivity; `EEXIST` on the link is
+   the honest `Exists`. **Etag** = `blake3(content)`, lowercase hex,
+   computed on every read and **never stored**: the bytes already
+   answer the question, a sidecar or a random token would be a second
+   answer waiting to disagree, and at protocol object sizes the hash
+   cost is noise. **The mutation lock** (put_swap's exclusivity) = a
+   pid-lockfile beside the key, published with the same
+   exclusive-temp-plus-link discipline so it can never exist without
+   its body — the owner pid; a contender probes the owner's liveness
+   and breaks the lock iff the owner is dead. `Created` and
    `Swapped` return only after fsync of the object file and its parent
    directory: 00 law 1 says an acked commit *exists*, and at power loss
    a filesystem "exists" means nothing less — the sidecar's write
    discipline (50), applied at the store. **One machine is
-   load-bearing, not descriptive**: `O_EXCL` and flock are the
+   load-bearing, not descriptive** — and it is what makes the pid lock
+   sound: link exclusivity and pid liveness are the
    arbitration primitives, and network filesystems historically weaken
    both — an `FsStore` prefix on a network mount is a misdeployment; no
    syscall can prove a mount local, so the refusal lives here in the
