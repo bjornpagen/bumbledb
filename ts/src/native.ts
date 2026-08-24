@@ -161,6 +161,52 @@ interface Manifest {
 	readonly statements: readonly ManifestStatement[]
 }
 
+interface SealedSide {
+	readonly relation: number
+	readonly projection: readonly number[]
+	readonly selection: ReadonlyArray<{ readonly field: number; readonly values: readonly FactValue[] }>
+}
+
+type SealedWeight =
+	| { readonly kind: "unit" }
+	| { readonly kind: "field"; readonly field: number }
+	| { readonly kind: "duration"; readonly field: number }
+
+type SealedHi =
+	| { readonly kind: "unbounded" }
+	| { readonly kind: "lit"; readonly value: bigint }
+	| { readonly kind: "targetField"; readonly field: number }
+	| { readonly kind: "targetDuration"; readonly field: number }
+
+type SealedStatement =
+	| {
+			readonly id: number
+			readonly kind: "functionality"
+			readonly relation: number
+			readonly projection: readonly number[]
+	  }
+	| {
+			readonly id: number
+			readonly kind: "containment"
+			readonly source: SealedSide
+			readonly target: SealedSide
+	  }
+	| {
+			readonly id: number
+			readonly kind: "capacity"
+			readonly target: SealedSide
+			readonly weight: SealedWeight
+			readonly lo: bigint
+			readonly hi: SealedHi
+			readonly source: SealedSide
+	  }
+
+interface SealedDescriptor {
+	readonly relations: readonly ManifestRelation[]
+	readonly statements: readonly SealedStatement[]
+	readonly fingerprint: string
+}
+
 interface ViolationFact {
 	readonly relation: string
 	readonly fields: ReadonlyArray<{ readonly name: string; readonly value: FactValue }>
@@ -258,6 +304,8 @@ interface Native {
 	engineVersion(): string
 
 	blake3Hash(data: Uint8Array): Uint8Array
+
+	descriptor(spec: SchemaSpec): SealedDescriptor
 
 	dbCreate(path: string, spec: SchemaSpec): Promise<CreateResult>
 
@@ -407,6 +455,19 @@ function internalBlake3(data: Uint8Array): Uint8Array {
 	})
 }
 
+/**
+ * @internal the engine's own sealed descriptor as data — relation ids,
+ * field ids and types in sealed order, closed rosters with resolved
+ * axiom rows, materialized statements in engine order, and the real
+ * fingerprint. Runs the pure seal path; no store opens. Not SDK API;
+ * the export is deliberately undocumented in the package surface.
+ */
+function internalDescriptor(spec: SchemaSpec): SealedDescriptor {
+	return bridged("bumbledb descriptor", function sealSpec() {
+		return binding.descriptor(spec)
+	})
+}
+
 function isEngineThrow(value: unknown): value is { kind: ErrorFamilyKind; message: string } {
 	if (typeof value !== "object" || value === null) {
 		return false
@@ -484,6 +545,11 @@ export type {
 	QueryParam,
 	RecIr,
 	RuleIr,
+	SealedDescriptor,
+	SealedHi,
+	SealedSide,
+	SealedStatement,
+	SealedWeight,
 	StatementKindTag,
 	TaggedValue,
 	TermIr,
@@ -495,4 +561,14 @@ export type {
 	WitnessHandle,
 	WriteTag
 }
-export { bridged, bridgedAsync, dbClose, errorFromThrow, internalBlake3, loadNativeBinding, native, SHIPPED_PLATFORMS }
+export {
+	bridged,
+	bridgedAsync,
+	dbClose,
+	errorFromThrow,
+	internalBlake3,
+	internalDescriptor,
+	loadNativeBinding,
+	native,
+	SHIPPED_PLATFORMS
+}

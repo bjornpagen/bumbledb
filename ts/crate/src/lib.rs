@@ -22,7 +22,7 @@ mod fingerprint_lock;
 mod marshal;
 mod tags;
 
-use marshal::{ManifestWire, OwnedParam, ValueOut, ViolationWire};
+use marshal::{DescriptorWire, ManifestWire, OwnedParam, ValueOut, ViolationWire};
 
 #[napi]
 #[must_use]
@@ -45,6 +45,37 @@ pub fn blake3_hash(data: Buffer) -> Buffer {
     let mut digest = bumbledb::digest::Digest::new();
     digest.update(&data);
     Buffer::from(digest.finalize().to_vec())
+}
+
+/// The engine's own sealed descriptor as data, lent to the
+/// replication driver so one authority seals the theory.
+/// Internal surface: not part of the SDK's documented API.
+#[napi]
+#[doc(hidden)]
+#[allow(clippy::needless_pass_by_value)]
+pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
+    use bumbledb::schema::ValidateDescriptor as _;
+    let descriptor = match descriptor_of(&spec)? {
+        Ok(descriptor) => descriptor,
+        Err(OpenOutcome::SchemaError(message) | OpenOutcome::NewtypeMismatch(message)) => {
+            return Err(marshal::throw_kind_message(
+                env,
+                tags::error_family::SCHEMA,
+                message,
+            ));
+        }
+        Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
+    };
+    let sealed = seal(descriptor);
+    let schema = sealed.descriptor.clone().validate().map_err(|error| {
+        marshal::throw_kind_message(env, tags::error_family::SCHEMA, error.to_string())
+    })?;
+    let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
+    Ok(DescriptorWire {
+        manifest: sealed.descriptor.manifest(),
+        statements: sealed.statements,
+        fingerprint: hex_fingerprint(&fingerprint.0),
+    })
 }
 
 struct Sealed {

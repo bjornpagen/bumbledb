@@ -7,14 +7,15 @@ use bumbledb::schema::spec::{
     RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
 };
 use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, SealedField, StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, Generation, IntervalElement, RelationManifest, SealedField, Side,
+    StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
     AcceptedCollection, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp,
-    CollectionBuilder, Comparison, ConditionTree, FieldId, FindTerm, FoldOp,
-    HeadOp, HeadTerm, Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId, ProjectionRule,
-    Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule, SchemaDescriptor,
-    SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
+    CollectionBuilder, Comparison, ConditionTree, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm,
+    Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId, ProjectionRule, Query, Rec,
+    RecRule, RecStep, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
+    StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -1322,6 +1323,162 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
     unsafe { Object::to_napi_value(env, obj) }
 }
 
+#[expect(
+    unsafe_code,
+    reason = "napi's Unknown::from_raw_unchecked rewraps a value this helper just rendered"
+)]
+fn relation_objects(
+    env: sys::napi_env,
+    env_handle: &Env,
+    relations: Vec<RelationManifest>,
+) -> napi::Result<Vec<Object<'_>>> {
+    let mut out = Vec::with_capacity(relations.len());
+    for relation in relations {
+        let mut rel_obj = Object::new(env_handle)?;
+        rel_obj.set("name", relation.name.as_ref())?;
+        rel_obj.set("id", relation.id.0)?;
+        let mut fields = Vec::with_capacity(relation.fields.len());
+        for field in relation.fields {
+            let mut field_obj = Object::new(env_handle)?;
+            field_obj.set("name", field.name.as_ref())?;
+            field_obj.set("id", u32::from(field.id.0))?;
+            let ty = value_type_out(env, &field.value_type)?;
+            // SAFETY: `ty` is the napi value `value_type_out` just
+            // rendered against this same live `env`, one line up.
+            let ty = unsafe { Unknown::from_raw_unchecked(env, ty) };
+            field_obj.set("valueType", ty)?;
+            fields.push(field_obj);
+        }
+        rel_obj.set("fields", fields)?;
+        if let Some(extension) = relation.extension {
+            let mut rows = Vec::with_capacity(extension.len());
+            for row in extension {
+                let mut row_obj = Object::new(env_handle)?;
+                row_obj.set("handle", row.handle.as_ref())?;
+                row_obj.set("id", row.id)?;
+                let mut values = Vec::with_capacity(row.values.len());
+                for (name, value) in row.values {
+                    let mut value_obj = Object::new(env_handle)?;
+                    value_obj.set("name", name.as_ref())?;
+                    value_obj.set("value", ValueOut::from_value(value))?;
+                    values.push(value_obj);
+                }
+                row_obj.set("values", values)?;
+                rows.push(row_obj);
+            }
+            rel_obj.set("extension", rows)?;
+        }
+        out.push(rel_obj);
+    }
+    Ok(out)
+}
+
+fn side_object<'env>(env_handle: &'env Env, side: &Side) -> napi::Result<Object<'env>> {
+    let mut obj = Object::new(env_handle)?;
+    obj.set("relation", side.relation.0)?;
+    let projection: Vec<u32> = side
+        .projection
+        .iter()
+        .map(|field| u32::from(field.0))
+        .collect();
+    obj.set("projection", projection)?;
+    let mut selection = Vec::with_capacity(side.selection.len());
+    for (field, set) in &side.selection {
+        let mut binding = Object::new(env_handle)?;
+        binding.set("field", u32::from(field.0))?;
+        let values: Vec<ValueOut> = set
+            .literals()
+            .iter()
+            .cloned()
+            .map(ValueOut::from_value)
+            .collect();
+        binding.set("values", values)?;
+        selection.push(binding);
+    }
+    obj.set("selection", selection)?;
+    Ok(obj)
+}
+
+fn weight_object(env_handle: &Env, weight: Weight) -> napi::Result<Object<'_>> {
+    let mut obj = Object::new(env_handle)?;
+    match weight {
+        Weight::Unit => {
+            obj.set("kind", "unit")?;
+        }
+        Weight::Field(field) => {
+            obj.set("kind", "field")?;
+            obj.set("field", u32::from(field.0))?;
+        }
+        Weight::DurationOf(field) => {
+            obj.set("kind", "duration")?;
+            obj.set("field", u32::from(field.0))?;
+        }
+    }
+    Ok(obj)
+}
+
+fn hi_object(env_handle: &Env, hi: Option<Bound>) -> napi::Result<Object<'_>> {
+    let mut obj = Object::new(env_handle)?;
+    match hi {
+        None => {
+            obj.set("kind", "unbounded")?;
+        }
+        Some(Bound::Lit(value)) => {
+            obj.set("kind", "lit")?;
+            obj.set("value", value)?;
+        }
+        Some(Bound::TargetField(field)) => {
+            obj.set("kind", "targetField")?;
+            obj.set("field", u32::from(field.0))?;
+        }
+        Some(Bound::TargetDuration(field)) => {
+            obj.set("kind", "targetDuration")?;
+            obj.set("field", u32::from(field.0))?;
+        }
+    }
+    Ok(obj)
+}
+
+fn statement_object(
+    env_handle: &Env,
+    id: u32,
+    statement: StatementDescriptor,
+) -> napi::Result<Object<'_>> {
+    let mut obj = Object::new(env_handle)?;
+    obj.set("id", id)?;
+    match statement {
+        StatementDescriptor::Functionality {
+            relation,
+            projection,
+        } => {
+            obj.set("kind", statement_kind_out(StatementKind::Functionality))?;
+            obj.set("relation", relation.0)?;
+            let fields: Vec<u32> = projection.iter().map(|field| u32::from(field.0)).collect();
+            obj.set("projection", fields)?;
+        }
+        StatementDescriptor::Containment { source, target } => {
+            obj.set("kind", statement_kind_out(StatementKind::Containment))?;
+            obj.set("source", side_object(env_handle, &source)?)?;
+            obj.set("target", side_object(env_handle, &target)?)?;
+        }
+        StatementDescriptor::Capacity {
+            target,
+            weight,
+            lo,
+            hi,
+            source,
+        } => {
+            obj.set("kind", statement_kind_out(StatementKind::Capacity))?;
+            obj.set("target", side_object(env_handle, &target)?)?;
+            obj.set("weight", weight_object(env_handle, weight)?)?;
+            obj.set("lo", lo)?;
+            obj.set("hi", hi_object(env_handle, hi)?)?;
+            obj.set("source", side_object(env_handle, &source)?)?;
+        }
+    }
+    Ok(obj)
+}
+
 pub struct ManifestWire(pub(crate) Manifest);
 
 impl ToNapiValue for ManifestWire {
@@ -1335,45 +1492,10 @@ impl ToNapiValue for ManifestWire {
         let env_handle = Env::from_raw(env);
         let manifest = val.0;
         let mut root = Object::new(&env_handle)?;
-        let mut relations = Vec::with_capacity(manifest.relations.len());
-        for relation in manifest.relations {
-            let mut rel_obj = Object::new(&env_handle)?;
-            rel_obj.set("name", relation.name.as_ref())?;
-            rel_obj.set("id", relation.id.0)?;
-            let mut fields = Vec::with_capacity(relation.fields.len());
-            for field in relation.fields {
-                let mut field_obj = Object::new(&env_handle)?;
-                field_obj.set("name", field.name.as_ref())?;
-                field_obj.set("id", u32::from(field.id.0))?;
-                let ty = value_type_out(env, &field.value_type)?;
-                // SAFETY: `ty` is the napi value `value_type_out` just
-                // rendered against this same live `env`, one line up.
-                let ty = unsafe { Unknown::from_raw_unchecked(env, ty) };
-                field_obj.set("valueType", ty)?;
-                fields.push(field_obj);
-            }
-            rel_obj.set("fields", fields)?;
-            if let Some(extension) = relation.extension {
-                let mut rows = Vec::with_capacity(extension.len());
-                for row in extension {
-                    let mut row_obj = Object::new(&env_handle)?;
-                    row_obj.set("handle", row.handle.as_ref())?;
-                    row_obj.set("id", row.id)?;
-                    let mut values = Vec::with_capacity(row.values.len());
-                    for (name, value) in row.values {
-                        let mut value_obj = Object::new(&env_handle)?;
-                        value_obj.set("name", name.as_ref())?;
-                        value_obj.set("value", ValueOut::from_value(value))?;
-                        values.push(value_obj);
-                    }
-                    row_obj.set("values", values)?;
-                    rows.push(row_obj);
-                }
-                rel_obj.set("extension", rows)?;
-            }
-            relations.push(rel_obj);
-        }
-        root.set("relations", relations)?;
+        root.set(
+            "relations",
+            relation_objects(env, &env_handle, manifest.relations)?,
+        )?;
         let mut statements = Vec::with_capacity(manifest.statements.len());
         for statement in manifest.statements {
             let mut statement_obj = Object::new(&env_handle)?;
@@ -1383,6 +1505,43 @@ impl ToNapiValue for ManifestWire {
             statements.push(statement_obj);
         }
         root.set("statements", statements)?;
+        // SAFETY: `env` is the live environment napi handed this very call,
+        // and `root` was created against it.
+        unsafe { Object::to_napi_value(env, root) }
+    }
+}
+
+pub struct DescriptorWire {
+    pub(crate) manifest: Manifest,
+    pub(crate) statements: Vec<StatementDescriptor>,
+    pub(crate) fingerprint: String,
+}
+
+impl ToNapiValue for DescriptorWire {
+    #[expect(
+        unsafe_code,
+        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
+                  builds plain objects on the live env and rewraps one raw \
+                  value it just rendered against that same env"
+    )]
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        let env_handle = Env::from_raw(env);
+        let mut root = Object::new(&env_handle)?;
+        root.set(
+            "relations",
+            relation_objects(env, &env_handle, val.manifest.relations)?,
+        )?;
+        let mut statements = Vec::with_capacity(val.statements.len());
+        for (idx, statement) in val.statements.into_iter().enumerate() {
+            let id = u32::try_from(idx).map_err(|_| {
+                err(format!(
+                    "bumbledb marshal: statement ordinal {idx} exceeds u32"
+                ))
+            })?;
+            statements.push(statement_object(&env_handle, id, statement)?);
+        }
+        root.set("statements", statements)?;
+        root.set("fingerprint", val.fingerprint)?;
         // SAFETY: `env` is the live environment napi handed this very call,
         // and `root` was created against it.
         unsafe { Object::to_napi_value(env, root) }

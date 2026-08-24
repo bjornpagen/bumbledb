@@ -117,8 +117,18 @@ export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower } from "#lower.ts"
 export type { KeyFact } from "#marshal.ts"
-export type { FactValue, ParsedQuery, QueryIr, StatementKindTag } from "#native.ts"
-export { internalBlake3 } from "#native.ts"
+export type {
+	FactValue,
+	ParsedQuery,
+	QueryIr,
+	SealedDescriptor,
+	SealedHi,
+	SealedSide,
+	SealedStatement,
+	SealedWeight,
+	StatementKindTag
+} from "#native.ts"
+export { internalBlake3, internalDescriptor } from "#native.ts"
 
 export type {
 	AnyCond,
