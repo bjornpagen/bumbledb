@@ -3,6 +3,7 @@
 //! failure (network, 5xx, auth, io) and nothing else.
 
 pub mod fs;
+pub mod mem;
 pub mod s3;
 
 use std::fmt;

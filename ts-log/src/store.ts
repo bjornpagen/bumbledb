@@ -279,7 +279,59 @@ function fsStore(root: string): ObjectStore {
 	}
 }
 
+/**
+ * The five verbs over one in-process Map. Single-process only: tests
+ * and ephemeral dev inside this process, no persistence, no
+ * cross-process claim, no configuration. Third `Etag` producer beside
+ * `fsStore` and `s3Store`: blake3 of the content, `fsStore`'s mint,
+ * carried as the same opaque brand.
+ */
+function memStore(): ObjectStore {
+	const objects = new Map<StoreKey, Fetched>()
+	return {
+		async get(key) {
+			return objects.get(key) ?? null
+		},
+
+		async getIfChanged(key, etag) {
+			const current = objects.get(key)
+			if (current === undefined) {
+				throw wrapStore(errors.new("poll target absent"), `getIfChanged ${key}`)
+			}
+			if (current.etag === etag) {
+				return { tag: "unchanged" }
+			}
+			return { tag: "changed", fetched: current }
+		},
+
+		async putCreate(key, bytes) {
+			if (objects.has(key)) {
+				return { tag: "exists" }
+			}
+			const copy = new Uint8Array(bytes)
+			const tag = contentEtag(copy)
+			objects.set(key, { bytes: copy, etag: tag })
+			return { tag: "created", etag: tag }
+		},
+
+		async putSwap(key, bytes, etag) {
+			const current = objects.get(key)
+			if (current === undefined || current.etag !== etag) {
+				return { tag: "moved" }
+			}
+			const copy = new Uint8Array(bytes)
+			const tag = contentEtag(copy)
+			objects.set(key, { bytes: copy, etag: tag })
+			return { tag: "swapped", etag: tag }
+		},
+
+		async delete(key) {
+			objects.delete(key)
+		}
+	}
+}
+
 export type { S3Config, S3Credentials } from "#store-s3.ts"
 export { s3Store } from "#store-s3.ts"
 export type { Create, Etag, Fetched, ObjectStore, Poll, Swap }
-export { etag, fsStore }
+export { etag, fsStore, memStore }

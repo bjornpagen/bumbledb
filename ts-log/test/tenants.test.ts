@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import { fsStore } from "#store.ts"
+import { memStore } from "#store.ts"
 import { openTenants } from "#tenants.ts"
 import { Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
@@ -16,7 +16,7 @@ after(function cleanup() {
 
 describe("per-tenant replicas", function suite() {
 	test("tenants are isolated prefixes; eviction is LRU with _shared pinned", async function isolation() {
-		const store = fsStore(path.join(tmpRoot, "bucket"))
+		const store = memStore()
 		const tenants = openTenants({
 			store,
 			root: "prod",
@@ -57,7 +57,7 @@ describe("per-tenant replicas", function suite() {
 	})
 
 	test("a tenant id must be a single path segment", async function badId() {
-		const store = fsStore(path.join(tmpRoot, "bucket2"))
+		const store = memStore()
 		const tenants = openTenants({ store, root: "prod", dir: path.join(tmpRoot, "replicas2"), theory: Ledger })
 		await assert.rejects(function escapeAttempt() {
 			return tenants.get("../prod")

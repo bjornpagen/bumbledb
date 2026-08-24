@@ -9,7 +9,7 @@ import { encodeBatch } from "#codec.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
 import { generation, storeKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
-import { fsStore } from "#store.ts"
+import { memStore } from "#store.ts"
 import { Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
 
@@ -21,11 +21,11 @@ after(function cleanup() {
 })
 
 let laneCounter = 0
-function lane(): { store: ReturnType<typeof fsStore>; prefix: string; dir: (name: string) => string } {
+function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (name: string) => string } {
 	laneCounter += 1
 	const base = path.join(tmpRoot, `lane-${laneCounter}`)
 	return {
-		store: fsStore(path.join(base, "bucket")),
+		store: memStore(),
 		prefix: "prod/main",
 		dir(name: string) {
 			return path.join(base, name)

@@ -6,7 +6,7 @@ import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import { toHex } from "#bytes.ts"
 import { storeKey } from "#keys.ts"
-import { fsStore } from "#store.ts"
+import { fsStore, memStore } from "#store.ts"
 import { joinPrefix, s3Store } from "#store-s3.ts"
 
 const SLOT = storeKey("log/c00000000/0000000000000001")
@@ -20,14 +20,13 @@ after(function cleanup() {
 
 const encoder = new TextEncoder()
 
-describe("the five verbs over a directory", function suite() {
+describe("the five verbs over a process map", function suite() {
 	test("get on an absent key is null, not an error", async function absent() {
-		const store = fsStore(path.join(tmpRoot, "s1"))
-		assert.equal(await store.get(SLOT), null)
+		assert.equal(await memStore().get(SLOT), null)
 	})
 
 	test("putCreate is create-only: the second writer sees exists", async function createOnly() {
-		const store = fsStore(path.join(tmpRoot, "s2"))
+		const store = memStore()
 		const first = await store.putCreate(SLOT, encoder.encode("one"))
 		assert.equal(first.tag, "created")
 		const second = await store.putCreate(SLOT, encoder.encode("two"))
@@ -37,7 +36,7 @@ describe("the five verbs over a directory", function suite() {
 	})
 
 	test("putSwap is CAS: a stale etag is moved, a fresh one swaps", async function cas() {
-		const store = fsStore(path.join(tmpRoot, "s3"))
+		const store = memStore()
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
 		assert.ok(created.tag === "created")
 		const swapped = await store.putSwap(MANIFEST, encoder.encode("v2"), created.etag)
@@ -49,7 +48,7 @@ describe("the five verbs over a directory", function suite() {
 	})
 
 	test("getIfChanged is the cheap poll: unchanged on the same etag, changed after a swap", async function poll() {
-		const store = fsStore(path.join(tmpRoot, "s4"))
+		const store = memStore()
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
 		assert.ok(created.tag === "created")
 		const same = await store.getIfChanged(MANIFEST, created.etag)
@@ -61,8 +60,8 @@ describe("the five verbs over a directory", function suite() {
 		assert.equal(new TextDecoder().decode(changed.fetched.bytes), "v2")
 	})
 
-	test("delete removes the object and its lockfile; a later create succeeds", async function remove() {
-		const store = fsStore(path.join(tmpRoot, "s5"))
+	test("delete is unconditional and a later create succeeds", async function remove() {
+		const store = memStore()
 		await store.putCreate(SLOT, encoder.encode("one"))
 		await store.delete(SLOT)
 		assert.equal(await store.get(SLOT), null)
@@ -70,6 +69,29 @@ describe("the five verbs over a directory", function suite() {
 		assert.equal(again.tag, "created")
 	})
 
+	test("the etag is the blake3 of the content", async function etags() {
+		const store = memStore()
+		const body = encoder.encode("the judged content")
+		const created = await store.putCreate(MANIFEST, body)
+		assert.ok(created.tag === "created")
+		assert.equal(created.etag, toHex(new Uint8Array(internalBlake3(body))))
+		const fetched = await store.get(MANIFEST)
+		assert.equal(fetched?.etag, created.etag)
+	})
+
+	test("contending writers on one slot: exactly one creates", async function contended() {
+		const store = memStore()
+		const outcomes = await Promise.all(
+			Array.from({ length: 8 }, function racer(_value, index) {
+				return store.putCreate(SLOT, encoder.encode(`racer-${index}`))
+			})
+		)
+		assert.equal(outcomes.filter((outcome) => outcome.tag === "created").length, 1)
+		assert.equal(outcomes.filter((outcome) => outcome.tag === "exists").length, 7)
+	})
+})
+
+describe("the five verbs over a directory", function suite() {
 	test("a dead owner's pid-lockfile beside the key is broken by putSwap", async function locks() {
 		const root = path.join(tmpRoot, "s6")
 		const store = fsStore(root)

@@ -12,6 +12,8 @@ three things:
 2. **The five-verb object store** — `get`, `getIfChanged`, `putCreate`,
    `putSwap`, `delete` — taking a branded `StoreKey` parsed once by
    `storeKey`. `fsStore` is the tier-1 local-directory implementation;
+   `memStore` is the same five verbs over one in-process map
+   (single-process only; third `Etag` producer, blake3 like `fsStore`);
    `s3Store` is the five verbs over S3-compatible storage (the official
    `@aws-sdk/client-s3` client signs and talks; R2 rides region `auto`).
 3. **Replica and writer** composed from the engine SDK's existing verbs:

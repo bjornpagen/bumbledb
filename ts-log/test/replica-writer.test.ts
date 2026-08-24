@@ -9,7 +9,7 @@ import { braid } from "#descriptor.ts"
 import { ErrContention } from "#errors.ts"
 import { generation, storeKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
-import { fsStore } from "#store.ts"
+import { memStore } from "#store.ts"
 
 const HOME = braid("c00000000")
 const NOTES = braid("c00000002")
@@ -24,11 +24,11 @@ after(function cleanup() {
 })
 
 let laneCounter = 0
-function lane(): { store: ReturnType<typeof fsStore>; prefix: string; dir: (name: string) => string } {
+function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (name: string) => string } {
 	laneCounter += 1
 	const base = path.join(tmpRoot, `lane-${laneCounter}`)
 	return {
-		store: fsStore(path.join(base, "bucket")),
+		store: memStore(),
 		prefix: "prod/main",
 		dir(name: string) {
 			return path.join(base, name)
@@ -40,7 +40,7 @@ function booking(id: bigint, holder: bigint, slot: string) {
 	return { id, holder, slot, at: { start: 1n, end: 2n } }
 }
 
-describe("replica and writer over the fs store", function suite() {
+describe("replica and writer over the mem store", function suite() {
 	test("commit publishes, a second replica replays it, waitFor delivers read-your-writes", async function commitReplay() {
 		const { store, prefix, dir } = lane()
 		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })

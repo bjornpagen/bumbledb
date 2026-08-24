@@ -3,7 +3,7 @@
  * bumbledb, a thin peer of the engine SDK. Public surface: the pure
  * protocol pair (`encodeBatch`/`decodeBatch`, `braidsOf`) mirrored
  * byte-exactly against the Rust driver, the five-verb object store
- * with its tier-1 `fsStore` and the `s3Store` AWS S3 client, and `openReplica`/`openWriter`/
+ * with its tier-1 `fsStore`, in-process `memStore`, and the `s3Store` AWS S3 client, and `openReplica`/`openWriter`/
  * `openTenants` composed from the engine SDK's own verbs — the replica
  * hands out the SDK's `Db`, and no engine surface is duplicated.
  */
@@ -32,7 +32,7 @@ export { generation, storeKey } from "#keys.ts"
 export type { OpenReplicaOptions, Replica } from "#replica.ts"
 export { openReplica } from "#replica.ts"
 export type { Create, Etag, Fetched, ObjectStore, Poll, S3Config, S3Credentials, Swap } from "#store.ts"
-export { etag, fsStore, s3Store } from "#store.ts"
+export { etag, fsStore, memStore, s3Store } from "#store.ts"
 export type { OpenTenantsOptions, Tenants } from "#tenants.ts"
 export { openTenants } from "#tenants.ts"
 export type { Interval, Value } from "#value.ts"
