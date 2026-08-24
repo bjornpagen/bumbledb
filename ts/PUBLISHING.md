@@ -1,7 +1,9 @@
 # Publishing @bjornpagen/bumbledb
 
 The owner-run release runbook. Owner-run, from the `ts/` package root, on a
-darwin-arm64 host, logged in to npm (`pnpm whoami` answers). This repo builds
+darwin-arm64 host, logged in to npm (`pnpm whoami` answers). Node >=24 is
+the floor for `engines` (`ts/`, `ts/npm/*`, `ts-log`) and for the `.ts`
+test runner and build scripts; the AL2023 CI cells install `nodejs24`. This repo builds
 and verifies the main package and the darwin-arm64 platform package; the
 linux-arm64 `.node` arrives from the amazonlinux:2023 CI run. The agent
 side does NOT publish. `npm publish` /

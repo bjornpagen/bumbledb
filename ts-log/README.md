@@ -19,6 +19,8 @@ three things:
    right to create log objects; `openTenants` is an LRU of per-tenant
    replicas. No engine surface is duplicated.
 
+The package `engines` and the `.ts` test runner require Node >=24.
+
 The exported vocabulary reads as English at the call site: `Value`,
 `Interval`, `Batch`, `Theory`, `Descriptor`, `Op`, `Pending`,
 `ChainEntry`, plus the branded scalars `StoreKey`, `Generation`,

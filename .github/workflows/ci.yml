@@ -96,9 +96,9 @@ jobs:
             findutils \
             ca-certificates \
             curl \
-            nodejs22 \
-            nodejs22-npm
-          alternatives --set node /usr/bin/node-22
+            nodejs24 \
+            nodejs24-npm
+          alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
       - name: Install rustup
         if: matrix.os == 'ubuntu-latest'
@@ -264,9 +264,9 @@ jobs:
             findutils \
             ca-certificates \
             curl \
-            nodejs22 \
-            nodejs22-npm
-          alternatives --set node /usr/bin/node-22
+            nodejs24 \
+            nodejs24-npm
+          alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
       - name: Install rustup
         if: matrix.os == 'ubuntu-latest'
