@@ -3,8 +3,9 @@
 One binary format, implemented twice (Rust in `bumbledb-log`, TS in
 `@bjornpagen/bumbledb-log`), pinned equal by cross-goldens (80). Commands
 carry **raw values, never intern ids** — interning is store-local and
-replays deterministically; footprint keys are hashes of these raw values
-(15), so the footprint section is verifiable by pure recomputation.
+replays deterministically. A batch is a header and its ops, nothing
+else: every consumer judges the ops through the engine, and no carried
+claim exists for a consumer to trust or a hostile writer to lie in.
 
 ## The batch
 
@@ -31,10 +32,11 @@ timestamp    u64 LE              (unix millis; the writer clamps at encode:
                                   convenience; never identity, never ordering)
 op_count     u32 LE
 ops          …
-fp_count     u32 LE
-footprint    fp_count × entry    (sorted ascending by (class, statement, key,
-                                  mode); duplicate tuples refused)
 ```
+
+The version stays **2** across the pass that deleted the footprint
+section: no release ever shipped the sectioned format; it never existed
+outside this tree, so there is no reader to version against.
 
 One batch = one engine write transaction = one braid-generation advance.
 Group commit packs many host writes into one batch; the batch is the
@@ -73,65 +75,21 @@ Row tags must match the relation's layout exactly; decode refuses with a
 typed error naming relation, row, and field. Decode is a full parse before
 any apply.
 
-## Footprint entries (the algebra's keys from 15; per-class shapes)
-
-Common prefix, then a class-determined suffix — the illegal combinations
-(a delta on an F entry, a mode on a K entry) are unencodable, not refused:
-
-```
-class        u8       1 = F (fact), 2 = K (key), 3 = C (containment), 4 = W (capacity)
-suffix       F: key 32 bytes (fid) + mode u8 (1 insert / 2 delete) — no
-                statement field exists for F, so "an F entry with a
-                statement" is unparseable, not refused
-             K: statement u16 LE + key 32 bytes (fkey) — no mode; a K
-                entry means "this determinant is written", and there is
-                no second thing it could mean
-             C: statement u16 LE + key 32 bytes + mode u8 (1 need /
-                2 support+ / 3 support−)
-             W: statement u16 LE + key 32 bytes + mode u8 (1 childΔ /
-                2 parent+ / 3 parent−); delta i64 LE follows iff mode = 1
-                (the one place a number exists, the only place one is
-                representable). The delta is an op-derived bound, never
-                an effect claim — set semantics can evaporate ops against
-                the final base, so 15's intersection consumes it as an
-                interval widened by the batch's own F entries on weighted
-                children
-```
-
-One entry per (class, statement, key, mode), which is also the sort
-tuple (F sorts under its class with statement absent): a batch legally
-emits `need` and `support+` at one containment key (insert a source and
-its target together), so mode disambiguates the order. W child deltas at
-one key merge into a single signed sum at encode.
-
-The section is **derivable**: `footprint(descriptor, ops)` is a pure
-function both implementations expose; encoders call it, replicas recompute
-it during replay and refuse a mismatch (`FootprintMismatch`,
-corruption-class). Publishing a derivable section is deliberate, and its
-consumer is the **tripwire, not the loser**: no consumer ever *acts* on
-the carried section (the loser recomputes the winner's footprint from
-the ops it fetched — 15's carried-and-checked law), but carrying it
-makes every batch a cross-implementation oracle — an encoder whose
-footprint function drifts from the decoder's is caught at the very next
-replay, on every replica, as a typed refusal instead of a silent
-disagreement about commutativity.
-
 ## Apply
 
 `apply(db, chain, batch)` — `chain` is the replica's per-braid position
 `(g, prev_hash, prev_ts)` from the sidecar (50):
 
-1. Refuse version ≠ 2, flags ≠ 0, fingerprint mismatch, unsorted or
-   duplicate footprint entries, op relation outside `braid` — and the
+1. Refuse version ≠ 2, flags ≠ 0, fingerprint mismatch, op relation
+   outside `braid` — and the
    chain discipline, one identity with three proved causes:
    `ChainMismatch{Slot}` when `header.braid_gen ≠` the slot number in
    the key the object was fetched from; `ChainMismatch{Prev}` when
    `header.prev ≠ chain.prev_hash`; `ChainMismatch{Timestamp}` when
    `header.timestamp < chain.prev_ts`. All corruption-class: the chain
    itself proves which writer misbehaved (the header carries its id).
-2. Recompute the footprint from ops; mismatch → `FootprintMismatch`.
-3. One `db.write` applying ops in listed order (rows in listed order).
-4. The engine verdict must be `Accepted`; `Rejected` during steady-state
+2. One `db.write` applying ops in listed order (rows in listed order).
+3. The engine verdict must be `Accepted`; `Rejected` during steady-state
    replay is `ReplayDiverged` (writers publish only accepted batches;
    determinism guarantees agreement). Advance the chain to
    `(header.braid_gen, blake3(batch bytes), header.timestamp)`, under
@@ -171,7 +129,7 @@ tip-vs-hole from the manifest's current checkpoint before any fetch (50).
 3. Deterministic row ids; fresh ids ride in the commands as plain values —
    replay never calls engine reserve.
 4. Judgment is a pure function of (state, batch) — Lean-pinned.
-5. Cross-braid apply order is irrelevant to final content (L8/L9).
+5. Cross-braid apply order is irrelevant to final content (L9).
 6. **Replay idempotence (L10).** Applying a batch whose effects the store
    already contains is the engine's no-op commit: empty net delta, no
    judgment, no LMDB commit, no generation advance. Corollary: after full
@@ -203,7 +161,7 @@ libraries, or mixed-version fleets. Neither exists; both out of scope
 by 00.
 
 **Precision on determinism:** the protocol's hard requirement is
-decode-compatibility plus footprint-recompute equality; byte-exact
+decode-compatibility; byte-exact
 cross-implementation *encoding* is the chosen stronger discipline because
 it makes the goldens trivial — a testing convenience, not a correctness
 dependency (even the ambiguity-retry compare in 40 uses the writer's
@@ -213,4 +171,6 @@ in-memory bytes).
 
 No intern ids (store-local). No row ids for non-fresh relations
 (derived). No floor ops (id leases, 10). No schema payloads (migration
-out of scope). No ordering meaning in `timestamp`.
+out of scope). No ordering meaning in `timestamp`. No carried conflict
+claims of any kind: the batch is header + ops, and every consumer
+judges the ops through the engine.
