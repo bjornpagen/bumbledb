@@ -14,7 +14,7 @@ use object_store::{
     CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, ObjectStoreExt as _,
     PutMode, UpdateVersion,
 };
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 
 use super::{Create, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap};
 
@@ -53,7 +53,11 @@ pub struct S3Config {
 }
 
 /// The five verbs against one bucket. Clone shares the client and the
-/// runtime; two clones are two HTTP clients over one prefix.
+/// runtime; two clones are two HTTP clients over one prefix. Construct
+/// outside an async context — every verb `block_on`s a multi-thread
+/// runtime, because the writer's publisher and duty threads call store
+/// verbs on other OS threads and a current-thread runtime cannot drive
+/// two `block_on` callers.
 #[derive(Clone)]
 pub struct S3Store {
     inner: AmazonS3,
@@ -64,11 +68,21 @@ pub struct S3Store {
 
 impl S3Store {
     pub fn new(config: &S3Config) -> Result<Self> {
-        let runtime = Runtime::new().map_err(|source| StoreError {
-            op: "open",
-            key: config.bucket.clone(),
-            source,
-        })?;
+        if Handle::try_current().is_ok() {
+            return Err(StoreError {
+                op: "open",
+                key: config.bucket.clone(),
+                source: io::Error::other("S3Store is constructed outside an async context"),
+            });
+        }
+        let runtime = Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|source| StoreError {
+                op: "open",
+                key: config.bucket.clone(),
+                source,
+            })?;
         let handle = runtime.handle().clone();
         let prefix = normalize_prefix(&config.prefix).map_err(|source| StoreError {
             op: "open",
@@ -341,6 +355,27 @@ mod tests {
             .object_path(&StoreKey::of("manifest.json"))
             .expect("path");
         assert_eq!(path.as_ref(), "smoke/run/manifest.json");
+    }
+
+    #[test]
+    fn constructor_refuses_inside_an_async_context() {
+        let nested = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("nested runtime");
+        let opened = nested.block_on(async {
+            S3Store::new(&S3Config {
+                endpoint: None,
+                region: "us-east-1".into(),
+                bucket: "example".into(),
+                credentials: static_keys(),
+                prefix: String::new(),
+            })
+        });
+        match opened {
+            Err(err) => assert_eq!(err.op, "open"),
+            Ok(_) => panic!("S3Store must refuse construction inside an async context"),
+        }
     }
 
     #[test]
