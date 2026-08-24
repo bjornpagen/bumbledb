@@ -15,8 +15,8 @@ it.
 
 ```
 Lane B (beauty: deep read + renames + types) ──┐
-Lane N (SDK 0.17.2: internalDescriptor,      ──┼──► Lane S (stores: S3Store, aws4fetch,
-        roster widening)                       │        memStore, gated smokes)
+Lane N (SDK 0.17.2: internalDescriptor,      ──┼──► Lane S (stores: S3Store, official
+        roster widening)                       │        S3 client, memStore, gated smokes)
 Lane C (CI: amazonlinux law, both workflows) ──┘            │
                                                 Lane D (duty binary) ──┐
                                                                        ▼
@@ -48,8 +48,9 @@ all exercised the way a stranger would.
   Lands early so every later push exercises it; the linux-arm64
   artifacts come from its runs.
 - **Lane S** — 30 whole plus 20's Rust `S3Store`: written against the
-  renamed surface; `memStore`; both gated smokes on a real bucket; the
-  interop lane's s3 variant.
+  renamed surface; official `@aws-sdk/client-s3` (owner killed
+  aws4fetch); `memStore`; both gated smokes; the interop lane's s3
+  variant.
 - **Lane D** — 20's duty binary, both modes; FsStore-backed tests
   in-repo; the s3 target exercised by the gated smoke.
 - **Ceremony** — owner-run, from PUBLISHING.md's 0.17.2 entry: download
@@ -82,8 +83,9 @@ all exercised the way a stranger would.
 - [ ] C: bumbledb-log.yml green on both jobs with artifacts attached;
       ci.yml's linux legs moved into the amazonlinux:2023 container;
       no Ubuntu userspace builds or tests anything, anywhere
-- [ ] S: S3Store + aws4fetch store + memStore landed; boxes B and C
-      closed with the gated smokes run against a real bucket
+- [x] S: S3Store + official S3 client + memStore landed; Refresh kept
+      with the census pin; Node floor 24; gated smokes loud-skipped on
+      this machine (no credentials); receipt below
 - [ ] D: duty binary, --once and resident modes, tested over FsStore,
       smoked over s3
 - [ ] CEREMONY: 0.17.2 (main + two platforms) and ts-log 0.18.0
@@ -297,3 +299,144 @@ Paths this lane changed: `ts-log/src/**`, `ts-log/test/**`,
 `proposals/60-writer.md`, `proposals/80-conformance.md`,
 `proposals/grail/90-rollout.md` (this receipt). Did not touch `ts/`,
 `.github/`, `duty.rs`, `examples/lambda/`, `lean/`.
+
+## Lane S receipt
+
+The three stores landed. aws4fetch shipped in `12be9118` and the
+owner killed it; the official `@aws-sdk/client-s3` client is the
+TS signer. Refresh is kept. Node is 24. The gated smokes loud-skip
+on this machine.
+
+Landing hashes:
+
+- `f6c338e0` — Rust `S3Store` over `object_store` 0.14.1
+- `12be9118` — TS aws4fetch store (owner-killed next)
+- `7ada883d` — official client; aws4fetch and `objectUrl` die
+- `bc7ef05b` — Refresh kept in both languages; census pin
+- `06f767f2` — Node floor 24 in engines, runbook, and CI
+- `44e69915` — multi-thread runtime; construct-outside-async
+- `6de97425` — `memStore` / `MemStore`; fsync tax dies
+- `ff097be2` — gated smokes + s3 interop read
+
+aws4fetch: fully gone after `7ada883d`. `pnpm-lock.yaml` carries
+`@aws-sdk/client-s3` only.
+
+Refresh was deleted in the working tree only, never committed. The
+keep commit is `bc7ef05b`. Both-language API is one credentials
+sum: static keys (id, secret, optional session token) | refresh
+callback. Rust: `S3Credentials::Static { … } | Refresh(Arc<dyn Fn()
+-> io::Result<StaticKeys> + Send + Sync>)`, plus the
+`RefreshProvider` field and the boxed future
+`CredentialProvider` forces. TS: `StaticKeys | (() => StaticKeys |
+Promise<StaticKeys>)` on the official client — not the SDK default
+provider chain. Exemption site: `scripts/spec-census.sh`, three
+exact lines in `crates/bumbledb-log/src/store/s3.rs`, reason
+attached: caller-owned credential behavior at a foreign async-trait
+boundary; cold path. Zero other log-driver dyns.
+
+Engines / CI Node spellings (one answer: 24):
+
+- `engines.node` is `>=24` in `ts/`, `ts/npm/darwin-arm64`,
+  `ts/npm/linux-arm64`, and `ts-log`
+- Runbook (`ts/PUBLISHING.md`) and `ts-log/README.md` state Node
+  >=24 for the `.ts` test runner and build scripts
+- `bumbledb-log.yml` arm job and both `ci.yml` linux cells install
+  `nodejs24` / `nodejs24-npm` and `alternatives --set node
+  /usr/bin/node-24`
+- Darwin already `node-version: 24`
+- `c-abi.yml` still installs `nodejs22` — Lane C's file, not taken
+- E-prep (grail/50) must use the newest AL2023 Node runtime Lambda
+  offers, which must be >=24 so engines admits it
+
+Runtime ruling (F3): keep multi-thread. The writer's publisher
+(`drain.rs` `spawn_publisher`) and duty thread call store verbs on
+other OS threads; a current-thread runtime cannot drive two
+`block_on` callers. `Builder::new_multi_thread().enable_all()`
+names the choice. Construct `S3Store` outside an async context —
+`Handle::try_current` at `new()` is a typed refusal. Reopen: a
+consumer that only ever calls verbs from one thread and measures
+the extra workers as cost.
+
+Dep-weight ruling (F4): ACCEPT `object_store` + `tokio` as
+unconditional crate deps. One way to build the crate; no feature
+matrix. The embedded use case's TS consumers never compile this
+crate. Reopen: an embedded Rust consumer that measures the build
+cost.
+
+Keep-ledger:
+
+- Refresh KEPT; dyn is the honest spelling of caller-owned creds;
+  exemption pinned with the reason above; reopen trigger is not
+  needed for Refresh itself (it is in scope). dyn-for-caller-owned-
+  credentials is the keep spelling.
+- Multi-thread runtime + construct-outside-async (F3, above).
+- `object_store` + tokio unconditional (F4, above).
+- `BUMBLEDB_S3_SMOKE_REGION` defaults to `us-east-1` when unset so
+  C's three-var gate still runs. Reopen: a smoke target whose
+  region is not us-east-1 and whose env omits the region var.
+
+Env contract (exact names):
+
+- Required: `BUMBLEDB_S3_SMOKE_BUCKET`, `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`
+- Optional: `BUMBLEDB_S3_SMOKE_REGION` (default `us-east-1`),
+  `BUMBLEDB_S3_SMOKE_ENDPOINT`, `AWS_SESSION_TOKEN`
+
+Smoke status: loud-skip on this machine (all three required vars
+absent). Tests are named `s3_smoke*` so CI `cargo test … s3_smoke`
+matches. They never fail without credentials. A live bucket was
+not exercised here.
+
+Close gates on this tree: `scripts/spec-census.sh` green (zero-dyn
+exemption pinned: Error::source 3, credential refresh 3);
+`scripts/check.sh` green; `scripts/lean.sh` green (277 conformance
+cases, three-way comparator). A green suite with a red census is
+a red tree — this close is green on all three.
+
+memStore: landed. Single-process honesty stated where declared.
+Third `Etag` producer (blake3 like `fsStore`; the brand is the
+contract). Rust migrated 11 store-semantic / retry-law tests off
+`FsStore` tempdirs. TypeScript migrated the five-verb semantics
+plus replica-writer, recovery, and tenants. Multiprocess stays on
+disk.
+
+Deletion tally addendum (S):
+
+1. aws4fetch (dep, import, every call)
+2. `objectUrl` (the fetch-signer URL assembler)
+3–5. `nodejs22` / `node-22` install spellings (bumbledb-log.yml
+   arm + two ci.yml linux cells)
+6. Implicit `Runtime::new()` (named as multi-thread)
+7. The fsync tax on 22 test bodies that never touched a disk
+8. The f11 pin that asserted credentials were absent and failed
+   when they were present
+
+Deviations:
+
+- grail/30 named aws4fetch; the owner deleted that part.
+- grail/30 named a refresh; the owner reversed a deletion and
+  kept the arm.
+- grail/50 still says Node 22 for Lambda — E-prep, not this lane;
+  engines will refuse a 22 runtime.
+- Live S3 smoke did not run (no credentials).
+- `c-abi.yml` still spells nodejs22.
+
+Blockers for D: duty execs `FsStore` in-repo and S3 via this
+gate. The smoke env names above are the contract. Duty must
+construct `S3Store` outside an async context. Refresh is in
+scope if duty ever needs it. `c-abi.yml` nodejs22 is C's leftover
+against the 24 floor.
+
+Paths this lane changed: `crates/bumbledb-log/src/store.rs`,
+`crates/bumbledb-log/src/store/{s3.rs,mem.rs}`,
+`crates/bumbledb-log/tests/{s3_smoke.rs,lane_b_mem_store.rs,lane_b_fs_store.rs,f11_pins.rs}`,
+`ts-log/src/{store.ts,store-s3.ts,index.ts}`,
+`ts-log/test/{store.test.ts,s3-smoke.test.ts,interop-child.ts,recovery.test.ts,replica-writer.test.ts,tenants.test.ts}`,
+`ts-log/package.json`, `ts-log/pnpm-lock.yaml`, `ts-log/README.md`,
+`ts/PUBLISHING.md` (Node 24 sentence), `.github/workflows/{bumbledb-log.yml,ci.yml}`
+(F2 node-version lines only), `proposals/40-object-store.md`,
+`proposals/grail/90-rollout.md` (this receipt),
+`scripts/spec-census.sh` (Refresh pin), `lean/Bumbledb/Bridge.lean`
+(one census token path: `Writer::clear_pending` now lives in
+`writer/discipline.rs` after B's split). Did not touch `ts/src`,
+`duty.rs`, `examples/lambda/`, `c-abi.yml`.

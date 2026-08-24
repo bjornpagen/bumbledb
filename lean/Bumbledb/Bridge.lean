@@ -618,7 +618,7 @@ def ledger : List Obligation := [
 
   .row @Txn.Braids.L10 `Bumbledb.Txn.Braids.L10
     "Replay idempotence: re-applying a batch whose effects the state already contains is the identity with an accepted verdict and no generation advance, so every crash window heals by replaying forward — recovery is the catch-up loop, never an intent record."
-    "apply (crates/bumbledb-log/src/apply.rs); Replica::resolve_pending (crates/bumbledb-log/src/replica.rs); Writer::clear_pending (crates/bumbledb-log/src/writer.rs)"
+    "apply (crates/bumbledb-log/src/apply.rs); Replica::resolve_pending (crates/bumbledb-log/src/replica.rs); Writer::clear_pending (crates/bumbledb-log/src/writer/discipline.rs)"
     "double_apply_every_batch_at_every_prefix_leaves_digest_generation_vector_unmoved (crates/bumbledb-log/tests/f4_crash.rs)"
 
 ]
