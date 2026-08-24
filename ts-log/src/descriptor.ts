@@ -21,7 +21,7 @@ import type {
 import { internalBlake3, lower } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { ByteWriter, fromHex, toHex, utf8Encoder } from "#bytes.ts"
-import type { LogValue } from "#value.ts"
+import type { Value } from "#value.ts"
 import { writeCanonicalLiteral } from "#value.ts"
 
 interface FieldInfo {
@@ -40,13 +40,13 @@ interface RelationInfo {
 	/** Sealed order: a closed relation's synthetic u64 `id` at ordinal 0. */
 	readonly fields: readonly FieldInfo[]
 	/** Closed ground axioms in sealed order (id first), resolved values. */
-	readonly rows: ReadonlyArray<readonly LogValue[]>
+	readonly rows: ReadonlyArray<readonly Value[]>
 }
 
 interface SideInfo {
 	readonly relation: number
 	readonly projection: readonly number[]
-	readonly selection: ReadonlyArray<{ readonly field: number; readonly values: readonly LogValue[] }>
+	readonly selection: ReadonlyArray<{ readonly field: number; readonly values: readonly Value[] }>
 }
 
 type WeightInfo =
@@ -83,7 +83,7 @@ interface SerialStatement {
 	readonly braid: string
 }
 
-interface LogDescriptor {
+interface Descriptor {
 	readonly relations: readonly RelationInfo[]
 	readonly relationByName: ReadonlyMap<string, RelationInfo>
 	readonly statements: readonly StatementInfo[]
@@ -97,19 +97,19 @@ interface LogDescriptor {
 }
 
 /** The pure trio's input: the theory value, its lowered spec, or an already-parsed descriptor. */
-type LogTheory = AnySchema | SchemaSpec | LogDescriptor
+type Theory = AnySchema | SchemaSpec | Descriptor
 
-function isDescriptor(theory: LogTheory): theory is LogDescriptor {
+function isDescriptor(theory: Theory): theory is Descriptor {
 	return "braidMembers" in theory
 }
 
-function isSpec(theory: LogTheory): theory is SchemaSpec {
+function isSpec(theory: Theory): theory is SchemaSpec {
 	return Array.isArray((theory as SchemaSpec).relations)
 }
 
-const cache = new WeakMap<object, LogDescriptor>()
+const cache = new WeakMap<object, Descriptor>()
 
-function descriptorOf(theory: LogTheory): LogDescriptor {
+function descriptorOf(theory: Theory): Descriptor {
 	if (isDescriptor(theory)) {
 		return theory
 	}
@@ -128,7 +128,7 @@ function braidHex(relationId: number): string {
 	return `c${relationId.toString(16).padStart(8, "0")}`
 }
 
-function logValueOf(value: ValueSpec): LogValue {
+function rawValue(value: ValueSpec): Value {
 	switch (value.kind) {
 		case "bool":
 			return value.value
@@ -178,9 +178,9 @@ function fieldsOf(
 	return fields
 }
 
-function resolveLiteral(tables: SpecTables, relation: RelationInfo, field: FieldInfo, literal: LiteralSpec): LogValue {
+function resolveLiteral(tables: SpecTables, relation: RelationInfo, field: FieldInfo, literal: LiteralSpec): Value {
 	if (literal.kind === "value") {
-		return logValueOf(literal.value)
+		return rawValue(literal.value)
 	}
 	if (field.closedRef === undefined) {
 		throw errors.new(
@@ -198,7 +198,7 @@ function resolveLiteral(tables: SpecTables, relation: RelationInfo, field: Field
 	return BigInt(id)
 }
 
-function literalSetOf(tables: SpecTables, relation: RelationInfo, field: FieldInfo, set: LiteralSetSpec): LogValue[] {
+function literalSetOf(tables: SpecTables, relation: RelationInfo, field: FieldInfo, set: LiteralSetSpec): Value[] {
 	if (set.kind === "one") {
 		return [resolveLiteral(tables, relation, field, set.literal)]
 	}
@@ -308,7 +308,7 @@ function capacityOf(
 
 /** The `exact {n}` window: lo = hi = n; a non-literal n is grammar-refused upstream. */
 
-function parseSpec(spec: SchemaSpec): LogDescriptor {
+function parseSpec(spec: SchemaSpec): Descriptor {
 	const prepass = new Map<string, { closed: boolean; handles: readonly string[] }>()
 	for (const relation of spec.relations) {
 		prepass.set(relation.name, {
@@ -343,7 +343,7 @@ function parseSpec(spec: SchemaSpec): LogDescriptor {
 			throw errors.new(`relation ordinal ${id} missing`)
 		}
 		const rows = relation.closed.rows.map(function resolveRow(row, rowId) {
-			const values: LogValue[] = [BigInt(rowId)]
+			const values: Value[] = [BigInt(rowId)]
 			row.values.forEach(function resolveCell(literal, column) {
 				const field = info.fields[column + 1]
 				if (field === undefined) {
@@ -433,7 +433,7 @@ function parseSpec(spec: SchemaSpec): LogDescriptor {
 		return hashed
 	}
 
-	const descriptor: LogDescriptor = {
+	const descriptor: Descriptor = {
 		relations,
 		relationByName: byName,
 		statements,
@@ -456,7 +456,7 @@ function parseSpec(spec: SchemaSpec): LogDescriptor {
  * recomputed, e.g. when the mirror cannot hash a closed relation's
  * interned string axioms.
  */
-function withFingerprint(descriptor: LogDescriptor, fingerprint: string): LogDescriptor {
+function withFingerprint(descriptor: Descriptor, fingerprint: string): Descriptor {
 	return {
 		relations: descriptor.relations,
 		relationByName: descriptor.relationByName,
@@ -728,14 +728,14 @@ function fingerprintOf(relations: readonly RelationInfo[], statements: readonly 
 }
 
 export type {
+	Descriptor,
 	FieldInfo,
 	HiInfo,
-	LogDescriptor,
-	LogTheory,
 	RelationInfo,
 	SerialStatement,
 	SideInfo,
 	StatementInfo,
+	Theory,
 	WeightInfo
 }
 export { braidHex, descriptorOf, withFingerprint }

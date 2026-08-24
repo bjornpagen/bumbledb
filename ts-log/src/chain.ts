@@ -12,14 +12,9 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
 import { utf8StrictDecoder } from "#bytes.ts"
+import type { ChainEntry } from "#codec.ts"
 
-interface ChainEntry {
-	readonly g: bigint
-	readonly prev: string
-	readonly ts: bigint
-}
-
-interface PendingBatch {
+interface Pending {
 	readonly braid: string
 	readonly gen: bigint
 	readonly bytes: Uint8Array
@@ -27,7 +22,7 @@ interface PendingBatch {
 
 interface Sidecar {
 	readonly chain: ReadonlyMap<string, ChainEntry>
-	readonly pending: PendingBatch | null
+	readonly pending: Pending | null
 }
 
 function renderSidecar(sidecar: Sidecar): string {
@@ -105,5 +100,5 @@ async function writeSidecar(file: string, sidecar: Sidecar): Promise<void> {
 	}
 }
 
-export type { ChainEntry, PendingBatch, Sidecar }
+export type { ChainEntry, Pending, Sidecar }
 export { readSidecar, renderSidecar, writeSidecar }

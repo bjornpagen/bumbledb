@@ -14,7 +14,7 @@ import * as crypto from "node:crypto"
 import type { Fact, FreshKeys, MemberRelation, SchemaRelations, Violation } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { bytesEqual, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
-import type { BatchOp } from "#codec.ts"
+import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
 import type { RelationInfo } from "#descriptor.ts"
 import { ErrSpanningCommit, throwContention } from "#errors.ts"
@@ -33,7 +33,7 @@ import {
 	readdressPending,
 	withGate
 } from "#replica.ts"
-import type { LogValue } from "#value.ts"
+import type { Value } from "#value.ts"
 import { checkAgainst } from "#value.ts"
 
 /** 10 owns the width: one CAS amortizes counter traffic 4096× below slot traffic. */
@@ -68,7 +68,7 @@ interface CommitSplit<Rels extends SchemaRelations, R> {
  * drawing on the id lease (10) — reservations never appear in the log;
  * the resulting inserts carry concrete values. Pure and synchronous.
  */
-interface LogBatch<Rels extends SchemaRelations> {
+interface Batch<Rels extends SchemaRelations> {
 	insert<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): void
 	delete<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): void
 	reserve<Rel extends MemberRelation<Rels>>(
@@ -79,8 +79,8 @@ interface LogBatch<Rels extends SchemaRelations> {
 }
 
 interface Writer<Rels extends SchemaRelations> {
-	commit<R>(body: (batch: LogBatch<Rels>) => R): Promise<Commit<Rels, R>>
-	commitSplit<R>(body: (batch: LogBatch<Rels>) => R): Promise<CommitSplit<Rels, R>>
+	commit<R>(body: (batch: Batch<Rels>) => R): Promise<Commit<Rels, R>>
+	commitSplit<R>(body: (batch: Batch<Rels>) => R): Promise<CommitSplit<Rels, R>>
 }
 
 interface LeaseRange {
@@ -162,20 +162,20 @@ function pushRange(state: WriterState, relation: number, field: number, next: bi
 }
 
 interface Recording {
-	readonly ops: BatchOp[]
+	readonly ops: Op[]
 }
 
 function lowerFact<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	info: RelationInfo,
 	fact: Record<string, unknown>
-): LogValue[] {
+): Value[] {
 	return info.fields.map(function lowerCell(field) {
 		const raw = fact[field.name]
 		if (raw === undefined) {
 			throw errors.new(`relation ${info.name}: fact is missing field ${field.name}`)
 		}
-		let value: LogValue
+		let value: Value
 		if (field.closedRef !== undefined) {
 			if (typeof raw !== "string") {
 				throw errors.new(`relation ${info.name} field ${field.name}: expected a ${field.closedRef} handle name`)
@@ -193,7 +193,7 @@ function lowerFact<Rels extends SchemaRelations>(
 			}
 			value = { start: interval.start, end: interval.end }
 		} else {
-			value = raw as LogValue
+			value = raw as Value
 		}
 		checkAgainst(`relation ${info.name} field ${field.name}`, field.type, value)
 		return value
@@ -203,7 +203,7 @@ function lowerFact<Rels extends SchemaRelations>(
 function recorderOf<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState
-): { batch: LogBatch<Rels>; recording: Recording } {
+): { batch: Batch<Rels>; recording: Recording } {
 	const recording: Recording = { ops: [] }
 	function infoOf(name: string): RelationInfo {
 		const info = core.descriptor.relationByName.get(name)
@@ -217,7 +217,7 @@ function recorderOf<Rels extends SchemaRelations>(
 	}
 	function record(op: "insert" | "delete", relationName: string, facts: Iterable<unknown>): void {
 		const info = infoOf(relationName)
-		const rows: LogValue[][] = []
+		const rows: Value[][] = []
 		for (const fact of facts) {
 			if (typeof fact !== "object" || fact === null) {
 				throw errors.new(`relation ${relationName}: a fact is not an object`)
@@ -226,7 +226,7 @@ function recorderOf<Rels extends SchemaRelations>(
 		}
 		recording.ops.push({ op, relation: relationName, rows })
 	}
-	const batch: LogBatch<Rels> = {
+	const batch: Batch<Rels> = {
 		insert(relation, facts) {
 			record("insert", relation.name, facts)
 		},
@@ -254,8 +254,8 @@ function recorderOf<Rels extends SchemaRelations>(
 async function recordWithLeases<Rels extends SchemaRelations, R>(
 	core: Core<Rels>,
 	state: WriterState,
-	body: (batch: LogBatch<Rels>) => R
-): Promise<{ value: R; ops: BatchOp[] }> {
+	body: (batch: Batch<Rels>) => R
+): Promise<{ value: R; ops: Op[] }> {
 	for (let attempt = 0; attempt < 16; attempt++) {
 		const { batch, recording } = recorderOf(core, state)
 		const ran = errors.trySync(function runBody() {
@@ -273,11 +273,8 @@ async function recordWithLeases<Rels extends SchemaRelations, R>(
 	throw errors.new("the id-lease pool could not satisfy the recording after 16 refills")
 }
 
-function braidsTouched<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	ops: readonly BatchOp[]
-): Map<string, BatchOp[]> {
-	const partitioned = new Map<string, BatchOp[]>()
+function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): Map<string, Op[]> {
+	const partitioned = new Map<string, Op[]>()
 	for (const op of ops) {
 		const info = core.descriptor.relationByName.get(op.relation)
 		const braid = info === undefined ? undefined : core.descriptor.braidOfRelation.get(info.id)
@@ -339,7 +336,7 @@ function screamContention<Rels extends SchemaRelations>(
 async function publishPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState,
-	ops: readonly BatchOp[]
+	ops: readonly Op[]
 ): Promise<Commit<Rels, undefined>> {
 	let losses = 0
 	for (;;) {
@@ -401,7 +398,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState,
 	braid: string,
-	ops: readonly BatchOp[]
+	ops: readonly Op[]
 ): Promise<Commit<Rels, undefined>> {
 	const entry = chainEntry(core, braid)
 	const timestamp = maxBigint(BigInt(Date.now()), entry.ts)
@@ -465,7 +462,7 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 				if (partitioned.size > 1) {
 					throw errors.wrap(ErrSpanningCommit, `the recorded ops span braids ${[...partitioned.keys()].join(", ")}`)
 				}
-				const [braid, ops] = [...partitioned.entries()][0] as [string, BatchOp[]]
+				const [braid, ops] = [...partitioned.entries()][0] as [string, Op[]]
 				const outcome = await disciplineCommit(core, state, braid, ops)
 				if (outcome.tag === "rejected") {
 					return outcome
@@ -502,5 +499,5 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 	}
 }
 
-export type { BraidOutcome, Commit, CommitSplit, Durability, LogBatch, Writer }
+export type { Batch, BraidOutcome, Commit, CommitSplit, Durability, Writer }
 export { openWriter }

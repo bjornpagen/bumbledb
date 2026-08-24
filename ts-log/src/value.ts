@@ -12,12 +12,12 @@ import * as errors from "@superbuilders/errors"
 import type { ByteReader, ByteWriter } from "#bytes.ts"
 import { bytesEqual, I64_MAX, I64_MIN, U64_MAX, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 
-interface LogInterval {
+interface Interval {
 	readonly start: bigint
 	readonly end: bigint
 }
 
-type LogValue = boolean | bigint | string | Uint8Array | LogInterval
+type Value = boolean | bigint | string | Uint8Array | Interval
 
 /** 20's tag table: the codec's own numbering, normative to the byte. */
 const TAG = {
@@ -30,7 +30,7 @@ const TAG = {
 	fixedInterval: 6
 } as const
 
-function isInterval(value: LogValue): value is LogInterval {
+function isInterval(value: Value): value is Interval {
 	return typeof value === "object" && !(value instanceof Uint8Array)
 }
 
@@ -51,7 +51,7 @@ function wireTagOf(type: ValueTypeSpec): number {
 	}
 }
 
-function checkAgainst(context: string, type: ValueTypeSpec, value: LogValue): void {
+function checkAgainst(context: string, type: ValueTypeSpec, value: Value): void {
 	switch (type.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
@@ -101,7 +101,7 @@ function checkAgainst(context: string, type: ValueTypeSpec, value: LogValue): vo
 }
 
 /** The codec's tagged form: `tag u8` + payload, at the field's layout. */
-function writeTagged(out: ByteWriter, type: ValueTypeSpec, value: LogValue): void {
+function writeTagged(out: ByteWriter, type: ValueTypeSpec, value: Value): void {
 	switch (type.kind) {
 		case "bool": {
 			out.u8(TAG.bool)
@@ -131,7 +131,7 @@ function writeTagged(out: ByteWriter, type: ValueTypeSpec, value: LogValue): voi
 			return
 		}
 		case "interval": {
-			const interval = value as LogInterval
+			const interval = value as Interval
 			if (type.width === undefined) {
 				out.u8(TAG.interval)
 				if (type.element === "u64") {
@@ -165,7 +165,7 @@ interface TaggedRefusal {
 }
 
 /** Full parse at the layout's type; every illegal byte is a typed refusal. */
-function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefusal): LogValue {
+function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefusal): Value {
 	const expected = wireTagOf(type)
 	const tag = reader.u8("value tag")
 	if (tag !== expected) {
@@ -215,7 +215,7 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 	}
 }
 
-function valuesEqual(a: LogValue, b: LogValue): boolean {
+function valuesEqual(a: Value, b: Value): boolean {
 	if (typeof a === "boolean" || typeof a === "bigint" || typeof a === "string") {
 		return a === b
 	}
@@ -234,7 +234,7 @@ function valuesEqual(a: LogValue, b: LogValue): boolean {
  * the fingerprint's `put_literal` length-prefixes them separately, and
  * closed ground axioms with string columns are the mirror's recorded gap.
  */
-function writeCanonicalLiteral(out: ByteWriter, type: ValueTypeSpec, value: LogValue): void {
+function writeCanonicalLiteral(out: ByteWriter, type: ValueTypeSpec, value: Value): void {
 	switch (type.kind) {
 		case "bool": {
 			out.u8(value === true ? 1 : 0)
@@ -260,7 +260,7 @@ function writeCanonicalLiteral(out: ByteWriter, type: ValueTypeSpec, value: LogV
 			return
 		}
 		case "interval": {
-			const interval = value as LogInterval
+			const interval = value as Interval
 			if (type.width !== undefined) {
 				if (type.element === "u64") {
 					out.u64be(interval.start)
@@ -281,5 +281,5 @@ function writeCanonicalLiteral(out: ByteWriter, type: ValueTypeSpec, value: LogV
 	}
 }
 
-export type { LogInterval, LogValue, TaggedRefusal }
+export type { Interval, TaggedRefusal, Value }
 export { checkAgainst, isInterval, readTagged, TAG, valuesEqual, wireTagOf, writeCanonicalLiteral, writeTagged }

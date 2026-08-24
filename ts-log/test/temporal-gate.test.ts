@@ -54,10 +54,7 @@ describe("the temporal gate", function suite() {
 	test("openWriter and the batch recorders are synchronous by law", function syncRecorders() {
 		const writer = sourceOf("writer.ts")
 		assert.ok(!writer.includes("async function openWriter"), "openWriter touches no store verb and stays sync")
-		const recorder = writer.slice(
-			writer.indexOf("const batch: LogBatch"),
-			writer.indexOf("return { batch, recording }")
-		)
+		const recorder = writer.slice(writer.indexOf("const batch: Batch"), writer.indexOf("return { batch, recording }"))
 		assert.ok(!recorder.includes("await"), "batch.insert/delete/reserve are pure recorders")
 	})
 })

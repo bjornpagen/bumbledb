@@ -14,18 +14,18 @@ import type { Db, Fact, MemberRelation, Schema, SchemaRelations, WriteOutcome } 
 import { internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { bytesEqual, toHex } from "#bytes.ts"
-import type { ChainEntry, PendingBatch } from "#chain.ts"
+import type { ChainEntry, Pending } from "#chain.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
-import type { BatchOp } from "#codec.ts"
+import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
-import type { LogDescriptor, RelationInfo } from "#descriptor.ts"
+import type { Descriptor, RelationInfo } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { ErrGapDetected, ErrReplayDiverged, refuse } from "#errors.ts"
 import { checkpointJsonKey, checkpointMdbKey, logKey, manifestKey } from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
 import { parseCheckpoint, parseManifest, renderManifest } from "#manifest.ts"
 import type { ObjectStore } from "#store.ts"
-import type { LogValue } from "#value.ts"
+import type { Value } from "#value.ts"
 
 const ZERO_HASH = "0".repeat(64)
 
@@ -55,11 +55,11 @@ interface Core<Rels extends SchemaRelations> {
 	readonly prefix: string
 	readonly dir: string
 	readonly theory: Schema<Rels>
-	readonly descriptor: LogDescriptor
+	readonly descriptor: Descriptor
 	db: Db<Rels>
 	chain: Map<string, ChainEntry>
-	pending: PendingBatch | null
-	pendingOps: readonly BatchOp[] | null
+	pending: Pending | null
+	pendingOps: readonly Op[] | null
 	pendingApplied: boolean
 	manifestEtag: string | null
 	checkpoint: CheckpointFacts | null
@@ -117,7 +117,7 @@ function storePath<Rels extends SchemaRelations>(core: Core<Rels>): string {
 	return path.join(core.dir, core.storeName)
 }
 
-function zeroChain(descriptor: LogDescriptor): Map<string, ChainEntry> {
+function zeroChain(descriptor: Descriptor): Map<string, ChainEntry> {
 	const chain = new Map<string, ChainEntry>()
 	for (const braid of descriptor.braidMembers.keys()) {
 		chain.set(braid, { g: 0n, prev: ZERO_HASH, ts: 0n })
@@ -166,7 +166,7 @@ async function clearPending<Rels extends SchemaRelations>(core: Core<Rels>): Pro
 function factOf<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	relation: RelationInfo,
-	row: readonly LogValue[]
+	row: readonly Value[]
 ): Record<string, unknown> {
 	const fact: Record<string, unknown> = {}
 	relation.fields.forEach(function liftCell(field, ordinal) {
@@ -191,7 +191,7 @@ function factOf<Rels extends SchemaRelations>(
 }
 
 /** One `db.write` applying ops in listed order, rows in listed order. */
-function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly BatchOp[]): WriteOutcome<Rels, number> {
+function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): WriteOutcome<Rels, number> {
 	return core.db.write(function applyBatch(tx) {
 		for (const op of ops) {
 			const info = core.descriptor.relationByName.get(op.relation)
@@ -502,7 +502,7 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 		return
 	}
 	const decoded = errors.trySync(function decodePending() {
-		return decodeBatch(core.descriptor, (core.pending as PendingBatch).bytes)
+		return decodeBatch(core.descriptor, (core.pending as Pending).bytes)
 	})
 	if (decoded.error) {
 		await clearPending(core)
@@ -529,10 +529,7 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
  * absorbs it (L10's idempotent replay), and everything else takes the
  * one loss path's re-judgment at the tip.
  */
-async function resolveColdPending<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	pending: PendingBatch
-): Promise<void> {
+async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>, pending: Pending): Promise<void> {
 	const decoded = errors.trySync(function decodePending() {
 		return decodeBatch(core.descriptor, pending.bytes)
 	})
@@ -583,7 +580,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	const existing = await newestStoreDir(core.dir)
 	const sidecar = await readSidecar(sidecarPath(core))
 	let opened = false
-	let coldPending: PendingBatch | null = null
+	let coldPending: Pending | null = null
 	if (existing !== null) {
 		core.storeName = existing
 		const openedDb = await errors.try(SdkDb.open(storePath(core), options.theory))
@@ -645,7 +642,7 @@ async function repairDiscard<Rels extends SchemaRelations>(core: Core<Rels>): Pr
  */
 async function readdressPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
-	ops: readonly BatchOp[],
+	ops: readonly Op[],
 	writerId: bigint
 ): Promise<void> {
 	const first = ops[0]

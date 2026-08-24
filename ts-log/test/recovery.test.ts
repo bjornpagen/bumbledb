@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { readSidecar, writeSidecar } from "#chain.ts"
-import type { BatchOp } from "#codec.ts"
+import type { Op } from "#codec.ts"
 import { encodeBatch } from "#codec.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { openReplica } from "#replica.ts"
@@ -49,7 +49,7 @@ describe("pending recovery (60)", function suite() {
 		const descriptor = descriptorOf(Ledger)
 		const entry = sidecar.chain.get("c00000000")
 		assert.ok(entry !== undefined)
-		const ops: BatchOp[] = [{ op: "insert", relation: "Holder", rows: [[2n, "bob"]] }]
+		const ops: Op[] = [{ op: "insert", relation: "Holder", rows: [[2n, "bob"]] }]
 		const bytes = encodeBatch(
 			descriptor,
 			{

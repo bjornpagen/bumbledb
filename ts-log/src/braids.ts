@@ -5,14 +5,14 @@
  * the descriptor, pinned cross-language by the codec goldens.
  */
 
-import type { LogTheory, SerialStatement } from "#descriptor.ts"
+import type { SerialStatement, Theory } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
 
 /** Braid id: `c{smallest RelationId:08x}`, scoped to the schema fingerprint. */
 type Braid = string
 
 /** The schema's own shard map: ordinary relation name → braid id. */
-function braidsOf(theory: LogTheory): ReadonlyMap<string, Braid> {
+function braidsOf(theory: Theory): ReadonlyMap<string, Braid> {
 	const descriptor = descriptorOf(theory)
 	const out = new Map<string, Braid>()
 	for (const relation of descriptor.relations) {
@@ -30,7 +30,7 @@ function braidsOf(theory: LogTheory): ReadonlyMap<string, Braid> {
  * serializes at that statement. Typed data beside the braid map, one
  * question per verb.
  */
-function serialAtStatementsOf(theory: LogTheory): readonly SerialStatement[] {
+function serialAtStatementsOf(theory: Theory): readonly SerialStatement[] {
 	return descriptorOf(theory).serialAtStatements
 }
 

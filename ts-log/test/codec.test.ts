@@ -3,7 +3,7 @@ import { describe, test } from "node:test"
 import { bool, bytes as bytesField, i64, interval, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
-import type { BatchHeader, BatchOp } from "#codec.ts"
+import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
@@ -34,7 +34,7 @@ function headerOf(): BatchHeader {
 	}
 }
 
-function opsOf(): BatchOp[] {
+function opsOf(): Op[] {
 	return [
 		{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] },
 		{
@@ -199,7 +199,7 @@ describe("the command codec", function suite() {
 	})
 
 	test("a spanning batch is unencodable", function spanning() {
-		const ops: BatchOp[] = [
+		const ops: Op[] = [
 			{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] },
 			{ op: "insert", relation: "Note", rows: [[1n, "memo"]] }
 		]

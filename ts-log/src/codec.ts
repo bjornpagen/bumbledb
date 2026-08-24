@@ -9,20 +9,20 @@
 
 import * as errors from "@superbuilders/errors"
 import { ByteReader, ByteWriter, bytesEqual, fromHex, toHex, utf8Encoder } from "#bytes.ts"
-import type { LogTheory } from "#descriptor.ts"
+import type { Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
 import { refuse, refuseChain } from "#errors.ts"
-import type { LogValue, TaggedRefusal } from "#value.ts"
+import type { TaggedRefusal, Value } from "#value.ts"
 import { readTagged, writeTagged } from "#value.ts"
 
 const MAGIC = utf8Encoder.encode("BDBL")
 const VERSION = 2
 const OP_KIND = { insert: 1, delete: 2 } as const
 
-interface BatchOp {
+interface Op {
 	readonly op: "insert" | "delete"
 	readonly relation: string
-	readonly rows: ReadonlyArray<readonly LogValue[]>
+	readonly rows: ReadonlyArray<readonly Value[]>
 }
 
 interface BatchHeader {
@@ -36,7 +36,7 @@ interface BatchHeader {
 
 interface DecodedBatch {
 	readonly header: BatchHeader
-	readonly ops: readonly BatchOp[]
+	readonly ops: readonly Op[]
 }
 
 function braidIdOf(braid: string): number {
@@ -52,7 +52,7 @@ function braidIdOf(braid: string): number {
  * the object is published under; every op relation must belong to the
  * header's braid — a spanning batch is unencodable.
  */
-function encodeBatch(theory: LogTheory, header: BatchHeader, ops: readonly BatchOp[]): Uint8Array {
+function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): Uint8Array {
 	const descriptor = descriptorOf(theory)
 	if (header.fingerprint !== descriptor.fingerprint) {
 		throw errors.new(`encode fingerprint ${header.fingerprint} is not the descriptor's ${descriptor.fingerprint}`)
@@ -105,7 +105,7 @@ function encodeBatch(theory: LogTheory, header: BatchHeader, ops: readonly Batch
 }
 
 /** Full parse of a batch object; refusals are typed, never partial reads. */
-function decodeBatch(theory: LogTheory, bytes: Uint8Array): DecodedBatch {
+function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	const descriptor = descriptorOf(theory)
 	const reader = new ByteReader(bytes, {
 		fail(what: string): never {
@@ -144,7 +144,7 @@ function decodeBatch(theory: LogTheory, bytes: Uint8Array): DecodedBatch {
 	const timestamp = reader.u64le("timestamp")
 
 	const opCount = reader.u32le("op count")
-	const ops: BatchOp[] = []
+	const ops: Op[] = []
 	for (let opIndex = 0; opIndex < opCount; opIndex++) {
 		const kind = reader.u8("op kind")
 		if (kind !== OP_KIND.insert && kind !== OP_KIND.delete) {
@@ -174,9 +174,9 @@ function decodeBatch(theory: LogTheory, bytes: Uint8Array): DecodedBatch {
 			)
 		}
 		const rowCount = reader.u32le("row count")
-		const rows: LogValue[][] = []
+		const rows: Value[][] = []
 		for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-			const row: LogValue[] = []
+			const row: Value[] = []
 			relation.fields.forEach(function readCell(field) {
 				const at = { relation: relation.name, row: rowIndex, field: field.name }
 				const where = `relation ${relation.name} row ${rowIndex} field ${field.name}`
@@ -217,7 +217,7 @@ function decodeBatch(theory: LogTheory, bytes: Uint8Array): DecodedBatch {
 	}
 }
 
-interface ChainPosition {
+interface ChainEntry {
 	readonly g: bigint
 	readonly prev: string
 	readonly ts: bigint
@@ -231,7 +231,7 @@ interface ChainPosition {
  * names the misbehaving writer, and the refusal data names the fetched
  * braid.
  */
-function verifyChain(header: BatchHeader, braid: string, slot: bigint, chain: ChainPosition): void {
+function verifyChain(header: BatchHeader, braid: string, slot: bigint, chain: ChainEntry): void {
 	if (header.braid !== braid || header.braidGen !== slot) {
 		refuseChain(
 			{ cause: "slot", braid, slot, writer: header.writer },
@@ -252,5 +252,5 @@ function verifyChain(header: BatchHeader, braid: string, slot: bigint, chain: Ch
 	}
 }
 
-export type { BatchHeader, BatchOp, ChainPosition, DecodedBatch }
+export type { BatchHeader, ChainEntry, DecodedBatch, Op }
 export { decodeBatch, encodeBatch, verifyChain }

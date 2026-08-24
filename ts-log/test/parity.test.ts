@@ -6,12 +6,12 @@ import type { LiteralSpec, SchemaSpec, StatementSpec, ValueSpec, ValueTypeSpec }
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { fromHex, toHex } from "#bytes.ts"
-import type { BatchHeader, BatchOp } from "#codec.ts"
+import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
-import type { LogDescriptor } from "#descriptor.ts"
+import type { Descriptor } from "#descriptor.ts"
 import { descriptorOf, withFingerprint } from "#descriptor.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
-import type { LogValue } from "#value.ts"
+import type { Value } from "#value.ts"
 
 /**
  * Lane 7's cross-language goldens: the corpus checked in beside the Rust
@@ -92,7 +92,7 @@ function valueSpecOf(raw: CorpusValue): ValueSpec {
 	throw errors.new(`corpus value unreadable: ${JSON.stringify(raw)}`)
 }
 
-function logValueOf(raw: CorpusValue): LogValue {
+function rawValue(raw: CorpusValue): Value {
 	const spec = valueSpecOf(raw)
 	switch (spec.kind) {
 		case "bool":
@@ -285,12 +285,12 @@ if (!present) {
 	const schemasRaw = JSON.parse(fs.readFileSync(path.join(corpusRoot, "schemas.json"), "utf8")) as {
 		schemas: Record<string, CorpusSchema>
 	}
-	const descriptors = new Map<string, LogDescriptor>()
+	const descriptors = new Map<string, Descriptor>()
 	for (const [name, corpus] of Object.entries(schemasRaw.schemas)) {
 		descriptors.set(name, descriptorOf(specOf(corpus)))
 	}
 
-	function pinned(fixture: BatchFixture): LogDescriptor {
+	function pinned(fixture: BatchFixture): Descriptor {
 		const descriptor = descriptors.get(fixture.schema)
 		assert.ok(descriptor !== undefined, `fixture cites schema ${fixture.schema}`)
 		return withFingerprint(descriptor, fixture.fingerprint)
@@ -364,14 +364,14 @@ if (!present) {
 					timestamp: BigInt(fixture.header.timestamp)
 				}
 				assert.deepEqual(decoded.header, header, `${stem}: header`)
-				const ops: BatchOp[] = fixture.ops.map(function opOf(op) {
+				const ops: Op[] = fixture.ops.map(function opOf(op) {
 					const relation = descriptor.relations[op.relation]
 					assert.ok(relation !== undefined)
 					return {
 						op: op.kind,
 						relation: relation.name,
 						rows: op.rows.map(function rowOf(row) {
-							return row.map(logValueOf)
+							return row.map(rawValue)
 						})
 					}
 				})
