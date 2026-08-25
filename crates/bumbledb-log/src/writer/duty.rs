@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 use bumbledb::Db;
 
 use crate::braids::BraidId;
-use crate::manifest::{ckpt_mdb_key, publish_checkpoint, Head, PublishRefusal, Published};
+use crate::manifest::{
+    ckpt_mdb_key, manifest_key, publish_checkpoint, Checkpoint, Head, Manifest, PublishRefusal,
+    Published,
+};
 use crate::replica::Scream;
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
@@ -139,7 +142,6 @@ where
             scream.attempt("a commit landed inside the snapshot window");
         };
         let (bytes, catalog, entries, sum, snap_bytes) = view;
-        let digest = *blake3::hash(&bytes).as_bytes();
         let heads: BTreeMap<BraidId, Head> = entries
             .iter()
             .map(|(braid, entry)| {
@@ -153,20 +155,27 @@ where
                 )
             })
             .collect();
+        let prev = match self.store.get(&manifest_key(&self.prefix)) {
+            Ok(Some(fetched)) => match Manifest::parse(&fetched.bytes) {
+                Ok(manifest) => manifest.checkpoint,
+                Err(_) => return Ran::Deferred,
+            },
+            Ok(None) => None,
+            Err(_) => return Ran::Deferred,
+        };
+        let doc = Checkpoint {
+            braids: heads,
+            catalog,
+            writer: self.writer_id,
+            prev,
+        };
+        let digest = doc.digest();
         let ran = match (|| -> std::result::Result<Published, ()> {
             self.store
                 .put_create(&ckpt_mdb_key(&self.prefix, &digest), &bytes)
                 .map_err(|_| ())?;
-            publish_checkpoint(
-                self.store.as_ref(),
-                &self.prefix,
-                self.codec.braids(),
-                digest,
-                &heads,
-                catalog,
-                self.writer_id,
-            )
-            .map_err(|_| ())
+            publish_checkpoint(self.store.as_ref(), &self.prefix, self.codec.braids(), &doc)
+                .map_err(|_| ())
         })() {
             Ok(Published::Replaced) => Ran::Replaced { sum },
             Ok(Published::Kept { incumbent }) => Ran::Kept { incumbent },
