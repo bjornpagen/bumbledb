@@ -262,34 +262,17 @@ function renderCheckpointValue(parsed: ReturnType<typeof parseCheckpoint>): unkn
 	}
 }
 
-function sidecarEntries(
-	parsed: ReturnType<typeof parseSidecar>
-): ReadonlyMap<string, { g: bigint; prev: Uint8Array | string; ts: bigint }> {
-	const record = parsed as {
-		readonly vector?: ReadonlyMap<string, { g: bigint; prev: Uint8Array | string; ts: bigint }>
-		readonly chain?: ReadonlyMap<string, { g: bigint; prev: Uint8Array | string; ts: bigint }>
-	}
-	const entries = record.vector ?? record.chain
-	assert.ok(entries !== undefined, "sidecar carries a chain map")
-	return entries
+function sidecarEntries(parsed: ReturnType<typeof parseSidecar>): ReturnType<typeof parseSidecar>["entries"] {
+	return parsed.entries
 }
 
 function sidecarPending(
 	parsed: ReturnType<typeof parseSidecar>
 ): { braid: string; gen: bigint; bytes: Uint8Array } | null {
-	const record = parsed as {
-		readonly tag?: "settled" | "pending"
-		readonly batch?: { braid: string; gen: bigint; bytes: Uint8Array }
-		readonly pending?: { braid: string; gen: bigint; bytes: Uint8Array } | null
-	}
-	if (record.tag === "settled") {
+	if (parsed.tag === "settled") {
 		return null
 	}
-	if (record.tag === "pending") {
-		assert.ok(record.batch !== undefined, "pending sidecar carries a batch")
-		return record.batch
-	}
-	return record.pending ?? null
+	return parsed.batch
 }
 
 function renderSidecarValue(parsed: ReturnType<typeof parseSidecar>): unknown {
