@@ -172,6 +172,10 @@ function refuseManifestMissing(detail: string): never {
 	throw errors.wrap(ErrManifestMissing, detail)
 }
 
+function isManifestMissing(error: unknown): boolean {
+	return error instanceof Error && errors.is(error, ErrManifestMissing)
+}
+
 function throwAmbiguous(data: AmbiguousData, detail: string): never {
 	const error = errors.wrap(ErrAmbiguous, detail)
 	ambiguousData.set(error, data)
@@ -260,6 +264,7 @@ export {
 	ErrSpanningCommit,
 	ErrStore,
 	exhaustedOf,
+	isManifestMissing,
 	overWidthOf,
 	refusalOf,
 	refuse,

@@ -26,6 +26,7 @@ export {
 	ErrReplayDiverged,
 	ErrSpanningCommit,
 	ErrStore,
+	isManifestMissing,
 	refusalOf
 } from "#errors.ts"
 export type { Generation, StoreKey } from "#keys.ts"
