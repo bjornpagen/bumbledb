@@ -13,13 +13,14 @@ use bumbledb::Db;
 
 use crate::braids::BraidId;
 use crate::manifest::{
-    ckpt_mdb_key, manifest_key, publish_checkpoint, Checkpoint, Head, Manifest, PublishRefusal,
-    Published,
+    Checkpoint, Head, Manifest, PublishRefusal, Published, ckpt_mdb_key, manifest_key,
+    publish_checkpoint,
 };
+use crate::replica::{clear_ckpt_scratch, reclaim_orphan, record_ckpt_scratch};
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
 
-use super::{lock, Core, Inner, StepHook, Theory, DATA_FILE};
+use super::{Core, DATA_FILE, Inner, StepHook, Theory, lock};
 
 /// One detached checkpoint duty. `Kept` and `Refused` are not
 /// success: they do not move `ckpt_sum` and do not subtract the meter.
@@ -168,6 +169,11 @@ where
             prev,
         };
         let digest = doc.digest();
+        // The scratch lease names this candidate before the
+        // upload-before-decision window. The successor GETs it at open.
+        if record_ckpt_scratch(&self.dir, &digest).is_err() {
+            return Ran::Deferred;
+        }
         let ran = match (|| -> std::result::Result<Published, ()> {
             self.store
                 .put_create(&ckpt_mdb_key(&self.prefix, &digest), &bytes)
@@ -175,9 +181,22 @@ where
             publish_checkpoint(self.store.as_ref(), &self.prefix, self.codec.braids(), &doc)
                 .map_err(|_| ())
         })() {
-            Ok(Published::Replaced) => Ran::Replaced { sum },
-            Ok(Published::Kept { incumbent }) => Ran::Kept { incumbent },
-            Ok(Published::Refused(refusal)) => Ran::Refused(refusal),
+            Ok(Published::Replaced) => {
+                let _ = clear_ckpt_scratch(&self.dir);
+                Ran::Replaced { sum }
+            }
+            Ok(Published::Kept { incumbent }) => {
+                // The loser deletes its own digest on Kept.
+                let _ = reclaim_orphan(self.store.as_ref(), &self.prefix, &digest);
+                let _ = clear_ckpt_scratch(&self.dir);
+                Ran::Kept { incumbent }
+            }
+            Ok(Published::Refused(refusal)) => {
+                // The loser deletes its own digest on every refused publish.
+                let _ = reclaim_orphan(self.store.as_ref(), &self.prefix, &digest);
+                let _ = clear_ckpt_scratch(&self.dir);
+                Ran::Refused(refusal)
+            }
             Err(()) => Ran::Deferred,
         };
         if let Ran::Replaced { sum } = ran {

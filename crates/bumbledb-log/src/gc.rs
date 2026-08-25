@@ -6,23 +6,27 @@
 //! braids are independent (L9), so every pointwise combination of braid
 //! prefixes is a real serial state — discovered by walking the
 //! checkpoint backlink chain from the manifest with GETs alone (no LIST
-//! exists). The gc window is also the audit window: history nobody
-//! replays again is vouched for by its publisher alone.
+//! exists). Crash-stranded candidates live in the reserved-namespace
+//! scratch lease; the successor GETs that known document at open and
+//! deletes the named objects. GET-only GC does not LIST-delete the
+//! complement of the reachable spine. The gc window is also the audit
+//! window: history nobody replays again is vouched for by its publisher
+//! alone.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use bumbledb::{Db, Theory, Violations};
 
-use crate::apply::{apply, Applied, ApplyRefusal};
+use crate::apply::{Applied, ApplyRefusal, apply};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
-    ckpt_json_key, ckpt_mdb_key, log_key, manifest_key, Checkpoint, CheckpointError, Manifest,
-    ManifestError,
+    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
+    manifest_key,
 };
 use crate::replica::{
-    derive_codec, fetch_checkpoint_bytes, write_checkpoint_bytes, Fault, OpenRefusal, Vector,
+    Fault, OpenRefusal, Vector, derive_codec, fetch_checkpoint_bytes, write_checkpoint_bytes,
 };
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::{ObjectStore, Result as StoreResult};
@@ -103,7 +107,9 @@ pub fn gc<S: ObjectStore>(
 /// stops that braid. Checkpoints behind the current one die by the same
 /// clock: the sweep walks the Merkle backlink, then deletes `.mdb` and
 /// `.json` as one unit from the tail so an interrupted sweep leaves a
-/// walkable json, never an orphan mdb.
+/// walkable json, never an orphan mdb. Crash-stranded candidates are
+/// not this walk: they are named in the scratch lease and reclaimed at
+/// open.
 pub fn gc_at<S: ObjectStore>(
     store: &S,
     prefix: &str,

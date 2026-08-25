@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +16,10 @@ use crate::gc::{CHECKPOINT_RETAIN_MS, Gc, PublishClock, gc_at};
 use crate::manifest::{
     Checkpoint, Head, Manifest, Published, ckpt_mdb_key, log_key, manifest_key, publish_checkpoint,
 };
-use crate::replica::{Fault, OpenRefusal, Opened, Refreshed, Replica};
+use crate::replica::{
+    Fault, OpenRefusal, Opened, Refreshed, Replica, clear_ckpt_scratch, reclaim_orphan,
+    record_ckpt_scratch,
+};
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::{Create, ObjectStore};
 use crate::writer::{CHECKPOINT_EVERY_BYTES, CHECKPOINT_EVERY_SUM, DATA_FILE};
@@ -192,13 +196,29 @@ where
         let compacted = (|| -> Result<Vec<u8>, Fault> {
             self.replica
                 .db()
+                .map_err(|_| {
+                    Fault::Io(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "replica is unmounted",
+                    ))
+                })?
                 .compact(&scratch.path)
                 .map_err(Fault::Engine)?;
             fs::read(scratch.path.join(DATA_FILE)).map_err(Fault::Io)
         })();
         drop(scratch);
         let bytes = compacted?;
-        let catalog = self.replica.db().catalog_digest().map_err(Fault::Engine)?;
+        let catalog = self
+            .replica
+            .db()
+            .map_err(|_| {
+                Fault::Io(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "replica is unmounted",
+                ))
+            })?
+            .catalog_digest()
+            .map_err(Fault::Engine)?;
         let heads: BTreeMap<_, _> = entries
             .iter()
             .map(|(braid, entry)| {
@@ -219,6 +239,9 @@ where
             prev: self.incumbent_digest()?,
         };
         let digest = doc.digest();
+        // The scratch lease names this candidate before the
+        // upload-before-decision window. The successor GETs it at open.
+        record_ckpt_scratch(self.replica.dir(), &digest).map_err(Fault::Io)?;
         put_create_once(
             self.replica.store(),
             &ckpt_mdb_key(self.replica.prefix(), &digest),
@@ -230,10 +253,19 @@ where
             self.replica.codec().braids(),
             &doc,
         )?;
-        if matches!(published, Published::Replaced) {
-            // The instant the candidate entered reachable history —
-            // the CAS is the linearization point (50 §3).
-            self.publish_ms = Some(now_ms());
+        match &published {
+            Published::Replaced => {
+                let _ = clear_ckpt_scratch(self.replica.dir());
+                // The instant the candidate entered reachable history —
+                // the CAS is the linearization point (50 §3).
+                self.publish_ms = Some(now_ms());
+            }
+            Published::Kept { .. } | Published::Refused(_) => {
+                // The loser deletes its own digest on Kept and every
+                // refused publish.
+                let _ = reclaim_orphan(self.replica.store(), self.replica.prefix(), &digest);
+                let _ = clear_ckpt_scratch(self.replica.dir());
+            }
         }
         Ok(published)
     }

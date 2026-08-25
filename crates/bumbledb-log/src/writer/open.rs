@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use bumbledb::{Admission, Db};
 
-use crate::apply::{apply, Applied};
+use crate::apply::{Applied, apply};
 use crate::braids::BraidId;
-use crate::manifest::{log_key, manifest_key, Checkpoint, Manifest};
+use crate::manifest::{Checkpoint, Manifest, log_key, manifest_key};
 use crate::replica::{
-    fetch_checkpoint_bytes, write_checkpoint_bytes, Corruption, Fault, OpenRefusal,
+    Corruption, Fault, OpenRefusal, fetch_checkpoint_bytes, sweep_at_open, write_checkpoint_bytes,
 };
 use crate::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 
@@ -56,6 +56,7 @@ where
         self: &Arc<Self>,
         core: &mut Core<T>,
     ) -> Result<Option<OpenRefusal>> {
+        sweep_at_open(self.store.as_ref(), &self.prefix, &self.dir).map_err(Error::Fault)?;
         loop {
             match self.read_floor()? {
                 Ok(floor) => core.floor = floor,

@@ -1125,3 +1125,138 @@ fn sweep_sibling_scratch(dir: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use crate::store::mem::MemStore;
+    use crate::store::{Create, ObjectStore};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ckpt_scratch_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("scratch dir");
+        path
+    }
+
+    #[test]
+    fn kept_loser_reclaims_its_own_digest() {
+        let store = MemStore::new();
+        let digest = [0x11u8; 32];
+        assert!(matches!(
+            store
+                .put_create(&ckpt_json_key("", &digest), b"json")
+                .expect("json"),
+            Create::Created(_)
+        ));
+        assert!(matches!(
+            store
+                .put_create(&ckpt_mdb_key("", &digest), b"mdb")
+                .expect("mdb"),
+            Create::Created(_)
+        ));
+        reclaim_orphan(&store, "", &digest).expect("reclaim");
+        assert!(
+            store
+                .get(&ckpt_json_key("", &digest))
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get(&ckpt_mdb_key("", &digest))
+                .expect("get")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn successor_sweeps_scratch_lease_and_local_litter() {
+        let store = MemStore::new();
+        let dir = temp_dir("open");
+        let digest = [0x22u8; 32];
+        record_ckpt_scratch(&dir, &digest).expect("lease");
+        store
+            .put_create(&ckpt_json_key("", &digest), b"json")
+            .expect("json");
+        store
+            .put_create(&ckpt_mdb_key("", &digest), b"mdb")
+            .expect("mdb");
+
+        let tmp = dir.join(TEMP_NAMESPACE).join("litter");
+        fs::create_dir_all(tmp.parent().expect("parent")).expect("tmp");
+        fs::write(&tmp, b"tmp").expect("write tmp");
+        fs::write(dir.join(format!(".{CHAIN_FILE}.tmp.9")), b"sidecar").expect("sidecar");
+        let sibling = PathBuf::from(format!("{}.ckpt0", dir.display()));
+        fs::create_dir_all(&sibling).expect("sibling");
+        fs::write(sibling.join("data.mdb"), b"x").expect("scratch bytes");
+        let duty = PathBuf::from(format!("{}.duty-ckpt", dir.display()));
+        fs::create_dir_all(&duty).expect("duty scratch");
+
+        sweep_at_open(&store, "", &dir).expect("sweep");
+
+        assert!(
+            store
+                .get(&ckpt_json_key("", &digest))
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get(&ckpt_mdb_key("", &digest))
+                .expect("get")
+                .is_none()
+        );
+        assert!(!ckpt_scratch_path(&dir).exists());
+        assert!(!dir.join(TEMP_NAMESPACE).exists());
+        assert!(!dir.join(format!(".{CHAIN_FILE}.tmp.9")).exists());
+        assert!(!sibling.exists());
+        assert!(!duty.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sweep_spares_the_live_head() {
+        let store = MemStore::new();
+        let dir = temp_dir("live");
+        let digest = [0x33u8; 32];
+        let manifest = Manifest {
+            fingerprint: [0x44; 32],
+            checkpoint: Some(digest),
+        };
+        store
+            .put_create(&manifest_key(""), &manifest.render())
+            .expect("manifest");
+        store
+            .put_create(&ckpt_json_key("", &digest), b"json")
+            .expect("json");
+        store
+            .put_create(&ckpt_mdb_key("", &digest), b"mdb")
+            .expect("mdb");
+        record_ckpt_scratch(&dir, &digest).expect("lease");
+
+        sweep_at_open(&store, "", &dir).expect("sweep");
+
+        assert!(
+            store
+                .get(&ckpt_json_key("", &digest))
+                .expect("get")
+                .is_some()
+        );
+        assert!(
+            store
+                .get(&ckpt_mdb_key("", &digest))
+                .expect("get")
+                .is_some()
+        );
+        assert!(!ckpt_scratch_path(&dir).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
