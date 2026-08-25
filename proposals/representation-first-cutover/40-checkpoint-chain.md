@@ -67,14 +67,23 @@ at — is *known-orphan by construction*, not accidentally-orphan.
 ### 3. Orphans are collectable because they are addressable
 
 A loser's or a crash's document is an object whose digest is not on the
-reachable spine. Because the digest names the whole spine, gc can
-recognize an unreachable checkpoint object *by walking the reachable set
-once and deleting the complement* — the "gc fodder" claim becomes true
-(findings [10] [17] [128]). The `.mdb` is uploaded under the same
-content-addressed digest and collected with its `.json` as one unit; the
-upload-before-decision strand (finding [17]) is swept because the object
-is addressable and its reachability is decidable. (The *sweep mechanics*
-— resumable, floor-guarded — are [50](50-retention.md).)
+reachable spine. The digest names the whole spine, so reachability is
+decidable. The store has no LIST: gc walks that spine with GETs alone
+and does not delete an unlistable complement (see
+[RULINGS.md](RULINGS.md)).
+
+- **Kept and every refused publish.** The loser knows its own digest
+  and deletes `ckpt/{digest}.json` and `.mdb` at the publish site
+  (finding [17]).
+- **Crash between upload and CAS.** The publisher records the candidate
+  digest in a scratch lease under the reserved `~lease` namespace
+  (`ckpt-scratch`). Any successor GETs that known document at open and
+  deletes the named objects when they are not the live head (findings
+  [10] [128]).
+
+The `.mdb` and `.json` share the digest and are collected as one unit.
+(The *sweep mechanics* — resumable, floor-guarded, reserved-namespace
+reclaim — are [50](50-retention.md).)
 
 ### 4. The catalog claim is audited by construction
 
