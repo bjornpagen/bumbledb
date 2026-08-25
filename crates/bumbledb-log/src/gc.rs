@@ -22,7 +22,7 @@ use crate::apply::{Applied, ApplyRefusal, apply};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
-    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
+    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_doc_key, ckpt_mdb_key, log_key,
     manifest_key,
 };
 use crate::replica::{
@@ -35,12 +35,13 @@ use crate::store::{ObjectStore, Result as StoreResult};
 /// value; consumer: the duty binary's one sweep after the cadence check.
 pub const CHECKPOINT_RETAIN_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 
-/// What one sweep deleted. `swept_below` is the exclusive end of the
+/// What one sweep deleted. `checkpoints_deleted` is the dropped
+/// checkpoint identities. `swept_below` is the exclusive end of the
 /// contiguous deleted prefix per braid — the next sweep resumes there.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Sweep {
     pub log_deleted: Vec<String>,
-    pub checkpoints_deleted: Vec<String>,
+    pub checkpoints_deleted: Vec<[u8; 32]>,
     pub swept_below: BTreeMap<BraidId, u64>,
 }
 
@@ -80,6 +81,8 @@ pub enum Gc {
 /// The gc verb: one sweep under window `window_ms`. Ages against
 /// `now_ms` as the publish stamp — the checkpointer's clock when the
 /// caller has not threaded a distinct stamp (see [`gc_at`]).
+///
+/// # Errors
 pub fn gc<S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -105,11 +108,13 @@ pub fn gc<S: ObjectStore>(
 /// the floor so the deleted region is the contiguous prefix `[0, marker)`.
 /// A missing slot advances the marker; a young or undecodable slot
 /// stops that braid. Checkpoints behind the current one die by the same
-/// clock: the sweep walks the Merkle backlink, then deletes `.mdb` and
-/// `.json` as one unit from the tail so an interrupted sweep leaves a
-/// walkable json, never an orphan mdb. Crash-stranded candidates are
+/// clock: the sweep walks the Merkle backlink, then deletes the mdb and
+/// the document as one unit from the tail so an interrupted sweep leaves
+/// a walkable document, never an orphan mdb. Crash-stranded candidates are
 /// not this walk: they are named in the scratch lease and reclaimed at
 /// open.
+///
+/// # Errors
 pub fn gc_at<S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -184,8 +189,8 @@ fn sweep_log_braid<S: ObjectStore>(
 }
 
 /// Walks the Merkle backlink from `start`, then deletes old nodes from
-/// the tail. A missing json still drops its mdb; a corrupt json stops
-/// the walk.
+/// the tail. A missing document still drops its mdb; a corrupt document
+/// stops the walk.
 fn sweep_checkpoints<S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -197,7 +202,7 @@ fn sweep_checkpoints<S: ObjectStore>(
     let mut chain = Vec::new();
     let mut digest = start;
     while let Some(prior) = digest {
-        let Some(object) = store.get(&ckpt_json_key(prefix, &prior))? else {
+        let Some(object) = store.get(&ckpt_doc_key(prefix, &prior))? else {
             store.delete(&ckpt_mdb_key(prefix, &prior))?;
             break;
         };
@@ -212,9 +217,7 @@ fn sweep_checkpoints<S: ObjectStore>(
     }
     for prior in chain.into_iter().rev() {
         delete_checkpoint_unit(store, prefix, &prior)?;
-        sweep
-            .checkpoints_deleted
-            .push(crate::manifest::hex32(&prior));
+        sweep.checkpoints_deleted.push(prior);
     }
     Ok(())
 }
@@ -225,7 +228,7 @@ fn delete_checkpoint_unit<S: ObjectStore>(
     digest: &[u8; 32],
 ) -> StoreResult<()> {
     store.delete(&ckpt_mdb_key(prefix, digest))?;
-    store.delete(&ckpt_json_key(prefix, digest))?;
+    store.delete(&ckpt_doc_key(prefix, digest))?;
     Ok(())
 }
 
@@ -235,7 +238,7 @@ fn fetch_doc<S: ObjectStore>(
     digest: [u8; 32],
     codec: &Codec,
 ) -> StoreResult<Result<Checkpoint, GcRefusal>> {
-    let Some(object) = store.get(&ckpt_json_key(prefix, &digest))? else {
+    let Some(object) = store.get(&ckpt_doc_key(prefix, &digest))? else {
         return Ok(Err(GcRefusal::CheckpointDocMissing { digest }));
     };
     match Checkpoint::parse(&object.bytes, codec.braids()) {
@@ -284,6 +287,8 @@ pub enum Restore<T> {
 }
 
 /// Restores to `target`: walks the checkpoint backlink chain from the
+///
+/// # Errors
 /// manifest to the first checkpoint whose vector is pointwise at or
 /// below the target (bootstrapping from zero when the walk runs out at
 /// the first checkpoint), opens it at `dir`, then replays each braid to
@@ -317,7 +322,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     let mut base: Option<([u8; 32], Checkpoint)> = None;
     let mut cursor = manifest.checkpoint;
     while let Some(digest) = cursor {
-        let Some(object) = store.get(&ckpt_json_key(prefix, &digest))? else {
+        let Some(object) = store.get(&ckpt_doc_key(prefix, &digest))? else {
             return Ok(Restore::Refused(RestoreRefusal::BeyondRetention { digest }));
         };
         let doc = match Checkpoint::parse(&object.bytes, codec.braids()) {
@@ -374,6 +379,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     })
 }
 
+/// # Errors
 /// Maps a wall-clock instant through the batch timestamps — per braid
 /// the largest g with `ts ≤ T`; timestamps are clamped monotone per
 /// braid at publish, so the mapped set is a prefix by construction —
@@ -404,7 +410,7 @@ pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
         .collect();
     let mut cursor = manifest.checkpoint;
     while let Some(digest) = cursor {
-        let Some(object) = store.get(&ckpt_json_key(prefix, &digest))? else {
+        let Some(object) = store.get(&ckpt_doc_key(prefix, &digest))? else {
             return Ok(Restore::Refused(RestoreRefusal::BeyondRetention { digest }));
         };
         let doc = match Checkpoint::parse(&object.bytes, codec.braids()) {

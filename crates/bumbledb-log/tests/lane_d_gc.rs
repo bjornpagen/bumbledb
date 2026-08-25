@@ -114,7 +114,7 @@ fn the_exemption_law_is_exact() {
         ],
         "the walk deletes upward through the old prefix"
     );
-    assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
+    assert_eq!(swept.checkpoints_deleted, Vec::<[u8; 32]>::new());
     assert_eq!(swept.swept_below.get(&kitchen).copied(), Some(4));
     assert!(
         log.store
@@ -151,7 +151,7 @@ fn the_exemption_law_is_exact() {
     // prefix is already `[0, marker)`.
     let swept = sweep_at(&log, 1_500, 4_000, 2_000);
     assert_eq!(swept.log_deleted, Vec::<String>::new());
-    assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
+    assert_eq!(swept.checkpoints_deleted, Vec::<[u8; 32]>::new());
 }
 
 #[test]
@@ -173,10 +173,7 @@ fn old_checkpoints_die_behind_the_current_one() {
     drop(builder);
 
     let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);
-    assert_eq!(
-        swept.checkpoints_deleted,
-        vec![bumbledb_log::manifest::hex32(&old_digest)]
-    );
+    assert_eq!(swept.checkpoints_deleted, vec![old_digest]);
     assert!(
         log.store
             .get(&ckpt_doc_key("", &old_digest))
@@ -512,5 +509,5 @@ fn a_missing_checkpoint_document_still_drops_its_mdb() {
             .is_none(),
         "the unit delete drops the orphan mdb"
     );
-    assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
+    assert_eq!(swept.checkpoints_deleted, Vec::<[u8; 32]>::new());
 }
