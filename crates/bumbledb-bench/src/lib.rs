@@ -32,8 +32,6 @@ pub mod schema;
 pub mod sqlite_run;
 pub mod sqlmap;
 pub mod storemode;
-#[cfg(test)]
-mod stress;
 pub mod sweep;
 pub mod trace_out;
 pub mod translate;

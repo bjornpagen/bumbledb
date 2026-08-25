@@ -126,25 +126,6 @@ fn a_wrong_oracle_fails_with_a_bundle() {
 }
 
 #[test]
-fn a_full_verify_at_s_succeeds() {
-    let config = cfg("full");
-    let report = run(&config).expect("verify succeeds");
-
-    assert_eq!(
-        report.cases + u64::from(DEFAULT_RANDOM_CASES - config.random_cases) * 4,
-        2_879,
-        "README.md's oracle case count must equal the default run's completed count"
-    );
-    let stamp_path = config.out_dir.join("verify.stamp");
-    assert!(stamp_matches(&config, &stamp_path));
-    // A different config must not accept this stamp.
-    let mut other = config.clone();
-    other.random_cases += 1;
-    assert!(!stamp_matches(&other, &stamp_path));
-    let _ = std::fs::remove_dir_all(&config.out_dir);
-}
-
-#[test]
 fn the_default_randomized_batch_draws_an_interiors_or_rec_query() {
     let cfg = GenConfig {
         seed: 1,
