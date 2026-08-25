@@ -39,6 +39,7 @@ pub enum S3Credentials {
 
 /// The three values a refresh must produce. `session_token` is `None`
 /// for long-lived keys.
+#[derive(Clone)]
 pub struct StaticKeys {
     pub access_key_id: String,
     pub secret_access_key: String,
@@ -203,29 +204,40 @@ fn build_client(config: &S3Config) -> Result<AmazonS3> {
             builder = builder.with_virtual_hosted_style_request(true);
         }
     }
-    builder = match &config.credentials {
-        S3Credentials::Static {
-            access_key_id,
-            secret_access_key,
-            session_token,
-        } => {
-            let mut built = builder
-                .with_access_key_id(access_key_id)
-                .with_secret_access_key(secret_access_key);
-            if let Some(token) = session_token {
-                built = built.with_token(token);
-            }
-            built
-        }
-        S3Credentials::Refresh(refresh) => builder.with_credentials(Arc::new(RefreshProvider {
-            refresh: Arc::clone(refresh),
-        })),
-    };
+    // Both arms resolve at sign time. Static is a closure that
+    // returns the same keys; Refresh is the caller-owned callback.
+    // Neither set is stored on a worker for the life of the client.
+    builder = builder.with_credentials(Arc::new(request_credentials(&config.credentials)));
     builder.build().map_err(|source| StoreError {
         op: "open",
         key: config.bucket.clone(),
         source: io::Error::other(source),
     })
+}
+
+/// One provider for both credential arms. `get_credential` consults
+/// the arm on every sign; the Refresh callback runs on `spawn_blocking`
+/// so blocking I/O never occupies a tokio worker.
+fn request_credentials(credentials: &S3Credentials) -> RefreshProvider {
+    match credentials {
+        S3Credentials::Static {
+            access_key_id,
+            secret_access_key,
+            session_token,
+        } => {
+            let keys = StaticKeys {
+                access_key_id: access_key_id.clone(),
+                secret_access_key: secret_access_key.clone(),
+                session_token: session_token.clone(),
+            };
+            RefreshProvider {
+                refresh: Arc::new(move || Ok(keys.clone())),
+            }
+        }
+        S3Credentials::Refresh(refresh) => RefreshProvider {
+            refresh: Arc::clone(refresh),
+        },
+    }
 }
 
 fn join_prefix(prefix: &str, key: &str) -> String {
@@ -634,6 +646,25 @@ mod tests {
         assert_eq!(err.op, "get");
         assert_eq!(err.key, key.as_str());
         assert!(err.source.to_string().contains("body closed mid-stream"));
+    }
+
+    #[test]
+    fn static_keys_are_consulted_per_request() {
+        let provider = request_credentials(&static_keys());
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let first = provider.get_credential().await.expect("first");
+            let second = provider.get_credential().await.expect("second");
+            assert_eq!(first.key_id, "AKIAEXAMPLE");
+            assert_eq!(second.key_id, first.key_id);
+            assert!(
+                !Arc::ptr_eq(&first, &second),
+                "each sign receives a fresh credential value"
+            );
+        });
     }
 
     #[test]
