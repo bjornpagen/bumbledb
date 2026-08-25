@@ -113,19 +113,18 @@ fn s3_smoke_create_only_race() {
     let key_b = key.clone();
     let left = thread::spawn(move || a.put_create(&key_a, b"alpha"));
     let right = thread::spawn(move || b.put_create(&key_b, b"beta"));
-    let outcomes = [left.join().expect("a"), right.join().expect("b")];
-    let created = outcomes
-        .iter()
-        .filter(|outcome| matches!(outcome, Ok(Create::Created(_))))
-        .count();
-    let exists = outcomes
-        .iter()
-        .filter(|outcome| matches!(outcome, Ok(Create::Exists)))
-        .count();
-    assert_eq!(created, 1, "exactly one create-only winner");
-    assert_eq!(exists, 1, "the loser sees exists");
+    let left = left.join().expect("a");
+    let right = right.join().expect("b");
+    let winner = match (&left, &right) {
+        (Ok(Create::Created(_)), Ok(Create::Exists)) => &b"alpha"[..],
+        (Ok(Create::Exists), Ok(Create::Created(_))) => &b"beta"[..],
+        other => panic!("exactly one Created and one Exists, got {other:?}"),
+    };
     let fetched = store.get(&key).expect("get").expect("present");
-    assert!(fetched.bytes == b"alpha" || fetched.bytes == b"beta");
+    assert_eq!(
+        fetched.bytes, winner,
+        "the Created arm is the body that persisted"
+    );
     store.delete(&key).expect("cleanup");
 }
 
