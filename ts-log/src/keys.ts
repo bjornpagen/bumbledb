@@ -11,7 +11,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import { U64_MAX, utf8Encoder } from "#bytes.ts"
+import { digest32, digest32FromHex, hex32, U64_MAX } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 
 /** A segment wearing this suffix — after format characters are stripped — is not a key. */
@@ -132,20 +132,26 @@ function scratchCkptName(): string {
 	return reservedName(`${LEASE_NAMESPACE}/${CKPT_SCRATCH_LEASE}`)
 }
 
-/** The scratch-lease body: one version line, then the digest. */
+const SCRATCH_VERSION = 3
+
+/** The scratch-lease body: version byte 3, then the 32-byte digest. */
 function encodeCkptScratch(digest: string): Uint8Array {
-	if (!/^[0-9a-f]{64}$/.test(digest)) {
-		throw errors.new(`checkpoint digest is not 64 lowercase hex: ${digest}`)
-	}
-	return utf8Encoder.encode(`CKPT-SCRATCH/1\n${digest}\n`)
+	const out = new Uint8Array(33)
+	out[0] = SCRATCH_VERSION
+	out.set(digest32FromHex(digest), 1)
+	return out
 }
 
 /** The digest a scratch-lease body names, or null. */
 function scratchCkptDigest(bytes: Uint8Array): string | null {
-	const text = new TextDecoder().decode(bytes)
-	const match = /^CKPT-SCRATCH\/1\n([0-9a-f]{64})\n$/.exec(text)
-	const digest = match?.[1]
-	return digest === undefined ? null : digest
+	if (bytes.length !== 33) {
+		return null
+	}
+	const version = bytes[0]
+	if (version !== SCRATCH_VERSION) {
+		return null
+	}
+	return hex32(digest32(bytes.subarray(1)))
 }
 
 function parseCkptScratch(bytes: Uint8Array): string | null {
