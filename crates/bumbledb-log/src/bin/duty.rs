@@ -1,10 +1,12 @@
-//! The duty binary: one body, two modes. `--once` is the Lambda arm;
-//! the default is the resident sleep loop. Argv is a parsed grammar;
-//! the exit code is a total function of [`Ran`].
+//! The duty binary: `--once` is the Lambda arm; the default is the
+//! resident sleep loop; `inspect <key>` renders a protocol document to
+//! text. Argv is a parsed grammar; the exit code is a total function
+//! of the outcome.
 
 use std::env;
 use std::fmt;
 use std::fmt::Write as _;
+use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::thread;
@@ -13,12 +15,14 @@ use std::time::Duration;
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
 use bumbledb_log::gc::Gc;
+use bumbledb_log::inspect::{self, InspectError, Kind};
 use bumbledb_log::manifest::{Published, hex32};
 use bumbledb_log::replica::{Fault, OpenRefusal};
 use bumbledb_log::schema_file::{self, TheoryFile};
+use bumbledb_log::sidecar::CHAIN_FILE;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
-use bumbledb_log::store::{ObjectStore, StoreError};
+use bumbledb_log::store::{ObjectStore, StoreError, StoreKey};
 
 /// Resident sleep default. Consumer: this binary's default loop; the
 /// scheduled cloud invoke is the peer, not a second cadence.
@@ -27,6 +31,7 @@ const SLEEP_MS: u64 = 5 * 60 * 1000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flag {
     Once,
+    Inspect,
     Dir,
     Prefix,
     Theory,
@@ -50,6 +55,7 @@ enum StoreKind {
 enum Mode {
     Once,
     Resident { sleep: Duration },
+    Inspect { key: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +89,7 @@ enum ConfigError {
     BadStore(String),
     BadInt(&'static str),
     OnceSleep,
+    InspectDuty,
     Cross { flag: Flag, backend: StoreKind },
 }
 
@@ -93,6 +100,12 @@ enum Error {
     Fault(Fault),
     Refused(OpenRefusal),
     Credentials,
+    Inspect(InspectError),
+}
+
+enum Outcome {
+    Duty(Ran),
+    Inspected(String),
 }
 
 enum Atom {
@@ -101,11 +114,12 @@ enum Atom {
     Bare(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ModeDraft {
     Default,
     Once,
     Resident { sleep_ms: u64 },
+    Inspect { key: String },
 }
 
 enum Draft {
@@ -134,6 +148,7 @@ impl Flag {
     fn parse(name: &str) -> Result<Self, ConfigError> {
         Ok(match name {
             "once" => Self::Once,
+            "inspect" => Self::Inspect,
             "dir" => Self::Dir,
             "prefix" => Self::Prefix,
             "theory" => Self::Theory,
@@ -152,6 +167,7 @@ impl Flag {
     const fn name(self) -> &'static str {
         match self {
             Self::Once => "once",
+            Self::Inspect => "inspect",
             Self::Dir => "dir",
             Self::Prefix => "prefix",
             Self::Theory => "theory",
@@ -193,6 +209,7 @@ impl fmt::Display for ConfigError {
             Self::BadStore(got) => write!(f, "store is fs or s3, not {got}"),
             Self::BadInt(name) => write!(f, "--{name} is not an integer"),
             Self::OnceSleep => write!(f, "--once does not take --sleep-ms"),
+            Self::InspectDuty => write!(f, "inspect does not take --once or --sleep-ms"),
             Self::Cross { flag, backend } => {
                 write!(
                     f,
@@ -214,15 +231,20 @@ impl fmt::Display for Error {
             Self::Fault(error) => write!(f, "{error}"),
             Self::Refused(refusal) => write!(f, "duty refused: {refusal:?}"),
             Self::Credentials => write!(f, "missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY"),
+            Self::Inspect(error) => write!(f, "{error}"),
         }
     }
 }
 
 fn main() -> ExitCode {
     match start(env::args().skip(1)) {
-        Ok(ran) => {
+        Ok(Outcome::Duty(ran)) => {
             eprint!("{}", scream(&ran));
             ExitCode::from(code(&ran))
+        }
+        Ok(Outcome::Inspected(text)) => {
+            print!("{text}");
+            ExitCode::SUCCESS
         }
         Err(error) => {
             eprintln!("{error}");
@@ -231,22 +253,83 @@ fn main() -> ExitCode {
     }
 }
 
-fn start(args: impl Iterator<Item = String>) -> Result<Ran, Error> {
+fn start(args: impl Iterator<Item = String>) -> Result<Outcome, Error> {
     let config = Config::parse(args).map_err(Error::Config)?;
     let theory = schema_file::load(&config.theory).map_err(Error::Theory)?;
-    match &config.backend {
-        Backend::Fs { root } => cycle(FsStore::new(root.clone()), &config, theory),
-        Backend::S3 {
-            bucket,
-            region,
-            endpoint,
-            key_prefix,
-        } => cycle(
-            open_s3(bucket, region, endpoint.as_deref(), key_prefix)?,
-            &config,
-            theory,
-        ),
+    match &config.mode {
+        Mode::Inspect { key } => match &config.backend {
+            Backend::Fs { root } => {
+                inspect(FsStore::new(root.clone()), &config, theory, key).map(Outcome::Inspected)
+            }
+            Backend::S3 {
+                bucket,
+                region,
+                endpoint,
+                key_prefix,
+            } => inspect(
+                open_s3(bucket, region, endpoint.as_deref(), key_prefix)?,
+                &config,
+                theory,
+                key,
+            )
+            .map(Outcome::Inspected),
+        },
+        Mode::Once | Mode::Resident { .. } => match &config.backend {
+            Backend::Fs { root } => {
+                cycle(FsStore::new(root.clone()), &config, theory).map(Outcome::Duty)
+            }
+            Backend::S3 {
+                bucket,
+                region,
+                endpoint,
+                key_prefix,
+            } => cycle(
+                open_s3(bucket, region, endpoint.as_deref(), key_prefix)?,
+                &config,
+                theory,
+            )
+            .map(Outcome::Duty),
+        },
     }
+}
+
+/// Fetch the object and render it through the crate parsers.
+fn inspect<S: ObjectStore>(
+    store: S,
+    config: &Config,
+    theory: SchemaDescriptor,
+    key: &str,
+) -> Result<String, Error> {
+    let kind = inspect::kind(key).map_err(Error::Inspect)?;
+    let bytes = match kind {
+        Kind::Sidecar => match std::fs::read(config.dir.join(CHAIN_FILE)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(Error::Inspect(InspectError::Missing));
+            }
+            Err(error) => {
+                return Err(Error::Inspect(InspectError::Io(error.to_string())));
+            }
+        },
+        Kind::Manifest | Kind::Checkpoint | Kind::Batch => {
+            let store_key = object_key(&config.prefix, key)?;
+            store
+                .get(&store_key)
+                .map_err(Error::Store)?
+                .ok_or(Error::Inspect(InspectError::Missing))?
+                .bytes
+        }
+    };
+    inspect::render(kind, &bytes, &theory).map_err(Error::Inspect)
+}
+
+fn object_key(prefix: &str, rest: &str) -> Result<StoreKey, Error> {
+    let raw = if prefix.is_empty() {
+        rest.to_string()
+    } else {
+        format!("{prefix}/{rest}")
+    };
+    StoreKey::parse(&raw).map_err(|error| Error::Inspect(InspectError::Key(error.key)))
 }
 
 fn cycle<S: ObjectStore>(
@@ -267,6 +350,7 @@ fn cycle<S: ObjectStore>(
             Mode::Once => return Ok(ran),
             Mode::Resident { sleep: _ } if !ready(&ran) => return Ok(ran),
             Mode::Resident { sleep } => thread::sleep(sleep),
+            Mode::Inspect { .. } => unreachable!("inspect does not cycle"),
         }
     }
 }
@@ -456,6 +540,7 @@ impl Draft {
             Flag::Endpoint => endpoint = Some(value),
             Flag::S3Prefix => key_prefix = value,
             Flag::Once
+            | Flag::Inspect
             | Flag::Dir
             | Flag::Prefix
             | Flag::Theory
@@ -509,6 +594,14 @@ impl ModeDraft {
         match self {
             Self::Default | Self::Once => Ok(Self::Once),
             Self::Resident { .. } => Err(ConfigError::OnceSleep),
+            Self::Inspect { .. } => Err(ConfigError::InspectDuty),
+        }
+    }
+
+    fn inspect(self, key: String) -> Result<Self, ConfigError> {
+        match self {
+            Self::Default | Self::Inspect { .. } => Ok(Self::Inspect { key }),
+            Self::Once | Self::Resident { .. } => Err(ConfigError::InspectDuty),
         }
     }
 
@@ -516,6 +609,7 @@ impl ModeDraft {
         match self {
             Self::Default | Self::Resident { .. } => Ok(Self::Resident { sleep_ms }),
             Self::Once => Err(ConfigError::OnceSleep),
+            Self::Inspect { .. } => Err(ConfigError::InspectDuty),
         }
     }
 
@@ -528,6 +622,7 @@ impl ModeDraft {
             Self::Resident { sleep_ms } => Mode::Resident {
                 sleep: Duration::from_millis(sleep_ms),
             },
+            Self::Inspect { key } => Mode::Inspect { key },
         }
     }
 }
@@ -545,6 +640,9 @@ impl Parse {
     fn bind(&mut self, flag: Flag, value: String) -> Result<(), ConfigError> {
         match flag {
             Flag::Once => unreachable!("once is the valueless arm"),
+            Flag::Inspect => {
+                self.mode = std::mem::replace(&mut self.mode, ModeDraft::Default).inspect(value)?;
+            }
             Flag::Dir => self.dir = Some(PathBuf::from(value)),
             Flag::Prefix => self.prefix = value,
             Flag::Theory => self.theory = Some(PathBuf::from(value)),
@@ -553,7 +651,8 @@ impl Parse {
             }
             Flag::SleepMs => {
                 let sleep_ms = value.parse().map_err(|_| ConfigError::BadInt("sleep-ms"))?;
-                self.mode = self.mode.sleep(sleep_ms)?;
+                self.mode =
+                    std::mem::replace(&mut self.mode, ModeDraft::Default).sleep(sleep_ms)?;
             }
             Flag::Store => {
                 self.draft = std::mem::replace(&mut self.draft, Draft::Empty)
@@ -601,6 +700,10 @@ impl Config {
                         return Err(ConfigError::MissingValue(name.name()));
                     }
                     parse.bind(name, value)?;
+                }
+                Atom::Bare(raw) if raw == "inspect" => {
+                    let value = take_value(Flag::Inspect, &mut args)?;
+                    parse.mode = parse.mode.inspect(value)?;
                 }
                 Atom::Bare(raw) => return Err(ConfigError::Unknown(raw)),
             }
@@ -736,6 +839,75 @@ mod tests {
                 flag: Flag::Root,
                 backend: StoreKind::S3,
             }
+        );
+    }
+
+    #[test]
+    fn inspect_is_a_mode_arm() {
+        let cfg = Config::parse(argv(&[
+            "inspect",
+            "manifest",
+            "--store=fs",
+            "--root=/tmp/r",
+            "--dir=/tmp/d",
+            "--theory=/tmp/t",
+        ]))
+        .expect("parse");
+        assert_eq!(
+            cfg.mode,
+            Mode::Inspect {
+                key: "manifest".into()
+            }
+        );
+        let cfg = Config::parse(argv(&[
+            "--inspect=ckpt/aa",
+            "--store=fs",
+            "--root=/tmp/r",
+            "--dir=/tmp/d",
+            "--theory=/tmp/t",
+        ]))
+        .expect("parse");
+        assert_eq!(
+            cfg.mode,
+            Mode::Inspect {
+                key: "ckpt/aa".into()
+            }
+        );
+    }
+
+    #[test]
+    fn inspect_excludes_once_and_sleep() {
+        assert_eq!(
+            parse_err(&[
+                "inspect",
+                "manifest",
+                "--once",
+                "--store=fs",
+                "--root=/tmp/r",
+                "--dir=/tmp/d",
+                "--theory=/tmp/t",
+            ]),
+            ConfigError::InspectDuty
+        );
+        assert_eq!(
+            parse_err(&[
+                "--sleep-ms=100",
+                "inspect",
+                "chain",
+                "--store=fs",
+                "--root=/tmp/r",
+                "--dir=/tmp/d",
+                "--theory=/tmp/t",
+            ]),
+            ConfigError::InspectDuty
+        );
+    }
+
+    #[test]
+    fn inspect_needs_a_key() {
+        assert_eq!(
+            parse_err(&["inspect", "--store=fs"]),
+            ConfigError::MissingValue("inspect")
         );
     }
 

@@ -3,6 +3,7 @@ pub mod braids;
 pub mod checkpointer;
 pub mod codec;
 pub mod gc;
+pub mod inspect;
 pub mod lease;
 pub mod manifest;
 pub mod replica;
