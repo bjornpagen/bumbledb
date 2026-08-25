@@ -276,10 +276,7 @@ fn run_with_floor(
         ));
     }
 
-    obs::start_capture();
-    let tracing = obs::capturing();
-    let _ = obs::finish_capture();
-    if !tracing {
+    if !cfg!(feature = "obs") {
         return Err(
             "`sweep-commit` times the judgment spans through the engine's trace seam — \
              rebuild with the obs feature: \
