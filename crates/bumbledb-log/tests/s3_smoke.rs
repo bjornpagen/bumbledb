@@ -51,7 +51,19 @@ fn unique_prefix(tag: &str) -> String {
     )
 }
 
-fn smoke_store(prefix: &str) -> Option<S3Store> {
+/// Sweeps the store prefix on drop. The binding must stay live until
+/// the test ends — a `_` discard would sweep under a still-running body.
+struct PrefixSweep(S3Store);
+
+impl Drop for PrefixSweep {
+    fn drop(&mut self) {
+        if let Err(err) = self.0.sweep_prefix() {
+            eprintln!("S3 smoke prefix sweep failed: {err}");
+        }
+    }
+}
+
+fn smoke_store(prefix: &str) -> Option<(S3Store, PrefixSweep)> {
     let missing = missing_required();
     if !missing.is_empty() {
         eprintln!("SKIPPED S3 smoke: credential-gated lane not run (missing {missing:?})");
@@ -64,20 +76,19 @@ fn smoke_store(prefix: &str) -> Option<S3Store> {
     let session_token = std::env::var("AWS_SESSION_TOKEN")
         .ok()
         .filter(|value| !value.is_empty());
-    Some(
-        S3Store::new(&S3Config {
-            endpoint,
-            region,
-            bucket: std::env::var("BUMBLEDB_S3_SMOKE_BUCKET").expect("bucket"),
-            credentials: S3Credentials::Static {
-                access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("id"),
-                secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret"),
-                session_token,
-            },
-            prefix: prefix.to_string(),
-        })
-        .expect("S3Store"),
-    )
+    let store = S3Store::new(&S3Config {
+        endpoint,
+        region,
+        bucket: std::env::var("BUMBLEDB_S3_SMOKE_BUCKET").expect("bucket"),
+        credentials: S3Credentials::Static {
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("id"),
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret"),
+            session_token,
+        },
+        prefix: prefix.to_string(),
+    })
+    .expect("S3Store");
+    Some((store.clone(), PrefixSweep(store)))
 }
 
 #[test]
@@ -92,7 +103,7 @@ fn s3_smoke_skips_loudly_without_credentials() {
 
 #[test]
 fn s3_smoke_create_only_race() {
-    let Some(store) = smoke_store(&unique_prefix("create")) else {
+    let Some((store, _sweep)) = smoke_store(&unique_prefix("create")) else {
         return;
     };
     let key = StoreKey::of("log/c00000000/1");
@@ -120,7 +131,7 @@ fn s3_smoke_create_only_race() {
 
 #[test]
 fn s3_smoke_cas_linearizes() {
-    let Some(store) = smoke_store(&unique_prefix("cas")) else {
+    let Some((store, _sweep)) = smoke_store(&unique_prefix("cas")) else {
         return;
     };
     let key = StoreKey::of("manifest.json");
@@ -165,7 +176,7 @@ fn s3_smoke_cas_linearizes() {
 
 #[test]
 fn s3_smoke_poll_unchanged() {
-    let Some(store) = smoke_store(&unique_prefix("poll")) else {
+    let Some((store, _sweep)) = smoke_store(&unique_prefix("poll")) else {
         return;
     };
     let key = StoreKey::of("manifest.json");
@@ -181,7 +192,7 @@ fn s3_smoke_poll_unchanged() {
 
 #[test]
 fn s3_smoke_get_before_put() {
-    let Some(store) = smoke_store(&unique_prefix("negcache")) else {
+    let Some((store, _sweep)) = smoke_store(&unique_prefix("negcache")) else {
         return;
     };
     let key = StoreKey::of("log/c00000000/probe");
@@ -211,7 +222,7 @@ fn open_replica(store: S3Store, dir: &Path) -> Replica<SchemaDescriptor, S3Store
 
 #[test]
 fn s3_smoke_replica_writer_round_trip() {
-    let Some(store) = smoke_store(&unique_prefix("roundtrip")) else {
+    let Some((store, _sweep)) = smoke_store(&unique_prefix("roundtrip")) else {
         return;
     };
     let root = temp_dir("s3_roundtrip");
@@ -243,7 +254,7 @@ fn child_script() -> PathBuf {
 #[test]
 fn s3_smoke_interop_rust_writes_ts_reads() {
     let prefix = unique_prefix("interop");
-    let Some(store) = smoke_store(&prefix) else {
+    let Some((store, _sweep)) = smoke_store(&prefix) else {
         return;
     };
     let key = StoreKey::of("interop/obj-0");
@@ -286,7 +297,7 @@ fn s3_smoke_interop_rust_writes_ts_reads() {
 
 #[test]
 fn s3_smoke_duty_once() {
-    let Some(store) = smoke_store(&unique_prefix("duty")) else {
+    let Some((store, _sweep)) = smoke_store(&unique_prefix("duty")) else {
         return;
     };
     let root = temp_dir("s3_duty");
