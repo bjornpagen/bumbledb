@@ -22,7 +22,7 @@ use crate::apply::{Applied, ApplyRefusal, PendingFold, apply, fold_pending};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
-    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
+    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_doc_key, ckpt_mdb_key, log_key,
     manifest_key,
 };
 use crate::sidecar::{CHAIN_FILE, Chain, ChainEntry, SidecarRead};
@@ -525,7 +525,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             self.floor = Some((digest, doc.clone()));
             return Ok(None);
         }
-        let Some(doc) = self.store.get(&ckpt_json_key(&self.prefix, &digest))? else {
+        let Some(doc) = self.store.get(&ckpt_doc_key(&self.prefix, &digest))? else {
             return Ok(Some(OpenRefusal::CheckpointDocMissing { digest }));
         };
         let doc = match Checkpoint::parse(&doc.bytes, self.codec.braids()) {
@@ -1028,7 +1028,7 @@ pub fn reclaim_orphan<S: ObjectStore>(
     digest: &[u8; 32],
 ) -> Result<(), StoreError> {
     store.delete(&ckpt_mdb_key(prefix, digest))?;
-    store.delete(&ckpt_json_key(prefix, digest))?;
+    store.delete(&ckpt_doc_key(prefix, digest))?;
     Ok(())
 }
 
@@ -1146,7 +1146,7 @@ mod sweep_tests {
         let digest = [0x11u8; 32];
         assert!(matches!(
             store
-                .put_create(&ckpt_json_key("", &digest), b"doc")
+                .put_create(&ckpt_doc_key("", &digest), b"doc")
                 .expect("doc"),
             Create::Created(_)
         ));
@@ -1159,7 +1159,7 @@ mod sweep_tests {
         reclaim_orphan(&store, "", &digest).expect("reclaim");
         assert!(
             store
-                .get(&ckpt_json_key("", &digest))
+                .get(&ckpt_doc_key("", &digest))
                 .expect("get")
                 .is_none()
         );
@@ -1178,7 +1178,7 @@ mod sweep_tests {
         let digest = [0x22u8; 32];
         record_ckpt_scratch(&dir, &digest).expect("lease");
         store
-            .put_create(&ckpt_json_key("", &digest), b"doc")
+            .put_create(&ckpt_doc_key("", &digest), b"doc")
             .expect("doc");
         store
             .put_create(&ckpt_mdb_key("", &digest), b"mdb")
@@ -1198,7 +1198,7 @@ mod sweep_tests {
 
         assert!(
             store
-                .get(&ckpt_json_key("", &digest))
+                .get(&ckpt_doc_key("", &digest))
                 .expect("get")
                 .is_none()
         );
@@ -1229,7 +1229,7 @@ mod sweep_tests {
             .put_create(&manifest_key(""), &manifest.render())
             .expect("manifest");
         store
-            .put_create(&ckpt_json_key("", &digest), b"doc")
+            .put_create(&ckpt_doc_key("", &digest), b"doc")
             .expect("doc");
         store
             .put_create(&ckpt_mdb_key("", &digest), b"mdb")
@@ -1240,7 +1240,7 @@ mod sweep_tests {
 
         assert!(
             store
-                .get(&ckpt_json_key("", &digest))
+                .get(&ckpt_doc_key("", &digest))
                 .expect("get")
                 .is_some()
         );

@@ -54,7 +54,7 @@ pub fn ckpt_mdb_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
 }
 
 #[must_use]
-pub fn ckpt_json_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
+pub fn ckpt_doc_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
     key(prefix, &format!("ckpt/{}", hex32(digest)))
 }
 
@@ -431,7 +431,7 @@ pub fn publish_checkpoint<S: ObjectStore>(
 ) -> StoreResult<Published> {
     let bytes = candidate.render();
     let digest = *blake3::hash(&bytes).as_bytes();
-    let key = ckpt_json_key(prefix, &digest);
+    let key = ckpt_doc_key(prefix, &digest);
     loop {
         match prove_create(store, &key, &bytes, store.put_create(&key, &bytes)?)? {
             Create::Created(_) | Create::Exists => break,
@@ -452,7 +452,7 @@ pub fn publish_checkpoint<S: ObjectStore>(
             if incumbent == digest {
                 return Ok(Published::Replaced);
             }
-            let Some(doc) = store.get(&ckpt_json_key(prefix, &incumbent))? else {
+            let Some(doc) = store.get(&ckpt_doc_key(prefix, &incumbent))? else {
                 return Ok(Published::Refused(PublishRefusal::CheckpointDocMissing {
                     digest: incumbent,
                 }));

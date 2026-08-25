@@ -19,7 +19,7 @@ use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran}
 use bumbledb_log::codec::Codec;
 use bumbledb_log::gc::Gc;
 use bumbledb_log::manifest::{
-    Checkpoint, Head, Manifest, ckpt_json_key, hex32, manifest_key, publish_checkpoint,
+    Checkpoint, Head, Manifest, ckpt_doc_key, hex32, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
@@ -647,7 +647,7 @@ fn the_resident_binary_screams_gc_checkpoint_doc_missing() {
     let digest = seed_published_store(&root);
     let out = resident_then(&root, &theory_path, || {
         FsStore::new(root.clone())
-            .delete(&ckpt_json_key("", &digest))
+            .delete(&ckpt_doc_key("", &digest))
             .expect("delete checkpoint");
     });
     let stderr = String::from_utf8_lossy(&out.stderr);

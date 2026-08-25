@@ -7,7 +7,7 @@ mod lane_d_support;
 use std::collections::BTreeMap;
 
 use bumbledb_log::manifest::{
-    Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, hex32,
+    Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_doc_key, hex32,
     log_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::replica::Vector;
@@ -166,7 +166,7 @@ fn key_layout_matches_the_protocol() {
         "log/c00000000/000000000000002a"
     );
     assert_eq!(
-        ckpt_json_key("p", &digest(0x01)).as_str(),
+        ckpt_doc_key("p", &digest(0x01)).as_str(),
         format!("p/ckpt/{}", hex32(&digest(0x01)))
     );
 }
@@ -204,7 +204,7 @@ fn doc_of(store: &FsStore, id: [u8; 32]) -> Checkpoint {
     let codec = codec();
     Checkpoint::parse(
         &store
-            .get(&ckpt_json_key("", &id))
+            .get(&ckpt_doc_key("", &id))
             .expect("get")
             .expect("doc")
             .bytes,

@@ -24,7 +24,7 @@ use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::gc::{Gc, Restore, RestoreRefusal, gc, restore_by_time, restore_to_vector};
 use bumbledb_log::manifest::{
-    Checkpoint, Head, Manifest, Published, ckpt_json_key, ckpt_mdb_key, create_manifest, hex32,
+    Checkpoint, Head, Manifest, Published, ckpt_doc_key, ckpt_mdb_key, create_manifest, hex32,
     log_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::replica::{OpenRefusal, Opened, Provenance, Refreshed, Replica, Vector};
@@ -326,7 +326,7 @@ fn walk_backlinks(store: &FsStore, prefix: &str, codec: &Codec) -> Vec<([u8; 32]
     let mut cursor = manifest.checkpoint;
     while let Some(digest) = cursor {
         let Some(fetched) = store
-            .get(&ckpt_json_key(prefix, &digest))
+            .get(&ckpt_doc_key(prefix, &digest))
             .expect("get checkpoint doc")
         else {
             break;
@@ -700,7 +700,7 @@ fn gc_deletes_exactly_the_retention_laws_set_per_braid() {
     assert_eq!(swept.checkpoints_deleted, vec![hex32(&first_digest)]);
     assert!(
         log.store
-            .get(&ckpt_json_key("", &second_digest))
+            .get(&ckpt_doc_key("", &second_digest))
             .expect("get")
             .is_some(),
         "the current checkpoint is always exempt"

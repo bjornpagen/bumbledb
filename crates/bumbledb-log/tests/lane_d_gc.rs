@@ -15,7 +15,7 @@ use bumbledb_log::braids::braids;
 use bumbledb_log::gc::{
     Gc, PublishClock, Restore, RestoreRefusal, gc, gc_at, restore_by_time, restore_to_vector,
 };
-use bumbledb_log::manifest::{ckpt_json_key, ckpt_mdb_key, log_key};
+use bumbledb_log::manifest::{ckpt_doc_key, ckpt_mdb_key, log_key};
 use bumbledb_log::replica::{Opened, Replica, Vector};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
@@ -179,7 +179,7 @@ fn old_checkpoints_die_behind_the_current_one() {
     );
     assert!(
         log.store
-            .get(&ckpt_json_key("", &old_digest))
+            .get(&ckpt_doc_key("", &old_digest))
             .expect("get")
             .is_none(),
         "json and mdb die as one unit"
@@ -193,7 +193,7 @@ fn old_checkpoints_die_behind_the_current_one() {
     );
     assert!(
         log.store
-            .get(&ckpt_json_key("", &current_digest))
+            .get(&ckpt_doc_key("", &current_digest))
             .expect("get")
             .is_some(),
         "the current checkpoint is always exempt"
@@ -494,7 +494,7 @@ fn a_missing_checkpoint_document_still_drops_its_mdb() {
     drop(builder);
 
     log.store
-        .delete(&ckpt_json_key("", &old_digest))
+        .delete(&ckpt_doc_key("", &old_digest))
         .expect("drop document");
     assert!(
         log.store

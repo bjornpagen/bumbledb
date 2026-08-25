@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::manifest::{
-    Checkpoint, Head, Manifest, ckpt_json_key, ckpt_mdb_key, manifest_key, publish_checkpoint,
+    Checkpoint, Head, Manifest, ckpt_doc_key, ckpt_mdb_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::replica::{Opened, Provenance, Replica};
 use bumbledb_log::store::ObjectStore;
@@ -59,7 +59,7 @@ fn crossing_the_sum_cadence_publishes_a_checkpoint() {
 
     let codec = codec();
     let doc_bytes = store
-        .get(&ckpt_json_key("", &digest))
+        .get(&ckpt_doc_key("", &digest))
         .expect("get")
         .expect("checkpoint doc");
     let doc = Checkpoint::parse(&doc_bytes.bytes, codec.braids()).expect("doc parses");

@@ -215,7 +215,7 @@ where
         };
         let doc = self
             .store
-            .get(&crate::manifest::ckpt_json_key(&self.prefix, &digest))
+            .get(&crate::manifest::ckpt_doc_key(&self.prefix, &digest))
             .map_err(|err| Error::Fault(Fault::Store(err)))?;
         let Some(doc) = doc else {
             return Ok(Err(OpenRefusal::CheckpointDocMissing { digest }));
