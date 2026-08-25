@@ -4,9 +4,11 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
+import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
+import { ErrStore } from "#errors.ts"
 import { storeKey } from "#keys.ts"
-import { fsStore, memStore } from "#store.ts"
+import { etag, fsStore, memStore, resolveAmbiguousCreate, resolveAmbiguousSwap } from "#store.ts"
 import { joinPrefix, s3Store } from "#store-s3.ts"
 
 const SLOT = storeKey("log/c00000000/0000000000000001")
@@ -89,18 +91,53 @@ describe("the five verbs over a process map", function suite() {
 		assert.equal(outcomes.filter((outcome) => outcome.tag === "created").length, 1)
 		assert.equal(outcomes.filter((outcome) => outcome.tag === "exists").length, 7)
 	})
+
+	test("get returns a fresh buffer: mutating the fetch leaves the store intact", async function fresh() {
+		const store = memStore()
+		const created = await store.putCreate(MANIFEST, encoder.encode("keep"))
+		assert.ok(created.tag === "created")
+		const fetched = await store.get(MANIFEST)
+		assert.ok(fetched !== null)
+		fetched.bytes[0] = 0
+		const again = await store.get(MANIFEST)
+		assert.equal(new TextDecoder().decode(again?.bytes), "keep")
+		const changed = await store.getIfChanged(MANIFEST, created.etag)
+		assert.equal(changed.tag, "unchanged")
+		const poll = await store.getIfChanged(MANIFEST, etag("0".repeat(64)))
+		assert.ok(poll.tag === "changed")
+		poll.fetched.bytes[0] = 0
+		const third = await store.get(MANIFEST)
+		assert.equal(new TextDecoder().decode(third?.bytes), "keep")
+	})
+
+	test("GET-verify names landed, lost, and absent", async function verify() {
+		const store = memStore()
+		const body = encoder.encode("ours")
+		const created = await store.putCreate(SLOT, body)
+		assert.ok(created.tag === "created")
+		const landed = await resolveAmbiguousCreate(store, SLOT, body)
+		assert.equal(landed.tag, "landed")
+		const lost = await resolveAmbiguousCreate(store, SLOT, encoder.encode("theirs"))
+		assert.equal(lost.tag, "lost")
+		await store.delete(SLOT)
+		const absent = await resolveAmbiguousCreate(store, SLOT, body)
+		assert.equal(absent.tag, "absent")
+		await store.putCreate(MANIFEST, encoder.encode("v1"))
+		const swapped = await resolveAmbiguousSwap(store, MANIFEST, encoder.encode("v1"))
+		assert.equal(swapped.tag, "landed")
+	})
 })
 
 describe("the five verbs over a directory", function suite() {
-	test("a dead owner's pid-lockfile beside the key is broken by putSwap", async function locks() {
+	test("an expired lease beside the key is broken by putSwap", async function leases() {
 		const root = path.join(tmpRoot, "s6")
 		const store = fsStore(root)
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
 		assert.ok(created.tag === "created")
-		fs.writeFileSync(path.join(root, "manifest.json.lock"), "999999999")
+		fs.writeFileSync(path.join(root, ".manifest.json.lease.1"), `${process.pid}\n1\n0\n`)
 		const swapped = await store.putSwap(MANIFEST, encoder.encode("v2"), created.etag)
 		assert.equal(swapped.tag, "swapped")
-		assert.equal(fs.existsSync(path.join(root, "manifest.json.lock")), false)
+		assert.equal(fs.readdirSync(root).filter((name) => name.startsWith(".manifest.json.lease.")).length, 0)
 	})
 
 	test("the etag is the blake3 of the content, computed and never stored", async function etags() {
@@ -116,16 +153,32 @@ describe("the five verbs over a directory", function suite() {
 		const swapped = await store.putSwap(MANIFEST, next, created.etag)
 		assert.ok(swapped.tag === "swapped")
 		assert.equal(swapped.etag, toHex(new Uint8Array(internalBlake3(next))))
-		assert.deepEqual(fs.readdirSync(root), [MANIFEST], "no sidecar and no lock residue beside the object")
+		assert.deepEqual(fs.readdirSync(root), [MANIFEST], "no sidecar and no lease residue beside the object")
 	})
 
-	test("a key wearing the lockfile suffix is refused at the parse boundary", function refused() {
-		assert.throws(function lockSuffix() {
-			storeKey("manifest.json.lock")
-		})
-		assert.throws(function lockSegment() {
-			storeKey("a.lock/b")
-		})
+	test("open sweeps leftover temps and expired leases", async function sweep() {
+		const root = path.join(tmpRoot, "sweep")
+		fs.mkdirSync(root, { recursive: true })
+		fs.writeFileSync(path.join(root, ".manifest.json.tmp.1.1"), "litter")
+		fs.writeFileSync(path.join(root, ".manifest.json.lease.9"), "1\n9\n0\n")
+		const store = fsStore(root)
+		assert.equal(await store.get(MANIFEST), null)
+		assert.equal(fs.existsSync(path.join(root, ".manifest.json.tmp.1.1")), false)
+		assert.equal(fs.existsSync(path.join(root, ".manifest.json.lease.9")), false)
+	})
+
+	test("putCreate against a directory is a key-shape fault, not exists", async function directory() {
+		const root = path.join(tmpRoot, "isdir")
+		fs.mkdirSync(path.join(root, "manifest.json"), { recursive: true })
+		const store = fsStore(root)
+		await assert.rejects(
+			function againstDir() {
+				return store.putCreate(MANIFEST, encoder.encode("no"))
+			},
+			function isStore(error: unknown) {
+				return error instanceof Error && errors.is(error, ErrStore)
+			}
+		)
 	})
 
 	test("contending writers on one slot: exactly one creates", async function contended() {
@@ -137,6 +190,11 @@ describe("the five verbs over a directory", function suite() {
 		)
 		assert.equal(outcomes.filter((outcome) => outcome.tag === "created").length, 1)
 		assert.equal(outcomes.filter((outcome) => outcome.tag === "exists").length, 7)
+		const fetched = await store.get(SLOT)
+		assert.ok(fetched !== null)
+		const winner = outcomes.find((outcome) => outcome.tag === "created")
+		assert.ok(winner !== undefined && winner.tag === "created")
+		assert.equal(fetched.etag, winner.etag)
 	})
 })
 
