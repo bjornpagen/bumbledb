@@ -67,7 +67,7 @@ fn assert_lowercase_hex(label: &str, text: &str) {
     );
 }
 
-fn json_stems_under(rel: &str) -> BTreeSet<String> {
+fn stems_under(rel: &str, extension: &str) -> BTreeSet<String> {
     let root = v3().join(rel);
     let mut stems = BTreeSet::new();
     let mut stack = vec![root];
@@ -79,7 +79,7 @@ fn json_stems_under(rel: &str) -> BTreeSet<String> {
                 stack.push(path);
                 continue;
             }
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            if path.extension().and_then(|ext| ext.to_str()) != Some(extension) {
                 continue;
             }
             let rel_path = path
@@ -90,6 +90,10 @@ fn json_stems_under(rel: &str) -> BTreeSet<String> {
         }
     }
     stems
+}
+
+fn json_stems_under(rel: &str) -> BTreeSet<String> {
+    stems_under(rel, "json")
 }
 
 fn decimal_u64(label: &str, value: &Json) -> u64 {
@@ -244,6 +248,18 @@ fn inventory_is_the_v3_roster() {
         json_stems_under("documents"),
         "inventory document roster matches the goldens"
     );
+    assert_eq!(
+        listed_docs,
+        stems_under("documents", "bin"),
+        "every document golden is binary"
+    );
+    assert!(
+        !v3().join("chain.json").exists()
+            && json_stems_under("chain")
+                .iter()
+                .all(|stem| stem != "chain/chain"),
+        "the local sidecar name is chain, not chain.json"
+    );
 
     let listed_chain: BTreeSet<String> = stems(&roster["chain"])
         .into_iter()
@@ -356,6 +372,18 @@ fn inventory_documents_parse_and_rerender() {
     for rel in stems(&inventory()["documents"]) {
         let sidecar = read_json(&v3().join(format!("{rel}.json")));
         let bytes = std::fs::read(v3().join(format!("{rel}.bin"))).expect("document bytes");
+        if let Some(hex) = sidecar.get("hex").and_then(Json::as_str) {
+            assert_eq!(
+                support::unhex(hex),
+                bytes,
+                "{rel}: inventory hex is the golden"
+            );
+        }
+        assert_ne!(
+            bytes.first().copied(),
+            Some(b'{'),
+            "{rel}: document golden is binary, not JSON"
+        );
         let kind = sidecar["kind"].as_str().expect("kind");
         match sidecar["expect"].as_str().expect("expect") {
             "ok" => match kind {

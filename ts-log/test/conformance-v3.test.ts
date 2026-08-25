@@ -2,8 +2,9 @@
  * The v:3 conformance inventory: every ok golden decodes and
  * re-encodes byte-identically, every `r_*` golden refuses under the
  * sidecar's typed identity, and every materialised fuzz prefix is a
- * named refusal. Documents are `v:3`. Pending is lowercase hex. u64s
- * are bigint / decimal strings, never JSON number.
+ * named refusal. Documents are the v:3 binary records. Pending is
+ * raw batch bytes (hex only as test metadata). u64s are bigint /
+ * decimal strings, never JSON number.
  */
 
 import assert from "node:assert/strict"
@@ -17,10 +18,9 @@ import type { BatchHeader, DecodedBatch, EncodeHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Descriptor } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
-import { DOC_VERSION } from "#document.ts"
 import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#errors.ts"
 import { generation } from "#keys.ts"
-import { parseCheckpoint, parseManifest, renderCheckpoint, renderManifest } from "#manifest.ts"
+import { DOC_VERSION, parseCheckpoint, parseManifest, renderCheckpoint, renderManifest } from "#manifest.ts"
 import { corpusRoot, pinned, schemaNamed } from "#test/conformance-v3-support.ts"
 import type { Interval, Value } from "#value.ts"
 
@@ -54,6 +54,7 @@ interface DocumentSidecar {
 	readonly expect: "ok" | "refusal"
 	readonly schema?: string
 	readonly refusal?: string
+	readonly hex?: string
 	readonly value?: unknown
 }
 
@@ -324,9 +325,11 @@ function assertWireVersion3(label: string, bytes: Uint8Array): void {
 	assert.equal(version, 3, `${label}: wire version 3`)
 }
 
-function assertDocumentV3(label: string, bytes: Uint8Array): void {
-	const prefix = utf8.decode(bytes.subarray(0, '{"v":3'.length))
-	assert.equal(prefix, '{"v":3', `${label}: document begins {"v":3`)
+function assertDocumentBinary(label: string, bytes: Uint8Array, hex?: string): void {
+	assert.notEqual(bytes[0], "{".charCodeAt(0), `${label}: document golden is binary, not JSON`)
+	if (hex !== undefined) {
+		assert.equal(toHex(bytes), hex, `${label}: inventory hex is the golden`)
+	}
 }
 
 if (!present) {
@@ -339,7 +342,7 @@ if (!present) {
 	describe("v3 inventory roster", function suite() {
 		test("inventory is the v:3 case roster", function rosterTest() {
 			assert.equal(roster.version, 3)
-			assert.equal(DOC_VERSION, 3n)
+			assert.equal(DOC_VERSION, 3)
 			assert.ok(roster.batch_ok.length > 0, "ok batch goldens")
 			assert.ok(roster.batch_refusal.length > 0, "refusal batch goldens")
 			for (const stem of roster.batch_ok) {
@@ -449,7 +452,7 @@ if (!present) {
 				const sidecar = readJson(rel) as DocumentSidecar
 				const bytes = readBin(rel)
 				if (sidecar.expect === "ok") {
-					assertDocumentV3(rel, bytes)
+					assertDocumentBinary(rel, bytes, sidecar.hex)
 					assert.ok(sidecar.value !== undefined, `${rel}: value`)
 					assertDocumentValueNumbers(rel, sidecar.kind, sidecar.value)
 					if (sidecar.kind === "manifest") {
@@ -469,9 +472,10 @@ if (!present) {
 					}
 					const parsed = parseSidecar(bytes, known)
 					assert.deepEqual(renderSidecarValue(parsed), sidecar.value, `${rel}: sidecar value`)
-					assert.equal(toHex(new TextEncoder().encode(renderSidecar(parsed))), toHex(bytes), `${rel}: sidecar fixpoint`)
+					assert.equal(toHex(renderSidecar(parsed)), toHex(bytes), `${rel}: sidecar fixpoint`)
 					return
 				}
+				assertDocumentBinary(rel, bytes, sidecar.hex)
 				assert.equal(sidecar.expect, "refusal", rel)
 				assert.ok(sidecar.refusal !== undefined, `${rel}: named refusal`)
 				const descriptor = sidecar.schema === undefined ? undefined : descriptorOf({ schema: sidecar.schema })
@@ -521,7 +525,7 @@ if (!present) {
 						return
 					}
 					const parsed = parseSidecar(bytes, known)
-					assert.equal(toHex(new TextEncoder().encode(renderSidecar(parsed))), toHex(bytes), `${rel}: sidecar fixpoint`)
+					assert.equal(toHex(renderSidecar(parsed)), toHex(bytes), `${rel}: sidecar fixpoint`)
 					return
 				}
 				assert.equal(sidecar.expect, "refusal", rel)
