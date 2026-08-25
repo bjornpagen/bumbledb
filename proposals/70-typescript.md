@@ -168,9 +168,8 @@ on-disk protocol of 40 verbatim: `wx`-opened synced temp published with
 `fs.link`, computed blake3 etags, the fenced CAS lease
 `{holder, token, expires}` — one protocol, two conforming
 implementations, raced against each other
-in the interop conformance lane. There is no pid-lockfile and no
-`kill(0)`. Document and sidecar `u64` fields parse to `bigint`, never
-`number`; pending bytes are the codec's lowercase hex. It runs every lane the S3 store runs
+in the interop conformance lane. Document and sidecar `u64` fields
+parse to `bigint`; pending bytes are the codec's lowercase hex. It runs every lane the S3 store runs
 (80); a lane that passes on one and not the other is a reported gap.
 Blake3 rides
 the engine package's existing native binding: the SDK's
