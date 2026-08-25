@@ -30,8 +30,8 @@ describe("the temporal gate", function suite() {
 		const writerVerbs = new Set([...writer.matchAll(verbPattern)].map((hit) => hit[1]))
 		assert.ok(replicaVerbs.has("get"), "the replica probes with get")
 		assert.ok(replicaVerbs.has("getIfChanged"), "the heartbeat polls with getIfChanged")
-		assert.ok(replicaVerbs.has("putCreate"), "manifest birth creates")
-		assert.ok(writerVerbs.has("putCreate"), "slot arbitration creates")
+		assert.ok(!replicaVerbs.has("putCreate"), "a replica never genesis-creates")
+		assert.ok(writerVerbs.has("putCreate"), "the writer births the store and arbitrates slots")
 		assert.ok(writerVerbs.has("putSwap"), "the id lease CAS swaps")
 		const unknownVerb = /store\.(?!get|getIfChanged|putCreate|putSwap|delete)[a-zA-Z]+\(/
 		assert.ok(!unknownVerb.test(replica) && !unknownVerb.test(writer), "a sixth verb appeared")
@@ -44,16 +44,18 @@ describe("the temporal gate", function suite() {
 		}
 		assert.ok(replica.includes("async function openCore"), "openReplica opens through the store")
 		const writer = sourceOf("writer.ts")
-		for (const surface of ["async commit(", "async commitSplit("]) {
+		for (const surface of ["async function openWriter", "async commit(", "async commitSplit("]) {
 			assert.ok(writer.includes(surface), `writer surface missing: ${surface}`)
 		}
+		const birthAt = writer.indexOf("await birthStore(")
+		const openAt = writer.indexOf("await openReplica(")
+		assert.ok(birthAt >= 0 && openAt > birthAt, "openWriter births the store, then opens the replica")
 		const tenants = sourceOf("tenants.ts")
 		assert.ok(tenants.includes("await openReplica("), "tenants.get awaits the replica open, which awaits the store")
 	})
 
-	test("openWriter and the batch recorders are synchronous by law", function syncRecorders() {
+	test("the batch recorders are synchronous by law", function syncRecorders() {
 		const writer = sourceOf("writer.ts")
-		assert.ok(!writer.includes("async function openWriter"), "openWriter touches no store verb and stays sync")
 		const recorder = writer.slice(writer.indexOf("const batch: Batch"), writer.indexOf("return { batch, recording }"))
 		assert.ok(!recorder.includes("await"), "batch.insert/delete/reserve are pure recorders")
 	})

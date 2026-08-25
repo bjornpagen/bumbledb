@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
-import { openReplica, openWriter, s3Store } from "@bjornpagen/bumbledb-log"
+import { openWriter, s3Store } from "@bjornpagen/bumbledb-log"
 import { holdReplica } from "./handle.ts"
 import { parseRequest } from "./request.ts"
 
@@ -29,9 +29,9 @@ const store = s3Store({
 
 const acquire = holdReplica(async function open() {
 	const openedAt = performance.now()
-	const replica = await openReplica({ store, prefix: "", dir: "/tmp/store", theory: Notes })
+	const writer = await openWriter({ store, prefix: "", dir: "/tmp/store", theory: Notes })
 	console.log(`open ${Math.round(performance.now() - openedAt)}`)
-	return { replica, writer: openWriter(replica) }
+	return { replica: writer.replica, writer }
 })
 
 function json(value: unknown): string {

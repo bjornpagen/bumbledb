@@ -157,8 +157,8 @@ describe("s3 smoke", function suite() {
 			return
 		}
 		const dir = path.join(tmpRoot, `roundtrip-${prefixSeq}`)
-		const a = await openReplica({ store, prefix: "", dir: path.join(dir, "a"), theory: Ledger })
-		const writer = openWriter(a)
+		const writer = await openWriter({ store, prefix: "", dir: path.join(dir, "a"), theory: Ledger })
+		const a = writer.replica
 		const out = await writer.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "s3-smoke" }])
 			const ids = batch.reserve(Booking, "id", 1n)

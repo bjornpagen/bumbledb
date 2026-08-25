@@ -76,8 +76,8 @@ function collect(child: Spawned): Promise<Exited> {
 }
 
 async function seedHolder(bucket: string, dir: string): Promise<void> {
-	const replica = await openReplica({ store: fsStore(bucket), prefix: PREFIX, dir, theory: Ledger })
-	const writer = openWriter(replica)
+	const writer = await openWriter({ store: fsStore(bucket), prefix: PREFIX, dir, theory: Ledger })
+	const replica = writer.replica
 	const seeded = await writer.commit(function seed(batch) {
 		batch.insert(Holder, [{ id: 1n, name: "root" }])
 		return 0

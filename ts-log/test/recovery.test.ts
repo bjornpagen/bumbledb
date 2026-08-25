@@ -37,8 +37,8 @@ describe("pending recovery (60)", function suite() {
 	test("a resurrected pending applies at open, is re-addressed, and publishes on the next commit", async function unpublished() {
 		const { store, prefix, dir } = lane()
 		{
-			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-			const writer = openWriter(a)
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const a = writer.replica
 			await writer.commit(function seed(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0
@@ -77,8 +77,9 @@ describe("pending recovery (60)", function suite() {
 			2n
 		)
 		assert.equal(again.vector.get(HOME), 1n)
+		await again[Symbol.asyncDispose]()
 
-		const writer = openWriter(again)
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const out = await writer.commit(function more(batch) {
 			batch.insert(Holder, [{ id: 3n, name: "eve" }])
 			return 0
@@ -93,15 +94,15 @@ describe("pending recovery (60)", function suite() {
 			}),
 			3n
 		)
-		await again[Symbol.asyncDispose]()
+		await writer.replica[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
 
 	test("a pending whose slot already holds our bytes is absorbed, never re-published", async function published() {
 		const { store, prefix, dir } = lane()
 		{
-			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-			const writer = openWriter(a)
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const a = writer.replica
 			await writer.commit(function seed(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0

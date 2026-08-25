@@ -17,7 +17,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
-import { openReplica } from "#replica.ts"
 import { fsStore } from "#store.ts"
 import { Booking, Ledger, Note } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
@@ -48,8 +47,8 @@ async function main(): Promise<void> {
 	}
 	const id = Number.parseInt(idRaw, 10)
 	const store = fsStore(bucket)
-	const replica = await openReplica({ store, prefix: PREFIX, dir, theory: Ledger })
-	const writer = openWriter(replica)
+	const writer = await openWriter({ store, prefix: PREFIX, dir, theory: Ledger })
+	const replica = writer.replica
 
 	if (role === "disjoint") {
 		const count = Number.parseInt(countRaw ?? "1", 10)

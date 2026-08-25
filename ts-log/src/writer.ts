@@ -23,26 +23,35 @@ import {
 import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, checkedAddU64, digest32, digest32FromHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
 import type { Braid, RelationInfo } from "#descriptor.ts"
-import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, throwContention } from "#errors.ts"
+import { descriptorOf } from "#descriptor.ts"
+import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, refuseSlotRetired, throwContention } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation, idsKey, logKey, manifestKey } from "#keys.ts"
 import { renderManifest } from "#manifest.ts"
-import type { Core, Replica } from "#replica.ts"
+import type { Core, OpenReplicaOptions, Replica } from "#replica.ts"
 import {
 	applyOps,
+	belowFloor,
 	chainEntry,
 	clearPending,
 	coreOf,
 	discardAndReopen,
+	entriesOf,
+	foldPending,
 	generationOf,
+	holdPending,
 	maxBigint,
+	openReplica,
+	pendingOf,
 	persistSidecar,
 	readdressPending,
 	withGate
 } from "#replica.ts"
+import type { ObjectStore } from "#store.ts"
 import type { Value } from "#value.ts"
 import { checkAgainst } from "#value.ts"
 
@@ -108,6 +117,7 @@ interface Deposition {
 
 interface Writer<Rels extends SchemaRelations> {
 	readonly role: "writer"
+	readonly replica: Replica<Rels>
 	deposition(): Deposition | null
 	commit<R>(body: (batch: Batch<Rels>) => R | Promise<R>): Promise<Commit<Rels, R>>
 	commitSplit<R>(body: (batch: Batch<Rels>) => R | Promise<R>): Promise<CommitSplit<Rels, R>>
@@ -448,15 +458,13 @@ function screamContention<Rels extends SchemaRelations>(
 }
 
 /**
- * Publishes the applied pending batch: slot CAS, then the one loss path
- * on Exists. A byte-equal occupant is our own ambiguous PUT, absorbed.
- * Anything else carries the pending through a directory discard —
- * re-persisted into the fresh sidecar before any re-judgment, so a
- * crash mid-loss resolves it at the next open — re-opens to the
- * current tip, and re-judges the recorded ops in one db.write: publish
- * on accepted-and-state-changing, Accepted at the current generation
- * on a net no-op (the publish law), or the serial Rejected. Each
- * iteration races once at the then-tip; the bound counts iterations.
+ * Publishes the applied pending batch: refuse a below-floor create,
+ * then slot CAS, then the one loss path on Exists. A byte-equal
+ * occupant is our own ambiguous PUT, absorbed. Anything else carries
+ * the pending through a directory discard — re-persisted into the
+ * fresh sidecar before any re-judgment — re-opens to the current tip,
+ * and re-judges the recorded ops in one db.write. An occupant that
+ * then vanishes is retired, not a loop that forges the swept slot.
  */
 async function publishPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -465,18 +473,24 @@ async function publishPending<Rels extends SchemaRelations>(
 ): Promise<Commit<Rels, undefined>> {
 	let losses = 0
 	for (;;) {
-		const pending = core.pending
+		const pending = pendingOf(core)
 		if (pending === null) {
 			throw errors.new("publish reached with no pending batch")
 		}
 		const braid = pending.braid
+		// The floor is a write precondition: a slot at or below it is
+		// retired. A create must not touch the store (70/116/127).
+		if (belowFloor(core, braid, pending.gen)) {
+			refuseSlotRetired({ braid, slot: pending.gen }, "the slot is retired")
+		}
 		const created = await core.store.putCreate(logKey(core.prefix, braid, pending.gen), pending.bytes)
 		let winnerBytes: Uint8Array | null = null
 		if (created.tag !== "created") {
 			const fetched = await core.store.get(logKey(core.prefix, braid, pending.gen))
 			if (fetched === null) {
-				state.scream.attempt("slot vanished after create")
-				continue
+				// Exists then null: the occupant was swept. Refuse
+				// rather than loop back into putCreate.
+				refuseSlotRetired({ braid, slot: pending.gen }, "the slot is retired")
 			}
 			if (!bytesEqual(fetched.bytes, pending.bytes)) {
 				winnerBytes = fetched.bytes
@@ -487,7 +501,7 @@ async function publishPending<Rels extends SchemaRelations>(
 			if (timestamp === undefined) {
 				throw errors.new("pending batch header is shorter than the fixed layout")
 			}
-			core.chain.set(braid, {
+			entriesOf(core).set(braid, {
 				g: pending.gen,
 				prev: digest32(new Uint8Array(internalBlake3(pending.bytes))),
 				ts: timestamp
@@ -520,7 +534,7 @@ async function publishPending<Rels extends SchemaRelations>(
 			}
 		}
 		const tip = chainEntry(core, braid)
-		core.chain.set(braid, { g: tip.g, prev: digestPrev(tip.prev), ts: tip.ts })
+		entriesOf(core).set(braid, { g: tip.g, prev: digestPrev(tip.prev), ts: tip.ts })
 		await readdressPending(core, ops, state.writerId)
 		if (losses >= LOSS_BOUND) {
 			screamContention(braid, { tag: "outraced", tip: chainEntry(core, braid).g })
@@ -528,8 +542,9 @@ async function publishPending<Rels extends SchemaRelations>(
 	}
 }
 
-/** The commit discipline (60): encode, fsync the pending, judge locally,
- *  publish only what advanced the generation. */
+/** The commit discipline (60): encode, fsync as Pending before any
+ *  apply, judge locally, publish only what advanced the generation.
+ *  Settled is written only after the verdict. */
 async function disciplineCommit<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState,
@@ -550,8 +565,8 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 		},
 		ops
 	)
-	core.pending = { braid, gen: generation(entry.g + 1n), bytes }
-	core.pendingOps = ops
+	// Pending → durable, before any apply.
+	holdPending(core, { braid, gen: generation(entry.g + 1n), bytes }, ops)
 	await persistSidecar(core)
 
 	const before = generationOf(core)
@@ -567,18 +582,32 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	return publishPending(core, state, ops)
 }
 
-/** An inherited pending is resolved-and-published by open. */
+/** An inherited pending is resolved-and-published by open. A slot the
+ *  floor already covers is published (`Clear`), not re-judged (46). */
 async function settleInheritedPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState
 ): Promise<void> {
-	if (core.pending === null) {
+	const pending = pendingOf(core)
+	if (pending === null) {
 		return
 	}
-	let ops = core.pendingOps
+	if (
+		foldPending(
+			chainSum(core.chain),
+			generationOf(core),
+			null,
+			pending.bytes,
+			belowFloor(core, pending.braid, pending.gen)
+		).tag === "below-floor"
+	) {
+		await clearPending(core)
+		return
+	}
+	let ops = pending.ops
 	if (ops === null) {
 		const decoded = errors.trySync(function decodePending() {
-			return decodeBatch(core.descriptor, (core.pending as { bytes: Uint8Array }).bytes)
+			return decodeBatch(core.descriptor, pending.bytes)
 		})
 		if (decoded.error) {
 			await clearPending(core)
@@ -593,28 +622,24 @@ async function settleInheritedPending<Rels extends SchemaRelations>(
 }
 
 /** Only the writer births a store: create-only PUT of a genesis manifest. */
-async function birthStore<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	const key = manifestKey(core.prefix)
+async function birthStore(store: ObjectStore, prefix: string, fingerprint: string): Promise<void> {
+	const key = manifestKey(prefix)
 	for (;;) {
-		const fetched = await core.store.get(key)
+		const fetched = await store.get(key)
 		if (fetched !== null) {
-			if (core.manifestEtag === null) {
-				core.manifestEtag = fetched.etag
-			}
 			return
 		}
-		const bytes = renderManifest({ fingerprint: core.descriptor.fingerprint, checkpoint: null })
-		const created = await core.store.putCreate(key, bytes)
+		const bytes = renderManifest({ fingerprint, checkpoint: null })
+		const created = await store.putCreate(key, bytes)
 		if (created.tag === "created") {
-			core.manifestEtag = created.etag
-			core.checkpoint = null
-			core.checkpointDigest = null
 			return
 		}
 	}
 }
 
-function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Writer<Rels> {
+async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Writer<Rels>> {
+	await birthStore(options.store, options.prefix, descriptorOf(options.theory).fingerprint)
+	const replica = await openReplica(options)
 	const core = coreOf(replica)
 	const state: WriterState = {
 		writerId: crypto.randomBytes(8).readBigUInt64LE(),
@@ -622,19 +647,18 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 		scream: screamOf("writer discard-and-re-pull"),
 		deposition: null
 	}
-	const opened = withGate(core, async function openTransition() {
-		await birthStore(core)
+	await withGate(core, async function openTransition() {
 		await ensureFreshLeases(core, state)
 		await settleInheritedPending(core, state)
 	})
 	return {
 		role: "writer",
+		replica,
 		deposition() {
 			return state.deposition
 		},
 		async commit(body) {
 			return withGate(core, async function commitBody() {
-				await opened
 				const recorded = await recordWithLeases(core, state, body)
 				if (recorded.ops.length === 0) {
 					throw errors.new("commit recorded no ops — an empty transaction names no braid")
@@ -654,7 +678,6 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 
 		async commitSplit(body) {
 			return withGate(core, async function splitBody() {
-				await opened
 				const recorded = await recordWithLeases(core, state, body)
 				if (recorded.ops.length === 0) {
 					throw errors.new("commitSplit recorded no ops — an empty transaction names no braid")

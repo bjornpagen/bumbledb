@@ -43,8 +43,8 @@ function booking(id: bigint, holder: bigint, slot: string) {
 describe("replica and writer over the mem store", function suite() {
 	test("commit publishes, a second replica replays it, waitFor delivers read-your-writes", async function commitReplay() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const writerA = openWriter(a)
+		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const a = writerA.replica
 
 		const out = await writerA.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
@@ -75,8 +75,8 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("a rejected commit never reaches the network and surfaces typed violations", async function rejectedLocal() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const writer = openWriter(a)
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const a = writer.replica
 		await writer.commit(function seed(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			batch.insert(Booking, [booking(10n, 1n, "s1")])
@@ -96,8 +96,8 @@ describe("replica and writer over the mem store", function suite() {
 	test("reopen from the same directory serves without replay drift", async function reopen() {
 		const { store, prefix, dir } = lane()
 		{
-			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-			const writer = openWriter(a)
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const a = writer.replica
 			await writer.commit(function seed(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0
@@ -118,8 +118,8 @@ describe("replica and writer over the mem store", function suite() {
 	test("the crash window heals by idempotent re-apply: a rewound sidecar catches up as engine no-ops", async function crashWindow() {
 		const { store, prefix, dir } = lane()
 		{
-			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-			const writer = openWriter(a)
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const a = writer.replica
 			await writer.commit(function seed(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0
@@ -151,8 +151,8 @@ describe("replica and writer over the mem store", function suite() {
 	test("a torn sidecar fails the wholeness identity and the directory is discarded and re-pulled", async function wholenessDiscard() {
 		const { store, prefix, dir } = lane()
 		{
-			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-			const writer = openWriter(a)
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const a = writer.replica
 			await writer.commit(function seed(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0
@@ -180,10 +180,10 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("the double-mint K-conflict re-judges into the serial rejection — the case-5 story", async function doubleMint() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
-		const writerA = openWriter(a)
-		const writerB = openWriter(b)
+		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
+		const a = writerA.replica
+		const b = writerB.replica
 
 		await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
@@ -217,10 +217,10 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("a disjoint-shaped loss re-judges at the tip and lands a fresh header at tip+1", async function disjointLoss() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
-		const writerA = openWriter(a)
-		const writerB = openWriter(b)
+		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
+		const a = writerA.replica
+		const b = writerB.replica
 
 		await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [
@@ -261,10 +261,10 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("a net-noop-shaped loss re-judges to a net no-op: Accepted at the current generation, nothing published", async function netNoopLoss() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
-		const writerA = openWriter(a)
-		const writerB = openWriter(b)
+		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
+		const a = writerA.replica
+		const b = writerB.replica
 
 		const winner = await writerA.commit(function mint(batch) {
 			batch.insert(Holder, [{ id: 7n, name: "ada" }])
@@ -294,8 +294,8 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("commitSplit returns the per-braid outcome vector", async function split() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const writer = openWriter(a)
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const a = writer.replica
 		const out = await writer.commitSplit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			batch.insert(Ledger.relations.Note, [{ id: 1n, body: "memo" }])
@@ -317,10 +317,10 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("a stale writer forty slots behind resolves through one re-open and one race at the tip", async function staleForty() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
-		const writerA = openWriter(a)
-		const writerB = openWriter(b)
+		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
+		const a = writerA.replica
+		const b = writerB.replica
 
 		await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
@@ -360,8 +360,8 @@ describe("replica and writer over the mem store", function suite() {
 	test("open sweeps dead rotated store dirs, keeping only the adopted one", async function sweep() {
 		const { store, prefix, dir } = lane()
 		{
-			const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-			const writer = openWriter(a)
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const a = writer.replica
 			await writer.commit(function seed(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0
@@ -384,8 +384,8 @@ describe("replica and writer over the mem store", function suite() {
 
 	test("a spanning commit is a typed refusal naming the verb boundary", async function spanning() {
 		const { store, prefix, dir } = lane()
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const writer = openWriter(a)
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const a = writer.replica
 		const caught = await errors.try(
 			writer.commit(function record(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])

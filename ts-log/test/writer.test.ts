@@ -4,12 +4,17 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
-import { bytesEqual, type Digest32, digest32 } from "#bytes.ts"
-import { decodeBatch } from "#codec.ts"
+import * as errors from "@superbuilders/errors"
+import { bytesEqual, type Digest32, digest32, digest32FromHex } from "#bytes.ts"
+import { readSidecar, writeSidecar } from "#chain.ts"
+import type { Op } from "#codec.ts"
+import { decodeBatch, encodeBatch } from "#codec.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
-import { generation, logKey, manifestKey } from "#keys.ts"
-import { renderManifest } from "#manifest.ts"
-import { coreOf, openReplica } from "#replica.ts"
+import { ErrManifestMissing, ErrSlotRetired, slotRetiredOf } from "#errors.ts"
+import { checkpointJsonKey, generation, logKey, manifestKey } from "#keys.ts"
+import type { CheckpointFacts } from "#manifest.ts"
+import { renderCheckpoint, renderManifest } from "#manifest.ts"
+import { coreOf, entriesOf, foldPending, openReplica } from "#replica.ts"
 import { memStore } from "#store.ts"
 import { Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
@@ -35,22 +40,37 @@ function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (nam
 	}
 }
 
-async function birthManifest(store: ReturnType<typeof memStore>, prefix: string): Promise<void> {
-	const created = await store.putCreate(
-		manifestKey(prefix),
-		renderManifest({ fingerprint: descriptorOf(Ledger).fingerprint, checkpoint: null })
-	)
-	assert.equal(created.tag, "created")
-}
-
 describe("writer encode site", function suite() {
+	test("the writer births an empty store; a replica alone refuses ManifestMissing", async function exclusiveBirth() {
+		const { store, prefix, dir } = lane()
+		const missing = await errors.try(
+			openReplica({ store, prefix, dir: dir("reader-cold"), theory: Ledger })
+		)
+		assert.ok(missing.error)
+		assert.ok(errors.is(missing.error, ErrManifestMissing))
+
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		assert.equal(writer.role, "writer")
+		const out = await writer.commit(function record(batch) {
+			batch.insert(Holder, [{ id: 1n, name: "ada" }])
+			return 0
+		})
+		assert.equal(out.tag, "accepted")
+		assert.ok(out.tag === "accepted")
+
+		const reader = await openReplica({ store, prefix, dir: dir("reader"), theory: Ledger })
+		await reader.waitFor(new Map([[HOME, out.generation]]))
+		assert.equal(reader.vector.get(HOME), 1n)
+		await writer.replica[Symbol.asyncDispose]()
+		await reader[Symbol.asyncDispose]()
+	})
+
 	test("a hex-string chain prev is branded Digest32 before encode", async function hexPrev() {
 		const { store, prefix, dir } = lane()
-		await birthManifest(store, prefix)
-		const replica = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const writer = openWriter(replica)
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const replica = writer.replica
 		const core = coreOf(replica)
-		core.chain.set(HOME, { g: generation(0n), prev: ZERO_HEX as unknown as Digest32, ts: 0n })
+		entriesOf(core).set(HOME, { g: generation(0n), prev: ZERO_HEX as unknown as Digest32, ts: 0n })
 
 		const out = await writer.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
@@ -71,18 +91,17 @@ describe("writer encode site", function suite() {
 
 	test("the first publish after a replica-built chain cites the predecessor", async function replicaBuilt() {
 		const { store, prefix, dir } = lane()
-		await birthManifest(store, prefix)
-		const a = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
-		const writerA = openWriter(a)
+		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const a = writerA.replica
 		const first = await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			return 0
 		})
 		assert.ok(first.tag === "accepted")
 
-		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
+		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
+		const b = writerB.replica
 		await b.waitFor(new Map([[HOME, first.generation]]))
-		const writerB = openWriter(b)
 		const second = await writerB.commit(function more(batch) {
 			batch.insert(Holder, [{ id: 2n, name: "bob" }])
 			return 0
@@ -99,5 +118,113 @@ describe("writer encode site", function suite() {
 
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
+	})
+})
+
+const ZERO_DIGEST = "0".repeat(64)
+
+function floorFacts(homeG: bigint): CheckpointFacts {
+	const braids = new Map()
+	let sum = 0n
+	for (const id of descriptorOf(Ledger).braidMembers.keys()) {
+		const g = id === HOME ? homeG : 0n
+		braids.set(id, { g: generation(g), hash: ZERO_DIGEST, ts: 0n })
+		sum += g
+	}
+	return { braids, catalog: ZERO_DIGEST, writer: 0n, prev: null, sum }
+}
+
+describe("the floor is a write-path invariant", function suite() {
+	test("foldPending names BelowFloor before any occupant arm", function foldTable() {
+		const ours = new Uint8Array([1, 2, 3])
+		const theirs = new Uint8Array([4, 5, 6])
+		assert.equal(foldPending(0n, 0n, null, ours, true).tag, "below-floor")
+		assert.equal(foldPending(0n, 0n, theirs, ours, true).tag, "below-floor")
+		assert.equal(foldPending(3n, 3n, ours, ours, false).tag, "ours")
+		assert.equal(foldPending(3n, 3n, theirs, ours, false).tag, "theirs-unapplied")
+		assert.equal(foldPending(3n, 4n, theirs, ours, false).tag, "theirs-applied")
+		assert.equal(foldPending(3n, 3n, null, ours, false).tag, "absent-unapplied")
+		assert.equal(foldPending(3n, 4n, null, ours, false).tag, "absent-applied")
+		assert.equal(foldPending(3n, 6n, null, ours, false).tag, "phantom")
+	})
+
+	test("putCreate below the floor is refused SlotRetired — a swept slot cannot be recreated", async function retired() {
+		const { store, prefix, dir } = lane()
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const core = coreOf(writer.replica)
+		core.checkpoint = floorFacts(5n)
+		const caught = await errors.try(
+			writer.commit(function record(batch) {
+				batch.insert(Holder, [{ id: 1n, name: "ada" }])
+				return 0
+			})
+		)
+		assert.ok(caught.error)
+		assert.ok(errors.is(caught.error, ErrSlotRetired))
+		assert.equal(slotRetiredOf(caught.error)?.braid, HOME)
+		assert.equal(slotRetiredOf(caught.error)?.slot, 1n)
+		assert.equal(await store.get(logKey(prefix, HOME, generation(1n))), null)
+		await writer.replica[Symbol.asyncDispose]()
+	})
+
+	test("a pending slot the floor already covers is published (Clear), not re-judged", async function belowFloorPublished() {
+		const { store, prefix, dir } = lane()
+		{
+			const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+			const out = await writer.commit(function seed(batch) {
+				batch.insert(Holder, [{ id: 1n, name: "ada" }])
+				return 0
+			})
+			assert.ok(out.tag === "accepted")
+			await writer.replica[Symbol.asyncDispose]()
+		}
+
+		const sidecarFile = path.join(dir("a"), "chain.json")
+		const sidecar = await readSidecar(sidecarFile)
+		assert.equal(sidecar.tag, "read")
+		const descriptor = descriptorOf(Ledger)
+		const ops: Op[] = [{ op: "insert", relation: "Holder", rows: [[2n, "bob"]] }]
+		const zombie = encodeBatch(
+			descriptor,
+			{
+				fingerprint: digest32FromHex(descriptor.fingerprint),
+				braid: HOME,
+				braidGen: generation(1n),
+				prev: digest32(new Uint8Array(32)),
+				writer: 42n,
+				timestamp: 1n
+			},
+			ops
+		)
+		await writeSidecar(sidecarFile, {
+			tag: "pending",
+			entries: sidecar.chain.entries,
+			batch: { braid: HOME, gen: generation(1n), bytes: zombie }
+		})
+
+		const digest = "ab".repeat(32)
+		const facts = renderCheckpoint(floorFacts(5n))
+		const uploaded = await store.putCreate(checkpointJsonKey(prefix, digest), facts)
+		assert.equal(uploaded.tag, "created")
+		const manifest = await store.get(manifestKey(prefix))
+		assert.ok(manifest !== null)
+		const swapped = await store.putSwap(
+			manifestKey(prefix),
+			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: digest }),
+			manifest.etag
+		)
+		assert.equal(swapped.tag, "swapped")
+
+		const again = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		assert.equal(
+			again.replica.db.read(function count(instance) {
+				return instance.count(Holder)
+			}),
+			1n,
+			"bob is not applied — the floor already published the slot"
+		)
+		assert.equal(await store.get(logKey(prefix, HOME, generation(2n))), null)
+		assert.equal(coreOf(again.replica).chain.tag, "settled")
+		await again.replica[Symbol.asyncDispose]()
 	})
 })
