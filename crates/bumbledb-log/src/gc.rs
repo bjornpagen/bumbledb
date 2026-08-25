@@ -14,15 +14,15 @@ use std::path::Path;
 
 use bumbledb::{Db, Theory, Violations};
 
-use crate::apply::{Applied, ApplyRefusal, apply};
+use crate::apply::{apply, Applied, ApplyRefusal};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
-    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
-    manifest_key,
+    ckpt_json_key, ckpt_mdb_key, log_key, manifest_key, Checkpoint, CheckpointError, Manifest,
+    ManifestError,
 };
 use crate::replica::{
-    Fault, OpenRefusal, Vector, derive_codec, fetch_checkpoint_bytes, write_checkpoint_bytes,
+    derive_codec, fetch_checkpoint_bytes, write_checkpoint_bytes, Fault, OpenRefusal, Vector,
 };
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::{ObjectStore, Result as StoreResult};
@@ -350,7 +350,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
                     slot,
                 }));
             };
-            match apply(&db, &mut chain, &codec, braid, slot, &object.bytes, 0)? {
+            match apply(&db, &mut chain, &codec, braid, slot, &object.bytes)? {
                 Applied::Advanced { .. } | Applied::Absorbed { .. } => {}
                 Applied::Refused(refusal) => {
                     return Ok(Restore::Refused(RestoreRefusal::Corrupt(refusal)));
@@ -526,7 +526,7 @@ fn seed_restore<T: Theory + Clone, S: ObjectStore>(
             computed,
         })));
     }
-    let chain = Chain {
+    let chain = Chain::Settled {
         entries: doc
             .braids
             .iter()
@@ -541,7 +541,6 @@ fn seed_restore<T: Theory + Clone, S: ObjectStore>(
                 )
             })
             .collect(),
-        pending: None,
     };
     Ok(Ok((db, chain)))
 }

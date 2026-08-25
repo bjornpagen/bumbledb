@@ -111,20 +111,24 @@ pub enum ApplyRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
     /// The engine commit advanced the generation — the ordinary arm.
-    Advanced { generation: u64 },
+    Advanced {
+        generation: u64,
+    },
     /// The engine took its no-op arm and the identity landed exact: the
     /// legitimate crash-window re-absorption.
-    Absorbed { generation: u64 },
+    Absorbed {
+        generation: u64,
+    },
     Rejected(Violations),
     Refused(ApplyRefusal),
 }
 
 /// Applies the log object at `(braid, slot)` to the store: full decode,
 /// chain discipline, one `db.write` with ops in listed order, then the
-/// state-change instrument. The identity's last term is a function of
-/// the chain: `Pending` counts one, `Settled` counts none. On
-/// `Advanced`/`Absorbed` the in-memory chain has advanced; persisting
-/// it is the caller's step two.
+/// state-change instrument. The identity is `generation(chain)` with
+/// this braid's count replaced by `slot` — `Pending` already counts
+/// one. On `Advanced`/`Absorbed` the in-memory chain has advanced;
+/// persisting it is the caller's step two.
 pub fn apply<T>(
     db: &Db<T>,
     chain: &mut Chain,
@@ -132,7 +136,6 @@ pub fn apply<T>(
     braid: BraidId,
     slot: u64,
     bytes: &[u8],
-    applied_pending: u64,
 ) -> bumbledb::Result<Applied> {
     let batch = match codec.decode(bytes) {
         Ok(batch) => batch,
@@ -186,11 +189,7 @@ pub fn apply<T>(
     };
     let generation = committed.generation.value();
 
-    let term = match chain {
-        Chain::Pending { .. } => 1,
-        Chain::Settled { .. } => applied_pending,
-    };
-    let identity = chain.sum() - position.g + slot + term;
+    let identity = chain.generation() - position.g + slot;
     if generation < identity {
         return Ok(Applied::Refused(ApplyRefusal::PublishLawViolation {
             braid,

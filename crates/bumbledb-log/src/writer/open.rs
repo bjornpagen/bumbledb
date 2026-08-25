@@ -388,7 +388,6 @@ where
                     at_tip.insert(*braid);
                     continue;
                 };
-                let pending_term = core.chain.generation().saturating_sub(core.chain.sum());
                 let outcome = apply(
                     core.db.as_deref().expect("mounted"),
                     &mut core.chain,
@@ -396,7 +395,6 @@ where
                     *braid,
                     slot,
                     &fetched.bytes,
-                    pending_term,
                 )
                 .map_err(|err| Error::Fault(Fault::Engine(err)))?;
                 match outcome {

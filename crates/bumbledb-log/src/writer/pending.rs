@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bumbledb::Admission;
 
-use crate::apply::{Applied, apply};
+use crate::apply::{apply, Applied};
 use crate::braids::BraidId;
 use crate::codec::{Op, OpKind};
 use crate::manifest::log_key;
@@ -188,7 +188,6 @@ where
             braid,
             slot,
             bytes,
-            0,
         )
         .map_err(|err| Error::Fault(Fault::Engine(err)))?;
         match applied {
@@ -334,7 +333,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{PendingFold, fold_pending};
+    use super::{fold_pending, PendingFold};
 
     #[test]
     fn fold_consults_floor_first() {

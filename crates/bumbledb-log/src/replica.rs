@@ -884,7 +884,6 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             braid,
             slot,
             &fetched.bytes,
-            0,
         )? {
             Applied::Advanced { .. } | Applied::Absorbed { .. } => {
                 self.chain.write_atomic(&self.dir)?;
