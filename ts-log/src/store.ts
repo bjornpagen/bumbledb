@@ -172,6 +172,11 @@ function isUnproved(error: Error): boolean {
 	return code === "EIO" || code === "EINTR" || code === "ETIMEDOUT" || code === "EAGAIN" || code === "EBUSY"
 }
 
+/** A temp or parent that vanished mid-link is not Exists and not Created. */
+function isVanished(error: Error): boolean {
+	return codeOf(error) === "ENOENT"
+}
+
 async function fsyncDir(dir: string): Promise<void> {
 	const handle = await fs.open(dir, "r")
 	const synced = await errors.try(handle.sync())
@@ -362,10 +367,19 @@ async function acquireFsLease(
 			token,
 			expires: BigInt(now + ttlMs)
 		})
-		const temp = await syncedTemp(dest, body, dir)
-		const published = await errors.try(publishLink(temp, dest))
-		await fs.rm(temp, { force: true })
+		const wrote = await errors.try(syncedTemp(dest, body, dir))
+		if (wrote.error) {
+			if (isVanished(wrote.error) || isUnproved(wrote.error)) {
+				continue
+			}
+			throw wrote.error
+		}
+		const published = await errors.try(publishLink(wrote.data, dest))
+		await fs.rm(wrote.data, { force: true })
 		if (published.error) {
+			if (isVanished(published.error) || isUnproved(published.error)) {
+				continue
+			}
 			throw published.error
 		}
 		if (published.data === "occupied") {
@@ -539,7 +553,7 @@ function fsStore(root: string): ObjectStore {
 						const published = await errors.try(publishLink(temp, target))
 						await fs.rm(temp, { force: true })
 						if (published.error) {
-							if (isUnproved(published.error)) {
+							if (isUnproved(published.error) || isVanished(published.error)) {
 								return { tag: "ambiguous" }
 							}
 							throw published.error
@@ -566,7 +580,7 @@ function fsStore(root: string): ObjectStore {
 				})()
 			)
 			if (ran.error) {
-				if (isUnproved(ran.error)) {
+				if (isUnproved(ran.error) || isVanished(ran.error)) {
 					return { tag: "ambiguous" }
 				}
 				throw wrapStore(ran.error, `putCreate ${key}`)
