@@ -165,7 +165,7 @@ where
             .store()
             .put_create(&ckpt_mdb_key(self.replica.prefix(), &digest), &bytes)?
         {
-            Create::Created(_) | Create::Exists => {}
+            Create::Created(_) | Create::Exists | Create::Ambiguous => {}
         }
         Ok(publish_checkpoint(
             self.replica.store(),

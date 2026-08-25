@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use crate::braids::{BraidId, Braids};
 use crate::store::{Create, ObjectStore, Result as StoreResult, StoreKey, Swap};
 
-/// The one accepted manifest and sidecar document version.
-pub const DOC_VERSION: u64 = 2;
+/// The one accepted manifest, checkpoint, and sidecar document version.
+pub const DOC_VERSION: u64 = 3;
 
 fn key(prefix: &str, rest: &str) -> StoreKey {
     let raw = if prefix.is_empty() {
@@ -139,6 +139,15 @@ impl<'b> Text<'b> {
         Ok(value)
     }
 
+    /// A quoted decimal u64: `"18446744073709551615"`. A JSON number,
+    /// a fractional string, or a leading zero is a refusal.
+    pub(crate) fn quoted_u64(&mut self) -> Result<u64, usize> {
+        self.lit("\"")?;
+        let value = self.u64()?;
+        self.lit("\"")?;
+        Ok(value)
+    }
+
     /// Lowercase hex payload of even length up to the closing quote; the
     /// pending slot's batch bytes ride here.
     pub(crate) fn hex_bytes(&mut self) -> Result<Vec<u8>, usize> {
@@ -167,7 +176,17 @@ pub enum ManifestError {
     Version { got: u64 },
 }
 
-/// The parsed manifest: `{"v":2,"fingerprint":…,"checkpoint":…}`.
+impl ManifestError {
+    #[must_use]
+    pub const fn identity(&self) -> &'static str {
+        match self {
+            Self::Malformed { .. } => "Malformed",
+            Self::Version { .. } => "Version",
+        }
+    }
+}
+
+/// The parsed manifest: `{"v":3,"fingerprint":…,"checkpoint":…}`.
 /// `checkpoint` is a real null arm from store birth until the first
 /// checkpoint lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +255,12 @@ pub enum CheckpointError {
     Malformed {
         at: usize,
     },
+    /// A well-formed document of a version this consumer refuses.
+    Version {
+        got: u64,
+    },
+    /// The vector sum of the `g` column overflows `u64`.
+    Overflow,
     /// A braid id the schema's own decomposition does not mint.
     UnknownBraid {
         got: u32,
@@ -244,6 +269,19 @@ pub enum CheckpointError {
     /// schema/checkpoint drift refusal (both are pure functions of the
     /// same schema, so any disagreement is drift, not variety).
     BraidSet,
+}
+
+impl CheckpointError {
+    #[must_use]
+    pub const fn identity(&self) -> &'static str {
+        match self {
+            Self::Malformed { .. } => "Malformed",
+            Self::Version { .. } => "Version",
+            Self::Overflow => "Overflow",
+            Self::UnknownBraid { .. } => "UnknownBraid",
+            Self::BraidSet => "BraidSet",
+        }
+    }
 }
 
 /// The parsed `ckpt/{digest}.json`: one map, one fact per braid, the
@@ -268,7 +306,7 @@ impl Checkpoint {
             }
             write!(
                 braids,
-                "\"{braid}\":{{\"g\":{},\"hash\":\"{}\",\"ts\":{}}}",
+                "\"{braid}\":{{\"g\":\"{}\",\"hash\":\"{}\",\"ts\":\"{}\"}}",
                 head.g,
                 hex32(&head.hash),
                 head.ts
@@ -280,7 +318,7 @@ impl Checkpoint {
             None => "null".to_string(),
         };
         format!(
-            "{{\"braids\":{{{braids}}},\"catalog\":\"{}\",\"writer\":{},\"prev\":{prev}}}",
+            "{{\"v\":{DOC_VERSION},\"braids\":{{{braids}}},\"catalog\":\"{}\",\"writer\":\"{}\",\"prev\":{prev}}}",
             hex32(&self.catalog),
             self.writer
         )
@@ -295,7 +333,12 @@ impl Checkpoint {
         let mal = |at| CheckpointError::Malformed { at };
         let mut text = Text::new(bytes);
         let mut map: BTreeMap<BraidId, Head> = BTreeMap::new();
-        text.lit("{\"braids\":{").map_err(mal)?;
+        text.lit("{\"v\":").map_err(mal)?;
+        let version = text.u64().map_err(mal)?;
+        if version != DOC_VERSION {
+            return Err(CheckpointError::Version { got: version });
+        }
+        text.lit(",\"braids\":{").map_err(mal)?;
         let mut first = true;
         while !text.peek("}") {
             if !first {
@@ -308,21 +351,28 @@ impl Checkpoint {
                 return Err(CheckpointError::UnknownBraid { got: raw });
             };
             text.lit("\":{\"g\":").map_err(mal)?;
-            let g = text.u64().map_err(mal)?;
+            let g = text.quoted_u64().map_err(mal)?;
             text.lit(",\"hash\":\"").map_err(mal)?;
             let hash = text.hex32().map_err(mal)?;
             text.lit("\",\"ts\":").map_err(mal)?;
-            let ts = text.u64().map_err(mal)?;
+            let ts = text.quoted_u64().map_err(mal)?;
             text.lit("}").map_err(mal)?;
             if map.last_key_value().is_some_and(|(last, _)| *last >= braid) {
                 return Err(mal(text.at()));
             }
             map.insert(braid, Head { g, hash, ts });
         }
+        if map
+            .values()
+            .try_fold(0u64, |acc, head| acc.checked_add(head.g))
+            .is_none()
+        {
+            return Err(CheckpointError::Overflow);
+        }
         text.lit("},\"catalog\":\"").map_err(mal)?;
         let catalog = text.hex32().map_err(mal)?;
         text.lit("\",\"writer\":").map_err(mal)?;
-        let writer = text.u64().map_err(mal)?;
+        let writer = text.quoted_u64().map_err(mal)?;
         text.lit(",\"prev\":").map_err(mal)?;
         let prev = if text.peek("null") {
             text.lit("null").map_err(mal)?;
@@ -351,7 +401,9 @@ impl Checkpoint {
     /// The vector sum — the checkpoint order's total order.
     #[must_use]
     pub fn sum(&self) -> u64 {
-        self.braids.values().map(|head| head.g).sum()
+        self.braids
+            .values()
+            .fold(0u64, |acc, head| acc.saturating_add(head.g))
     }
 
     /// The vector: the `g` column keyed by braid.
@@ -416,7 +468,9 @@ pub fn publish_checkpoint<S: ObjectStore>(
     catalog: [u8; 32],
     writer: u64,
 ) -> StoreResult<Published> {
-    let candidate_sum: u64 = heads.values().map(|head| head.g).sum();
+    let candidate_sum: u64 = heads
+        .values()
+        .fold(0u64, |acc, head| acc.saturating_add(head.g));
     loop {
         let Some(fetched) = store.get(&manifest_key(prefix))? else {
             return Ok(Published::Refused(PublishRefusal::ManifestMissing));
@@ -459,7 +513,7 @@ pub fn publish_checkpoint<S: ObjectStore>(
         };
         match store.put_swap(&manifest_key(prefix), &next.render(), &fetched.etag)? {
             Swap::Swapped(_) => return Ok(Published::Replaced),
-            Swap::Moved => {}
+            Swap::Moved | Swap::Ambiguous => {}
         }
     }
 }
@@ -472,6 +526,7 @@ fn upsert<S: ObjectStore>(store: &S, key: &StoreKey, bytes: &[u8]) -> StoreResul
     loop {
         match store.put_create(key, bytes)? {
             Create::Created(_) => return Ok(()),
+            Create::Ambiguous => continue,
             Create::Exists => {
                 let Some(existing) = store.get(key)? else {
                     continue;
@@ -481,7 +536,7 @@ fn upsert<S: ObjectStore>(store: &S, key: &StoreKey, bytes: &[u8]) -> StoreResul
                 }
                 match store.put_swap(key, bytes, &existing.etag)? {
                     Swap::Swapped(_) => return Ok(()),
-                    Swap::Moved => {}
+                    Swap::Moved | Swap::Ambiguous => {}
                 }
             }
         }

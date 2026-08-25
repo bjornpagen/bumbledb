@@ -152,6 +152,17 @@ fn open_s3(config: &Config) -> Result<S3Store, Error> {
     .map_err(Error::Store)
 }
 
+fn take_value(
+    args: &mut std::iter::Peekable<impl Iterator<Item = String>>,
+    name: &'static str,
+) -> Result<String, ConfigError> {
+    match args.peek() {
+        Some(next) if next.starts_with("--") => Err(ConfigError::MissingValue(name)),
+        None => Err(ConfigError::MissingValue(name)),
+        Some(_) => args.next().ok_or(ConfigError::MissingValue(name)),
+    }
+}
+
 impl Config {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, ConfigError> {
         let mut once = false;
@@ -168,30 +179,27 @@ impl Config {
         let mut key_prefix = String::new();
         let mut args = args.peekable();
         while let Some(flag) = args.next() {
-            let take = |args: &mut std::iter::Peekable<_>, name| {
-                args.next().ok_or(ConfigError::MissingValue(name))
-            };
             match flag.as_str() {
                 "--once" => once = true,
-                "--dir" => dir = Some(PathBuf::from(take(&mut args, "dir")?)),
-                "--prefix" => prefix = take(&mut args, "prefix")?,
-                "--theory" => theory = Some(PathBuf::from(take(&mut args, "theory")?)),
+                "--dir" => dir = Some(PathBuf::from(take_value(&mut args, "dir")?)),
+                "--prefix" => prefix = take_value(&mut args, "prefix")?,
+                "--theory" => theory = Some(PathBuf::from(take_value(&mut args, "theory")?)),
                 "--writer" => {
-                    writer_id = take(&mut args, "writer")?
+                    writer_id = take_value(&mut args, "writer")?
                         .parse()
                         .map_err(|_| ConfigError::BadInt("writer"))?;
                 }
                 "--sleep-ms" => {
-                    sleep_ms = take(&mut args, "sleep-ms")?
+                    sleep_ms = take_value(&mut args, "sleep-ms")?
                         .parse()
                         .map_err(|_| ConfigError::BadInt("sleep-ms"))?;
                 }
-                "--store" => store = Some(take(&mut args, "store")?),
-                "--root" => root = Some(PathBuf::from(take(&mut args, "root")?)),
-                "--bucket" => bucket = Some(take(&mut args, "bucket")?),
-                "--region" => region = take(&mut args, "region")?,
-                "--endpoint" => endpoint = Some(take(&mut args, "endpoint")?),
-                "--s3-prefix" => key_prefix = take(&mut args, "s3-prefix")?,
+                "--store" => store = Some(take_value(&mut args, "store")?),
+                "--root" => root = Some(PathBuf::from(take_value(&mut args, "root")?)),
+                "--bucket" => bucket = Some(take_value(&mut args, "bucket")?),
+                "--region" => region = take_value(&mut args, "region")?,
+                "--endpoint" => endpoint = Some(take_value(&mut args, "endpoint")?),
+                "--s3-prefix" => key_prefix = take_value(&mut args, "s3-prefix")?,
                 other => return Err(ConfigError::Unknown(other.to_string())),
             }
         }

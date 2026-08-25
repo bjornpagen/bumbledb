@@ -191,6 +191,22 @@ where
         let mut attempt: u32 = 0;
         let created = loop {
             match self.store.put_create(&key, bytes) {
+                Ok(Create::Ambiguous) => {
+                    match resolve_ambiguous_create(self.store.as_ref(), &key, bytes)
+                        .map_err(|probe_err| Error::Fault(Fault::Store(probe_err)))?
+                    {
+                        CreateProbe::Landed(etag) => break Create::Created(etag),
+                        CreateProbe::Lost(_) => break Create::Exists,
+                        CreateProbe::Absent => {
+                            attempt += 1;
+                            if attempt == CREATE_ATTEMPTS {
+                                return Err(Error::Fault(Fault::Io(io::Error::other(
+                                    "ambiguous create stayed absent",
+                                ))));
+                            }
+                        }
+                    }
+                }
                 Ok(created) => break created,
                 Err(err) => {
                     match resolve_ambiguous_create(self.store.as_ref(), &key, bytes)
@@ -213,6 +229,22 @@ where
             Create::Created(_) => {
                 self.advance_and_clear(core, braid, slot, ts, bytes)?;
                 Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
+            }
+            Create::Ambiguous => {
+                let winner = retry_read(|| self.store.get(&key))
+                    .map_err(|err| Error::Fault(Fault::Store(err)))?
+                    .ok_or_else(|| {
+                        Error::Fault(Fault::Io(io::Error::other(
+                            "ambiguous create stayed absent",
+                        )))
+                    })?;
+                if winner.bytes == bytes {
+                    self.advance_and_clear(core, braid, slot, ts, bytes)?;
+                    return Ok(PublishEnd::Done(Settled::Accepted { generation: slot }));
+                }
+                Ok(PublishEnd::Lost {
+                    winner: winner.bytes,
+                })
             }
             Create::Exists => {
                 let winner = retry_read(|| self.store.get(&key))
