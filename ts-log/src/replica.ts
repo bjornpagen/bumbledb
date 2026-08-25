@@ -39,6 +39,7 @@ import type { CheckpointFacts } from "#manifest.ts"
 import { auditCatalog, parseCheckpoint, parseManifest } from "#manifest.ts"
 import type { Etag, ObjectStore } from "#store.ts"
 import type { Value } from "#value.ts"
+import { Vector } from "#vector.ts"
 
 const ZERO_HASH = digest32(new Uint8Array(32))
 
@@ -1003,15 +1004,6 @@ function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<B
 	return vector
 }
 
-function dominates(have: ReadonlyMap<Braid, Generation>, want: ReadonlyMap<Braid, Generation>): boolean {
-	for (const [braid, wantGen] of want) {
-		if ((have.get(braid) ?? -1n) < wantGen) {
-			return false
-		}
-	}
-	return true
-}
-
 async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid?: Braid): Promise<RefreshOutcome> {
 	const braids = braid === undefined ? allBraids(core) : [braidOf(core.theory, braid)]
 	const outcome = await runPass(core, braids, "steady")
@@ -1064,7 +1056,7 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 				chainEntry(core, braid)
 			}
 			await refreshUntil(core, function reached() {
-				return dominates(vectorOf(core), vector)
+				return Vector.from(vectorOf(core)).dominates(Vector.from(vector))
 			})
 		},
 		async [Symbol.asyncDispose]() {

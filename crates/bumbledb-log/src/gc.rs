@@ -306,7 +306,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     if dir.exists() {
         return Ok(Restore::Refused(RestoreRefusal::DirExists));
     }
-    for braid in target.keys() {
+    for braid in target.braids() {
         if codec.braids().parse(braid.raw()).is_none() {
             return Ok(Restore::Refused(RestoreRefusal::UnknownBraid {
                 got: braid.raw(),
@@ -328,11 +328,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
                 )));
             }
         };
-        let qualifies = doc
-            .braids
-            .iter()
-            .all(|(braid, head)| head.g <= target.get(braid).copied().unwrap_or(0));
-        if qualifies {
+        if target.dominates(&Vector::from(doc.vector())) {
             base = Some((digest, doc));
             break;
         }
@@ -346,7 +342,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
 
     let braids: Vec<BraidId> = codec.braids().components().keys().copied().collect();
     for braid in braids {
-        let goal = target.get(&braid).copied().unwrap_or(0);
+        let goal = target.at(braid);
         while chain.position(braid).g < goal {
             let slot = chain.position(braid).g + 1;
             let key = log_key(prefix, braid, slot);
@@ -372,10 +368,9 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
         }
     }
     chain.write_atomic(dir)?;
-    let vector = chain.vector();
     Ok(Restore::Restored {
         db: Box::new(db),
-        vector,
+        vector: Vector::from(chain.vector()),
     })
 }
 
@@ -421,17 +416,17 @@ pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
             }
         };
         if doc.braids.values().all(|head| head.ts <= t_ms) {
-            base_vector = doc.vector();
+            base_vector = Vector::from(doc.vector());
             break;
         }
         cursor = doc.prev;
     }
 
-    let mut target: Vector = Vector::new();
-    for (braid, start) in &base_vector {
-        let mut g = *start;
+    let mut target = Vector::new();
+    for (braid, start) in base_vector.iter() {
+        let mut g = start;
         loop {
-            let key = log_key(prefix, *braid, g + 1);
+            let key = log_key(prefix, braid, g + 1);
             let Some(object) = store.get(&key)? else {
                 break;
             };
@@ -448,7 +443,7 @@ pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
             }
             g += 1;
         }
-        target.insert(*braid, g);
+        target.set(braid, g);
     }
 
     restore_to_vector(store, prefix, dir, theory, &target)

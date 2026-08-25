@@ -28,6 +28,8 @@ use crate::manifest::{
 use crate::sidecar::{CHAIN_FILE, Chain, ChainEntry, SidecarRead};
 use crate::store::{Etag, LEASE_NAMESPACE, ObjectStore, Poll, StoreError, TEMP_NAMESPACE};
 
+pub use crate::vector::{CheckpointOrder, Overflow, Vector};
+
 /// The gc-safety heartbeat cadence: every N-th `refresh` pass begins
 /// with a conditional manifest poll, bounding hole-detection staleness
 /// by law rather than by luck. A chosen bounded-staleness knob,
@@ -40,11 +42,6 @@ pub const HEARTBEAT_EVERY: u64 = 16;
 pub const WAIT_FOR_POLL_MS: u64 = 10;
 
 const DATA_FILE: &str = "data.mdb";
-
-/// A braid vector: applied counts keyed by braid id. Any vector is a
-/// legal restore point, and pointwise dominance is the read-your-writes
-/// order.
-pub type Vector = BTreeMap<BraidId, u64>;
 
 /// Infrastructure failure — the transport, the filesystem, or the
 /// engine's own environment. Never a protocol outcome.
@@ -360,7 +357,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// The replica's vector: per-braid applied counts.
     #[must_use]
     pub fn vector(&self) -> Vector {
-        self.chain.vector()
+        Vector::from(self.chain.vector())
     }
 
     /// Where the current directory came from.
@@ -400,23 +397,17 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         self.step_pass(Phase::Steady)
     }
 
-    /// `refresh` until `target` is dominated pointwise.
+    /// `refresh` until this vector dominates `target`.
     pub fn wait_for(&mut self, target: &Vector) -> Result<Waited, Fault> {
         loop {
-            if let Some(braid) = target
-                .iter()
-                .find(|(braid, g)| {
-                    self.wedged.contains_key(braid) && self.chain.position(**braid).g < **g
-                })
-                .map(|(braid, _)| *braid)
-            {
+            let have = Vector::from(self.chain.vector());
+            if let Some(braid) = target.braids().find(|&braid| {
+                self.wedged.contains_key(&braid) && have.at(braid) < target.at(braid)
+            }) {
                 return Ok(Waited::Wedged { braid });
             }
-            if target
-                .iter()
-                .all(|(braid, g)| self.chain.position(*braid).g >= *g)
-            {
-                return Ok(Waited::Reached(self.chain.vector()));
+            if have.dominates(target) {
+                return Ok(Waited::Reached(have));
             }
             match self.refresh()? {
                 Refreshed::Vector(_) => {}
@@ -584,7 +575,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                     if let Some(refusal) = self.audit_reached_floor()? {
                         return Ok(Refreshed::Refused(refusal));
                     }
-                    return Ok(Refreshed::Vector(self.chain.vector()));
+                    return Ok(Refreshed::Vector(Vector::from(self.chain.vector())));
                 }
                 Ok(false) => {}
                 Err(refusal) => return Ok(Refreshed::Refused(refusal)),
@@ -601,7 +592,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     fn reseed(&mut self) -> Result<Refreshed, Fault> {
         self.discard()?;
         match self.establish()? {
-            None => Ok(Refreshed::Vector(self.chain.vector())),
+            None => Ok(Refreshed::Vector(Vector::from(self.chain.vector()))),
             Some(refusal) => Ok(Refreshed::Refused(refusal)),
         }
     }

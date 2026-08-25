@@ -11,4 +11,5 @@ pub mod schema_file;
 pub mod sidecar;
 pub mod store;
 pub mod tenants;
+pub mod vector;
 pub mod writer;
