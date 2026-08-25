@@ -16,8 +16,8 @@ use bumbledb::{Db, Theory, Value};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{
-    ckpt_mdb_key, create_manifest, log_key, manifest_key, publish_checkpoint, Checkpoint, Head,
-    Manifest,
+    Checkpoint, Head, Manifest, ckpt_mdb_key, create_manifest, log_key, manifest_key,
+    publish_checkpoint,
 };
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{Create, ObjectStore};

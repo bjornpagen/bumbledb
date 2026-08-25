@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use bumbledb_log::store::fs::{content_etag, FsStore};
+use bumbledb_log::store::fs::{FsStore, content_etag};
 use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
 
 const ROLE_ENV: &str = "LANE_B_CHILD_ROLE";

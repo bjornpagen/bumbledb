@@ -3,7 +3,7 @@
 
 mod lane_d_support;
 
-use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarError, SidecarRead, CHAIN_FILE};
+use bumbledb_log::sidecar::{CHAIN_FILE, Chain, ChainEntry, Pending, SidecarError, SidecarRead};
 use lane_d_support::{codec, kitchen_braid, note_braid, temp_dir};
 
 #[test]

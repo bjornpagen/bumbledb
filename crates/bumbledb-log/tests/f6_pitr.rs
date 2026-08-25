@@ -19,13 +19,13 @@ use bumbledb::schema::{
     StatementDescriptor, ValidateDescriptor as _, ValueType,
 };
 use bumbledb::{Admission, Db, Theory, Value};
-use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
+use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::gc::{gc, restore_by_time, restore_to_vector, Gc, Restore, RestoreRefusal};
+use bumbledb_log::gc::{Gc, Restore, RestoreRefusal, gc, restore_by_time, restore_to_vector};
 use bumbledb_log::manifest::{
-    ckpt_json_key, ckpt_mdb_key, create_manifest, hex32, log_key, manifest_key, publish_checkpoint,
-    Checkpoint, Head, Manifest, Published,
+    Checkpoint, Head, Manifest, Published, ckpt_json_key, ckpt_mdb_key, create_manifest, hex32,
+    log_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::replica::{OpenRefusal, Opened, Provenance, Refreshed, Replica, Vector};
 use bumbledb_log::sidecar::Chain;

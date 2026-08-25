@@ -15,12 +15,12 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::{Admission, Db, Value};
-use bumbledb_log::apply::{apply, Applied};
+use bumbledb_log::apply::{Applied, apply};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Codec, Op, OpKind};
-use bumbledb_log::gc::{restore_to_vector, Restore};
+use bumbledb_log::gc::{Restore, restore_to_vector};
 use bumbledb_log::manifest::{
-    ckpt_mdb_key, log_key, manifest_key, publish_checkpoint, Checkpoint, Head, Manifest, Published,
+    Checkpoint, Head, Manifest, Published, ckpt_mdb_key, log_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::replica::{Opened, Provenance, Replica, Vector};
 use bumbledb_log::sidecar::Chain;

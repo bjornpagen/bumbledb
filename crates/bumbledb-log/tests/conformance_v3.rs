@@ -9,10 +9,10 @@ mod support;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
+use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::{Codec, DecodeError, MAGIC, VERSION};
 use bumbledb_log::manifest::{
-    hex32, Checkpoint, CheckpointError, Manifest, ManifestError, DOC_VERSION,
+    Checkpoint, CheckpointError, DOC_VERSION, Manifest, ManifestError, hex32,
 };
 use bumbledb_log::sidecar::{Chain, ChainEntry, SidecarError};
 use serde_json::Value as Json;

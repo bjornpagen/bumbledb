@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use crate::braids::{BraidId, Braids};
 use crate::store::{
-    prove_create, prove_swap, Create, ObjectStore, Result as StoreResult, StoreKey, Swap,
+    Create, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
 };
 
 /// The one accepted manifest, checkpoint, and sidecar document version.

@@ -15,7 +15,7 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::{Db, Value};
-use bumbledb_log::apply::{apply, Applied};
+use bumbledb_log::apply::{Applied, apply};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::sidecar::Chain;

@@ -300,10 +300,7 @@ mod tests {
 
     #[test]
     fn put_create_against_a_directory_is_a_key_shape_fault() {
-        let root = std::env::temp_dir().join(format!(
-            "fs_store_dir_shape_{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("fs_store_dir_shape_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("root");
         let key = StoreKey::of("manifest.json");

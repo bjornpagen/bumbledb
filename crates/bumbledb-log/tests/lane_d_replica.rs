@@ -10,16 +10,16 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use bumbledb::{Db, SchemaDescriptor, Value};
-use bumbledb_log::apply::{apply, ApplyRefusal, ChainCause};
+use bumbledb_log::apply::{ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::BatchHeader;
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::replica::{Corruption, Opened, Provenance, Refreshed, Replica, Waited};
 use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
-use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::ObjectStore;
+use bumbledb_log::store::fs::FsStore;
 use lane_d_support::{
-    insert_note, insert_recipe, insert_step, kitchen_braid, note_braid, temp_dir, theory, TestLog,
-    NOTE, RECIPE,
+    NOTE, RECIPE, TestLog, insert_note, insert_recipe, insert_step, kitchen_braid, note_braid,
+    temp_dir, theory,
 };
 
 type TestReplica = Replica<SchemaDescriptor, FsStore>;

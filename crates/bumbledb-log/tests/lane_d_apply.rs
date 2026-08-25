@@ -5,12 +5,12 @@
 mod lane_d_support;
 
 use bumbledb::{Db, Value};
-use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
+use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::{BatchHeader, Op, OpKind};
 use bumbledb_log::sidecar::{Chain, ChainEntry};
 use lane_d_support::{
-    codec, insert_note, insert_recipe, insert_step, kitchen_braid, note_braid, temp_dir, theory,
-    NOTE, RECIPE,
+    NOTE, RECIPE, codec, insert_note, insert_recipe, insert_step, kitchen_braid, note_braid,
+    temp_dir, theory,
 };
 
 fn fresh_db(tag: &str) -> Db<bumbledb::SchemaDescriptor> {
@@ -47,9 +47,10 @@ fn first_apply_advances_and_moves_the_chain() {
     assert_eq!(position.g, 1);
     assert_eq!(position.prev, *blake3::hash(&bytes).as_bytes());
     assert_eq!(position.ts, 500);
-    assert!(db
-        .read(|instance| instance.contains_dyn(RECIPE, &[Value::U64(1)]))
-        .expect("read"));
+    assert!(
+        db.read(|instance| instance.contains_dyn(RECIPE, &[Value::U64(1)]))
+            .expect("read")
+    );
 }
 
 #[test]
@@ -305,10 +306,11 @@ fn braids_apply_independently() {
         Applied::Advanced { generation: 2 }
     );
     assert_eq!(chain.sum(), 2);
-    assert!(db
-        .read(|instance| instance.contains_dyn(
+    assert!(
+        db.read(|instance| instance.contains_dyn(
             NOTE,
             &[Value::U64(1), Value::String("remember the salt".into())]
         ))
-        .expect("read"));
+        .expect("read")
+    );
 }
