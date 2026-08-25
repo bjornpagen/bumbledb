@@ -11,7 +11,7 @@ use crate::apply::{apply, Applied};
 use crate::braids::BraidId;
 use crate::manifest::{log_key, manifest_key, Checkpoint, Manifest};
 use crate::replica::{
-    fetch_checkpoint_bytes, write_checkpoint_bytes, Corruption, Fault, OpenRefusal, Scream,
+    fetch_checkpoint_bytes, write_checkpoint_bytes, Corruption, Fault, OpenRefusal,
 };
 use crate::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 
@@ -56,7 +56,6 @@ where
         self: &Arc<Self>,
         core: &mut Core<T>,
     ) -> Result<Option<OpenRefusal>> {
-        let mut scream = Scream::new("writer open discard-and-re-pull");
         loop {
             match self.read_floor()? {
                 Ok(floor) => core.floor = floor,
@@ -71,7 +70,7 @@ where
                 } => (db, chain, pre_existing),
                 MountEnd::Discard(signature) => {
                     self.discard_dir()?;
-                    scream.attempt(signature);
+                    self.scream(signature);
                     continue;
                 }
                 MountEnd::Refused(refusal) => return Ok(Some(refusal)),
@@ -90,7 +89,7 @@ where
                     PendingArm::Discard => {
                         core.db = None;
                         self.discard_dir()?;
-                        scream.attempt("the pending arm convicted a torn store");
+                        self.scream("the pending arm convicted a torn store");
                         continue;
                     }
                 }
@@ -100,13 +99,13 @@ where
                 CatchUp::Gap => {
                     core.db = None;
                     self.discard_dir()?;
-                    scream.attempt("catch-up hit a hole below the floor");
+                    self.scream("catch-up hit a hole below the floor");
                     continue;
                 }
                 CatchUp::RejectedInOpen => {
                     core.db = None;
                     self.discard_dir()?;
-                    scream.attempt("replay rejected in the open phase");
+                    self.scream("replay rejected in the open phase");
                     continue;
                 }
             }
@@ -122,7 +121,7 @@ where
             }
             core.db = None;
             self.discard_dir()?;
-            scream.attempt("the wholeness identity failed after catch-up");
+            self.scream("the wholeness identity failed after catch-up");
         }
     }
 
@@ -134,7 +133,6 @@ where
     pub(crate) fn re_establish(&self, core: &mut Core<T>, carry: Option<Pending>) -> Result<()> {
         core.db = None;
         self.discard_dir()?;
-        let mut scream = Scream::new("writer discard-and-re-pull");
         loop {
             match self.read_floor()? {
                 Ok(floor) => core.floor = floor,
@@ -149,7 +147,7 @@ where
                 } => (db, chain, pre_existing),
                 MountEnd::Discard(signature) => {
                     self.discard_dir()?;
-                    scream.attempt(signature);
+                    self.scream(signature);
                     continue;
                 }
                 MountEnd::Refused(refusal) => return Err(Error::Refused(refusal)),
@@ -162,13 +160,13 @@ where
                 CatchUp::Gap => {
                     core.db = None;
                     self.discard_dir()?;
-                    scream.attempt("catch-up hit a hole below the floor");
+                    self.scream("catch-up hit a hole below the floor");
                     continue;
                 }
                 CatchUp::RejectedInOpen => {
                     core.db = None;
                     self.discard_dir()?;
-                    scream.attempt("replay rejected in the open phase");
+                    self.scream("replay rejected in the open phase");
                     continue;
                 }
             }
@@ -178,7 +176,7 @@ where
             }
             core.db = None;
             self.discard_dir()?;
-            scream.attempt("the wholeness identity failed after catch-up");
+            self.scream("the wholeness identity failed after catch-up");
         }
         if let Some(batch) = carry {
             core.chain = Chain::Pending {

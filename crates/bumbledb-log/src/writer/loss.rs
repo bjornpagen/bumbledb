@@ -62,6 +62,7 @@ where
         live.losses += 1;
         live.tip = slot;
         self.losses.fetch_add(1, Ordering::Relaxed);
+        self.scream("slot occupant is not ours");
         if core.ack == AckMode::Local
             && core.deposition.is_none()
             && let Some(usurper) = header_writer(winner_bytes)

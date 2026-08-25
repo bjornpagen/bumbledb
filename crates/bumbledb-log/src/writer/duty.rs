@@ -16,7 +16,6 @@ use crate::manifest::{
     ckpt_mdb_key, manifest_key, publish_checkpoint, Checkpoint, Head, Manifest, PublishRefusal,
     Published,
 };
-use crate::replica::Scream;
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
 
@@ -95,7 +94,6 @@ where
     /// the duty.
     pub(crate) fn run_duty(self: &Arc<Self>) -> Ran {
         let _busy = DutyBusy { core: &self.core };
-        let mut scream = Scream::new("checkpoint duty");
         let seq = self.scratch_seq.fetch_add(1, Ordering::Relaxed);
         let scratch = PathBuf::from(format!("{}.ckpt{seq}", self.dir.display()));
         let view = loop {
@@ -139,7 +137,7 @@ where
             if let Some(snap_bytes) = consistent {
                 break (bytes, catalog, entries, sum, snap_bytes);
             }
-            scream.attempt("a commit landed inside the snapshot window");
+            self.scream("a commit landed inside the snapshot window");
         };
         let (bytes, catalog, entries, sum, snap_bytes) = view;
         let heads: BTreeMap<BraidId, Head> = entries

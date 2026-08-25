@@ -333,6 +333,10 @@ pub(crate) struct Inner<T: Theory + Clone, S: ObjectStore, H: StepHook> {
     pub(crate) role: Role,
     pub(crate) hook: H,
     pub(crate) losses: AtomicU64,
+    /// The set of recent repair signatures. A recurrence of either
+    /// trips the alarm, so an A,B,A,B loop is audible on the first
+    /// return of A or of B.
+    pub(crate) scream: Mutex<Scream>,
     pub(crate) leases: Mutex<Leases>,
     pub(crate) maps: SchemaMaps,
     pub(crate) queues: BTreeMap<BraidId, Mutex<VecDeque<Request>>>,
@@ -405,6 +409,14 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+impl<T: Theory + Clone, S: ObjectStore, H: StepHook> Inner<T, S, H> {
+    /// Records one repair signature on the handle's scream. A
+    /// signature already in the set trips the alarm.
+    pub(crate) fn scream(&self, signature: &'static str) -> bool {
+        lock(&self.scream).attempt(signature)
+    }
+}
+
 impl<T, S> Writer<T, S, NoFaults>
 where
     T: Theory + Clone + Send + Sync + 'static,
@@ -473,6 +485,7 @@ where
             role,
             hook,
             losses: AtomicU64::new(0),
+            scream: Mutex::new(Scream::new("writer discard-and-re-pull")),
             leases: Mutex::new(Leases::new(options.writer_id)),
             maps,
             queues,

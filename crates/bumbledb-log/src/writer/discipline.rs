@@ -127,6 +127,7 @@ where
                 Admission::Rejected(violations) => {
                     self.clear_pending(core)?;
                     if live.losses >= LOSS_BOUND {
+                        self.scream("the terminal re-judgment rejected");
                         return Err(Error::Contention {
                             braid,
                             cause: self.hot_key(&violations),
@@ -148,6 +149,7 @@ where
                 // The bound is spent and the final re-judgment
                 // accepted: the applied batch stays in Pending, and
                 // publication retries on the next commit.
+                self.scream("the terminal re-judgment was outraced");
                 return Err(Error::Contention {
                     braid,
                     cause: ContentionCause::SlotRace { tip: live.tip },
@@ -250,6 +252,7 @@ where
                 let Some(winner) = retry_read(|| self.store.get(&key))
                     .map_err(|err| Error::Fault(Fault::Store(err)))?
                 else {
+                    self.scream("slot vanished after create");
                     return Err(if below_floor(core, braid, slot) {
                         slot_retired()
                     } else {
@@ -272,6 +275,7 @@ where
                 else {
                     // Exists then null: the occupant was swept. Refuse
                     // rather than loop back into put_create.
+                    self.scream("slot vanished after create");
                     return Err(slot_retired());
                 };
                 if winner.bytes == bytes {
