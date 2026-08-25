@@ -292,3 +292,36 @@ pub fn durable_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{Create, ObjectStore, StoreKey};
+
+    #[test]
+    fn put_create_against_a_directory_is_a_key_shape_fault() {
+        let root = std::env::temp_dir().join(format!(
+            "fs_store_dir_shape_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("root");
+        let key = StoreKey::of("manifest.json");
+        fs::create_dir_all(root.join(key.as_str())).expect("directory at the key");
+        let store = FsStore::new(&root);
+        let outcome = store.put_create(&key, b"body");
+        match outcome {
+            Err(err) => {
+                assert_eq!(err.op, "put_create");
+                assert!(
+                    err.source.to_string().contains("key names a directory"),
+                    "directory at a key is a shape fault: {}",
+                    err.source
+                );
+            }
+            Ok(Create::Exists) => panic!("a directory at the key is not Exists"),
+            Ok(other) => panic!("expected a key-shape fault, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+}
