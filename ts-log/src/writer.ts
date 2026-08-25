@@ -27,7 +27,7 @@ import {
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, checkedAddU64, digest32, digest32FromHex, toHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import { bytesEqual, checkedAddU64, digest32, digest32FromHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
@@ -37,7 +37,7 @@ import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, refuseSlotRetired,
 import type { Generation } from "#keys.ts"
 import {
 	CKPT_SCRATCH_LEASE,
-	checkpointJsonKey,
+	ckptDocKey,
 	checkpointMdbKey,
 	encodeCkptScratch,
 	generation,
@@ -419,11 +419,8 @@ function headerTimestamp(bytes: Uint8Array): bigint | undefined {
 	return u64leAt(bytes, WRITER_AT + 8)
 }
 
-/** Header prev is 32 bytes. A hex string is parsed; a 32-byte buffer is branded. */
-function digestPrev(prev: Digest32 | Uint8Array | string): Digest32 {
-	if (typeof prev === "string") {
-		return digest32FromHex(prev)
-	}
+/** Header prev is 32 branded bytes. */
+function digestPrev(prev: Digest32 | Uint8Array): Digest32 {
 	return digest32(prev)
 }
 
@@ -642,12 +639,12 @@ type PublishRefusal = "manifest-missing" | "manifest" | "checkpoint-doc-missing"
 
 type Published =
 	| { readonly tag: "replaced" }
-	| { readonly tag: "kept"; readonly incumbent: string }
+	| { readonly tag: "kept"; readonly incumbent: Digest32 }
 	| { readonly tag: "refused"; readonly reason: PublishRefusal }
 
 async function putCreateOnce(
 	store: ObjectStore,
-	key: ReturnType<typeof checkpointJsonKey>,
+	key: ReturnType<typeof ckptDocKey>,
 	bytes: Uint8Array
 ): Promise<void> {
 	for (;;) {
@@ -663,8 +660,8 @@ async function putCreateOnce(
 }
 
 /** The loser deletes its own `ckpt/{digest}` and `.mdb`. */
-async function deleteOrphan(store: ObjectStore, prefix: string, digest: string): Promise<void> {
-	await store.delete(checkpointJsonKey(prefix, digest))
+async function deleteOrphan(store: ObjectStore, prefix: string, digest: Digest32): Promise<void> {
+	await store.delete(ckptDocKey(prefix, digest))
 	await store.delete(checkpointMdbKey(prefix, digest))
 }
 
@@ -672,7 +669,7 @@ function scratchPath(dir: string): string {
 	return path.join(dir, LEASE_NAMESPACE, CKPT_SCRATCH_LEASE)
 }
 
-async function claimScratch(dir: string, digest: string): Promise<void> {
+async function claimScratch(dir: string, digest: Digest32): Promise<void> {
 	const target = scratchPath(dir)
 	await fs.mkdir(path.dirname(target), { recursive: true })
 	const handle = await fs.open(target, "w")
@@ -698,10 +695,10 @@ async function casPublish(
 	prefix: string,
 	known: ReadonlySet<Braid>,
 	candidate: CheckpointFacts,
-	digest: string,
+	digest: Digest32,
 	bytes: Uint8Array
 ): Promise<Published> {
-	await putCreateOnce(store, checkpointJsonKey(prefix, digest), bytes)
+	await putCreateOnce(store, ckptDocKey(prefix, digest), bytes)
 	for (;;) {
 		const fetched = await store.get(manifestKey(prefix))
 		if (fetched === null) {
@@ -714,11 +711,11 @@ async function casPublish(
 			return { tag: "refused", reason: "manifest" }
 		}
 		const incumbent = parsed.data.checkpoint
-		if (incumbent === digest) {
+		if (incumbent !== null && bytesEqual(incumbent, digest)) {
 			return { tag: "replaced" }
 		}
 		if (incumbent !== null) {
-			const doc = await store.get(checkpointJsonKey(prefix, incumbent))
+			const doc = await store.get(ckptDocKey(prefix, incumbent))
 			if (doc === null) {
 				return { tag: "refused", reason: "checkpoint-doc-missing" }
 			}
@@ -757,7 +754,7 @@ async function publishCheckpoint(
 	mdb: Uint8Array
 ): Promise<Published> {
 	const bytes = renderCheckpoint(candidate)
-	const digest = toHex(new Uint8Array(internalBlake3(bytes)))
+	const digest = digest32(new Uint8Array(internalBlake3(bytes)))
 	await claimScratch(dir, digest)
 	const ran = await errors.try(
 		(async function publish() {
@@ -776,7 +773,7 @@ async function publishCheckpoint(
 }
 
 /** Only the writer births a store: create-only PUT of a genesis manifest. */
-async function birthStore(store: ObjectStore, prefix: string, fingerprint: string): Promise<void> {
+async function birthStore(store: ObjectStore, prefix: string, fingerprint: Digest32): Promise<void> {
 	const key = manifestKey(prefix)
 	for (;;) {
 		const fetched = await store.get(key)
@@ -869,7 +866,7 @@ async function openWriter<Rels extends SchemaRelations>(
 	if (isReplica(source)) {
 		return writerOn(source)
 	}
-	await birthStore(source.store, source.prefix, descriptorOf(source.theory).fingerprint)
+	await birthStore(source.store, source.prefix, digest32FromHex(descriptorOf(source.theory).fingerprint))
 	return writerOn(await openReplica(source))
 }
 
