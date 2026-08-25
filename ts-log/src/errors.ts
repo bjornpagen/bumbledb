@@ -87,6 +87,8 @@ type RefusalCause =
 	| { readonly kind: "TrailingBytes"; readonly bytes: number }
 	| { readonly kind: "DigestWidth" }
 	| { readonly kind: "Arity"; readonly op: number; readonly relation: string; readonly row: number }
+	| { readonly kind: "Malformed"; readonly at: number }
+	| { readonly kind: "Overflow" }
 	| { readonly kind: "ManifestShape" }
 	| { readonly kind: "ManifestVersion"; readonly version: number }
 	| { readonly kind: "SidecarShape" }
