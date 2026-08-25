@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::{LEASE_NAMESPACE, Lease, TEMP_NAMESPACE, WriterId, jittered, unix_ms};
+use super::{jittered, unix_ms, Lease, WriterId, LEASE_NAMESPACE, TEMP_NAMESPACE};
 
 /// How long a mutation lease stays current, in milliseconds.
 pub const MUTATION_TTL_MS: u64 = 5_000;
@@ -93,27 +93,23 @@ pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Sweep crash litter: stale temps, and every expired lease token file.
+/// Sweep crash litter at paths this process already names: stale
+/// `{pid}.{seq}` temps, and superseded tokens under `~lease` once
+/// `~head` names the current exclusivity token.
 ///
 /// # Errors
 pub fn sweep_reserved(root: &Path) -> io::Result<()> {
-    sweep_stale_temps(&root.join(TEMP_NAMESPACE))?;
-    sweep_expired_leases(&root.join(LEASE_NAMESPACE), unix_ms())?;
+    sweep_stale_temps(&root.join(TEMP_NAMESPACE));
+    sweep_owned_predecessors(&root.join(LEASE_NAMESPACE))?;
     Ok(())
 }
 
-fn sweep_stale_temps(dir: &Path) -> io::Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err),
-    };
+fn sweep_stale_temps(dir: &Path) {
     let stale = Duration::from_millis(TEMP_STALE_MS);
-    for entry in entries {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
+    let pid = std::process::id();
+    let end = TEMP_SEQ.load(Ordering::Relaxed);
+    for seq in 0..end {
+        let path = dir.join(format!("{pid}.{seq}"));
         let Ok(modified) = fs::metadata(&path).and_then(|meta| meta.modified()) else {
             continue;
         };
@@ -121,66 +117,100 @@ fn sweep_stale_temps(dir: &Path) -> io::Result<()> {
             let _ = fs::remove_file(&path);
         }
     }
+}
+
+/// `~head` is not a `StoreKey`. It names the current token so a
+/// successor GETs `dir/{n}`.
+const HEAD: &str = "~head";
+
+fn head_path(dir: &Path) -> PathBuf {
+    dir.join(HEAD)
+}
+
+fn read_head(dir: &Path) -> io::Result<Option<u64>> {
+    match fs::read(head_path(dir)) {
+        Ok(bytes) => Ok(std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .filter(|token| *token >= 1)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn write_head(root: &Path, dir: &Path, token: u64) -> io::Result<()> {
+    let dest = head_path(dir);
+    let body = token.to_string();
+    let temp = synced_temp(root, body.as_bytes())?;
+    if let Err(err) = fs::rename(&temp, &dest).and_then(|()| sync_parent(&dest)) {
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
     Ok(())
 }
 
-fn sweep_expired_leases(dir: &Path, now: u64) -> io::Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err),
+fn sweep_owned_predecessors(dir: &Path) -> io::Result<()> {
+    let Some((token, _)) = current_lease(dir)? else {
+        return Ok(());
     };
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            sweep_expired_leases(&path, now)?;
-            match fs::remove_dir(&path) {
-                Ok(()) => {}
-                Err(err) if err.kind() == io::ErrorKind::DirectoryNotEmpty => {}
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err),
-            }
-            continue;
-        }
-        let Some(lease) = fs::read(&path).ok().and_then(|bytes| Lease::parse(&bytes)) else {
-            let _ = fs::remove_file(&path);
-            continue;
-        };
-        if lease.expired(now) {
-            let _ = fs::remove_file(&path);
-        }
-    }
+    forget_predecessors(dir, token);
     Ok(())
+}
+
+/// Removes `dir/{1..=current-1}` after `~head` names `current`.
+fn forget_predecessors(dir: &Path, current: u64) {
+    for token in (1..current).rev() {
+        let _ = fs::remove_file(token_path(dir, token));
+    }
 }
 
 fn token_path(dir: &Path, token: u64) -> PathBuf {
     dir.join(token.to_string())
 }
 
+/// The current lease is `dir/{n}` for the token `~head` names, or the
+/// highest `dir/{n}` at or after that hint. A mint past a stale head
+/// is still visible: the probe opens `n`, `n+1`, … until a gap.
 fn current_lease(dir: &Path) -> io::Result<Option<(u64, Lease)>> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err),
-    };
+    let start = read_head(dir)?.unwrap_or(1);
+    Ok(match probe_from(dir, start) {
+        None if start > 1 => probe_from(dir, 1),
+        found => found,
+    })
+}
+
+fn probe_from(dir: &Path, start: u64) -> Option<(u64, Lease)> {
     let mut best: Option<(u64, Lease)> = None;
-    for entry in entries {
-        let entry = entry?;
-        let Ok(token) = entry.file_name().to_string_lossy().parse::<u64>() else {
+    let mut token = start;
+    loop {
+        let path = token_path(dir, token);
+        if path.is_dir() {
+            token = match token.checked_add(1) {
+                Some(next) => next,
+                None => break,
+            };
             continue;
-        };
-        let Ok(bytes) = fs::read(entry.path()) else {
-            continue;
-        };
-        let Some(lease) = Lease::parse(&bytes) else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|(t, _)| token >= *t) {
-            best = Some((token, lease));
+        }
+        match fs::read(&path) {
+            Ok(bytes) => {
+                if let Some(lease) = Lease::parse(&bytes) {
+                    best = Some((token, lease));
+                }
+                token = match token.checked_add(1) {
+                    Some(next) => next,
+                    None => break,
+                };
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => break,
+            Err(_) => {
+                token = match token.checked_add(1) {
+                    Some(next) => next,
+                    None => break,
+                };
+            }
         }
     }
-    Ok(best)
+    best
 }
 
 fn try_mint(
@@ -203,6 +233,9 @@ fn try_mint(
         Ok(()) => {
             let _ = fs::remove_file(&temp);
             sync_parent(&dest)?;
+            if write_head(root, dir, token).is_ok() {
+                forget_predecessors(dir, token);
+            }
             Ok(true)
         }
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
