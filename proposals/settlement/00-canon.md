@@ -119,22 +119,29 @@ are the binding contract:
    by a probe of a foreign process.*
 3. **Pending is a chain constructor.** `Chain = Settled{vector} |
    Pending{vector, batch}`; `generation()` is a total function of the
-   value (`sum`, or `sum + 1` under `Pending`); compaction's input type
-   is `Settled`; resolution is one fold returning remaining segments as
-   data; the sidecar read is `Absent | Fault | Corrupt | Read` with
-   `Absent` = NotFound only; durability order is `Pending → durable →
-   Settled`. *There is no addend a reader can forget, because there is
-   no addend.*
-4. **The checkpoint chain is immutable and content-addressed.** `prev`
-   is inside the content hash; a document is written once with
-   `put_create` (`Exists` is byte-identity); the manifest points at the
-   head of the Merkle list; a Kept or refused loser deletes its own
-   digest pair; crash candidates are named in the `~lease/ckpt-scratch`
-   document any successor sweeps at open (see RULINGS). The catalog
-   claim is audited at the one seed transition. Compact→publish is one
-   transition; the detached duty binary and the resident cadence are two
-   entries into it. *The spine cannot be rewritten and reachability is
-   decidable.*
+   value (`Vector.sum()`, or `sum + 1` under `Pending`); `Vector` owns
+   the algebra — `sum` (the one Overflow site), `dominates`, `order`,
+   `at`/`advance` — so wholeness, wait_for, checkpoint order, and the
+   floor are calls, not loops; compaction's input type is `Settled`;
+   resolution is one fold returning remaining segments as data; the
+   sidecar is a binary v:3 document; the sidecar read is `Absent |
+   Fault | Corrupt | Read` with `Absent` = NotFound only; durability
+   order is `Pending → durable → Settled`. *There is no addend a
+   reader can forget, because there is no addend.*
+4. **The checkpoint chain is immutable and content-addressed.** The
+   manifest, checkpoint document, and sidecar are binary v:3 records
+   at the keys `manifest`, `ckpt/{digest}`, and `chain` (the `.mdb`
+   sibling keeps its suffix). `prev` is inside the content hash; a
+   document is written once with `put_create` (`Exists` is
+   byte-identity); `blake3(bytes)` has no canonicalization clause,
+   because one encoder produces one byte string; the manifest points
+   at the head of the Merkle list; a Kept or refused loser deletes
+   its own digest pair; crash candidates are named in the
+   `~lease/ckpt-scratch` document any successor sweeps at open (see
+   RULINGS). The catalog claim is audited at the one seed transition.
+   Compact→publish is one transition; the detached duty binary and
+   the resident cadence are two entries into it. *The spine cannot
+   be rewritten and reachability is decidable.*
 5. **The gc floor is a write-path invariant.** A below-floor slot create
    is refused `SlotRetired` before it touches the store; the sweep is a
    resumable contiguous bottom segment `[0, marker)` walked upward;
@@ -144,16 +151,21 @@ are the binding contract:
    code is a total function of its outcome and a refusal screams; every
    scratch object has a successor that reclaims it. *A slot below the
    floor cannot be created and a hole below the floor cannot exist.*
-6. **Parse, don't validate, at the codec.** One grammar; numbers are
-   exact (`u64`/`bigint`, checked sums — overflow is a refusal, not a
-   wrap); digests are `[u8; 32]`; a row vector cannot claim more rows
-   than its bytes back; a string cell is `WellFormedUtf8` from a fatal
-   encoder; fixed intervals are half-open (the ceiling is not a value);
-   `schema_file`, the duty argv, and the Lambda request are parsed
-   grammars; refusals are named identities (`Malformed`, `Version`,
-   `UnknownBraid`, `Overflow`) spelled identically by both drivers and
-   pinned by the conformance inventory. *One codec cannot decode one
-   byte string to two values.*
+6. **Parse, don't validate, at the codec.** One grammar; every
+   protocol object — batch, manifest, checkpoint, sidecar — is a
+   sentence of it, opened by version byte 3; numbers are exact
+   (`u64`/`bigint`, checked sums — overflow is a refusal of
+   `Vector.sum()`, not a wrap); digests are `[u8; 32]`; a row vector
+   cannot claim more rows than its bytes back; a string cell is
+   `WellFormedUtf8` from a fatal encoder; fixed intervals are
+   half-open (the ceiling is not a value); `schema_file`, the duty
+   argv, and the Lambda request are parsed grammars; refusals are
+   named identities (`Malformed`, `Version`, `UnknownBraid`,
+   `Overflow`) spelled identically by both drivers and pinned by the
+   conformance inventory. Machines write binary; humans write text:
+   protocol objects are the one binary grammar, and the theory file
+   and `duty inspect` output are the text half. *One codec cannot
+   decode one byte string to two values.*
 
 Conformance executes the artifacts: both drivers walk the one v:3
 inventory (`crates/bumbledb-log/conformance/v3/`), the crash matrices
@@ -161,9 +173,7 @@ execute the same step tables, the parity lane asserts identical named
 outcomes on identical bytes, and the store smoke lane ties outcomes to
 persisted bytes and cleans its bucket.
 
-**The remaining delta between this canon and the tree is
-[10-endgame.md](10-endgame.md)** — chiefly
-[20-one-encoding.md](20-one-encoding.md), which retires the last second
-grammar (JSON documents) and gives `Vector` its algebra. When the
-endgame receipt lands, this document describes the tree with no
+**The remaining delta between this canon and the tree is the lockstep
+receipt** ([50-proof-as-gate.md](../lockstep/50-proof-as-gate.md)).
+When that receipt lands, this document describes the tree with no
 remainder.
