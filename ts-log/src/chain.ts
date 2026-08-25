@@ -70,105 +70,109 @@ function renderSidecar(chain: Chain): string {
 	return `{"v":${DOC_VERSION},"chain":{${body}},"pending":${pending}}`
 }
 
+function malformed(text: Text, detail: string): never {
+	refuse({ kind: "Malformed", at: text.offset() }, detail)
+}
+
 function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 	const text = new Text(bytes)
 	if (!text.lit('{"v":')) {
-		refuse({ kind: "SidecarShape" }, "sidecar is not the canonical template")
+		malformed(text, "sidecar is not the canonical template")
 	}
 	const version = text.u64()
 	if (version === undefined) {
-		refuse({ kind: "SidecarShape" }, "sidecar version is not a canonical u64")
+		malformed(text, "sidecar version is not a canonical u64")
 	}
 	if (version !== DOC_VERSION) {
 		refuse(
-			{ kind: "SidecarVersion", version: Number(version) },
+			{ kind: "Version", version: Number(version) },
 			`sidecar version ${version}, consumers refuse ≠ ${DOC_VERSION}`
 		)
 	}
 	if (!text.lit(',"chain":{')) {
-		refuse({ kind: "SidecarShape" }, "sidecar chain field is absent")
+		malformed(text, "sidecar chain field is absent")
 	}
 	const entries = new Map<Braid, ChainEntry>()
 	let first = true
 	let sum = 0n
 	while (!text.peek("}")) {
 		if (!first && !text.lit(",")) {
-			refuse({ kind: "SidecarShape" }, "sidecar chain is not comma-separated")
+			malformed(text, "sidecar chain is not comma-separated")
 		}
 		first = false
 		if (!text.lit('"c')) {
-			refuse({ kind: "SidecarShape" }, "sidecar braid id is not a c-prefixed hex")
+			malformed(text, "sidecar braid id is not a c-prefixed hex")
 		}
 		const raw = text.hexU32()
 		if (raw === undefined) {
-			refuse({ kind: "SidecarShape" }, "sidecar braid id is not 8 hex")
+			malformed(text, "sidecar braid id is not 8 hex")
 		}
 		const name = braid(`c${raw.toString(16).padStart(8, "0")}`)
 		if (known !== undefined && !known.has(name)) {
-			refuse({ kind: "SidecarShape" }, `sidecar cites unknown braid ${name}`)
+			refuse({ kind: "UnknownBraid", braid: raw }, `sidecar cites unknown braid ${name}`)
 		}
 		if (!text.lit('":{"g":')) {
-			refuse({ kind: "SidecarShape" }, `sidecar braid ${name} entry is malformed`)
+			malformed(text, `sidecar braid ${name} entry is malformed`)
 		}
 		const g = text.quotedU64()
 		if (g === undefined || !text.lit(',"prev":"')) {
-			refuse({ kind: "SidecarShape" }, `sidecar braid ${name} generation is not a quoted decimal u64`)
+			malformed(text, `sidecar braid ${name} generation is not a quoted decimal u64`)
 		}
 		const prev = text.hex32()
 		if (prev === undefined || !text.lit('","ts":')) {
-			refuse({ kind: "SidecarShape" }, `sidecar braid ${name} prev is not 32 bytes`)
+			malformed(text, `sidecar braid ${name} prev is not 32 bytes`)
 		}
 		const ts = text.quotedU64()
 		if (ts === undefined || !text.lit("}")) {
-			refuse({ kind: "SidecarShape" }, `sidecar braid ${name} timestamp is not a quoted decimal u64`)
+			malformed(text, `sidecar braid ${name} timestamp is not a quoted decimal u64`)
 		}
 		const last = [...entries.keys()].at(-1)
 		if (last !== undefined && last >= name) {
-			refuse({ kind: "SidecarShape" }, "sidecar chain is not strictly ascending")
+			malformed(text, "sidecar chain is not strictly ascending")
 		}
 		const next = checkedAddU64(sum, g)
 		if (next === undefined) {
-			refuse({ kind: "SidecarShape" }, "sidecar chain sum overflows u64")
+			refuse({ kind: "Overflow" }, "sidecar chain sum overflows u64")
 		}
 		entries.set(name, { g: generation(g), prev: hex32(prev), ts })
 		sum = next
 	}
 	if (!text.lit('},"pending":')) {
-		refuse({ kind: "SidecarShape" }, "sidecar pending field is absent")
+		malformed(text, "sidecar pending field is absent")
 	}
 	if (text.peek("null")) {
 		if (!text.lit("null")) {
-			refuse({ kind: "SidecarShape" }, "sidecar pending null arm failed")
+			malformed(text, "sidecar pending null arm failed")
 		}
 		if (!text.lit("}") || !text.finished()) {
-			refuse({ kind: "SidecarShape" }, "sidecar is not the canonical single-line rendering")
+			malformed(text, "sidecar is not the canonical single-line rendering")
 		}
 		return { tag: "settled", entries }
 	}
 	if (!text.lit('{"braid":"c')) {
-		refuse({ kind: "SidecarShape" }, "sidecar pending is not the canonical object")
+		malformed(text, "sidecar pending is not the canonical object")
 	}
 	const raw = text.hexU32()
 	if (raw === undefined) {
-		refuse({ kind: "SidecarShape" }, "sidecar pending braid is not 8 hex")
+		malformed(text, "sidecar pending braid is not 8 hex")
 	}
 	const name = braid(`c${raw.toString(16).padStart(8, "0")}`)
 	if (known !== undefined && !known.has(name)) {
-		refuse({ kind: "SidecarShape" }, `sidecar pending cites unknown braid ${name}`)
+		refuse({ kind: "UnknownBraid", braid: raw }, `sidecar pending cites unknown braid ${name}`)
 	}
 	if (!text.lit('","gen":')) {
-		refuse({ kind: "SidecarShape" }, "sidecar pending gen field is absent")
+		malformed(text, "sidecar pending gen field is absent")
 	}
 	const slot = text.quotedU64()
 	if (slot === undefined || !text.lit(',"bytes":"')) {
-		refuse({ kind: "SidecarShape" }, "sidecar pending generation is not a quoted decimal u64")
+		malformed(text, "sidecar pending generation is not a quoted decimal u64")
 	}
 	const body = text.hexBytes()
 	if (body === undefined || !text.lit('"}')) {
-		refuse({ kind: "SidecarShape" }, "sidecar pending bytes are not lowercase hex")
+		malformed(text, "sidecar pending bytes are not lowercase hex")
 	}
 	if (!text.lit("}") || !text.finished()) {
-		refuse({ kind: "SidecarShape" }, "sidecar is not the canonical single-line rendering")
+		malformed(text, "sidecar is not the canonical single-line rendering")
 	}
 	return {
 		tag: "pending",
