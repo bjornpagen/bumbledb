@@ -1,6 +1,9 @@
-//! The commit discipline: one shape for every pass. Encode, persist
-//! pending, apply, then publish; a loss loops back through the same
-//! `db.write` of the same recorded ops.
+//! The commit discipline: one shape for every pass. Durability is
+//! `Pending → durable → Settled`, in that order: the batch is fsynced
+//! as `Pending` before any apply, and the transition to `Settled` is
+//! written only after the verdict. A below-floor `put_create` is
+//! refused as retired before it touches the store. A loss loops back
+//! through the same `db.write` of the same recorded ops.
 
 use std::io;
 use std::sync::Arc;
@@ -12,7 +15,7 @@ use crate::braids::BraidId;
 use crate::codec::{BatchHeader, Op, OpKind};
 use crate::manifest::log_key;
 use crate::replica::Fault;
-use crate::sidecar::{ChainEntry, Pending};
+use crate::sidecar::{Chain, ChainEntry, Pending};
 use crate::store::{Create, CreateProbe, resolve_ambiguous_create, retry_read};
 
 use super::{
@@ -55,15 +58,17 @@ where
     H: StepHook + 'static,
 {
     /// The commit discipline, one shape for every pass: encode at the
-    /// current head with the monotone ts clamp, fsync the pending slot
+    /// current head with the monotone ts clamp, fsync as `Pending`
     /// BEFORE first judgment, apply in one `db.write`, then publish.
-    /// A loss loops back here through the disposable law — the
-    /// re-judgment is the same `db.write` of the same recorded ops at
-    /// the re-opened tip, never a body re-run. At the loss bound the
-    /// final re-judgment sources the contention cause: its own
-    /// rejection is `HotKey` (statement and offending values from the
-    /// engine's violation), an accepted-but-unpublished apply is
-    /// `SlotRace` with the batch retained in `pending`.
+    /// `Settled` is written only after that verdict — never a
+    /// `pending: null` write ahead of the resolution, and a refusal
+    /// never advances the vector. A loss loops back here through the
+    /// disposable law — the re-judgment is the same `db.write` of the
+    /// same recorded ops at the re-opened tip, never a body re-run.
+    /// At the loss bound the final re-judgment sources the contention
+    /// cause: its own rejection is `HotKey` (statement and offending
+    /// values from the engine's violation), an accepted-but-unpublished
+    /// apply is `SlotRace` with the batch retained in `Pending`.
     pub(crate) fn discipline(
         self: &Arc<Self>,
         core: &mut Core<T>,
@@ -89,15 +94,15 @@ where
             let bytes = self.codec.encode(&header, ops).map_err(Error::Encode)?;
             self.step(WriterStep::Encode)?;
 
-            core.chain.pending = Some(Pending {
-                braid,
-                slot,
-                bytes: bytes.clone(),
-            });
-            core.chain
-                .write_atomic(&self.dir)
-                .map_err(|err| Error::Fault(Fault::Io(err)))?;
-            self.step(WriterStep::PendingWrite)?;
+            // Pending → durable, before any apply.
+            self.persist_pending(
+                core,
+                Pending {
+                    braid,
+                    slot,
+                    bytes: bytes.clone(),
+                },
+            )?;
 
             let before = core.generation()?;
             let admission = core
@@ -141,7 +146,7 @@ where
 
             if live.losses >= LOSS_BOUND {
                 // The bound is spent and the final re-judgment
-                // accepted: the applied batch stays in pending, and
+                // accepted: the applied batch stays in Pending, and
                 // publication retries on the next commit.
                 return Err(Error::Contention {
                     braid,
@@ -172,12 +177,14 @@ where
         }
     }
 
-    /// One publication attempt: `put_create`, then `Created`, the
-    /// byte-equal absorption of our own ambiguous PUT, or the loss. A
-    /// `put_create` failure is an ambiguous outcome — the request may
-    /// have landed — so it is never retried blindly: the follow-up is a
-    /// GET of the target key comparing content, and only a
-    /// proven-absent create is reissued.
+    /// One publication attempt: refuse a below-floor create, then
+    /// `put_create`, then `Created`, the byte-equal absorption of our
+    /// own ambiguous PUT, or the loss. A `put_create` failure is an
+    /// ambiguous outcome — the request may have landed — so it is
+    /// never retried blindly: the follow-up is a GET of the target key
+    /// comparing content, and only a proven-absent create *above* the
+    /// floor is reissued. An occupant that then vanishes is retired,
+    /// not a loop that forges the swept slot.
     pub(crate) fn publish(
         self: &Arc<Self>,
         core: &mut Core<T>,
@@ -187,6 +194,9 @@ where
         bytes: &[u8],
     ) -> Result<PublishEnd> {
         const CREATE_ATTEMPTS: u32 = 6;
+        if below_floor(core, braid, slot) {
+            return Err(slot_retired());
+        }
         let key = log_key(&self.prefix, braid, slot);
         let mut attempt: u32 = 0;
         let created = loop {
@@ -198,6 +208,9 @@ where
                         CreateProbe::Landed(etag) => break Create::Created(etag),
                         CreateProbe::Lost(_) => break Create::Exists,
                         CreateProbe::Absent => {
+                            if below_floor(core, braid, slot) {
+                                return Err(slot_retired());
+                            }
                             attempt += 1;
                             if attempt == CREATE_ATTEMPTS {
                                 return Err(Error::Fault(Fault::Io(io::Error::other(
@@ -215,6 +228,9 @@ where
                         CreateProbe::Landed(etag) => break Create::Created(etag),
                         CreateProbe::Lost(_) => break Create::Exists,
                         CreateProbe::Absent => {
+                            if below_floor(core, braid, slot) {
+                                return Err(slot_retired());
+                            }
                             attempt += 1;
                             if attempt == CREATE_ATTEMPTS {
                                 return Err(Error::Fault(Fault::Store(err)));
@@ -231,13 +247,17 @@ where
                 Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
             }
             Create::Ambiguous => {
-                let winner = retry_read(|| self.store.get(&key))
+                let Some(winner) = retry_read(|| self.store.get(&key))
                     .map_err(|err| Error::Fault(Fault::Store(err)))?
-                    .ok_or_else(|| {
+                else {
+                    return Err(if below_floor(core, braid, slot) {
+                        slot_retired()
+                    } else {
                         Error::Fault(Fault::Io(io::Error::other(
                             "ambiguous create stayed absent",
                         )))
-                    })?;
+                    });
+                };
                 if winner.bytes == bytes {
                     self.advance_and_clear(core, braid, slot, ts, bytes)?;
                     return Ok(PublishEnd::Done(Settled::Accepted { generation: slot }));
@@ -247,13 +267,13 @@ where
                 })
             }
             Create::Exists => {
-                let winner = retry_read(|| self.store.get(&key))
+                let Some(winner) = retry_read(|| self.store.get(&key))
                     .map_err(|err| Error::Fault(Fault::Store(err)))?
-                    .ok_or_else(|| {
-                        Error::Fault(Fault::Io(io::Error::other(
-                            "log slot existed and then vanished",
-                        )))
-                    })?;
+                else {
+                    // Exists then null: the occupant was swept. Refuse
+                    // rather than loop back into put_create.
+                    return Err(slot_retired());
+                };
                 if winner.bytes == bytes {
                     self.advance_and_clear(core, braid, slot, ts, bytes)?;
                     return Ok(PublishEnd::Done(Settled::Accepted { generation: slot }));
@@ -264,6 +284,7 @@ where
             }
         }
     }
+
     pub(crate) fn advance_and_clear(
         self: &Arc<Self>,
         core: &mut Core<T>,
@@ -272,7 +293,7 @@ where
         ts: u64,
         bytes: &[u8],
     ) -> Result<()> {
-        core.chain.entries.insert(
+        core.chain.entries_mut().insert(
             braid,
             ChainEntry {
                 g: slot,
@@ -282,17 +303,44 @@ where
         );
         self.step(WriterStep::ChainAdvance)?;
         core.log_bytes += bytes.len() as u64;
+        // Durable Settled at the new vector — advancing *is* this write.
         self.clear_pending(core)?;
         self.maybe_duty(core);
         Ok(())
     }
 
+    /// Fsync the batch as `Pending` before first judgment.
+    fn persist_pending(&self, core: &mut Core<T>, batch: Pending) -> Result<()> {
+        let entries = std::mem::take(core.chain.entries_mut());
+        core.chain = Chain::Pending { entries, batch };
+        core.chain
+            .write_atomic(&self.dir)
+            .map_err(|err| Error::Fault(Fault::Io(err)))?;
+        self.step(WriterStep::PendingWrite)?;
+        Ok(())
+    }
+
+    /// Write `Settled` after the verdict. Never called ahead of apply.
     pub(crate) fn clear_pending(&self, core: &mut Core<T>) -> Result<()> {
-        core.chain.pending = None;
+        let entries = std::mem::take(core.chain.entries_mut());
+        core.chain = Chain::Settled { entries };
         core.chain
             .write_atomic(&self.dir)
             .map_err(|err| Error::Fault(Fault::Io(err)))?;
         self.step(WriterStep::PendingClear)?;
         Ok(())
     }
+}
+
+/// The published checkpoint vector is the one floor: a slot at or
+/// below it is retired, and a create must not touch the store.
+fn below_floor<T: Theory + Clone>(core: &Core<T>, braid: BraidId, slot: u64) -> bool {
+    core.floor
+        .as_ref()
+        .and_then(|(_, doc)| doc.braids.get(&braid))
+        .is_some_and(|head| slot <= head.g)
+}
+
+fn slot_retired() -> Error {
+    Error::Fault(Fault::Io(io::Error::other("the slot is retired")))
 }
