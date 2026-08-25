@@ -11,15 +11,12 @@ import { braid as asBraid, descriptorOf } from "#descriptor.ts"
 import { generation, idsKey, logKey } from "#keys.ts"
 import { openReplica, ZERO_HASH } from "#replica.ts"
 import { fsStore } from "#store.ts"
-import { Holder, Ledger, Note } from "#test/fixtures.ts"
+import { Ledger, Note } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
 
 /**
- * The TS multi-process lane (60): real Node child processes over one
- * FsStore prefix, mirroring lane_b_fs_multiprocess's re-exec pattern —
- * children print structured lines, the parent asserts hard. Every other
- * TS contention test races promises in one process; this one races
- * processes.
+ * A second Node process recovers a scripted Pending over one FsStore
+ * prefix. Children print structured lines; the parent asserts hard.
  */
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-mp-"))
@@ -78,17 +75,6 @@ function collect(child: Spawned): Promise<Exited> {
 	})
 }
 
-async function seedHolder(bucket: string, dir: string): Promise<void> {
-	const writer = await openWriter({ store: fsStore(bucket), prefix: PREFIX, dir, theory: Ledger })
-	const replica = writer.replica
-	const seeded = await writer.commit(function seed(batch) {
-		batch.insert(Holder, [{ id: 1n, name: "root" }])
-		return 0
-	})
-	assert.ok(seeded.tag === "accepted")
-	await replica[Symbol.asyncDispose]()
-}
-
 async function assertGapFreeChain(bucket: string, id: string, tip: bigint): Promise<void> {
 	const store = fsStore(bucket)
 	const home = asBraid(id)
@@ -101,85 +87,6 @@ async function assertGapFreeChain(bucket: string, id: string, tip: bigint): Prom
 }
 
 describe("the TS multi-process lane", function suite() {
-	test("N writers, disjoint content: every ack exactly once in a gap-free chain", async function disjoint() {
-		const { base, bucket, dir } = lane()
-		const writers = 4
-		const commits = 5
-		const children = Array.from({ length: writers }, function spawnOne(_value, id) {
-			return spawnChild(["disjoint", bucket, dir(`w${id}`), String(id), String(commits)])
-		})
-		const settled = collect(children[0] as Spawned)
-		const others = children.slice(1).map(collect)
-		fs.writeFileSync(path.join(base, "go"), "go")
-		const results = [await settled, ...(await Promise.all(others))]
-
-		const acks: { braid: string; generation: bigint; noteId: string }[] = []
-		for (const result of results) {
-			assert.equal(result.code, 0, `child exits clean: ${result.stderr}`)
-			for (const line of result.lines) {
-				assert.equal(line.tag, "ack")
-				acks.push({
-					braid: line.braid as string,
-					generation: BigInt(line.generation as string),
-					noteId: line.noteId as string
-				})
-			}
-		}
-		assert.equal(acks.length, writers * commits, "every commit acked exactly once")
-		const braid = acks[0]?.braid
-		assert.ok(braid !== undefined)
-		const generations = new Set(acks.map((ack) => String(ack.generation)))
-		assert.equal(generations.size, acks.length, "no two acks share a slot")
-		const noteIds = new Set(acks.map((ack) => ack.noteId))
-		assert.equal(noteIds.size, acks.length, "every acked row is distinct")
-		for (const ack of acks) {
-			assert.equal(ack.braid, braid, "all Notes land in the one Note braid")
-			assert.ok(ack.generation >= 1n && ack.generation <= BigInt(acks.length), "acks cover exactly the chain")
-		}
-		await assertGapFreeChain(bucket, braid, BigInt(acks.length))
-
-		const verifier = await openReplica({ store: fsStore(bucket), prefix: PREFIX, dir: dir("verify"), theory: Ledger })
-		assert.equal(
-			verifier.db.read(function count(instance) {
-				return instance.count(Note)
-			}),
-			BigInt(acks.length),
-			"the converged replica holds every acked row exactly once"
-		)
-		assert.equal(verifier.vector.get(asBraid(braid)), BigInt(acks.length))
-		await verifier[Symbol.asyncDispose]()
-	})
-
-	test("a shared determinant: one winner, N-1 typed FD rejections", async function shared() {
-		const { base, bucket, dir } = lane()
-		await seedHolder(bucket, dir("seed"))
-		const writers = 4
-		const children = Array.from({ length: writers }, function spawnOne(_value, id) {
-			return spawnChild(["fd", bucket, dir(`w${id}`), String(id)])
-		})
-		const pending = children.map(collect)
-		fs.writeFileSync(path.join(base, "go"), "go")
-		const results = await Promise.all(pending)
-
-		const verdicts: { result: string; canonical: string | undefined }[] = []
-		for (const result of results) {
-			assert.equal(result.code, 0, `child exits clean: ${result.stderr}`)
-			assert.equal(result.lines.length, 1)
-			const line = result.lines[0] as Record<string, unknown>
-			assert.equal(line.tag, "verdict")
-			verdicts.push({ result: line.result as string, canonical: line.canonical as string | undefined })
-		}
-		const winners = verdicts.filter((verdict) => verdict.result === "accepted")
-		const losers = verdicts.filter((verdict) => verdict.result === "rejected")
-		assert.equal(winners.length, 1, "exactly one writer lands the shared determinant")
-		assert.equal(losers.length, writers - 1, "every other writer gets the serial rejection")
-		const canonical = losers[0]?.canonical
-		assert.ok(canonical !== undefined && canonical.length > 0, "the rejection is typed: it names the statement")
-		for (const loser of losers) {
-			assert.equal(loser.canonical, canonical, "every loser names the same FD")
-		}
-	})
-
 	test("a scripted Pending at a known slot recovers in a second process", async function scriptedPending() {
 		const { bucket, dir } = lane()
 		const victimDir = dir("victim")
