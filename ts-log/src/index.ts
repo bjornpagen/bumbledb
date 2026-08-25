@@ -28,7 +28,16 @@ export {
 	refusalOf
 } from "#errors.ts"
 export type { Generation, StoreKey } from "#keys.ts"
-export { generation, storeKey } from "#keys.ts"
+export {
+	CKPT_SCRATCH_LEASE,
+	encodeCkptScratch,
+	generation,
+	LEASE_NAMESPACE,
+	parseCkptScratch,
+	scratchCkptDigest,
+	scratchCkptName,
+	storeKey
+} from "#keys.ts"
 export type { OpenReplicaOptions, Replica } from "#replica.ts"
 export { openReplica } from "#replica.ts"
 export type { Create, Etag, Fetched, ObjectStore, Poll, S3Config, S3Credentials, Swap } from "#store.ts"
