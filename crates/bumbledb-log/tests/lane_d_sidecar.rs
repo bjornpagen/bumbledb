@@ -94,7 +94,10 @@ fn parse_is_order_strict_like_the_checkpoint_parser() {
         },
     );
     let canonical = chain.render();
-    assert!(kitchen_braid(&codec) < note_braid(&codec), "canonical order");
+    assert!(
+        kitchen_braid(&codec) < note_braid(&codec),
+        "canonical order"
+    );
     const ENTRY: usize = 52;
     let kitchen = canonical[5..5 + ENTRY].to_vec();
     let note = canonical[5 + ENTRY..5 + 2 * ENTRY].to_vec();

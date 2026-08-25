@@ -125,11 +125,7 @@ fn put_swap_serializes_across_threads_without_lost_updates() {
                         .expect("decimal");
                     let next = (value + 1).to_string();
                     if let Swap::Swapped(_) = store
-                        .put_swap(
-                            &StoreKey::of("manifest"),
-                            next.as_bytes(),
-                            &current.etag,
-                        )
+                        .put_swap(&StoreKey::of("manifest"), next.as_bytes(), &current.etag)
                         .expect("swap")
                     {
                         landed += 1;
