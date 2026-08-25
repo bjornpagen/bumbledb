@@ -1,15 +1,14 @@
 //! The manifest — the protocol's one mutable object — and the
-//! checkpoint document it points to. Both are canonical single-line
-//! UTF-8 JSON with a fixed field order, so parse and render are exact
-//! template walks (hand-rolled on purpose: a general JSON reader would
-//! accept re-orderings and whitespace the canon forbids). The manifest
-//! is a pointer to the head of an immutable Merkle list: every
-//! checkpoint fact lives in `ckpt/{digest}.json` beside the store
+//! checkpoint document it points to. Both are binary records of the
+//! batch codec's grammar: a leading version byte, fixed field rosters,
+//! and length-delimited vectors over `u64le` / `u32le` / `[u8; 32]`.
+//! The manifest is a pointer to the head of an immutable Merkle list:
+//! every checkpoint fact lives in `ckpt/{digest}` beside the store
 //! bytes that share that digest, the digest is the blake3 of the
-//! document's full bytes including `prev`, and the mutable CAS surface
-//! of the whole protocol is one 64-hex field. This module also owns
-//! the object key layout, so every consumer spells a key exactly one
-//! way.
+//! document's bytes including `prev`, and the mutable CAS surface of
+//! the whole protocol is the manifest object's checkpoint digest. This
+//! module also owns the object key layout, so every consumer spells a
+//! key exactly one way.
 
 use std::collections::BTreeMap;
 
@@ -18,8 +17,16 @@ use crate::store::{
     Create, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
 };
 
-/// The one accepted manifest, checkpoint, and sidecar document version.
-pub const DOC_VERSION: u64 = 3;
+/// The one accepted document version; it is the leading byte of every
+/// manifest and checkpoint record. The binary format is v:3.
+pub const DOC_VERSION: u8 = 3;
+
+const ABSENT: u8 = 0;
+const PRESENT: u8 = 1;
+
+/// One checkpoint head on the wire: `braid u32le`, `g u64le`,
+/// `hash [u8; 32]`, `ts u64le`.
+const HEAD_BYTES: usize = 4 + 8 + 32 + 8;
 
 fn key(prefix: &str, rest: &str) -> StoreKey {
     let raw = if prefix.is_empty() {
@@ -32,7 +39,7 @@ fn key(prefix: &str, rest: &str) -> StoreKey {
 
 #[must_use]
 pub fn manifest_key(prefix: &str) -> StoreKey {
-    key(prefix, "manifest.json")
+    key(prefix, "manifest")
 }
 
 #[must_use]
@@ -47,11 +54,11 @@ pub fn ckpt_mdb_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
 
 #[must_use]
 pub fn ckpt_json_key(prefix: &str, digest: &[u8; 32]) -> StoreKey {
-    key(prefix, &format!("ckpt/{}.json", hex32(digest)))
+    key(prefix, &format!("ckpt/{}", hex32(digest)))
 }
 
-/// 64 lowercase hex characters for a 32-byte digest — the one rendering
-/// every document in the protocol uses.
+/// 64 lowercase hex characters for a 32-byte digest — the object-key
+/// spelling of a content address.
 #[must_use]
 pub fn hex32(bytes: &[u8; 32]) -> String {
     use std::fmt::Write as _;
@@ -61,15 +68,15 @@ pub fn hex32(bytes: &[u8; 32]) -> String {
     })
 }
 
-/// A strict template walker over canonical document bytes: every method
-/// refuses at the first byte that deviates, carrying the offset. No
-/// whitespace skipping exists — the canon has no whitespace.
-pub(crate) struct Text<'b> {
+/// A sequential walker over document bytes: every method refuses at the
+/// first short read, carrying the offset. Counts are bounded by the
+/// bytes behind them.
+pub(crate) struct Cursor<'b> {
     bytes: &'b [u8],
     at: usize,
 }
 
-impl<'b> Text<'b> {
+impl<'b> Cursor<'b> {
     pub(crate) const fn new(bytes: &'b [u8]) -> Self {
         Self { bytes, at: 0 }
     }
@@ -78,87 +85,51 @@ impl<'b> Text<'b> {
         self.at
     }
 
-    pub(crate) fn lit(&mut self, expected: &str) -> Result<(), usize> {
-        let want = expected.as_bytes();
-        let end = self.at.checked_add(want.len()).ok_or(self.at)?;
-        if self.bytes.get(self.at..end) == Some(want) {
-            self.at = end;
-            Ok(())
-        } else {
-            Err(self.at)
-        }
+    pub(crate) fn take(&mut self, len: usize) -> Result<&'b [u8], usize> {
+        let end = self
+            .at
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or(self.at)?;
+        let slice = &self.bytes[self.at..end];
+        self.at = end;
+        Ok(slice)
     }
 
-    pub(crate) fn peek(&self, expected: &str) -> bool {
-        let want = expected.as_bytes();
-        self.at
-            .checked_add(want.len())
-            .is_some_and(|end| self.bytes.get(self.at..end) == Some(want))
+    pub(crate) fn u8(&mut self) -> Result<u8, usize> {
+        Ok(self.take(1)?[0])
     }
 
-    fn hex_nibble(&mut self) -> Result<u8, usize> {
-        let byte = *self.bytes.get(self.at).ok_or(self.at)?;
-        let value = match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            _ => return Err(self.at),
-        };
-        self.at += 1;
-        Ok(value)
+    pub(crate) fn u32(&mut self) -> Result<u32, usize> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
-    pub(crate) fn hex32(&mut self) -> Result<[u8; 32], usize> {
-        let mut out = [0u8; 32];
-        for slot in &mut out {
-            *slot = self.hex_nibble()? << 4 | self.hex_nibble()?;
-        }
-        Ok(out)
-    }
-
-    pub(crate) fn hex_u32(&mut self) -> Result<u32, usize> {
-        let mut out: u32 = 0;
-        for _ in 0..8 {
-            out = out << 4 | u32::from(self.hex_nibble()?);
-        }
-        Ok(out)
-    }
-
-    /// A canonical JSON u64: decimal digits, no leading zero unless the
-    /// value is exactly zero.
     pub(crate) fn u64(&mut self) -> Result<u64, usize> {
-        let start = self.at;
-        let mut value: u64 = 0;
-        while let Some(byte @ b'0'..=b'9') = self.bytes.get(self.at) {
-            value = value
-                .checked_mul(10)
-                .and_then(|v| v.checked_add(u64::from(byte - b'0')))
-                .ok_or(self.at)?;
-            self.at += 1;
-        }
-        let len = self.at - start;
-        if len == 0 || (len > 1 && self.bytes[start] == b'0') {
-            return Err(start);
-        }
-        Ok(value)
+        let bytes = self.take(8)?;
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(bytes);
+        Ok(u64::from_le_bytes(raw))
     }
 
-    /// A quoted decimal u64: `"18446744073709551615"`. A JSON number,
-    /// a fractional string, or a leading zero is a refusal.
-    pub(crate) fn quoted_u64(&mut self) -> Result<u64, usize> {
-        self.lit("\"")?;
-        let value = self.u64()?;
-        self.lit("\"")?;
-        Ok(value)
+    pub(crate) fn array32(&mut self) -> Result<[u8; 32], usize> {
+        let bytes = self.take(32)?;
+        let mut raw = [0u8; 32];
+        raw.copy_from_slice(bytes);
+        Ok(raw)
     }
 
-    /// Lowercase hex payload of even length up to the closing quote; the
-    /// pending slot's batch bytes ride here.
-    pub(crate) fn hex_bytes(&mut self) -> Result<Vec<u8>, usize> {
-        let mut out = Vec::new();
-        while !self.peek("\"") {
-            out.push(self.hex_nibble()? << 4 | self.hex_nibble()?);
+    pub(crate) fn optional_digest(&mut self) -> Result<Option<[u8; 32]>, usize> {
+        let tag_at = self.at;
+        match self.u8()? {
+            ABSENT => Ok(None),
+            PRESENT => Ok(Some(self.array32()?)),
+            _ => Err(tag_at),
         }
-        Ok(out)
+    }
+
+    pub(crate) const fn remaining(&self) -> usize {
+        self.bytes.len() - self.at
     }
 
     pub(crate) fn end(&self) -> Result<(), usize> {
@@ -170,10 +141,31 @@ impl<'b> Text<'b> {
     }
 }
 
+fn bytes_back(count: u32, remaining: usize, min_item: usize) -> bool {
+    let declared = usize::try_from(count).expect("u32 fits usize");
+    if declared == 0 {
+        return true;
+    }
+    if min_item == 0 {
+        return false;
+    }
+    remaining / min_item >= declared
+}
+
+fn put_optional_digest(out: &mut Vec<u8>, digest: Option<&[u8; 32]>) {
+    match digest {
+        None => out.push(ABSENT),
+        Some(digest) => {
+            out.push(PRESENT);
+            out.extend_from_slice(digest);
+        }
+    }
+}
+
 /// Why manifest bytes refused to parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestError {
-    /// The bytes deviate from the canonical template at this offset.
+    /// The bytes deviate from the roster at this offset.
     Malformed { at: usize },
     /// A well-formed document of a version this consumer refuses.
     Version { got: u64 },
@@ -189,9 +181,9 @@ impl ManifestError {
     }
 }
 
-/// The parsed manifest: `{"v":3,"fingerprint":…,"checkpoint":…}`.
-/// `checkpoint` is a real null arm from store birth until the first
-/// checkpoint lands.
+/// The parsed manifest: version byte, fingerprint, optional checkpoint
+/// digest. `checkpoint` is a real null arm from store birth until the
+/// first checkpoint lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Manifest {
     pub fingerprint: [u8; 32],
@@ -199,42 +191,28 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// The canonical single-line rendering, byte-exact for CAS bodies.
+    /// The one encoding, byte-exact for CAS bodies.
     #[must_use]
     pub fn render(&self) -> Vec<u8> {
-        let checkpoint = match &self.checkpoint {
-            Some(digest) => format!("\"{}\"", hex32(digest)),
-            None => "null".to_string(),
-        };
-        format!(
-            "{{\"v\":{DOC_VERSION},\"fingerprint\":\"{}\",\"checkpoint\":{checkpoint}}}",
-            hex32(&self.fingerprint)
-        )
-        .into_bytes()
+        let mut out = Vec::with_capacity(1 + 32 + 1 + 32);
+        out.push(DOC_VERSION);
+        out.extend_from_slice(&self.fingerprint);
+        put_optional_digest(&mut out, self.checkpoint.as_ref());
+        out
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ManifestError> {
         let mal = |at| ManifestError::Malformed { at };
-        let mut text = Text::new(bytes);
-        text.lit("{\"v\":").map_err(mal)?;
-        let version = text.u64().map_err(mal)?;
+        let mut cur = Cursor::new(bytes);
+        let version = cur.u8().map_err(mal)?;
         if version != DOC_VERSION {
-            return Err(ManifestError::Version { got: version });
+            return Err(ManifestError::Version {
+                got: u64::from(version),
+            });
         }
-        text.lit(",\"fingerprint\":\"").map_err(mal)?;
-        let fingerprint = text.hex32().map_err(mal)?;
-        text.lit("\",\"checkpoint\":").map_err(mal)?;
-        let checkpoint = if text.peek("null") {
-            text.lit("null").map_err(mal)?;
-            None
-        } else {
-            text.lit("\"").map_err(mal)?;
-            let digest = text.hex32().map_err(mal)?;
-            text.lit("\"").map_err(mal)?;
-            Some(digest)
-        };
-        text.lit("}").map_err(mal)?;
-        text.end().map_err(mal)?;
+        let fingerprint = cur.array32().map_err(mal)?;
+        let checkpoint = cur.optional_digest().map_err(mal)?;
+        cur.end().map_err(mal)?;
         Ok(Self {
             fingerprint,
             checkpoint,
@@ -287,9 +265,9 @@ impl CheckpointError {
     }
 }
 
-/// The parsed `ckpt/{digest}.json`: one map, one fact per braid, the
-/// catalog content claim, the publisher, and the backlink. The vector is
-/// the `g` column; its sum is derived, never stored.
+/// The parsed `ckpt/{digest}`: one map, one fact per braid, the catalog
+/// content claim, the publisher, and the backlink. The vector is the
+/// `g` column; its sum is derived, never stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checkpoint {
     pub braids: BTreeMap<BraidId, Head>,
@@ -301,67 +279,51 @@ pub struct Checkpoint {
 impl Checkpoint {
     #[must_use]
     pub fn render(&self) -> Vec<u8> {
-        use std::fmt::Write as _;
-        let mut braids = String::new();
-        for (index, (braid, head)) in self.braids.iter().enumerate() {
-            if index > 0 {
-                braids.push(',');
-            }
-            write!(
-                braids,
-                "\"{braid}\":{{\"g\":\"{}\",\"hash\":\"{}\",\"ts\":\"{}\"}}",
-                head.g,
-                hex32(&head.hash),
-                head.ts
-            )
-            .expect("write to string");
+        let count = u32::try_from(self.braids.len()).expect("braid count fits u32");
+        let mut out = Vec::with_capacity(1 + 4 + self.braids.len() * HEAD_BYTES + 32 + 8 + 1 + 32);
+        out.push(DOC_VERSION);
+        out.extend_from_slice(&count.to_le_bytes());
+        for (braid, head) in &self.braids {
+            out.extend_from_slice(&braid.raw().to_le_bytes());
+            out.extend_from_slice(&head.g.to_le_bytes());
+            out.extend_from_slice(&head.hash);
+            out.extend_from_slice(&head.ts.to_le_bytes());
         }
-        let prev = match &self.prev {
-            Some(digest) => format!("\"{}\"", hex32(digest)),
-            None => "null".to_string(),
-        };
-        format!(
-            "{{\"v\":{DOC_VERSION},\"braids\":{{{braids}}},\"catalog\":\"{}\",\"writer\":\"{}\",\"prev\":{prev}}}",
-            hex32(&self.catalog),
-            self.writer
-        )
-        .into_bytes()
+        out.extend_from_slice(&self.catalog);
+        out.extend_from_slice(&self.writer.to_le_bytes());
+        put_optional_digest(&mut out, self.prev.as_ref());
+        out
     }
 
     /// Strict parse against the derived braid set: unknown ids refuse,
-    /// entries must ascend in the render's canonical braid order (which
-    /// leaves a duplicate no place to stand), and the set must match
-    /// the decomposition exactly.
+    /// entries ascend in braid-id order (which leaves a duplicate no
+    /// place to stand), and the set must match the decomposition
+    /// exactly. A declared count the remaining bytes cannot back is
+    /// Malformed.
     pub fn parse(bytes: &[u8], braids: &Braids) -> Result<Self, CheckpointError> {
         let mal = |at| CheckpointError::Malformed { at };
-        let mut text = Text::new(bytes);
-        let mut map: BTreeMap<BraidId, Head> = BTreeMap::new();
-        text.lit("{\"v\":").map_err(mal)?;
-        let version = text.u64().map_err(mal)?;
+        let mut cur = Cursor::new(bytes);
+        let version = cur.u8().map_err(mal)?;
         if version != DOC_VERSION {
-            return Err(CheckpointError::Version { got: version });
+            return Err(CheckpointError::Version {
+                got: u64::from(version),
+            });
         }
-        text.lit(",\"braids\":{").map_err(mal)?;
-        let mut first = true;
-        while !text.peek("}") {
-            if !first {
-                text.lit(",").map_err(mal)?;
-            }
-            first = false;
-            text.lit("\"c").map_err(mal)?;
-            let raw = text.hex_u32().map_err(mal)?;
+        let count = cur.u32().map_err(mal)?;
+        if !bytes_back(count, cur.remaining(), HEAD_BYTES) {
+            return Err(mal(cur.at()));
+        }
+        let mut map: BTreeMap<BraidId, Head> = BTreeMap::new();
+        for _ in 0..count {
+            let raw = cur.u32().map_err(mal)?;
             let Some(braid) = braids.parse(raw) else {
                 return Err(CheckpointError::UnknownBraid { got: raw });
             };
-            text.lit("\":{\"g\":").map_err(mal)?;
-            let g = text.quoted_u64().map_err(mal)?;
-            text.lit(",\"hash\":\"").map_err(mal)?;
-            let hash = text.hex32().map_err(mal)?;
-            text.lit("\",\"ts\":").map_err(mal)?;
-            let ts = text.quoted_u64().map_err(mal)?;
-            text.lit("}").map_err(mal)?;
+            let g = cur.u64().map_err(mal)?;
+            let hash = cur.array32().map_err(mal)?;
+            let ts = cur.u64().map_err(mal)?;
             if map.last_key_value().is_some_and(|(last, _)| *last >= braid) {
-                return Err(mal(text.at()));
+                return Err(mal(cur.at()));
             }
             map.insert(braid, Head { g, hash, ts });
         }
@@ -372,22 +334,10 @@ impl Checkpoint {
         {
             return Err(CheckpointError::Overflow);
         }
-        text.lit("},\"catalog\":\"").map_err(mal)?;
-        let catalog = text.hex32().map_err(mal)?;
-        text.lit("\",\"writer\":").map_err(mal)?;
-        let writer = text.quoted_u64().map_err(mal)?;
-        text.lit(",\"prev\":").map_err(mal)?;
-        let prev = if text.peek("null") {
-            text.lit("null").map_err(mal)?;
-            None
-        } else {
-            text.lit("\"").map_err(mal)?;
-            let digest = text.hex32().map_err(mal)?;
-            text.lit("\"").map_err(mal)?;
-            Some(digest)
-        };
-        text.lit("}").map_err(mal)?;
-        text.end().map_err(mal)?;
+        let catalog = cur.array32().map_err(mal)?;
+        let writer = cur.u64().map_err(mal)?;
+        let prev = cur.optional_digest().map_err(mal)?;
+        cur.end().map_err(mal)?;
         let derived: Vec<BraidId> = braids.components().keys().copied().collect();
         let carried: Vec<BraidId> = map.keys().copied().collect();
         if derived != carried {
@@ -401,9 +351,9 @@ impl Checkpoint {
         })
     }
 
-    /// blake3 of the canonical rendering. `prev` is inside the hash, so
-    /// two documents that differ only in the backlink are different
-    /// objects at different keys.
+    /// blake3 of the rendered bytes. `prev` is inside the hash, so two
+    /// documents that differ only in the backlink are different objects
+    /// at different keys.
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
         *blake3::hash(&self.render()).as_bytes()
@@ -465,11 +415,11 @@ pub enum PublishRefusal {
 /// Publishes `candidate` under the checkpoint order: the candidate
 /// replaces the incumbent iff its vector sum is strictly greater; a
 /// `Moved` CAS re-reads and re-applies the order. The document is
-/// named by the blake3 of its full bytes, `prev` included, and is
-/// written once with `put_create`; `Exists` is byte-identity. The
-/// manifest points at the head of that immutable list. Termination
-/// is structural — every successful swap strictly raises the
-/// incumbent sum.
+/// named by the blake3 of its bytes, `prev` included, and is written
+/// once with `put_create`; `Exists` is byte-identity. The manifest
+/// points at the head of that immutable list. Termination is
+/// structural — every successful swap strictly raises the incumbent
+/// sum.
 pub fn publish_checkpoint<S: ObjectStore>(
     store: &S,
     prefix: &str,
