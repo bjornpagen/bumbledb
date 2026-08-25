@@ -63,8 +63,12 @@ type RefusalCause =
 	| { readonly kind: "EmptyInterval"; readonly relation: string; readonly row: number; readonly field: string }
 	| { readonly kind: "IntervalOverflow"; readonly relation: string; readonly row: number; readonly field: string }
 	| { readonly kind: "TrailingBytes"; readonly bytes: number }
+	| { readonly kind: "DigestWidth" }
+	| { readonly kind: "Arity"; readonly op: number; readonly relation: string; readonly row: number }
 	| { readonly kind: "ManifestShape" }
 	| { readonly kind: "ManifestVersion"; readonly version: number }
+	| { readonly kind: "SidecarShape" }
+	| { readonly kind: "SidecarVersion"; readonly version: number }
 	| { readonly kind: "CheckpointShape" }
 	| { readonly kind: "CheckpointBraids"; readonly carried: readonly string[]; readonly derived: readonly string[] }
 	| { readonly kind: "CheckpointDigest"; readonly expected: string; readonly computed: string }

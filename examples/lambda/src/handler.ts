@@ -2,6 +2,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { openReplica, openWriter, s3Store } from "@bjornpagen/bumbledb-log"
+import { parseRequest } from "./request.ts"
 
 const exec = promisify(execFile)
 
@@ -38,7 +39,11 @@ function json(value: unknown): string {
 }
 
 export default async function handler(event: unknown): Promise<{ statusCode: number; body: string }> {
-	if (typeof event === "object" && event !== null && "duty" in event && event.duty === true) {
+	const request = parseRequest(event)
+	if (request.tag === "refused") {
+		return { statusCode: request.status, body: json({ error: request.reason }) }
+	}
+	if (request.tag === "duty") {
 		const ran = await exec("/opt/bin/bumbledb-log-duty", [
 			"--once",
 			"--store",
@@ -59,14 +64,11 @@ export default async function handler(event: unknown): Promise<{ statusCode: num
 
 	const { replica, writer } = await ready
 	await replica.refresh()
-	const http = event as { requestContext?: { http?: { method?: string } }; body?: string | null }
-	if ((http.requestContext?.http?.method ?? "GET") === "POST") {
-		const payload = JSON.parse(http.body ?? "{}") as { id?: string; body?: string }
+	if (request.tag === "write") {
 		const started = performance.now()
 		const out = await writer.commit(function record(batch) {
-			const id = BigInt(payload.id ?? `${Date.now()}`)
-			batch.insert(Note, [{ id, body: payload.body ?? "" }])
-			return id
+			batch.insert(Note, [{ id: request.id, body: request.body }])
+			return request.id
 		})
 		console.log(`commit ${Math.round(performance.now() - started)}`)
 		return { statusCode: 200, body: json(out) }
