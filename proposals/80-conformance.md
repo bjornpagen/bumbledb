@@ -162,7 +162,7 @@ refuse rather than serve stale reads as fresh. A below-floor
 Checked-in corpora for the pure functions, regenerated as header + ops:
 `encode/decodeBatch`
 (every op kind, every tag, boundary values, every refusal — bad magic,
-version ≠ 3 including a well-formed v:2, flags ≠ 0, wrong fingerprint, wrong braid relation, kind 3,
+version ≠ 3, flags ≠ 0, wrong fingerprint, wrong braid relation, kind 3,
 `ChainMismatch` in all three causes (prev, slot,
 timestamp), `IntervalOverflow` on a fixed interval whose end is the
 domain ceiling, `Truncated` on an unbacked row count) and `braidsOf`
@@ -184,7 +184,8 @@ against the trace names, since the whole recovery design stands on it).
 The batch decoder (offset-free sequential — prove it): arbitrary bytes
 and golden mutations; no panic, no overflow, every rejection typed, the
 trailing-bytes refusal landing at the exact end of the accepted prefix.
-A JSON-number `u64` and a base64 pending are `Malformed`. The same
+A `u64` that is not a quoted decimal and pending bytes that are not
+lowercase hex are `Malformed`. The same
 harness shape runs over the manifest, checkpoint, and
 chain-sidecar parsers, where an accepted mutant must be a **canonical
 fixpoint**: parse-then-render reproduces the exact input bytes.
