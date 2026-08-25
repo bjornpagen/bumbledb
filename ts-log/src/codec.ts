@@ -8,17 +8,17 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import { ByteReader, ByteWriter, bytesEqual, fromHex, toHex, utf8Encoder } from "#bytes.ts"
+import { ByteReader, ByteWriter, bytesEqual, digest32FromHex, toHex, utf8Encoder } from "#bytes.ts"
 import type { Braid, Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
 import { refuse, refuseChain } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
 import type { TaggedRefusal, Value } from "#value.ts"
-import { readTagged, writeTagged } from "#value.ts"
+import { checkAgainst, readTagged, writeTagged } from "#value.ts"
 
 const MAGIC = utf8Encoder.encode("BDBL")
-const VERSION = 2
+const VERSION = 3
 const OP_KIND = { insert: 1, delete: 2 } as const
 
 interface Op {
@@ -60,24 +60,51 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 	if (members === undefined) {
 		throw errors.new(`braid ${header.braid} is not derived from this descriptor`)
 	}
-	for (const op of ops) {
+	for (const [opIndex, op] of ops.entries()) {
 		const relation = descriptor.relationByName.get(op.relation)
 		if (relation === undefined) {
 			throw errors.new(`op cites unknown relation ${op.relation}`)
 		}
+		if (relation.closed) {
+			refuse({ kind: "ClosedRelation", op: opIndex, relation: relation.id }, `op ${opIndex} writes closed relation ${relation.name}`)
+		}
 		if (!members.includes(relation.id)) {
 			throw errors.new(`op relation ${op.relation} is outside braid ${header.braid} — a spanning batch is unencodable`)
 		}
+		for (const [rowIndex, row] of op.rows.entries()) {
+			if (row.length !== relation.fields.length) {
+				refuse(
+					{ kind: "Arity", op: opIndex, relation: relation.name, row: rowIndex },
+					`op ${opIndex} relation ${relation.name} row ${rowIndex} arity ${row.length} ≠ ${relation.fields.length}`
+				)
+			}
+			relation.fields.forEach(function gateCell(field, ordinal) {
+				const value = row[ordinal]
+				if (value === undefined) {
+					refuse(
+						{ kind: "Arity", op: opIndex, relation: relation.name, row: rowIndex },
+						`op ${opIndex} relation ${relation.name} row ${rowIndex} cell ${ordinal} absent`
+					)
+				}
+				checkAgainst(`relation ${relation.name} field ${field.name}`, field.type, value)
+			})
+		}
+	}
+
+	const fingerprint = digest32FromHex(header.fingerprint)
+	const prev = encodeDigest(header.prev)
+	if (ops.length > 0xffffffff) {
+		throw errors.new(`encode op count ${ops.length} exceeds u32`)
 	}
 
 	const out = new ByteWriter(4096)
 	out.bytes(MAGIC)
 	out.u16le(VERSION)
 	out.u16le(0)
-	out.bytes(fromHex(header.fingerprint))
+	out.bytes(fingerprint)
 	out.u32le(braidId)
 	out.u64le(header.braidGen)
-	out.bytes(fromHex(header.prev))
+	out.bytes(prev)
 	out.u64le(header.writer)
 	out.u64le(header.timestamp)
 	out.u32le(ops.length)
@@ -85,6 +112,9 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 		const relation = descriptor.relationByName.get(op.relation)
 		if (relation === undefined) {
 			throw errors.new(`op cites unknown relation ${op.relation}`)
+		}
+		if (op.rows.length > 0xffffffff) {
+			throw errors.new(`encode row count ${op.rows.length} exceeds u32`)
 		}
 		out.u8(OP_KIND[op.op])
 		out.u32le(relation.id)
@@ -100,6 +130,34 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 		}
 	}
 	return out.finish()
+}
+
+function encodeDigest(hex: string): Uint8Array {
+	const parsed = errors.trySync(function parsePrev() {
+		return digest32FromHex(hex)
+	})
+	if (parsed.error) {
+		refuse({ kind: "DigestWidth" }, `digest is not 32 bytes: ${hex}`)
+	}
+	return parsed.data
+}
+
+/** Kind + relation id + row count: the shortest op the grammar admits. */
+const MIN_OP_BYTES = 9n
+
+/** A declared count the remaining bytes cannot open is Truncated
+ *  before the loop. Counts are exact bigint so a u32::MAX row vector
+ *  cannot wrap a JavaScript number. A zero-field relation has no row
+ *  bytes. A nonempty layout uses one tag byte so a first-cell typed
+ *  refusal is not swallowed. */
+function refuseUnbacked(count: number, remaining: number, minItem: bigint, at: string): void {
+	const declared = BigInt(count)
+	if (declared === 0n) {
+		return
+	}
+	if (minItem === 0n || BigInt(remaining) / minItem < declared) {
+		refuse({ kind: "Truncated", at }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
+	}
 }
 
 /** Full parse of a batch object; refusals are typed, never partial reads. */
@@ -142,6 +200,7 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	const timestamp = reader.u64le("timestamp")
 
 	const opCount = reader.u32le("op count")
+	refuseUnbacked(opCount, reader.remaining(), MIN_OP_BYTES, "op count")
 	const ops: Op[] = []
 	for (let opIndex = 0; opIndex < opCount; opIndex++) {
 		const kind = reader.u8("op kind")
@@ -172,6 +231,8 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 			)
 		}
 		const rowCount = reader.u32le("row count")
+		const minRow = relation.fields.length === 0 ? 0n : 1n
+		refuseUnbacked(rowCount, reader.remaining(), minRow, "row count")
 		const rows: Value[][] = []
 		for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
 			const row: Value[] = []
