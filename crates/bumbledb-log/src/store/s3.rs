@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn join_prefix_omits_the_slash_on_an_empty_prefix() {
-        assert_eq!(join_prefix("", "manifest.json"), "manifest.json");
+        assert_eq!(join_prefix("", "manifest"), "manifest");
         assert_eq!(
             join_prefix("smoke/run", "log/c00000000/1"),
             "smoke/run/log/c00000000/1"
@@ -555,9 +555,9 @@ mod tests {
         })
         .expect("build");
         let path = store
-            .object_path(&StoreKey::of("manifest.json"))
+            .object_path(&StoreKey::of("manifest"))
             .expect("path");
-        assert_eq!(path.as_ref(), "smoke/run/manifest.json");
+        assert_eq!(path.as_ref(), "smoke/run/manifest");
     }
 
     #[test]
@@ -591,7 +591,7 @@ mod tests {
             prefix: String::new(),
         })
         .expect("build");
-        let key = StoreKey::of("manifest.json");
+        let key = StoreKey::of("manifest");
         let nested = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn conflict_on_swap_is_ambiguous_never_moved() {
-        let key = StoreKey::of("manifest.json");
+        let key = StoreKey::of("manifest");
         assert!(matches!(
             swap_from_put(&key, conflict_exists(key.as_str())),
             Ok(Swap::Ambiguous)

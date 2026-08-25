@@ -303,7 +303,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("fs_store_dir_shape_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("root");
-        let key = StoreKey::of("manifest.json");
+        let key = StoreKey::of("manifest");
         fs::create_dir_all(root.join(key.as_str())).expect("directory at the key");
         let store = FsStore::new(&root);
         let outcome = store.put_create(&key, b"body");
