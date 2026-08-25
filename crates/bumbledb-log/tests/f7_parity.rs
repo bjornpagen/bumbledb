@@ -1,40 +1,43 @@
-//! Lane 7's Rust half of the cross-language parity goldens: the corpus
-//! under `conformance/corpus` is consumed from disk as the oracle — the
-//! sidecar is parsed, the binary is decoded against it, and the batch
-//! is re-encoded byte for byte. The TypeScript suite consumes the
+//! Lane 7's Rust half of the cross-language parity goldens: the v:3
+//! inventory under `conformance/v3` is consumed from disk as the oracle
+//! — the sidecar is parsed, the binary is decoded against it, and the
+//! batch is re-encoded byte for byte. The TypeScript suite consumes the
 //! identical files, so any drift between the two codecs or braid
 //! derivations lands here or there as a typed disagreement.
 
 #[path = "lane_a_support/mod.rs"]
 mod support;
 
-use bumbledb::{Interval, Value};
-use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
+use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::braids::braids;
-use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
+use bumbledb_log::codec::Codec;
 use bumbledb_log::sidecar::{Chain, ChainEntry};
 use serde_json::Value as Json;
 
-fn corpus_files(section: &str) -> Vec<(String, Json)> {
-    let dir = support::corpus_dir().join(section);
-    let mut fixtures: Vec<(String, Json)> = std::fs::read_dir(&dir)
-        .expect("corpus section present")
-        .map(|entry| {
-            entry
-                .expect("entry")
-                .file_name()
-                .into_string()
-                .expect("name")
-        })
-        .filter_map(|name| {
-            let stem = name.strip_suffix(".json")?;
-            let text = std::fs::read_to_string(dir.join(&name)).expect("sidecar readable");
-            let json: Json = serde_json::from_str(&text).expect("sidecar parses");
-            Some((stem.to_string(), json))
-        })
-        .collect();
-    fixtures.sort_by(|a, b| a.0.cmp(&b.0));
-    fixtures
+fn inventory() -> Json {
+    serde_json::from_str(
+        &std::fs::read_to_string(support::corpus_dir().join("inventory.json")).expect("inventory"),
+    )
+    .expect("inventory parses")
+}
+
+fn stems(value: &Json) -> Vec<String> {
+    value
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|item| item.as_str().expect("stem").to_string())
+        .collect()
+}
+
+fn sidecar(section: &str, stem: &str) -> Json {
+    let text = std::fs::read_to_string(
+        support::corpus_dir()
+            .join(section)
+            .join(format!("{stem}.json")),
+    )
+    .expect("sidecar readable");
+    serde_json::from_str(&text).expect("sidecar parses")
 }
 
 fn corpus_bytes(section: &str, stem: &str) -> Vec<u8> {
@@ -58,19 +61,54 @@ fn codec_of(fixture: &Json) -> (String, Codec) {
     (schema, codec)
 }
 
-/// Every batch golden, decoded from disk against its sidecar: ok
-/// fixtures must yield the sidecar's header and ops and re-encode to
+fn parse_braid_text(codec: &Codec, text: &str) -> bumbledb_log::braids::BraidId {
+    let hex = text
+        .strip_prefix('c')
+        .unwrap_or_else(|| panic!("{text}: braid spelling"));
+    let raw = u32::from_str_radix(hex, 16).expect("braid hex");
+    codec.braids().parse(raw).expect("schema braid")
+}
+
+fn digest32(text: &str) -> [u8; 32] {
+    support::unhex(text).try_into().expect("32-byte digest")
+}
+
+fn cause_name(cause: &ChainCause) -> &'static str {
+    match cause {
+        ChainCause::Slot { .. } => "slot",
+        ChainCause::Prev { .. } => "prev",
+        ChainCause::Timestamp { .. } => "timestamp",
+    }
+}
+
+fn temp_root(tag: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("f7_parity_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).expect("create test root");
+    path
+}
+
+/// Every inventory batch golden, decoded from disk against its sidecar:
+/// ok fixtures must yield the sidecar's header and ops and re-encode to
 /// the identical bytes; refusal fixtures must carry the sidecar's
-/// typed identity.
+/// typed identity; encode-only fixtures name DigestWidth and have no
+/// wire bytes.
 #[test]
 fn batch_corpus_decodes_recomputes_and_reencodes() {
-    let fixtures = corpus_files("batch");
+    let roster = inventory();
+    let mut fixtures = Vec::new();
+    for stem in stems(&roster["batch_ok"]) {
+        fixtures.push((stem, sidecar("batch", &stem)));
+    }
+    for stem in stems(&roster["batch_refusal"]) {
+        fixtures.push((stem.clone(), sidecar("batch", &stem)));
+    }
     assert!(!fixtures.is_empty(), "the batch corpus is populated");
     for (stem, fixture) in fixtures {
         let (_, codec) = codec_of(&fixture);
-        let bytes = corpus_bytes("batch", &stem);
         match fixture["expect"].as_str().expect("expect") {
             "ok" => {
+                let bytes = corpus_bytes("batch", &stem);
                 let batch = codec.decode(&bytes).expect("ok fixture decodes");
                 assert_eq!(
                     support::render_header(&batch.header),
@@ -88,6 +126,7 @@ fn batch_corpus_decodes_recomputes_and_reencodes() {
                 assert_eq!(reencoded, bytes, "{stem}: byte-exact re-encode");
             }
             "refusal" => {
+                let bytes = corpus_bytes("batch", &stem);
                 let refusal = codec
                     .decode(&bytes)
                     .expect_err("refusal fixture must refuse");
@@ -95,6 +134,20 @@ fn batch_corpus_decodes_recomputes_and_reencodes() {
                     refusal.identity(),
                     fixture["refusal"].as_str().expect("refusal identity"),
                     "{stem}: refusal identity"
+                );
+            }
+            "encode-refusal" => {
+                assert_eq!(
+                    fixture["refusal"].as_str().expect("refusal identity"),
+                    "DigestWidth",
+                    "{stem}: encode refusal identity"
+                );
+                assert!(
+                    !support::corpus_dir()
+                        .join("batch")
+                        .join(format!("{stem}.bin"))
+                        .exists(),
+                    "{stem}: encode-only has no wire bytes"
                 );
             }
             other => panic!("{stem}: unknown expectation {other}"),
@@ -127,13 +180,22 @@ fn batch_corpus_covers_the_wire() {
         "TrailingBytes",
     ];
     let mut refused = std::collections::BTreeSet::new();
+    let mut encode_refused = std::collections::BTreeSet::new();
     let mut kinds = std::collections::BTreeSet::new();
     let mut arms = std::collections::BTreeSet::new();
     let mut scalars = std::collections::BTreeSet::new();
-    for (stem, fixture) in corpus_files("batch") {
+    let inventory = inventory();
+    for stem in stems(&inventory["batch_ok"])
+        .into_iter()
+        .chain(stems(&inventory["batch_refusal"]))
+    {
+        let fixture = sidecar("batch", &stem);
         match fixture["expect"].as_str().expect("expect") {
             "refusal" => {
                 refused.insert(fixture["refusal"].as_str().expect("identity").to_string());
+            }
+            "encode-refusal" => {
+                encode_refused.insert(fixture["refusal"].as_str().expect("identity").to_string());
             }
             "ok" => {
                 for op in fixture["ops"].as_array().expect("ops") {
@@ -162,6 +224,10 @@ fn batch_corpus_covers_the_wire() {
             "sidecar identity {identity} is on the decoder's roster"
         );
     }
+    assert!(
+        encode_refused.contains("DigestWidth"),
+        "corpus encode-refuses DigestWidth"
+    );
     assert_eq!(
         kinds.into_iter().collect::<Vec<_>>(),
         ["delete", "insert"],
@@ -199,7 +265,24 @@ fn batch_corpus_covers_the_wire() {
 #[test]
 fn braids_corpus_matches_the_derivation() {
     let schemas = support::load_schemas();
-    let fixtures = corpus_files("braids");
+    let dir = support::corpus_dir().join("braids");
+    let mut fixtures: Vec<(String, Json)> = std::fs::read_dir(&dir)
+        .expect("corpus section present")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .into_string()
+                .expect("name")
+        })
+        .filter_map(|name| {
+            let stem = name.strip_suffix(".json")?;
+            let text = std::fs::read_to_string(dir.join(&name)).expect("sidecar readable");
+            let json: Json = serde_json::from_str(&text).expect("sidecar parses");
+            Some((stem.to_string(), json))
+        })
+        .collect();
+    fixtures.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
         fixtures.len(),
         schemas.len(),
@@ -243,292 +326,91 @@ fn braids_corpus_matches_the_derivation() {
     }
 }
 
-/// A chain golden: batch bytes beside the fetch context — the key the
-/// object came from and the replica's chain position — and the verdict
-/// the chain discipline must pronounce, shared with the TypeScript
-/// suite through the sidecar's cause names.
-struct ChainCase {
-    name: &'static str,
-    schema: &'static str,
-    fetched: u32,
-    slot: u64,
-    position: ChainEntry,
-    bytes: Vec<u8>,
-    expect: ChainExpect,
-}
-
-enum ChainExpect {
-    Advance,
-    Cause(&'static str),
-}
-
-fn chain_header(
-    codec: &Codec,
-    braid_raw: u32,
-    slot_gen: u64,
-    prev: [u8; 32],
-    ts: u64,
-) -> BatchHeader {
-    BatchHeader {
-        fingerprint: *codec.fingerprint(),
-        braid: codec.braids().parse(braid_raw).expect("fixture braid"),
-        braid_gen: slot_gen,
-        prev,
-        writer: 7,
-        timestamp: ts,
-    }
-}
-
-fn kitchen_insert() -> Op {
-    Op {
-        kind: OpKind::Insert,
-        relation: bumbledb::RelationId(0),
-        rows: vec![Box::from([
-            Value::Bool(true),
-            Value::U64(11),
-            Value::I64(-4),
-            Value::String("chained".into()),
-            Value::FixedBytes(Box::from([7, 8, 9])),
-            Value::IntervalU64(Interval::new(3, 9).expect("interval")),
-            Value::IntervalI64(Interval::new(-2, 2).expect("interval")),
-            Value::IntervalU64(Interval::fixed(20u64, 5).expect("fixed interval")),
-            Value::IntervalI64(Interval::fixed(-20i64, 5).expect("fixed interval")),
-        ])],
-    }
-}
-
-fn audit_insert() -> Op {
-    Op {
-        kind: OpKind::Insert,
-        relation: bumbledb::RelationId(3),
-        rows: vec![Box::from([Value::U64(1), Value::String("ledger".into())])],
-    }
-}
-
-const CHAIN_TS: u64 = 1_755_801_600_000;
-
-/// The chain case table: one advance and the three proved mismatch
-/// causes, the slot cause split into its generation and braid halves —
-/// the braid half is the wrong-key object a hostile or confused store
-/// could serve, refused before any apply on both implementations.
-fn chain_cases(kitchen: &Codec, booking: &Codec) -> Vec<ChainCase> {
-    vec![
-        ChainCase {
-            name: "ok_chain_advance",
-            schema: "kitchen",
-            fetched: 0,
-            slot: 1,
-            position: ChainEntry::GENESIS,
-            bytes: kitchen
-                .encode(
-                    &chain_header(kitchen, 0, 1, [0u8; 32], CHAIN_TS),
-                    &[kitchen_insert()],
-                )
-                .expect("encode"),
-            expect: ChainExpect::Advance,
-        },
-        ChainCase {
-            name: "r_chain_prev",
-            schema: "kitchen",
-            fetched: 0,
-            slot: 1,
-            position: ChainEntry::GENESIS,
-            bytes: kitchen
-                .encode(
-                    &chain_header(kitchen, 0, 1, [0x55; 32], CHAIN_TS),
-                    &[kitchen_insert()],
-                )
-                .expect("encode"),
-            expect: ChainExpect::Cause("prev"),
-        },
-        ChainCase {
-            name: "r_chain_slot_gen",
-            schema: "kitchen",
-            fetched: 0,
-            slot: 1,
-            position: ChainEntry::GENESIS,
-            bytes: kitchen
-                .encode(
-                    &chain_header(kitchen, 0, 2, [0u8; 32], CHAIN_TS),
-                    &[kitchen_insert()],
-                )
-                .expect("encode"),
-            expect: ChainExpect::Cause("slot"),
-        },
-        ChainCase {
-            name: "r_chain_slot_braid",
-            schema: "booking",
-            fetched: 0,
-            slot: 1,
-            position: ChainEntry::GENESIS,
-            bytes: booking
-                .encode(
-                    &chain_header(booking, 3, 1, [0u8; 32], CHAIN_TS),
-                    &[audit_insert()],
-                )
-                .expect("encode"),
-            expect: ChainExpect::Cause("slot"),
-        },
-        ChainCase {
-            name: "r_chain_timestamp",
-            schema: "kitchen",
-            fetched: 0,
-            slot: 2,
-            position: ChainEntry {
-                g: 1,
-                prev: [0x66; 32],
-                ts: 200_000,
-            },
-            bytes: kitchen
-                .encode(
-                    &chain_header(kitchen, 0, 2, [0x66; 32], 100_000),
-                    &[kitchen_insert()],
-                )
-                .expect("encode"),
-            expect: ChainExpect::Cause("timestamp"),
-        },
-    ]
-}
-
-fn chain_sidecar(case: &ChainCase, codec: &Codec) -> Json {
-    let braid = codec.braids().parse(case.fetched).expect("fetched braid");
-    let mut sidecar = serde_json::json!({
-        "schema": case.schema,
-        "fingerprint": support::hex(codec.fingerprint()),
-        "braid": braid.to_string(),
-        "slot": case.slot.to_string(),
-        "chain": {
-            "g": case.position.g.to_string(),
-            "prev": support::hex(&case.position.prev),
-            "ts": case.position.ts.to_string(),
-        },
-    });
-    let object = sidecar.as_object_mut().expect("object");
-    match case.expect {
-        ChainExpect::Advance => {
-            object.insert("expect".into(), Json::String("ok".into()));
-        }
-        ChainExpect::Cause(label) => {
-            object.insert("expect".into(), Json::String("chainMismatch".into()));
-            object.insert("cause".into(), Json::String(label.into()));
-            object.insert("writer".into(), Json::String("7".into()));
-        }
-    }
-    sidecar
-}
-
-fn cause_name(cause: &ChainCause) -> &'static str {
-    match cause {
-        ChainCause::Slot { .. } => "slot",
-        ChainCause::Prev { .. } => "prev",
-        ChainCause::Timestamp { .. } => "timestamp",
-    }
-}
-
-fn temp_root(tag: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("f7_parity_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("create test root");
-    path
-}
-
-/// Writes the fixture pair under bless, or holds the disk files to the
-/// case table byte for byte otherwise.
-fn pin_chain_fixture(dir: &std::path::Path, case: &ChainCase, sidecar: &Json) {
-    let bin_path = dir.join(format!("{}.bin", case.name));
-    let json_path = dir.join(format!("{}.json", case.name));
-    if support::bless() {
-        std::fs::write(&bin_path, &case.bytes).expect("write bin");
-        let mut text = serde_json::to_string_pretty(sidecar).expect("render sidecar");
-        text.push('\n');
-        std::fs::write(&json_path, text).expect("write sidecar");
-        return;
-    }
-    assert_eq!(
-        std::fs::read(&bin_path).expect("chain bin present"),
-        case.bytes,
-        "case {}: bin bytes pinned",
-        case.name
-    );
-    let disk: Json =
-        serde_json::from_str(&std::fs::read_to_string(&json_path).expect("chain sidecar present"))
-            .expect("sidecar parses");
-    assert_eq!(&disk, sidecar, "case {}: sidecar pinned", case.name);
-}
-
-/// The chain corpus, generated from the case table and pinned to disk
-/// like the batch corpus, then driven whole through `apply` over a
-/// fresh store: the advance fixture lands `Advanced` at generation one,
-/// and every mismatch fixture surfaces `ChainMismatch` carrying the
-/// sidecar's cause name, the fetched braid, the slot, and the writer —
-/// the identity the TypeScript `verifyChain` is held to over the same
-/// files.
+/// The chain corpus from the v:3 inventory, driven whole through
+/// `apply` over a fresh store: the advance fixture lands `Advanced` at
+/// generation one, and every mismatch fixture surfaces `ChainMismatch`
+/// carrying the sidecar's cause name, the fetched braid, the slot, and
+/// the writer — the identity the TypeScript `verifyChain` is held to
+/// over the same files.
 #[test]
 fn chain_corpus_pins_the_three_causes() {
     let schemas = support::load_schemas();
-    let dir = support::corpus_dir().join("chain");
-    if support::bless() {
-        std::fs::create_dir_all(&dir).expect("chain dir");
-    }
-    let kitchen = Codec::new(&schemas["kitchen"], support::corpus_fingerprint("kitchen"));
-    let booking = Codec::new(&schemas["booking"], support::corpus_fingerprint("booking"));
-
-    let cases = chain_cases(&kitchen, &booking);
-    let mut seen = Vec::new();
     let mut mismatch_names = std::collections::BTreeSet::new();
-    for case in &cases {
-        let codec = if case.schema == "kitchen" {
-            &kitchen
-        } else {
-            &booking
-        };
-        let sidecar = chain_sidecar(case, codec);
-        pin_chain_fixture(&dir, case, &sidecar);
-        seen.push(format!("{}.bin", case.name));
-        seen.push(format!("{}.json", case.name));
+    for stem in stems(&inventory()["chain"]) {
+        let fixture = sidecar("chain", &stem);
+        let (_, codec) = codec_of(&fixture);
+        let bytes = corpus_bytes("chain", &stem);
+        let batch = codec
+            .decode(&bytes)
+            .unwrap_or_else(|err| panic!("{stem}: chain golden decodes, got {}", err.identity()));
+        let again = codec.encode(&batch.header, &batch.ops).expect("re-encode");
+        assert_eq!(again, bytes, "{stem}: byte-exact re-encode");
 
-        let braid = codec.braids().parse(case.fetched).expect("fetched braid");
+        let fetched = parse_braid_text(&codec, fixture["braid"].as_str().expect("braid"));
+        let slot: u64 = fixture["slot"]
+            .as_str()
+            .expect("slot")
+            .parse()
+            .expect("u64");
+        let position = ChainEntry {
+            g: fixture["chain"]["g"]
+                .as_str()
+                .expect("g")
+                .parse()
+                .expect("u64"),
+            prev: digest32(fixture["chain"]["prev"].as_str().expect("prev")),
+            ts: fixture["chain"]["ts"]
+                .as_str()
+                .expect("ts")
+                .parse()
+                .expect("u64"),
+        };
         // The chain discipline refuses before the store is touched, so
         // every mismatch case runs over a kitchen-theory scratch store;
         // only the advance case — itself a kitchen batch — writes to it.
         // (The booking fixture schema is codec vocabulary, not an
         // engine-admissible theory: its containment target carries no
         // backing key statement.)
-        let db = bumbledb::Db::create(&temp_root(case.name).join("db"), schemas["kitchen"].clone())
+        let db = bumbledb::Db::create(&temp_root(&stem).join("db"), schemas["kitchen"].clone())
             .expect("create")
             .expect("theory admits empty store");
         let mut chain = Chain::genesis(codec.braids());
-        chain.entries_mut().insert(braid, case.position);
-        let applied = apply(&db, &mut chain, codec, braid, case.slot, &case.bytes)
-            .expect("apply infrastructure");
-        match case.expect {
-            ChainExpect::Advance => {
+        chain.entries_mut().insert(fetched, position);
+        let applied =
+            apply(&db, &mut chain, &codec, fetched, slot, &bytes).expect("apply infrastructure");
+        match fixture["expect"].as_str().expect("expect") {
+            "ok" => {
                 assert_eq!(
                     applied,
                     Applied::Advanced { generation: 1 },
-                    "case {}: the clean chain advances",
-                    case.name
+                    "{stem}: the clean chain advances"
                 );
             }
-            ChainExpect::Cause(expected) => {
+            "chainMismatch" => {
                 let Applied::Refused(ApplyRefusal::ChainMismatch {
                     cause,
                     braid: refused_braid,
-                    slot,
+                    slot: refused_slot,
                     writer,
                 }) = applied
                 else {
-                    panic!(
-                        "case {}: expected a chain mismatch, got {applied:?}",
-                        case.name
-                    );
+                    panic!("{stem}: expected a chain mismatch, got {applied:?}");
                 };
-                assert_eq!(cause_name(&cause), expected, "case {}: cause", case.name);
-                assert_eq!(refused_braid, braid, "case {}: fetched braid", case.name);
-                assert_eq!(slot, case.slot, "case {}: slot", case.name);
-                assert_eq!(writer, 7, "case {}: writer", case.name);
-                mismatch_names.insert(expected);
+                assert_eq!(
+                    cause_name(&cause),
+                    fixture["cause"].as_str().expect("cause"),
+                    "{stem}: cause"
+                );
+                assert_eq!(refused_braid, fetched, "{stem}: fetched braid");
+                assert_eq!(refused_slot, slot, "{stem}: slot");
+                assert_eq!(
+                    writer.to_string(),
+                    fixture["writer"].as_str().expect("writer"),
+                    "{stem}: writer"
+                );
+                mismatch_names.insert(fixture["cause"].as_str().expect("cause").to_string());
             }
+            other => panic!("{stem}: unknown expect {other}"),
         }
     }
 
@@ -537,22 +419,4 @@ fn chain_corpus_pins_the_three_causes() {
         ["prev", "slot", "timestamp"],
         "all three proved causes are pinned"
     );
-    if !support::bless() {
-        let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
-            .expect("chain dir present")
-            .map(|entry| {
-                entry
-                    .expect("entry")
-                    .file_name()
-                    .into_string()
-                    .expect("name")
-            })
-            .collect();
-        on_disk.sort();
-        seen.sort();
-        assert_eq!(
-            on_disk, seen,
-            "chain corpus holds exactly the table's cases"
-        );
-    }
 }

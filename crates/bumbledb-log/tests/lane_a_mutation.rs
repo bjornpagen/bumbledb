@@ -40,12 +40,21 @@ fn goldens() -> Vec<(String, Codec, Vec<u8>, bool)> {
         }
         let sidecar: Json =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("sidecar")).expect("json");
+        let bin = path.with_extension("bin");
+        if sidecar["expect"].as_str() == Some("encode-refusal") {
+            assert!(
+                !bin.exists(),
+                "{}: encode-only has no wire bytes",
+                path.file_stem().expect("stem").to_string_lossy()
+            );
+            continue;
+        }
         let schema = sidecar["schema"].as_str().expect("schema").to_owned();
         let fingerprint: [u8; 32] = support::unhex(sidecar["fingerprint"].as_str().expect("hex"))
             .try_into()
             .expect("32 bytes");
         let codec = Codec::new(&schemas[&schema], fingerprint);
-        let bytes = std::fs::read(path.with_extension("bin")).expect("bin");
+        let bytes = std::fs::read(&bin).expect("bin");
         let ok = sidecar["expect"].as_str() == Some("ok");
         out.push((schema, codec, bytes, ok));
     }

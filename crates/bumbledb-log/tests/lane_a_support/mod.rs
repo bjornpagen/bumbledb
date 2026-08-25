@@ -1,5 +1,5 @@
 //! Shared fixtures for the lane's conformance tests: the corpus schema
-//! loader (`conformance/corpus/schemas.json` is the one cross-language
+//! loader (`conformance/v3/schemas.json` is the one cross-language
 //! source of the fixture descriptors), the JSON value vocabulary the
 //! sidecars speak, and the renderers that turn decoded batches back
 //! into sidecar JSON for byte-exact comparison.
@@ -19,7 +19,7 @@ use serde_json::Value as Json;
 pub fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("conformance")
-        .join("corpus")
+        .join("v3")
 }
 
 pub fn bless() -> bool {

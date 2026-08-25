@@ -2,8 +2,6 @@
 
 Cross-driver goldens for the representation-first codec. Both suites
 decode these bytes to one value and re-encode them byte-identically.
-The v:2 tree under `conformance/corpus/` is not this corpus.
-
 Root: `crates/bumbledb-log/conformance/v3/`.
 
 ## Layout
@@ -64,4 +62,3 @@ On representation the cutover subdirectory wins; 60 owns this seam.
 - `"v":3` stays a JSON number — the discriminator 70 spells. Every other u64/i64 is a decimal string.
 - Checkpoint documents carry `"v":3` as the first field.
 - Pending bytes are hex, never base64.
-- This path is new so the v:2 suite is not rewritten mid-cutover.
