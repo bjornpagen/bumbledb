@@ -24,7 +24,17 @@ import type { Braid, Descriptor, RelationInfo } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { ErrRefused, ErrReplayDiverged, refuse, refuseManifestMissing, wrapStore } from "#errors.ts"
 import type { Generation } from "#keys.ts"
-import { checkpointJsonKey, checkpointMdbKey, generation, logKey, manifestKey } from "#keys.ts"
+import {
+	CKPT_SCRATCH_LEASE,
+	checkpointJsonKey,
+	checkpointMdbKey,
+	generation,
+	LEASE_NAMESPACE,
+	logKey,
+	manifestKey,
+	parseCkptScratch,
+	TEMP_NAMESPACE
+} from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
 import { auditCatalog, parseCheckpoint, parseManifest } from "#manifest.ts"
 import type { Etag, ObjectStore } from "#store.ts"
@@ -724,6 +734,26 @@ async function newestStoreDir(dir: string): Promise<string | null> {
 	return newest
 }
 
+/**
+ * Open reclaims the reserved `~tmp`/`~lease` namespace. The known
+ * document `{dir}/~lease/ckpt-scratch` names a crash-stranded
+ * candidate; when that digest is not the live head the ckpt pair is
+ * deleted with the lease.
+ */
+async function sweepReservedKeys<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
+	const lease = path.join(core.dir, LEASE_NAMESPACE, CKPT_SCRATCH_LEASE)
+	const read = await errors.try(fs.readFile(lease))
+	if (read.error === undefined) {
+		const digest = parseCkptScratch(read.data)
+		if (digest !== null && digest !== core.checkpointDigest) {
+			await core.store.delete(checkpointJsonKey(core.prefix, digest))
+			await core.store.delete(checkpointMdbKey(core.prefix, digest))
+		}
+	}
+	await fs.rm(path.join(core.dir, TEMP_NAMESPACE), { recursive: true, force: true })
+	await fs.rm(path.join(core.dir, LEASE_NAMESPACE), { recursive: true, force: true })
+}
+
 /** The disposable law says cache directories do not hoard corpses: every
  *  rotated `store-*` LMDB dir except the adopted one is dead — left by a
  *  crashed process or a prior rotation — and is swept at open. */
@@ -902,6 +932,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		auditCatalog(core.checkpoint, catalogDigestOf(core))
 	}
 	await sweepRotations(core)
+	await sweepReservedKeys(core)
 	return core
 }
 
