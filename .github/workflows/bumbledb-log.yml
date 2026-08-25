@@ -6,6 +6,8 @@
 # the userspace, glibc 2.34 is Lambda's floor. No step on that job
 # executes in the host's Ubuntu userspace. Publishing stays owner
 # ceremony — the runner uploads artifacts and stops.
+# Correctness is scripts/battery.sh. The S3 smoke is a nextest filter
+# over the workspace, not a second manifest.
 name: bumbledb-log
 
 on:
@@ -17,6 +19,9 @@ on:
       - "crates/bumbledb-theory/**"
       - "ts-log/**"
       - "ts/**"
+      - "Cargo.lock"
+      - ".config/nextest.toml"
+      - "scripts/battery.sh"
       - "rust-toolchain.toml"
       - ".github/workflows/bumbledb-log.yml"
   pull_request:
@@ -26,6 +31,9 @@ on:
       - "crates/bumbledb-theory/**"
       - "ts-log/**"
       - "ts/**"
+      - "Cargo.lock"
+      - ".config/nextest.toml"
+      - "scripts/battery.sh"
       - "rust-toolchain.toml"
       - ".github/workflows/bumbledb-log.yml"
   workflow_dispatch:
@@ -37,7 +45,7 @@ jobs:
   linux-arm64:
     runs-on: ubuntu-24.04-arm
     container: amazonlinux:2023
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Install the Amazon Linux 2023 toolchain
         # AL2023 ships curl-minimal. `dnf install curl` without
@@ -76,9 +84,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            crates/bumbledb-log/target
+            target
             ts/crate/target
-          key: log-al2023-arm64-cargo-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-log/Cargo.lock', 'ts/crate/Cargo.lock') }}
+          key: log-al2023-arm64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
           restore-keys: |
             log-al2023-arm64-cargo-
       - name: Activate the pinned pnpm
@@ -89,6 +97,23 @@ jobs:
         run: |
           npm install -g corepack
           corepack enable pnpm
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: log-al2023-arm64-lean-${{ hashFiles('lean/lean-toolchain') }}
+          restore-keys: |
+            log-al2023-arm64-lean-
+      - name: install elan
+        # lean/lean-toolchain owns the exact version; elan resolves
+        # and installs it on first `lake` invocation inside lean/.
+        # A cache hit leaves the toolchain on disk; this step is PATH.
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -108,38 +133,21 @@ jobs:
         run: node scripts/build.ts
         working-directory: ts
       - name: Build the duty binary
-        run: cargo build --release --manifest-path crates/bumbledb-log/Cargo.toml --bin duty
+        run: cargo build --release --bin duty
       - name: Install ts-log/ (frozen lockfile)
         # lane_b_interop.rs spawns ts-log/test/interop-child.ts, which
-        # resolves @bjornpagen/bumbledb from this install. Cargo test
-        # cannot run first.
+        # resolves @bjornpagen/bumbledb from this install. nextest is
+        # battery lane 3, ahead of the ts/ trio.
         run: pnpm install --frozen-lockfile
         working-directory: ts-log
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: bumbledb-log fmt
-        working-directory: crates/bumbledb-log
-        run: cargo fmt --all --check
-      - name: bumbledb-log clippy
-        working-directory: crates/bumbledb-log
-        run: cargo clippy --all-targets -- -D warnings
-      - name: bumbledb-log test
-        working-directory: crates/bumbledb-log
-        run: cargo test
-      - name: ts/ suite
-        working-directory: ts
-        run: node --test 'test/**/*.test.ts'
-      - name: ts-log suite
-        working-directory: ts-log
-        run: |
-          tsc --noEmit
-          biome check .
-          node --test 'test/**/*.test.ts'
+      - run: scripts/battery.sh
       - name: Stage the linux-arm64 artifacts
         run: |
           mkdir -p /tmp/grail-artifacts
           cp ts/npm/linux-arm64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-arm64.node
-          cp crates/bumbledb-log/target/release/duty /tmp/grail-artifacts/bumbledb-log-duty
+          cp target/release/duty /tmp/grail-artifacts/bumbledb-log-duty
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.linux-arm64.node
@@ -167,11 +175,11 @@ jobs:
             exit 0
           fi
           echo "S3 smoke credentials present; running the crate's gated smoke"
-          cargo test --manifest-path crates/bumbledb-log/Cargo.toml s3_smoke -- --nocapture
+          cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture
 
   darwin:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - name: Install the pinned toolchain
@@ -186,11 +194,28 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            crates/bumbledb-log/target
+            target
             ts/crate/target
-          key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'crates/bumbledb-log/Cargo.lock', 'ts/crate/Cargo.lock') }}
+          key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
           restore-keys: |
             log-darwin-cargo-
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: log-darwin-lean-${{ hashFiles('lean/lean-toolchain') }}
+          restore-keys: |
+            log-darwin-lean-
+      - name: install elan
+        # lean/lean-toolchain owns the exact version; elan resolves
+        # and installs it on first `lake` invocation inside lean/.
+        # A cache hit leaves the toolchain on disk; this step is PATH.
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -210,27 +235,13 @@ jobs:
         run: node scripts/build.ts
         working-directory: ts
       - name: Install ts-log/ (frozen lockfile)
-        # Same reason as the linux-arm64 job: cargo test's interop
-        # lane resolves @bjornpagen/bumbledb from this tree.
+        # Same reason as the linux-arm64 job: nextest's interop lane
+        # resolves @bjornpagen/bumbledb from this tree.
         run: pnpm install --frozen-lockfile
         working-directory: ts-log
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: bumbledb-log fmt
-        working-directory: crates/bumbledb-log
-        run: cargo fmt --all --check
-      - name: bumbledb-log clippy
-        working-directory: crates/bumbledb-log
-        run: cargo clippy --all-targets -- -D warnings
-      - name: bumbledb-log test
-        working-directory: crates/bumbledb-log
-        run: cargo test
-      - name: ts-log suite
-        working-directory: ts-log
-        run: |
-          tsc --noEmit
-          biome check .
-          node --test 'test/**/*.test.ts'
+      - run: scripts/battery.sh
       - name: Gated S3 smoke
         env:
           BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
@@ -248,4 +259,4 @@ jobs:
             exit 0
           fi
           echo "S3 smoke credentials present; running the crate's gated smoke"
-          cargo test --manifest-path crates/bumbledb-log/Cargo.toml s3_smoke -- --nocapture
+          cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture

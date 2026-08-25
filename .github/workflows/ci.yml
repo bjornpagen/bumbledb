@@ -1,8 +1,7 @@
-# The CI spine (the crucible packet (git ecec1dc3)). Three lanes on
-# macos arm64 (macos-latest is M-series): the workspace gate and the
-# Lean gate per push; the Miri lane on a nightly cron.
-# The SDK lane (the hardening-0.3.0 packet, PRD T6) joins them:
-# both halves of the cross-host fingerprint lock, per push.
+# The CI spine (the crucible packet (git ecec1dc3)). The battery
+# (scripts/battery.sh) and the SDK fingerprint lock run per push on
+# macos arm64 (macos-latest is M-series); the Miri lane runs on a
+# nightly cron.
 # The check lane runs on macos and on ubuntu-latest-as-host under an
 # amazonlinux:2023 container (grail/40): Amazon Linux is the linux
 # userspace — glibc 2.34, never Ubuntu — and that linux cell is the
@@ -15,15 +14,14 @@
 # 29697582864 falsified that claim once — clockproxy's plausibility
 # band read 0.18 GHz on the shared ubuntu runner — and the probe
 # joined the host-pinned set (arch-conditioned ignore: the band is
-# aarch64 physics). The lean lane could run anywhere but stays put;
-# the sdk lane matrixes macos + the same amazonlinux:2023 linux cell
-# as the check lane (below); the miri lane's native pass is the
-# reference host's.
+# aarch64 physics). The sdk lane matrixes macos + the same
+# amazonlinux:2023 linux cell as the check lane; the miri lane's
+# native pass is the reference host's.
 #
 # Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
 #   * Miri lane: 752 s ≈ 12.5 min — OVER the 10-minute per-push budget,
 #     hence the cron (the "measure first, decide by the number" rule).
-#   * check lane: 178 s local wall (scripts/check.sh, warm build).
+#   * check lane: scripts/battery.sh is the correctness body.
 #   The lanes run in parallel: estimated under 15 minutes with warm
 #   caches; the first run on a cold cache (toolchain download + full
 #   builds) will exceed it once.
@@ -58,14 +56,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Lane 1 — the workspace gate: exactly scripts/check.sh (fmt, clippy
-  # -D warnings, workspace tests + doctests, the release alloc gate,
-  # the feature matrix builds, the bench-crate obs config).
+  # Lane 1 — the workspace gate: env plus scripts/battery.sh.
   # Both cells run the identical script; on linux the run itself IS
   # the x86-64 scalar-fallback coverage (AL2023 userspace; the host
-  # kernel is not a build userspace). The cross `cargo check` that
-  # used to self-skip at the end of check.sh died superseded —
-  # executing the tests is strictly stronger.
+  # kernel is not a build userspace).
   check:
     if: github.event_name != 'schedule'
     strategy:
@@ -74,7 +68,7 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.os == 'ubuntu-latest' && fromJSON('{"image":"amazonlinux:2023"}') || fromJSON('null') }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: Install the Amazon Linux 2023 toolchain
         if: matrix.os == 'ubuntu-latest'
@@ -127,7 +121,53 @@ jobs:
           key: check-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
             check-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
-      - run: scripts/check.sh
+      - uses: actions/setup-node@v5
+        with:
+          # ts/package.json engines pins node >=24. battery.sh runs
+          # the ts/ and ts-log/ package-script trios.
+          node-version: 24
+      - name: install pnpm
+        # ts/package.json#packageManager (pnpm@11.9.0) owns the exact
+        # version; corepack reads and activates that pin.
+        run: corepack enable pnpm
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: lean-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('lean/lean-toolchain') }}
+          restore-keys: |
+            lean-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
+      - name: install elan
+        # lean/lean-toolchain owns the exact version; elan resolves
+        # and installs it on first `lake` invocation inside lean/.
+        # A cache hit leaves the toolchain on disk; this step is PATH.
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: resolve the pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ts
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: check-pnpm-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
+          restore-keys: |
+            check-pnpm-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
+      - run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: build the napi bridge
+        # lane_b_interop.rs spawns a Node child that loads
+        # @bjornpagen/bumbledb. nextest is battery lane 3, ahead of
+        # the ts/ trio that builds the addon.
+        run: pnpm run build
+        working-directory: ts
+      - run: pnpm install --frozen-lockfile
+        working-directory: ts-log
+      - run: scripts/battery.sh
 
   # Lane 2 — Miri, both interpretation targets (native arm64 + the
   # x86_64-linux cross-interpretation): 752 s ≈ 12.5 min measured
@@ -153,64 +193,7 @@ jobs:
             miri-${{ runner.os }}-
       - run: scripts/miri.sh
 
-  # Lane 3 — the Lean gate (the covenant campaign, PRD 01; census
-  # added by PRD 10; the conformance lane by PRD 13): elan installs the
-  # toolchain pinned in lean/lean-toolchain, then scripts/lean.sh runs
-  # `lake build` (the conformance exe is a default target), the
-  # placeholder battery, scripts/spec-census.sh (the Bridge ledger's
-  # mechanism/instrument tokens against crates/, the docs'
-  # lean/ citations against the tree), the conformance corpus run
-  # (`lake exe conformance` over lean/conformance/cases — the
-  # executable denotation vs the recorded engine answers), and
-  # battery 5 — the three-way comparator (engine fresh + naive fresh,
-  # byte-held to the corpus files, vs the Lean denotation; a
-  # disagreement names the case file and demands triage before anything
-  # else merges), guarded against the zero-tests vacuous pass.
-  # lean.sh is the ONE spelling of the whole lane; the Rust toolchain
-  # and cargo cache steps precede it so battery 5's bench-crate build
-  # is the one the cache absorbs (measured 2026-07-14, pinned M2 Max,
-  # debug build: 12.4 s engine+naive replay + 1.2 s Lean corpus run —
-  # the per-push budget holds).
-  # Per push — if the lane exceeds 2 minutes by campaign end, PRD 14
-  # moves it to the Miri cron and records the number.
-  lean:
-    if: github.event_name != 'schedule'
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.elan
-            lean/.lake
-          key: lean-${{ runner.os }}-${{ hashFiles('lean/lean-toolchain') }}
-          restore-keys: |
-            lean-${{ runner.os }}-
-      - name: install elan (the pinned Lean toolchain)
-        # lean/lean-toolchain owns the exact version; elan resolves and
-        # installs it on first `lake` invocation inside lean/. On a
-        # cache hit the toolchain is already present and this step is
-        # a no-op beyond PATH.
-        run: |
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: install the pinned Rust toolchain (for battery 5, the comparator)
-        run: rustup show
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: lean-conformance-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: |
-            lean-conformance-${{ runner.os }}-
-      - run: scripts/lean.sh
-
-  # Lane 4 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
+  # Lane 3 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
   # halves of the cross-host fingerprint lock, per push. The TS half is
   # the full SDK gate exactly as run locally — build the napi bridge +
   # package from source, then tsc, biome, and `pnpm test` (the ONE
