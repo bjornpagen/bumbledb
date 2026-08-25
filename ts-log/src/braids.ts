@@ -6,7 +6,9 @@
  */
 
 import type { Braid, SerialStatement, Theory } from "#descriptor.ts"
-import { braid, descriptorOf } from "#descriptor.ts"
+import { braid, braidHex, descriptorOf } from "#descriptor.ts"
+
+const U32_MAX = 0xffffffff
 
 /** The schema's own shard map: ordinary relation name → braid id. */
 function braidsOf(theory: Theory): ReadonlyMap<string, Braid> {
@@ -31,5 +33,18 @@ function serialAtStatementsOf(theory: Theory): readonly SerialStatement[] {
 	return descriptorOf(theory).serialAtStatements
 }
 
+/**
+ * Parses a wire u32 into a braid id: valid only when the relation it
+ * names is the smallest in its own component. An unknown, closed, or
+ * non-head id is not a braid — the caller refuses, it is not ignored.
+ */
+function parse(theory: Theory, raw: number): Braid | undefined {
+	if (!Number.isInteger(raw) || raw < 0 || raw > U32_MAX) {
+		return undefined
+	}
+	const name = braidHex(raw)
+	return descriptorOf(theory).braidMembers.has(name) ? name : undefined
+}
+
 export type { Braid }
-export { braid, braidsOf, serialAtStatementsOf }
+export { braid, braidsOf, parse, serialAtStatementsOf }
