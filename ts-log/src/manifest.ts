@@ -1,16 +1,17 @@
 /**
  * The protocol's one mutable object: a v:3 binary record — version
- * byte 3, a 32-byte fingerprint, an optional 32-byte checkpoint
- * digest. The checkpoint record is digest-keyed and immutable: version
- * byte 3, a count-bounded braid roster (id, g, hash, ts) in ascending
- * id order, catalog digest, writer, optional prev. The content address
- * is blake3 of the record bytes. Seed audits the catalog claim when a
- * checkpoint is present.
+ * byte 3, a branded Digest32 fingerprint, an optional branded Digest32
+ * checkpoint. The checkpoint record is digest-keyed and immutable:
+ * version byte 3, a count-bounded braid roster (id, g, hash, ts) in
+ * ascending id order, catalog digest, writer, optional prev. Every
+ * digest field is Digest32. The content address is blake3 of the
+ * record bytes. Seed audits the catalog claim when a checkpoint is
+ * present.
  */
 
 import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
-import { ByteReader, ByteWriter, digest32FromHex, hex32 } from "#bytes.ts"
+import { ByteReader, ByteWriter, bytesEqual, hex32 } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
 import { refuse } from "#errors.ts"
@@ -24,8 +25,8 @@ const U32_MAX = 0xffffffffn
 const MIN_HEAD_BYTES = 52n
 
 interface Manifest {
-	readonly fingerprint: string
-	readonly checkpoint: string | null
+	readonly fingerprint: Digest32
+	readonly checkpoint: Digest32 | null
 }
 
 function readerOf(bytes: Uint8Array): ByteReader {
@@ -51,17 +52,13 @@ function refuseUnbacked(count: bigint, remaining: number, minItem: bigint, at: s
 	}
 }
 
-function writeDigest(out: ByteWriter, hex: string): void {
-	out.bytes(digest32FromHex(hex))
-}
-
-function writeOptionalDigest(out: ByteWriter, hex: string | null): void {
-	if (hex === null) {
+function writeOptionalDigest(out: ByteWriter, digest: Digest32 | null): void {
+	if (digest === null) {
 		out.u8(0)
 		return
 	}
 	out.u8(1)
-	writeDigest(out, hex)
+	out.array32(digest)
 }
 
 function readOptionalDigest(reader: ByteReader, at: string): Digest32 | null {
@@ -92,7 +89,7 @@ function braidIdOf(id: Braid): number {
 function renderManifest(manifest: Manifest): Uint8Array {
 	const out = new ByteWriter(66)
 	out.u8(DOC_VERSION)
-	writeDigest(out, manifest.fingerprint)
+	out.array32(manifest.fingerprint)
 	writeOptionalDigest(out, manifest.checkpoint)
 	return out.finish()
 }
@@ -103,23 +100,20 @@ function parseManifest(bytes: Uint8Array): Manifest {
 	const fingerprint = reader.array32("fingerprint")
 	const checkpoint = readOptionalDigest(reader, "checkpoint")
 	finish(reader, "the manifest")
-	return {
-		fingerprint: hex32(fingerprint),
-		checkpoint: checkpoint === null ? null : hex32(checkpoint)
-	}
+	return { fingerprint, checkpoint }
 }
 
 interface CheckpointHead {
 	readonly g: Generation
-	readonly hash: string
+	readonly hash: Digest32
 	readonly ts: bigint
 }
 
 interface CheckpointFacts {
 	readonly braids: ReadonlyMap<Braid, CheckpointHead>
-	readonly catalog: string
+	readonly catalog: Digest32
 	readonly writer: bigint
-	readonly prev: string | null
+	readonly prev: Digest32 | null
 	readonly sum: bigint
 }
 
@@ -151,10 +145,10 @@ function renderCheckpoint(facts: CheckpointFacts): Uint8Array {
 		}
 		out.u32le(braidIdOf(id))
 		out.u64le(head.g)
-		writeDigest(out, head.hash)
+		out.array32(head.hash)
 		out.u64le(head.ts)
 	}
-	writeDigest(out, facts.catalog)
+	out.array32(facts.catalog)
 	out.u64le(facts.writer)
 	writeOptionalDigest(out, facts.prev)
 	return out.finish()
@@ -182,7 +176,7 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 				"checkpoint braid roster is not strictly ascending"
 			)
 		}
-		braids.set(name, { g: generation(g), hash: hex32(hash), ts })
+		braids.set(name, { g: generation(g), hash, ts })
 	}
 	const catalog = reader.array32("catalog")
 	const writer = reader.u64le("writer")
@@ -192,28 +186,22 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 	if (typeof summed !== "bigint") {
 		refuse({ kind: "Overflow" }, "checkpoint vector sum overflows u64")
 	}
-	return {
-		braids,
-		catalog: hex32(catalog),
-		writer,
-		prev: prev === null ? null : hex32(prev),
-		sum: summed
-	}
+	return { braids, catalog, writer, prev, sum: summed }
 }
 
 /** The seed transition's catalog claim: a present checkpoint
  *  compares the opened store's `catalog_digest` against the document.
  *  Genesis (no checkpoint) has no claim. A mismatch names the publisher. */
-function auditCatalog(facts: CheckpointFacts | null, computed: string): void {
+function auditCatalog(facts: CheckpointFacts | null, computed: Digest32): void {
 	if (facts === null) {
 		return
 	}
-	if (facts.catalog === computed) {
+	if (bytesEqual(facts.catalog, computed)) {
 		return
 	}
 	refuse(
-		{ kind: "CheckpointDigest", expected: facts.catalog, computed },
-		`checkpoint catalog ${facts.catalog} disagrees with the opened store ${computed}; publisher ${facts.writer}`
+		{ kind: "CheckpointDigest", expected: hex32(facts.catalog), computed: hex32(computed) },
+		`checkpoint catalog ${hex32(facts.catalog)} disagrees with the opened store ${hex32(computed)}; publisher ${facts.writer}`
 	)
 }
 
