@@ -16,19 +16,19 @@ generation(Settled{v})    = v.sum()
 generation(Pending{v, _}) = v.sum() + 1
 ```
 
-There is no `applied_pending` addend and no `pending: Option` beside
-the chain — `Pending` is a constructor every reader must match. The
-per-braid split and chain position live in `dir/chain.json` (canonical
-one-line JSON, `v:3`, refuse `v:2`; every numeric field other than the
-version discriminator is a decimal string; a `Pending` batch's bytes
-are lowercase hex of the codec's canonical rendering — one encoding,
-both drivers):
+`Pending` is a constructor every reader must match. The per-braid
+split and chain position live in `dir/chain.json` (canonical one-line
+JSON, `v` is 3; every numeric field other than the version
+discriminator is a decimal string; a `Pending` batch's bytes are
+lowercase hex of the codec's canonical rendering — one encoding, both
+drivers). Wire `pending` is the constructor's rendering: a JSON null
+on `Settled`, the hex object on `Pending`:
 
 ```json
-{"v":3,"chain":{"c00000001":{"g":"80","prev":"<64 hex>","ts":"1755801600000"}},"pending":null}
+{"v":3,"chain":{"c00000001":{"g":"80","prev":"<64 hex>","ts":"1755801600000"}},"pending":{"braid":"c00000001","gen":"81","bytes":"<hex>"}}
 ```
 
-A `Pending` document carries the batch instead of `null`. Written
+A `Settled` document renders that same field as a JSON null. Written
 atomically (temp + rename, fsync). `prev` is the blake3 of the braid's
 head log object — what the next batch's header must cite — and `ts`
 its timestamp — what the next batch's header must dominate (20).
@@ -87,8 +87,8 @@ manifest refuses `ManifestMissing`; only the writer births a store. An
 inherited `Pending` is resolved-and-published here, not deferred to
 the next commit.
 
-1. GET `manifest.json`; refuse `v ≠ 3` (a well-formed `v:2` is
-   `Version` — no translator) or fingerprint mismatch; if
+1. GET `manifest.json`; refuse `v ≠ 3` (`Version` — no translator) or
+   fingerprint mismatch; if
    `checkpoint` is non-null, GET `ckpt/{digest}.json` (immutable —
    cached forever once seen). Derive the braid set from the descriptor
    locally and refuse if the checkpoint's braid ids disagree (both are
