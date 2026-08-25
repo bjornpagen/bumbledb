@@ -21,6 +21,7 @@ import {
 	type Violation
 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
+import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, checkedAddU64, digest32, digest32FromHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
@@ -391,6 +392,14 @@ function headerTimestamp(bytes: Uint8Array): bigint | undefined {
 	return u64leAt(bytes, WRITER_AT + 8)
 }
 
+/** Header prev is 32 bytes. A hex string is parsed; a 32-byte buffer is branded. */
+function digestPrev(prev: Digest32 | Uint8Array | string): Digest32 {
+	if (typeof prev === "string") {
+		return digest32FromHex(prev)
+	}
+	return digest32(prev)
+}
+
 function noteDeposition(state: WriterState, braid: Braid, slot: Generation, winnerBytes: Uint8Array): void {
 	if (state.deposition !== null) {
 		return
@@ -510,6 +519,8 @@ async function publishPending<Rels extends SchemaRelations>(
 				durability: "published"
 			}
 		}
+		const tip = chainEntry(core, braid)
+		core.chain.set(braid, { g: tip.g, prev: digestPrev(tip.prev), ts: tip.ts })
 		await readdressPending(core, ops, state.writerId)
 		if (losses >= LOSS_BOUND) {
 			screamContention(braid, { tag: "outraced", tip: chainEntry(core, braid).g })
@@ -533,7 +544,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 			fingerprint: digest32FromHex(core.descriptor.fingerprint),
 			braid,
 			braidGen: generation(entry.g + 1n),
-			prev: entry.prev,
+			prev: digestPrev(entry.prev),
 			writer: state.writerId,
 			timestamp
 		},
