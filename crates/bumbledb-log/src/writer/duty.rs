@@ -15,6 +15,7 @@ use crate::checkpointer::compact_and_publish;
 use crate::manifest::{PublishRefusal, Published};
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
+use crate::vector::{Overflow, Vector};
 
 use super::{Core, Inner, StepHook, Theory, WriterState, lock};
 
@@ -103,9 +104,15 @@ where
                 // cadence crossing re-arms the duty.
                 return Ran::Deferred;
             };
-            let sum = entries
-                .values()
-                .fold(0u64, |acc, entry| acc.saturating_add(entry.g));
+            let sum = match entries
+                .iter()
+                .map(|(&braid, entry)| (braid, entry.g))
+                .collect::<Vector>()
+                .sum()
+            {
+                Ok(n) => n,
+                Err(Overflow) => u64::MAX,
+            };
             let mut snap_bytes = 0u64;
             let published = match compact_and_publish(
                 self.store.as_ref(),

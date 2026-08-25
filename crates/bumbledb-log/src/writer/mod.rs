@@ -640,7 +640,7 @@ where
     /// The writer's vector: per-braid applied counts.
     #[must_use]
     pub fn vector(&self) -> Vector {
-        Vector::from(lock(&self.inner.core).chain.vector())
+        lock(&self.inner.core).chain.vector()
     }
 
     /// The chain the store must match: `generation ≡ generation(chain)`.

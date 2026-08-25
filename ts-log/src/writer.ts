@@ -44,7 +44,7 @@ import {
 	manifestKey
 } from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
-import { parseCheckpoint, parseManifest, renderCheckpoint, renderManifest } from "#manifest.ts"
+import { checkpointVector, parseCheckpoint, parseManifest, renderCheckpoint, renderManifest } from "#manifest.ts"
 import type { Core, OpenReplicaOptions, Replica } from "#replica.ts"
 import {
 	applyOps,
@@ -724,7 +724,7 @@ async function casPublish(
 			if (incumbentDoc.error) {
 				return { tag: "refused", reason: "checkpoint" }
 			}
-			if (candidate.sum <= incumbentDoc.data.sum) {
+			if (checkpointVector(candidate).order(checkpointVector(incumbentDoc.data)) !== "after") {
 				return { tag: "kept", incumbent }
 			}
 		}

@@ -12,13 +12,14 @@ import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
-import { ByteReader, ByteWriter, checkedAddU64, saturatingAddU64 } from "#bytes.ts"
+import { ByteReader, ByteWriter, saturatingAddU64, U64_MAX } from "#bytes.ts"
 import type { ChainEntry } from "#codec.ts"
 import type { Braid } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
 import { refuse } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
+import { Vector } from "#vector.ts"
 
 /** The sidecar's file name inside a replica directory. */
 const CHAIN_FILE = "chain"
@@ -53,12 +54,17 @@ function braidIdOf(id: Braid): number {
 	return Number.parseInt(id.slice(1), 16)
 }
 
-function chainSum(chain: Chain): bigint {
-	let sum = 0n
-	for (const entry of chain.entries.values()) {
-		sum = saturatingAddU64(sum, entry.g)
+function vectorOf(entries: ReadonlyMap<Braid, { readonly g: bigint }>): Vector {
+	const counts = new Map<Braid, bigint>()
+	for (const [braid, entry] of entries) {
+		counts.set(braid, entry.g)
 	}
-	return sum
+	return Vector.from(counts)
+}
+
+function chainSum(chain: Chain): bigint {
+	const sum = vectorOf(chain.entries).sum()
+	return typeof sum === "bigint" ? sum : U64_MAX
 }
 
 function chainGeneration(chain: Chain): bigint {
@@ -127,7 +133,6 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 	refuseUnbacked(count, reader.remaining(), ENTRY_BYTES, "chain count")
 	const entries = new Map<Braid, ChainEntry>()
 	let last: Braid | undefined
-	let sum = 0n
 	for (let i = 0n; i < count; i++) {
 		const raw = reader.u32le("braid")
 		const name = braidHex(raw)
@@ -140,13 +145,11 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 		if (last !== undefined && last >= name) {
 			refuse({ kind: "Malformed", at: at() }, "sidecar chain is not strictly ascending")
 		}
-		const next = checkedAddU64(sum, g)
-		if (next === undefined) {
-			refuse({ kind: "Overflow" }, "sidecar chain sum overflows u64")
-		}
 		entries.set(name, { g: generation(g), prev, ts })
 		last = name
-		sum = next
+	}
+	if (typeof vectorOf(entries).sum() !== "bigint") {
+		refuse({ kind: "Overflow" }, "sidecar chain sum overflows u64")
 	}
 	const tag = reader.u8("pending")
 	if (tag === SETTLED) {

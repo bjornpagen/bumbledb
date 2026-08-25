@@ -27,6 +27,7 @@ use std::path::Path;
 
 use crate::braids::{BraidId, Braids};
 use crate::manifest::{Cursor, DOC_VERSION};
+use crate::vector::{Overflow, Vector};
 
 /// The sidecar's file name inside a replica directory.
 pub const CHAIN_FILE: &str = "chain";
@@ -166,12 +167,15 @@ impl Chain {
             .unwrap_or(ChainEntry::GENESIS)
     }
 
-    /// The vector sum — the settled side of `generation`.
+    /// The vector sum — the settled side of `generation`. Overflow
+    /// saturates so generation stays total; the refusal lives in
+    /// [`Vector::sum`].
     #[must_use]
     pub fn sum(&self) -> u64 {
-        self.entries()
-            .values()
-            .fold(0u64, |acc, entry| acc.saturating_add(entry.g))
+        match self.vector().sum() {
+            Ok(n) => n,
+            Err(Overflow) => u64::MAX,
+        }
     }
 
     /// The generation a store must show: the vector sum, plus one
@@ -187,7 +191,7 @@ impl Chain {
 
     /// The vector: applied counts keyed by braid.
     #[must_use]
-    pub fn vector(&self) -> BTreeMap<BraidId, u64> {
+    pub fn vector(&self) -> Vector {
         self.entries()
             .iter()
             .map(|(braid, entry)| (*braid, entry.g))
@@ -261,9 +265,11 @@ impl Chain {
             entries.insert(braid, ChainEntry { g, prev, ts });
         }
         if entries
-            .values()
-            .try_fold(0u64, |acc, entry| acc.checked_add(entry.g))
-            .is_none()
+            .iter()
+            .map(|(&braid, entry)| (braid, entry.g))
+            .collect::<Vector>()
+            .sum()
+            .is_err()
         {
             return Err(SidecarError::Overflow);
         }
@@ -349,7 +355,7 @@ fn bytes_back(count: u32, remaining: usize, min_item: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chain, Pending, SidecarError, SidecarRead, ARM_PENDING, ARM_SETTLED, CHAIN_FILE};
+    use super::{ARM_PENDING, ARM_SETTLED, CHAIN_FILE, Chain, Pending, SidecarError, SidecarRead};
     use crate::braids::braids;
     use crate::manifest::DOC_VERSION;
     use bumbledb::schema::{

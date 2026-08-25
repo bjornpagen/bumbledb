@@ -16,6 +16,7 @@ use crate::braids::{BraidId, Braids};
 use crate::store::{
     Create, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
 };
+use crate::vector::{CheckpointOrder, Overflow, Vector};
 
 /// The one accepted document version; it is the leading byte of every
 /// manifest and checkpoint record. The binary format is v:3.
@@ -328,9 +329,11 @@ impl Checkpoint {
             map.insert(braid, Head { g, hash, ts });
         }
         if map
-            .values()
-            .try_fold(0u64, |acc, head| acc.checked_add(head.g))
-            .is_none()
+            .iter()
+            .map(|(&braid, head)| (braid, head.g))
+            .collect::<Vector>()
+            .sum()
+            .is_err()
         {
             return Err(CheckpointError::Overflow);
         }
@@ -359,17 +362,20 @@ impl Checkpoint {
         *blake3::hash(&self.render()).as_bytes()
     }
 
-    /// The vector sum — the checkpoint order's total order.
+    /// The vector sum — the checkpoint order's total order. Overflow
+    /// saturates so the CAS order stays total; the refusal lives in
+    /// [`Vector::sum`].
     #[must_use]
     pub fn sum(&self) -> u64 {
-        self.braids
-            .values()
-            .fold(0u64, |acc, head| acc.saturating_add(head.g))
+        match self.vector().sum() {
+            Ok(n) => n,
+            Err(Overflow) => u64::MAX,
+        }
     }
 
     /// The vector: the `g` column keyed by braid.
     #[must_use]
-    pub fn vector(&self) -> BTreeMap<BraidId, u64> {
+    pub fn vector(&self) -> Vector {
         self.braids
             .iter()
             .map(|(braid, head)| (*braid, head.g))
@@ -460,7 +466,7 @@ pub fn publish_checkpoint<S: ObjectStore>(
                     return Ok(Published::Refused(PublishRefusal::Checkpoint(error)));
                 }
             };
-            if candidate.sum() <= incumbent_doc.sum() {
+            if candidate.vector().order(&incumbent_doc.vector()) != CheckpointOrder::After {
                 return Ok(Published::Kept { incumbent });
             }
         }

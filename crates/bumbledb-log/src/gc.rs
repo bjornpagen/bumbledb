@@ -328,7 +328,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
                 )));
             }
         };
-        if target.dominates(&Vector::from(doc.vector())) {
+        if target.dominates(&doc.vector()) {
             base = Some((digest, doc));
             break;
         }
@@ -370,7 +370,7 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     chain.write_atomic(dir)?;
     Ok(Restore::Restored {
         db: Box::new(db),
-        vector: Vector::from(chain.vector()),
+        vector: chain.vector(),
     })
 }
 
@@ -416,7 +416,7 @@ pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
             }
         };
         if doc.braids.values().all(|head| head.ts <= t_ms) {
-            base_vector = Vector::from(doc.vector());
+            base_vector = doc.vector();
             break;
         }
         cursor = doc.prev;

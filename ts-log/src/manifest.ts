@@ -10,12 +10,13 @@
 
 import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
-import { ByteReader, ByteWriter, checkedAddU64, digest32FromHex, hex32 } from "#bytes.ts"
+import { ByteReader, ByteWriter, digest32FromHex, hex32 } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
 import { refuse } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
+import { Vector } from "#vector.ts"
 
 const DOC_VERSION = 3
 const U32_MAX = 0xffffffffn
@@ -122,6 +123,18 @@ interface CheckpointFacts {
 	readonly sum: bigint
 }
 
+function vectorOfHeads(braids: ReadonlyMap<Braid, CheckpointHead>): Vector {
+	const counts = new Map<Braid, bigint>()
+	for (const [id, head] of braids) {
+		counts.set(id, head.g)
+	}
+	return Vector.from(counts)
+}
+
+function checkpointVector(facts: CheckpointFacts): Vector {
+	return vectorOfHeads(facts.braids)
+}
+
 function renderCheckpoint(facts: CheckpointFacts): Uint8Array {
 	const braids = [...facts.braids.keys()].sort()
 	const count = BigInt(braids.length)
@@ -153,7 +166,6 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 	const count = BigInt(reader.u32le("braid count"))
 	refuseUnbacked(count, reader.remaining(), MIN_HEAD_BYTES, "braid count")
 	const braids = new Map<Braid, CheckpointHead>()
-	let sum = 0n
 	for (let i = 0n; i < count; i++) {
 		const raw = reader.u32le("braid")
 		const name = braidHex(raw)
@@ -171,22 +183,21 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 			)
 		}
 		braids.set(name, { g: generation(g), hash: hex32(hash), ts })
-		const next = checkedAddU64(sum, g)
-		if (next === undefined) {
-			refuse({ kind: "Overflow" }, "checkpoint vector sum overflows u64")
-		}
-		sum = next
 	}
 	const catalog = reader.array32("catalog")
 	const writer = reader.u64le("writer")
 	const prev = readOptionalDigest(reader, "prev")
 	finish(reader, "the checkpoint")
+	const summed = vectorOfHeads(braids).sum()
+	if (typeof summed !== "bigint") {
+		refuse({ kind: "Overflow" }, "checkpoint vector sum overflows u64")
+	}
 	return {
 		braids,
 		catalog: hex32(catalog),
 		writer,
 		prev: prev === null ? null : hex32(prev),
-		sum
+		sum: summed
 	}
 }
 
@@ -207,4 +218,4 @@ function auditCatalog(facts: CheckpointFacts | null, computed: string): void {
 }
 
 export type { CheckpointFacts, CheckpointHead, Manifest }
-export { auditCatalog, DOC_VERSION, parseCheckpoint, parseManifest, renderCheckpoint, renderManifest }
+export { auditCatalog, checkpointVector, DOC_VERSION, parseCheckpoint, parseManifest, renderCheckpoint, renderManifest }

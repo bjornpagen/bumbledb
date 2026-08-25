@@ -357,7 +357,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// The replica's vector: per-braid applied counts.
     #[must_use]
     pub fn vector(&self) -> Vector {
-        Vector::from(self.chain.vector())
+        self.chain.vector()
     }
 
     /// Where the current directory came from.
@@ -400,7 +400,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// `refresh` until this vector dominates `target`.
     pub fn wait_for(&mut self, target: &Vector) -> Result<Waited, Fault> {
         loop {
-            let have = Vector::from(self.chain.vector());
+            let have = self.chain.vector();
             if let Some(braid) = target.braids().find(|&braid| {
                 self.wedged.contains_key(&braid) && have.at(braid) < target.at(braid)
             }) {
@@ -575,7 +575,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                     if let Some(refusal) = self.audit_reached_floor()? {
                         return Ok(Refreshed::Refused(refusal));
                     }
-                    return Ok(Refreshed::Vector(Vector::from(self.chain.vector())));
+                    return Ok(Refreshed::Vector(self.chain.vector()));
                 }
                 Ok(false) => {}
                 Err(refusal) => return Ok(Refreshed::Refused(refusal)),
@@ -592,7 +592,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     fn reseed(&mut self) -> Result<Refreshed, Fault> {
         self.discard()?;
         match self.establish()? {
-            None => Ok(Refreshed::Vector(Vector::from(self.chain.vector()))),
+            None => Ok(Refreshed::Vector(self.chain.vector())),
             Some(refusal) => Ok(Refreshed::Refused(refusal)),
         }
     }
