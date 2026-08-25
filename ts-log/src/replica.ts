@@ -15,9 +15,9 @@ import { internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { parse } from "#braids.ts"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, digest32, digest32FromHex, toHex } from "#bytes.ts"
+import { bytesEqual, digest32, digest32FromHex, saturatingAddU64, toHex } from "#bytes.ts"
 import type { Chain, ChainEntry, Pending } from "#chain.ts"
-import { chainGeneration, readSidecar, writeSidecar } from "#chain.ts"
+import { chainGeneration, chainSum, readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Braid, Descriptor, RelationInfo } from "#descriptor.ts"
@@ -226,6 +226,13 @@ function holdPending<Rels extends SchemaRelations>(core: Core<Rels>, batch: Pend
 	core.chain = { tag: "pending", entries: entriesOf(core), batch: held }
 }
 
+function pendingOf<Rels extends SchemaRelations>(core: Core<Rels>): HeldBatch | null {
+	if (core.chain.tag !== "pending") {
+		return null
+	}
+	return core.chain.batch as HeldBatch
+}
+
 function settleHeld<Rels extends SchemaRelations>(core: Core<Rels>): void {
 	core.chain = { tag: "settled", entries: entriesOf(core) }
 }
@@ -374,10 +381,10 @@ async function applySlot<Rels extends SchemaRelations>(
 }
 
 /**
- * The gc floor rule: below the current checkpoint's vector a 404 is a
- * collected hole, at or above it the honest tip.
+ * The published checkpoint vector is the one floor: a slot at or
+ * below it is retired, and a create must not touch the store.
  */
-function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, next: Generation): boolean {
+function belowFloor<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, slot: Generation): boolean {
 	const id = braidOf(core.theory, braid)
 	if (core.checkpoint === null) {
 		return false
@@ -386,7 +393,54 @@ function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, ne
 	if (floor === undefined) {
 		return false
 	}
-	return next <= floor.g
+	return slot <= floor.g
+}
+
+/**
+ * The gc floor rule: below the current checkpoint's vector a 404 is a
+ * collected hole, at or above it the honest tip.
+ */
+function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, next: Generation): boolean {
+	return belowFloor(core, braid, next)
+}
+
+/**
+ * Classification of a pending batch against occupant, store
+ * generation, and the floor. BelowFloor is published (`Clear`) — the
+ * slot is already in the trusted history, not a candidate to re-judge.
+ */
+type PendingFold =
+	| { readonly tag: "ours" }
+	| { readonly tag: "theirs-unapplied" }
+	| { readonly tag: "theirs-applied" }
+	| { readonly tag: "absent-unapplied" }
+	| { readonly tag: "absent-applied" }
+	| { readonly tag: "below-floor" }
+	| { readonly tag: "phantom" }
+
+function foldPending(
+	sum: bigint,
+	generation: bigint,
+	occupant: Uint8Array | null,
+	pendingBytes: Uint8Array,
+	covered: boolean
+): PendingFold {
+	if (covered) {
+		return { tag: "below-floor" }
+	}
+	if (occupant !== null && bytesEqual(occupant, pendingBytes)) {
+		return { tag: "ours" }
+	}
+	if (occupant !== null) {
+		return generation === sum ? { tag: "theirs-unapplied" } : { tag: "theirs-applied" }
+	}
+	if (generation === sum) {
+		return { tag: "absent-unapplied" }
+	}
+	if (generation === saturatingAddU64(sum, 1n)) {
+		return { tag: "absent-applied" }
+	}
+	return { tag: "phantom" }
 }
 
 function isCorruption(error: unknown): boolean {
@@ -504,30 +558,29 @@ async function adoptManifest<Rels extends SchemaRelations>(
 			"the store's manifest names a different theory"
 		)
 	}
-	core.manifestEtag = etag
 	if (manifest.checkpoint === null) {
 		core.checkpoint = null
 		core.checkpointDigest = null
-		return
+	} else if (manifest.checkpoint !== core.checkpointDigest) {
+		const facts = await core.store.get(checkpointJsonKey(core.prefix, manifest.checkpoint))
+		if (facts === null) {
+			throw errors.new(`manifest points at absent checkpoint ${manifest.checkpoint}`)
+		}
+		const checkpoint = parseCheckpoint(facts.bytes)
+		for (const id of checkpoint.braids.keys()) {
+			braidOf(core.theory, id)
+		}
+		const carried = [...checkpoint.braids.keys()].sort()
+		const derived = [...core.descriptor.braidMembers.keys()].sort()
+		if (carried.join(",") !== derived.join(",")) {
+			refuse({ kind: "CheckpointBraids", carried, derived }, "checkpoint braid set drifted from the derived braids")
+		}
+		core.checkpoint = checkpoint
+		core.checkpointDigest = manifest.checkpoint
 	}
-	if (manifest.checkpoint === core.checkpointDigest) {
-		return
-	}
-	const facts = await core.store.get(checkpointJsonKey(core.prefix, manifest.checkpoint))
-	if (facts === null) {
-		throw errors.new(`manifest points at absent checkpoint ${manifest.checkpoint}`)
-	}
-	const checkpoint = parseCheckpoint(facts.bytes)
-	for (const id of checkpoint.braids.keys()) {
-		braidOf(core.theory, id)
-	}
-	const carried = [...checkpoint.braids.keys()].sort()
-	const derived = [...core.descriptor.braidMembers.keys()].sort()
-	if (carried.join(",") !== derived.join(",")) {
-		refuse({ kind: "CheckpointBraids", carried, derived }, "checkpoint braid set drifted from the derived braids")
-	}
-	core.checkpoint = checkpoint
-	core.checkpointDigest = manifest.checkpoint
+	// The pointer is adopted only after the checkpoint it names is in
+	// hand. A failed fetch leaves the old etag and the old floor (40/67).
+	core.manifestEtag = etag
 }
 
 /** A replica never births a manifest. Absence is ManifestMissing. */
@@ -697,6 +750,19 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 	if (chain.tag === "settled") {
 		return
 	}
+	// A slot the floor already covers is published (`Clear`), not re-judged (46).
+	if (
+		foldPending(
+			chainSum(core.chain),
+			generationOf(core),
+			null,
+			chain.batch.bytes,
+			belowFloor(core, chain.batch.braid, chain.batch.gen)
+		).tag === "below-floor"
+	) {
+		await settle(core)
+		return
+	}
 	const decoded = errors.trySync(function decodePending() {
 		return decodeBatch(core.descriptor, chain.batch.bytes)
 	})
@@ -724,12 +790,16 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
  * unopenable (or discarded), so the sidecar's pending is resolved
  * against a freshly caught-up store — a byte-equal published slot
  * absorbs it (L10's idempotent replay), and everything else takes the
- * one loss path's re-judgment at the tip. A slot at or below the floor
- * is already published.
+ * one loss path's re-judgment at the tip. A slot the floor already
+ * covers is published (`Clear`), not re-judged (46).
  */
 async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>, pending: Pending): Promise<void> {
 	const braid = braidOf(core.theory, pending.braid)
-	if (holeAt(core, braid, pending.gen)) {
+	if (
+		foldPending(chainSum(core.chain), generationOf(core), null, pending.bytes, belowFloor(core, braid, pending.gen))
+			.tag === "below-floor"
+	) {
+		await settle(core)
 		return
 	}
 	const decoded = errors.trySync(function decodePending() {
@@ -977,20 +1047,24 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 	return replica
 }
 
-export type { ApplyPhase, Core, OpenReplicaOptions, RefreshOutcome, Replica, ReplicaState, SlotApply }
+export type { ApplyPhase, Core, OpenReplicaOptions, PendingFold, RefreshOutcome, Replica, ReplicaState, SlotApply }
 export {
 	applyOps,
 	applySlot,
+	belowFloor,
 	blake3Hex,
 	chainEntry,
 	chainOf,
 	clearPending,
 	coreOf,
 	discardAndReopen,
+	entriesOf,
+	foldPending,
 	generationOf,
 	holdPending,
 	maxBigint,
 	openReplica,
+	pendingOf,
 	persistSidecar,
 	readdressPending,
 	vectorOf,

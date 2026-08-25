@@ -9,7 +9,7 @@ import { DOC_VERSION } from "#document.ts"
 import { ErrManifestMissing, ErrRefused, refusalOf } from "#errors.ts"
 import { manifestKey } from "#keys.ts"
 import { renderManifest } from "#manifest.ts"
-import { openReplica } from "#replica.ts"
+import { coreOf, openReplica } from "#replica.ts"
 import { memStore } from "#store.ts"
 import { Ledger } from "#test/fixtures.ts"
 
@@ -52,5 +52,55 @@ describe("replica open refusals", function suite() {
 		assert.ok(caught.error)
 		assert.ok(errors.is(caught.error, ErrRefused))
 		assert.equal(refusalOf(caught.error)?.kind, "UnknownBraid")
+	})
+})
+
+describe("adoptManifest is one transition", function suite() {
+	test("the etag is assigned only after the checkpoint document is in hand", function order() {
+		const source = fs.readFileSync(path.resolve(import.meta.dirname, "../src/replica.ts"), "utf8")
+		const start = source.indexOf("async function adoptManifest")
+		const end = source.indexOf("async function refreshManifest")
+		assert.ok(start !== -1 && end > start)
+		const body = source.slice(start, end)
+		const facts = body.indexOf("await core.store.get(checkpointJsonKey")
+		const checkpoint = body.indexOf("core.checkpoint = checkpoint")
+		const etag = body.indexOf("core.manifestEtag = etag")
+		assert.ok(facts !== -1, "checkpoint bytes are fetched")
+		assert.ok(checkpoint !== -1, "checkpoint facts are adopted")
+		assert.ok(etag !== -1, "etag is adopted")
+		assert.equal(body.indexOf("core.manifestEtag = etag", etag + 1), -1, "etag is assigned once")
+		assert.ok(facts < checkpoint, "checkpoint bytes precede checkpoint facts")
+		assert.ok(checkpoint < etag, "checkpoint facts precede etag")
+	})
+
+	test("a failed checkpoint fetch leaves the old etag, so the floor cannot freeze", async function failedFetch() {
+		const store = memStore()
+		const descriptor = descriptorOf(Ledger)
+		const created = await store.putCreate(
+			manifestKey("prod/main"),
+			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: null })
+		)
+		assert.equal(created.tag, "created")
+		const replica = await openReplica({
+			store,
+			prefix: "prod/main",
+			dir: path.join(tmpRoot, "adopt-fail"),
+			theory: Ledger
+		})
+		const core = coreOf(replica)
+		const genesis = core.manifestEtag
+		assert.ok(genesis !== null)
+		const swapped = await store.putSwap(
+			manifestKey("prod/main"),
+			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: "ab".repeat(32) }),
+			genesis
+		)
+		assert.equal(swapped.tag, "swapped")
+		core.passes = 15
+		const caught = await errors.try(replica.refresh())
+		assert.ok(caught.error)
+		assert.equal(core.manifestEtag, genesis, "etag stays the old pointer when the checkpoint is absent")
+		assert.equal(core.checkpoint, null)
+		await replica[Symbol.asyncDispose]()
 	})
 })
