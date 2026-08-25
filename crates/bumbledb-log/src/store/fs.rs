@@ -72,7 +72,7 @@ fn read_generation(path: &Path) -> u64 {
 
 fn write_generation(root: &Path, dest: &Path, token: u64) -> io::Result<()> {
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_dir(parent)?;
     }
     let body = Lease {
         holder: WriterId(0),
@@ -128,8 +128,32 @@ fn ensure_parent(root: &Path, dest: &Path) -> io::Result<()> {
     let dir = dest
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent"))?;
-    fs::create_dir_all(dir)?;
+    ensure_dir(dir)?;
     sync_ancestors(dest, root)
+}
+
+/// Concurrent constructors share one root. Darwin `create_dir_all` returns
+/// EEXIST when a sibling already minted the directory and `is_dir` still
+/// loses the race; that is occupancy of a reserved node, not a fault.
+fn ensure_dir(path: &Path) -> io::Result<()> {
+    match fs::create_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// EEXIST on create is the sibling constructor: it occupies the key or
+/// already minted `~tmp` / `~lease`. That is the create-or-exist sum —
+/// `Exists` when GET proves a foreign occupant, `Created` when our bytes
+/// landed, `Ambiguous` when the key is still vacant — never infrastructure.
+fn settle_create(path: &Path, attempted: &[u8]) -> io::Result<Create> {
+    key_shape_fault(path)?;
+    match read_fetched(path)? {
+        Some(fetched) if fetched.bytes == attempted => Ok(Create::Created(fetched.etag)),
+        Some(_) => Ok(Create::Exists),
+        None => Ok(Create::Ambiguous),
+    }
 }
 
 fn key_shape_fault(path: &Path) -> io::Result<()> {
@@ -197,7 +221,29 @@ impl ObjectStore for FsStore {
                 }
             }
         };
-        run().map_err(infra("put_create", key.as_str()))
+        // EEXIST is the sibling constructor: it published the key or
+        // already minted `~tmp` / `~lease`. That is Exists / Ambiguous,
+        // never a failed put_create.
+        let mut vacant = 0_u8;
+        loop {
+            match run() {
+                Ok(outcome) => return Ok(outcome),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    match settle_create(&path, body.bytes)
+                        .map_err(infra("put_create", key.as_str()))?
+                    {
+                        Create::Ambiguous => {
+                            vacant += 1;
+                            if vacant == 8 {
+                                return Ok(Create::Ambiguous);
+                            }
+                        }
+                        outcome => return Ok(outcome),
+                    }
+                }
+                Err(err) => return Err(infra("put_create", key.as_str())(err)),
+            }
+        }
     }
 
     fn put_swap<'a>(
