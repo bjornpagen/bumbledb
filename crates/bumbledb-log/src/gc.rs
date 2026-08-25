@@ -9,6 +9,7 @@
 //! exists). The gc window is also the audit window: history nobody
 //! replays again is vouched for by its publisher alone.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use bumbledb::{Db, Theory, Violations};
@@ -30,11 +31,22 @@ use crate::store::{ObjectStore, Result as StoreResult};
 /// value; consumer: the duty binary's one sweep after the cadence check.
 pub const CHECKPOINT_RETAIN_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 
-/// What one sweep deleted.
+/// What one sweep deleted. `swept_below` is the exclusive end of the
+/// contiguous deleted prefix per braid — the next sweep resumes there.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Sweep {
     pub log_deleted: Vec<String>,
     pub checkpoints_deleted: Vec<String>,
+    pub swept_below: BTreeMap<BraidId, u64>,
+}
+
+/// The checkpointer's trusted publish clock. Age is
+/// `now_ms.saturating_sub(publish_ms)`; `publish_ms` is the instant the
+/// current checkpoint entered reachable history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishClock {
+    pub now_ms: u64,
+    pub publish_ms: u64,
 }
 
 /// Why the sweep refused to run at all.
@@ -61,19 +73,43 @@ pub enum Gc {
     Refused(GcRefusal),
 }
 
-/// The gc verb: one sweep under window `window_ms` at `now_ms`.
-/// Log objects strictly below the current checkpoint's vector whose
-/// batch timestamp is older than the window die, walking each braid
-/// downward from the floor so deletion stays a contiguous bottom
-/// segment. Checkpoints behind the current one die by the same clock,
-/// json before object, so an interrupted sweep truncates the backlink
-/// walk instead of dangling it.
+/// The gc verb: one sweep under window `window_ms`. Ages against
+/// `now_ms` as the publish stamp — the checkpointer's clock when the
+/// caller has not threaded a distinct stamp (see [`gc_at`]).
 pub fn gc<S: ObjectStore>(
     store: &S,
     prefix: &str,
     codec: &Codec,
     window_ms: u64,
     now_ms: u64,
+) -> StoreResult<Gc> {
+    gc_at(
+        store,
+        prefix,
+        codec,
+        window_ms,
+        PublishClock {
+            now_ms,
+            publish_ms: now_ms,
+        },
+    )
+}
+
+/// One sweep under `window_ms` at `clock`. Log objects strictly below
+/// the current checkpoint's vector whose publish age exceeds the window
+/// die, walking each braid upward from the swept-below marker toward
+/// the floor so the deleted region is the contiguous prefix `[0, marker)`.
+/// A missing slot advances the marker; a young or undecodable slot
+/// stops that braid. Checkpoints behind the current one die by the same
+/// clock: the sweep walks the Merkle backlink, then deletes `.mdb` and
+/// `.json` as one unit from the tail so an interrupted sweep leaves a
+/// walkable json, never an orphan mdb.
+pub fn gc_at<S: ObjectStore>(
+    store: &S,
+    prefix: &str,
+    codec: &Codec,
+    window_ms: u64,
+    clock: PublishClock,
 ) -> StoreResult<Gc> {
     let Some(fetched) = store.get(&manifest_key(prefix))? else {
         return Ok(Gc::Refused(GcRefusal::ManifestMissing));
@@ -91,57 +127,100 @@ pub fn gc<S: ObjectStore>(
     };
 
     let mut sweep = Sweep::default();
+    let old = clock.now_ms.saturating_sub(clock.publish_ms) > window_ms;
 
     for (braid, head) in &doc.braids {
-        let mut old = false;
-        let mut slot = head.g;
-        while slot > 1 {
-            slot -= 1;
-            let key = log_key(prefix, *braid, slot);
-            let Some(object) = store.get(&key)? else {
-                break;
-            };
-            if !old {
-                let Ok(batch) = codec.decode(&object.bytes) else {
-                    // An undecodable object blocks its braid's sweep:
-                    // deleting around evidence is worse than keeping it.
-                    break;
-                };
-                if now_ms.saturating_sub(batch.header.timestamp) <= window_ms {
-                    continue;
-                }
-                old = true;
-            }
-            store.delete(&key)?;
-            sweep.log_deleted.push(key.to_string());
-        }
+        let marker = sweep_log_braid(store, prefix, codec, *braid, head.g, old, &mut sweep)?;
+        sweep.swept_below.insert(*braid, marker);
     }
 
-    let mut digest = doc.prev;
+    sweep_checkpoints(store, prefix, codec, doc.prev, old, &mut sweep)?;
+
+    Ok(Gc::Swept(sweep))
+}
+
+/// Walks slots `[1, floor)` upward. Missing objects are already in the
+/// deleted prefix and advance the marker; an undecodable object blocks
+/// the braid.
+fn sweep_log_braid<S: ObjectStore>(
+    store: &S,
+    prefix: &str,
+    codec: &Codec,
+    braid: BraidId,
+    floor: u64,
+    old: bool,
+    sweep: &mut Sweep,
+) -> StoreResult<u64> {
+    let mut marker = 0;
+    let mut slot = 1;
+    while slot < floor {
+        let key = log_key(prefix, braid, slot);
+        match store.get(&key)? {
+            None => {
+                marker = slot + 1;
+                slot += 1;
+            }
+            Some(object) => {
+                if !old {
+                    break;
+                }
+                if codec.decode(&object.bytes).is_err() {
+                    break;
+                }
+                store.delete(&key)?;
+                sweep.log_deleted.push(key.to_string());
+                marker = slot + 1;
+                slot += 1;
+            }
+        }
+    }
+    Ok(marker)
+}
+
+/// Walks the Merkle backlink from `start`, then deletes old nodes from
+/// the tail. A missing json still drops its mdb; a corrupt json stops
+/// the walk.
+fn sweep_checkpoints<S: ObjectStore>(
+    store: &S,
+    prefix: &str,
+    codec: &Codec,
+    start: Option<[u8; 32]>,
+    old: bool,
+    sweep: &mut Sweep,
+) -> StoreResult<()> {
+    let mut chain = Vec::new();
+    let mut digest = start;
     while let Some(prior) = digest {
         let Some(object) = store.get(&ckpt_json_key(prefix, &prior))? else {
+            store.delete(&ckpt_mdb_key(prefix, &prior))?;
             break;
         };
         let Ok(prior_doc) = Checkpoint::parse(&object.bytes, codec.braids()) else {
             break;
         };
         digest = prior_doc.prev;
-        let age = prior_doc
-            .braids
-            .values()
-            .map(|head| head.ts)
-            .max()
-            .unwrap_or(0);
-        if now_ms.saturating_sub(age) > window_ms {
-            store.delete(&ckpt_json_key(prefix, &prior))?;
-            store.delete(&ckpt_mdb_key(prefix, &prior))?;
-            sweep
-                .checkpoints_deleted
-                .push(crate::manifest::hex32(&prior));
-        }
+        chain.push(prior);
     }
+    if !old {
+        return Ok(());
+    }
+    for prior in chain.into_iter().rev() {
+        delete_checkpoint_unit(store, prefix, &prior)?;
+        sweep
+            .checkpoints_deleted
+            .push(crate::manifest::hex32(&prior));
+    }
+    Ok(())
+}
 
-    Ok(Gc::Swept(sweep))
+fn delete_checkpoint_unit<S: ObjectStore>(
+    store: &S,
+    prefix: &str,
+    digest: &[u8; 32],
+) -> StoreResult<()> {
+    store.delete(&ckpt_mdb_key(prefix, digest))?;
+    store.delete(&ckpt_json_key(prefix, digest))?;
+    Ok(())
 }
 
 fn fetch_doc<S: ObjectStore>(

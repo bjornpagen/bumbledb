@@ -12,8 +12,10 @@ use bumbledb::schema::{
 };
 use bumbledb::{SchemaDescriptor, Value};
 use bumbledb_log::braids::braids;
-use bumbledb_log::gc::{Gc, Restore, RestoreRefusal, gc, restore_by_time, restore_to_vector};
-use bumbledb_log::manifest::log_key;
+use bumbledb_log::gc::{
+    Gc, PublishClock, Restore, RestoreRefusal, gc, gc_at, restore_by_time, restore_to_vector,
+};
+use bumbledb_log::manifest::{ckpt_json_key, ckpt_mdb_key, log_key};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
@@ -40,6 +42,26 @@ fn restored(
     match outcome {
         Restore::Restored { db, vector } => (*db, vector),
         Restore::Refused(refusal) => panic!("restore refused: {refusal:?}"),
+    }
+}
+
+fn sweep_at(
+    log: &lane_d_support::TestLog,
+    window_ms: u64,
+    now_ms: u64,
+    publish_ms: u64,
+) -> bumbledb_log::gc::Sweep {
+    match gc_at(
+        &log.store,
+        "",
+        &log.codec,
+        window_ms,
+        PublishClock { now_ms, publish_ms },
+    )
+    .expect("gc")
+    {
+        Gc::Swept(sweep) => sweep,
+        other => panic!("expected a sweep, got {other:?}"),
     }
 }
 
@@ -79,22 +101,21 @@ fn the_exemption_law_is_exact() {
     log.checkpoint(builder.db(), &scratch);
     drop(builder);
 
-    // Window: slots older than 1500 ms at now = 4000 die — kitchen 1
-    // and 2 — while kitchen 3 (young) and kitchen 4 (the floor) and
-    // notes 1 (the notes floor) survive.
-    let swept = match gc(&log.store, "", &log.codec, 1_500, 4_000).expect("gc") {
-        Gc::Swept(sweep) => sweep,
-        other => panic!("expected a sweep, got {other:?}"),
-    };
+    // Window 1500 at now 4000 against publish 2000: the below-floor
+    // kitchen prefix is old as one unit; kitchen 4 and notes 1 are the
+    // floor and survive. The walk names slots in ascending order.
+    let swept = sweep_at(&log, 1_500, 4_000, 2_000);
     assert_eq!(
         swept.log_deleted,
         vec![
-            log_key("", kitchen, 2).to_string(),
             log_key("", kitchen, 1).to_string(),
+            log_key("", kitchen, 2).to_string(),
+            log_key("", kitchen, 3).to_string(),
         ],
-        "the walk deletes downward from the first old slot"
+        "the walk deletes upward through the old prefix"
     );
     assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
+    assert_eq!(swept.swept_below.get(&kitchen).copied(), Some(4));
     assert!(
         log.store
             .get(&log_key("", kitchen, 1))
@@ -111,7 +132,7 @@ fn the_exemption_law_is_exact() {
         log.store
             .get(&log_key("", kitchen, 3))
             .expect("get")
-            .is_some()
+            .is_none()
     );
     assert!(
         log.store
@@ -126,11 +147,9 @@ fn the_exemption_law_is_exact() {
             .is_some()
     );
 
-    // A second sweep under an enormous window deletes nothing more.
-    let swept = match gc(&log.store, "", &log.codec, u64::MAX, 4_000).expect("gc") {
-        Gc::Swept(sweep) => sweep,
-        other => panic!("expected a sweep, got {other:?}"),
-    };
+    // A second sweep under the same clock deletes nothing more: the
+    // prefix is already `[0, marker)`.
+    let swept = sweep_at(&log, 1_500, 4_000, 2_000);
     assert_eq!(swept.log_deleted, Vec::<String>::new());
     assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
 }
@@ -153,17 +172,35 @@ fn old_checkpoints_die_behind_the_current_one() {
     let current_digest = log.checkpoint(builder.db(), &scratch);
     drop(builder);
 
-    let swept = match gc(&log.store, "", &log.codec, 10_000, 1_000_000).expect("gc") {
-        Gc::Swept(sweep) => sweep,
-        other => panic!("expected a sweep, got {other:?}"),
-    };
+    let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);
     assert_eq!(
         swept.checkpoints_deleted,
         vec![bumbledb_log::manifest::hex32(&old_digest)]
     );
     assert!(
         log.store
-            .get(&bumbledb_log::manifest::ckpt_json_key("", &current_digest))
+            .get(&ckpt_json_key("", &old_digest))
+            .expect("get")
+            .is_none(),
+        "json and mdb die as one unit"
+    );
+    assert!(
+        log.store
+            .get(&ckpt_mdb_key("", &old_digest))
+            .expect("get")
+            .is_none(),
+        "json and mdb die as one unit"
+    );
+    assert!(
+        log.store
+            .get(&ckpt_json_key("", &current_digest))
+            .expect("get")
+            .is_some(),
+        "the current checkpoint is always exempt"
+    );
+    assert!(
+        log.store
+            .get(&ckpt_mdb_key("", &current_digest))
             .expect("get")
             .is_some(),
         "the current checkpoint is always exempt"
@@ -339,4 +376,132 @@ fn restore_refuses_a_braid_the_schema_never_minted() {
         Restore::Refused(other) => panic!("wrong refusal: {other:?}"),
         Restore::Restored { .. } => panic!("unknown braid must refuse"),
     }
+}
+
+#[test]
+fn an_interrupted_sweep_resumes_past_a_hole() {
+    let root = temp_dir("gc_hole");
+    let local = temp_dir("gc_hole_local");
+    let scratch = temp_dir("gc_hole_scratch");
+    let mut log = TestLog::new(root.clone(), "");
+    let kitchen = kitchen_braid(&log.codec);
+
+    log.publish(kitchen, &[insert_recipe(1)], 1_000);
+    log.publish(kitchen, &[insert_recipe(2)], 2_000);
+    log.publish(kitchen, &[insert_recipe(3)], 3_000);
+    log.publish(kitchen, &[insert_recipe(4)], 4_000);
+    let builder = open_replica(&root, &local.join("builder"));
+    log.checkpoint(builder.db(), &scratch);
+    drop(builder);
+
+    log.store
+        .delete(&log_key("", kitchen, 2))
+        .expect("plant a hole");
+
+    let swept = sweep_at(&log, 1_500, 4_000, 2_000);
+    assert_eq!(
+        swept.log_deleted,
+        vec![
+            log_key("", kitchen, 1).to_string(),
+            log_key("", kitchen, 3).to_string(),
+        ],
+        "a hole advances the marker; the walk continues upward"
+    );
+    assert_eq!(swept.swept_below.get(&kitchen).copied(), Some(4));
+    assert!(
+        log.store
+            .get(&log_key("", kitchen, 1))
+            .expect("get")
+            .is_none()
+    );
+    assert!(
+        log.store
+            .get(&log_key("", kitchen, 3))
+            .expect("get")
+            .is_none()
+    );
+    assert!(
+        log.store
+            .get(&log_key("", kitchen, 4))
+            .expect("get")
+            .is_some(),
+        "the floor stays"
+    );
+}
+
+#[test]
+fn a_writer_claimed_timestamp_does_not_age_the_slot() {
+    let root = temp_dir("gc_clock");
+    let local = temp_dir("gc_clock_local");
+    let scratch = temp_dir("gc_clock_scratch");
+    let mut log = TestLog::new(root.clone(), "");
+    let kitchen = kitchen_braid(&log.codec);
+
+    // The writer stamps the batch at the observation instant; the
+    // checkpointer stamped the covering checkpoint far earlier.
+    log.publish(kitchen, &[insert_recipe(1)], 1_000_000);
+    log.publish(kitchen, &[insert_recipe(2)], 1_000_000);
+    let builder = open_replica(&root, &local.join("builder"));
+    log.checkpoint(builder.db(), &scratch);
+    drop(builder);
+
+    let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);
+    assert_eq!(
+        swept.log_deleted,
+        vec![log_key("", kitchen, 1).to_string()],
+        "age is the publish clock, not the batch header"
+    );
+    assert!(
+        log.store
+            .get(&log_key("", kitchen, 1))
+            .expect("get")
+            .is_none()
+    );
+    assert!(
+        log.store
+            .get(&log_key("", kitchen, 2))
+            .expect("get")
+            .is_some(),
+        "the floor stays"
+    );
+}
+
+#[test]
+fn a_missing_checkpoint_json_still_drops_its_mdb() {
+    let root = temp_dir("gc_unit");
+    let local = temp_dir("gc_unit_local");
+    let scratch = temp_dir("gc_unit_scratch");
+    let mut log = TestLog::new(root.clone(), "");
+    let kitchen = kitchen_braid(&log.codec);
+
+    log.publish(kitchen, &[insert_recipe(1)], 1_000);
+    let builder = open_replica(&root, &local.join("b1"));
+    let old_digest = log.checkpoint(builder.db(), &scratch);
+    drop(builder);
+
+    log.publish(kitchen, &[insert_recipe(2)], 2_000);
+    let builder = open_replica(&root, &local.join("b2"));
+    log.checkpoint(builder.db(), &scratch);
+    drop(builder);
+
+    log.store
+        .delete(&ckpt_json_key("", &old_digest))
+        .expect("drop json");
+    assert!(
+        log.store
+            .get(&ckpt_mdb_key("", &old_digest))
+            .expect("get")
+            .is_some(),
+        "mdb remains after the json disappears"
+    );
+
+    let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);
+    assert!(
+        log.store
+            .get(&ckpt_mdb_key("", &old_digest))
+            .expect("get")
+            .is_none(),
+        "the unit delete drops the orphan mdb"
+    );
+    assert_eq!(swept.checkpoints_deleted, Vec::<String>::new());
 }
