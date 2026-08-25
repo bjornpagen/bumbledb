@@ -798,7 +798,6 @@ async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOpti
 		deposition: null
 	}
 	await withGate(core, async function openTransition() {
-		await ensureFreshLeases(core, state)
 		await settleInheritedPending(core, state)
 	})
 	return {
