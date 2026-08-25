@@ -68,3 +68,16 @@ rendering.
 30's green is one script. The test lane is `cargo nextest run
 --workspace` — one process pool. The config is `.config/nextest.toml`
 at the workspace root.
+
+## 20 — the async boundary is a runtime constructor refuse (29)
+
+20 spells the async/sync boundary as a type: misuse will not compile.
+Rust cannot inhabit a token that is unobtainable inside an async
+context without a second public capability on `ObjectStore`. The
+trait stays five sync verbs. `S3Store::new` and every verb return
+`Err` when `Handle::try_current` is `Ok`, and never `block_on` from
+that context. The compile-time spelling is this runtime constructor
+refuse — the logged substitute.
+
+The binding contract is unchanged: an async caller cannot
+`block_on`-panic the dedicated runtime.

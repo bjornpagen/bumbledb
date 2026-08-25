@@ -261,6 +261,29 @@ async function persistSidecar<Rels extends SchemaRelations>(core: Core<Rels>): P
 	await writeSidecar(sidecarPath(core), chainOf(core))
 }
 
+/** Writes the checkpoint store file and fsyncs the file and its parent
+ *  directory — the mdb is durable before the sidecar. */
+async function writeCheckpointMdb(dir: string, bytes: Uint8Array): Promise<void> {
+	const data = path.join(dir, "data.mdb")
+	const handle = await fs.open(data, "w")
+	const written = await errors.try(
+		(async function writeAll() {
+			await handle.writeFile(bytes)
+			await handle.sync()
+		})()
+	)
+	await handle.close()
+	if (written.error) {
+		throw errors.wrap(written.error, `write checkpoint store ${data}`)
+	}
+	const parent = await fs.open(dir, "r")
+	const synced = await errors.try(parent.sync())
+	await parent.close()
+	if (synced.error) {
+		throw errors.wrap(synced.error, `fsync checkpoint store directory ${dir}`)
+	}
+}
+
 async function settle<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	settleHeld(core)
 	await persistSidecar(core)
@@ -351,9 +374,10 @@ function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly 
 }
 
 /**
- * The two-step apply discipline: `db.write` the batch, then advance the
- * sidecar. Chain and publish-law refusals live here; a rejected replay
- * is phase-scoped: discard before the store has proven itself whole,
+ * Decode, verify the chain, `db.write` the batch, then refuse a
+ * first-applied no-op against the identity. The sidecar advances
+ * only after that check; a rejected replay is phase-scoped:
+ * discard before the store has proven itself whole,
  * `ErrReplayDiverged` after.
  */
 async function applySlot<Rels extends SchemaRelations>(
@@ -373,15 +397,15 @@ async function applySlot<Rels extends SchemaRelations>(
 		}
 		throw errors.wrap(ErrReplayDiverged, `braid ${braid} slot ${slot} writer ${decoded.header.writer}`)
 	}
-	entriesOf(core).set(braid, { g: slot, prev: blake3Digest(bytes), ts: decoded.header.timestamp })
-	await persistSidecar(core)
-	const expected = chainGeneration(core.chain)
-	if (outcome.value.generation < expected) {
+	const identity = chainSum(core.chain) - entry.g + slot
+	if (outcome.value.generation < identity) {
 		refuse(
 			{ kind: "NoOpSlot", braid, slot, writer: decoded.header.writer },
 			`braid ${braid} slot ${slot}: a first-applied slot changed nothing — publish-law violation by writer ${decoded.header.writer}`
 		)
 	}
+	entriesOf(core).set(braid, { g: slot, prev: blake3Digest(bytes), ts: decoded.header.timestamp })
+	await persistSidecar(core)
 	return { tag: "applied", generation: outcome.value.generation }
 }
 
@@ -623,7 +647,7 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 			throw errors.new(`checkpoint ${hex32(core.checkpointDigest)} names an absent .mdb`)
 		}
 		await fs.mkdir(target, { recursive: true })
-		await fs.writeFile(path.join(target, "data.mdb"), mdb.bytes)
+		await writeCheckpointMdb(target, mdb.bytes)
 		core.db = await SdkDb.open(target, core.theory)
 		core.chain = {
 			tag: "settled",

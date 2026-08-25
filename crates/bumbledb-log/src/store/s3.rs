@@ -125,9 +125,9 @@ impl S3Store {
         })
     }
 
-    /// The verbs are the sync surface. An async caller has no method;
-    /// this gate returns `Err` so the dedicated runtime never
-    /// `block_on`s from a foreign context.
+    /// The verbs are the sync surface. Construction and every verb
+    /// return `Err` when this thread is inside an async context, so
+    /// the dedicated runtime never `block_on`s from a foreign context.
     fn block<T>(&self, fut: impl std::future::Future<Output = T>) -> Result<T> {
         if Handle::try_current().is_ok() {
             return Err(StoreError {
