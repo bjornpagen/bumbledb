@@ -3,7 +3,8 @@
 //! maps their outcomes onto the trait's sums and nothing else. A 409
 //! is `Ambiguous`, never a proved `Exists` or `Moved`. Conditional
 //! writes are not retried by the transport. Credentials are consulted
-//! per request, off the worker threads.
+//! per request, off the worker threads. Body-stream failures ride
+//! `ErrStore`.
 
 use std::io;
 use std::sync::Arc;
@@ -17,7 +18,8 @@ use object_store::{
 use tokio::runtime::{Builder, Handle, Runtime};
 
 use super::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap, parse_prefix,
+    Create, ErrStore, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
+    parse_prefix, prove_create, prove_swap,
 };
 
 /// Static keys, or a caller-owned refresh the store invokes before
@@ -234,26 +236,79 @@ fn join_prefix(prefix: &str, key: &str) -> String {
     }
 }
 
-fn infra(op: &'static str, key: &StoreKey, source: ObjError) -> StoreError {
-    StoreError {
+fn infra(op: &'static str, key: &StoreKey, source: ObjError) -> ErrStore {
+    ErrStore {
         op,
         key: key.to_string(),
         source: io::Error::other(source),
     }
 }
 
+/// A body-stream failure is an infrastructure error, never a raw
+/// vendor error leaking past the store channel.
+fn stream_err(op: &'static str, key: &StoreKey, source: ObjError) -> ErrStore {
+    infra(op, key, source)
+}
+
 fn etag_of(op: &'static str, key: &StoreKey, raw: Option<String>) -> Result<Etag> {
-    raw.map(Etag).ok_or_else(|| StoreError {
+    raw.map(Etag).ok_or_else(|| ErrStore {
         op,
         key: key.to_string(),
         source: io::Error::new(io::ErrorKind::InvalidData, "vendor omitted ETag"),
     })
 }
 
-/// 409 Conflict is `Ambiguous`. object_store maps it onto `AlreadyExists`.
-fn is_conflict(err: &ObjError) -> bool {
-    let text = err.to_string();
-    text.contains("409") || text.contains("Conflict")
+/// 409 Conflict, a timed-out PUT, and any other unproved transport
+/// result. object_store maps 409 onto `AlreadyExists`, so the walk
+/// has to read the status out of the source chain — the variant
+/// alone is not a proof.
+fn is_unproved(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(err);
+    while let Some(e) = current {
+        if unproved_text(&e.to_string()) {
+            return true;
+        }
+        current = e.source();
+    }
+    false
+}
+
+fn unproved_text(text: &str) -> bool {
+    text.contains("409")
+        || text.contains("Conflict")
+        || text.contains("CONFLICT")
+        || text.contains("timed out")
+        || text.contains("TimedOut")
+}
+
+/// Create-only: 412 / a remapped `AlreadyExists` is a proved
+/// occupation. 409 and a timeout are not — they stay `Ambiguous`.
+fn create_from_put(key: &StoreKey, source: ObjError) -> Result<Create> {
+    if is_unproved(&source) {
+        Ok(Create::Ambiguous)
+    } else if matches!(
+        source,
+        ObjError::AlreadyExists { .. } | ObjError::Precondition { .. }
+    ) {
+        Ok(Create::Exists)
+    } else {
+        Err(infra("put_create", key, source))
+    }
+}
+
+/// Swap: 412 / 404 is a proved `Moved`. 409 lands as `AlreadyExists`
+/// in the crate and is never a proved mismatch.
+fn swap_from_put(key: &StoreKey, source: ObjError) -> Result<Swap> {
+    if is_unproved(&source) || matches!(source, ObjError::AlreadyExists { .. }) {
+        Ok(Swap::Ambiguous)
+    } else if matches!(
+        source,
+        ObjError::Precondition { .. } | ObjError::NotFound { .. }
+    ) {
+        Ok(Swap::Moved)
+    } else {
+        Err(infra("put_swap", key, source))
+    }
 }
 
 struct RefreshProvider {
@@ -309,7 +364,7 @@ impl ObjectStore for S3Store {
                     let bytes = result
                         .bytes()
                         .await
-                        .map_err(|source| infra("get", key, source))?;
+                        .map_err(|source| stream_err("get", key, source))?;
                     Ok(Some(Fetched {
                         bytes: bytes.to_vec(),
                         etag: tag,
@@ -331,7 +386,7 @@ impl ObjectStore for S3Store {
                     let bytes = result
                         .bytes()
                         .await
-                        .map_err(|source| infra("get_if_changed", key, source))?;
+                        .map_err(|source| stream_err("get_if_changed", key, source))?;
                     Ok(Poll::Changed(Fetched {
                         bytes: bytes.to_vec(),
                         etag: tag,
@@ -346,20 +401,17 @@ impl ObjectStore for S3Store {
     fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
         let path = self.object_path(key)?;
         let payload = bytes.to_vec();
-        self.block(async {
+        let raw = self.block(async {
             match self
                 .inner
                 .put_opts(&path, payload.into(), PutMode::Create.into())
                 .await
             {
                 Ok(result) => Ok(Create::Created(etag_of("put_create", key, result.e_tag)?)),
-                Err(source) if is_conflict(&source) => Ok(Create::Ambiguous),
-                Err(ObjError::AlreadyExists { .. } | ObjError::Precondition { .. }) => {
-                    Ok(Create::Exists)
-                }
-                Err(source) => Err(infra("put_create", key, source)),
+                Err(source) => create_from_put(key, source),
             }
-        })?
+        })??;
+        prove_create(self, key, bytes, raw)
     }
 
     fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
@@ -369,18 +421,17 @@ impl ObjectStore for S3Store {
             e_tag: Some(etag.0.clone()),
             version: None,
         });
-        self.block(async {
+        let raw = self.block(async {
             match self
                 .inner
                 .put_opts(&path, payload.into(), mode.into())
                 .await
             {
                 Ok(result) => Ok(Swap::Swapped(etag_of("put_swap", key, result.e_tag)?)),
-                Err(source) if is_conflict(&source) => Ok(Swap::Ambiguous),
-                Err(ObjError::Precondition { .. } | ObjError::NotFound { .. }) => Ok(Swap::Moved),
-                Err(source) => Err(infra("put_swap", key, source)),
+                Err(source) => swap_from_put(key, source),
             }
-        })?
+        })??;
+        prove_swap(self, key, bytes, raw)
     }
 
     fn delete(&self, key: &StoreKey) -> Result<()> {
@@ -498,5 +549,109 @@ mod tests {
             Err(err) => assert_eq!(err.op, "open"),
             Ok(_) => panic!("reserved prefix is refused"),
         }
+    }
+
+    fn conflict_exists(path: &str) -> ObjError {
+        ObjError::AlreadyExists {
+            path: path.into(),
+            source: "409 Conflict".into(),
+        }
+    }
+
+    #[test]
+    fn conflict_on_create_is_ambiguous_never_exists() {
+        let key = StoreKey::of("log/c00000000/1");
+        assert!(matches!(
+            create_from_put(&key, conflict_exists(key.as_str())),
+            Ok(Create::Ambiguous)
+        ));
+        assert!(
+            !matches!(
+                create_from_put(&key, conflict_exists(key.as_str())),
+                Ok(Create::Exists) | Ok(Create::Created(_))
+            ),
+            "409 is not a proved occupation"
+        );
+        let proved = ObjError::Precondition {
+            path: key.to_string(),
+            source: "412 Precondition Failed".into(),
+        };
+        assert!(matches!(create_from_put(&key, proved), Ok(Create::Exists)));
+    }
+
+    #[test]
+    fn conflict_on_swap_is_ambiguous_never_moved() {
+        let key = StoreKey::of("manifest.json");
+        assert!(matches!(
+            swap_from_put(&key, conflict_exists(key.as_str())),
+            Ok(Swap::Ambiguous)
+        ));
+        assert!(
+            !matches!(
+                swap_from_put(&key, conflict_exists(key.as_str())),
+                Ok(Swap::Moved) | Ok(Swap::Swapped(_))
+            ),
+            "409 is not a proved mismatch"
+        );
+        let proved = ObjError::Precondition {
+            path: key.to_string(),
+            source: "412 Precondition Failed".into(),
+        };
+        assert!(matches!(swap_from_put(&key, proved), Ok(Swap::Moved)));
+    }
+
+    #[test]
+    fn timed_out_put_is_ambiguous() {
+        let key = StoreKey::of("log/c00000000/1");
+        let timed = ObjError::Generic {
+            store: "S3",
+            source: "request timed out".into(),
+        };
+        assert!(matches!(
+            create_from_put(&key, timed),
+            Ok(Create::Ambiguous)
+        ));
+    }
+
+    #[test]
+    fn stream_failure_is_err_store() {
+        let key = StoreKey::of("ckpt/digest.mdb");
+        let err: ErrStore = stream_err(
+            "get",
+            &key,
+            ObjError::Generic {
+                store: "S3",
+                source: "body closed mid-stream".into(),
+            },
+        );
+        assert_eq!(err.op, "get");
+        assert_eq!(err.key, key.as_str());
+        assert!(err.source.to_string().contains("body closed mid-stream"));
+    }
+
+    #[test]
+    fn refresh_is_consulted_per_request() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let calls = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&calls);
+        let provider = RefreshProvider {
+            refresh: Arc::new(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(StaticKeys {
+                    access_key_id: "AKIA".into(),
+                    secret_access_key: "secret".into(),
+                    session_token: None,
+                })
+            }),
+        };
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            provider.get_credential().await.expect("first");
+            provider.get_credential().await.expect("second");
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "refresh is not memoized");
     }
 }

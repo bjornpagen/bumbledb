@@ -3,23 +3,55 @@
 //! deletes its directory — the disposable law — and the `_shared`
 //! control-plane tenant is pinned, never evicted. A replica directory
 //! has one owner: a fenced CAS lease. `tenant` returns a live handle
-//! whose pin holds eviction off; a disposed handle is a distinct type.
+//! whose refcount pins eviction off until drop; a disposed handle is a
+//! distinct type with no replica, so every verb on it is a compile-time
+//! refusal.
 
 use std::fs;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use bumbledb::Theory;
 
 use crate::replica::{Fault, OpenRefusal, Opened, Replica};
-use crate::store::fence::{DIR_TTL_MS, HeldLease, LeaseBusy, acquire_dir};
+use crate::store::fence::{acquire_dir, HeldLease, LeaseBusy, DIR_TTL_MS};
 use crate::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap, WriterId,
-    segment_ok,
+    segment_ok, Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+    WriterId,
 };
 
 /// The pinned control-plane tenant.
 pub const SHARED_TENANT: &str = "_shared";
+
+/// A live tenant handle. The pin is held until this value is dropped,
+/// so the LRU cannot evict or dispose the replica for the borrow.
+/// Replica verbs are reachable by deref; a [`Disposed`] handle has none.
+pub struct Live<'lru, T: Theory + Clone, S: ObjectStore> {
+    replica: &'lru mut Replica<T, Shared<S>>,
+    pin: Arc<AtomicUsize>,
+}
+
+impl<T: Theory + Clone, S: ObjectStore> Drop for Live<'_, T, S> {
+    fn drop(&mut self) {
+        self.pin.fetch_sub(1, Ordering::Release);
+    }
+}
+
+impl<T: Theory + Clone, S: ObjectStore> Deref for Live<'_, T, S> {
+    type Target = Replica<T, Shared<S>>;
+
+    fn deref(&self) -> &Self::Target {
+        self.replica
+    }
+}
+
+impl<T: Theory + Clone, S: ObjectStore> DerefMut for Live<'_, T, S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.replica
+    }
+}
 
 /// A handle whose replica is gone. Every verb on this type is a
 /// compile-time refusal — there is no replica field to call.
@@ -76,10 +108,10 @@ pub enum TenantRefusal {
     Exclusive,
 }
 
-/// Outcome of a tenant lookup. `Ready` is a live replica; a [`Disposed`]
-/// handle is a different type and cannot appear here.
+/// Outcome of a tenant lookup. `Ready` is a [`Live`] handle; a
+/// [`Disposed`] handle is a different type and cannot appear here.
 pub enum Tenant<'lru, T: Theory + Clone, S: ObjectStore> {
-    Ready(&'lru mut Replica<T, Shared<S>>),
+    Ready(Live<'lru, T, S>),
     Refused(TenantRefusal),
 }
 
@@ -87,7 +119,7 @@ struct Entry<T: Theory + Clone, S: ObjectStore> {
     id: String,
     replica: Replica<T, Shared<S>>,
     lease: HeldLease,
-    pins: usize,
+    pins: Arc<AtomicUsize>,
 }
 
 /// The LRU itself. Recency order lives in `open`: the back is the most
@@ -133,9 +165,42 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
         WriterId(u64::from(std::process::id()))
     }
 
+    fn add_pin(&mut self) {
+        self.open
+            .last_mut()
+            .expect("pinned entry")
+            .pins
+            .fetch_add(1, Ordering::Acquire);
+    }
+
+    fn unpin_last(&mut self) {
+        self.open
+            .last_mut()
+            .expect("pinned entry")
+            .pins
+            .fetch_sub(1, Ordering::Release);
+    }
+
+    fn take_live(&mut self) -> Live<'_, T, S> {
+        let last = self.open.last_mut().expect("pinned entry");
+        Live {
+            replica: &mut last.replica,
+            pin: Arc::clone(&last.pins),
+        }
+    }
+
+    fn finish_live(&mut self) -> Result<Tenant<'_, T, S>, Fault> {
+        self.add_pin();
+        if let Err(err) = self.enforce_budget() {
+            self.unpin_last();
+            return Err(err);
+        }
+        Ok(Tenant::Ready(self.take_live()))
+    }
+
     /// The tenant's replica, opening it on a miss and evicting the
     /// least-recent unpinned replicas past the budget. The returned
-    /// handle is live: its pin holds eviction off for the borrow.
+    /// handle is live: its pin holds eviction off until drop.
     pub fn tenant(&mut self, id: &str) -> Result<Tenant<'_, T, S>, Fault> {
         if !segment_ok(id) {
             return Ok(Tenant::Refused(TenantRefusal::Id));
@@ -143,61 +208,68 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
         if let Some(index) = self.open.iter().position(|entry| entry.id == id) {
             let entry = self.open.remove(index);
             self.open.push(entry);
-            let last = self.open.last_mut().expect("pushed above");
-            last.pins = last.pins.saturating_add(1);
-            let _ = last.lease.refresh(DIR_TTL_MS);
-            last.pins = last.pins.saturating_sub(1);
-        } else {
-            let local = self.dir.join(id);
-            if let Err(err) = fs::create_dir_all(&local) {
-                return Err(Fault::Io(err));
+            let current = self
+                .open
+                .last()
+                .expect("pushed above")
+                .lease
+                .still_current()?;
+            if !current {
+                // Another process may own the directory. Close our
+                // replica and expire our token; do not delete the dir.
+                drop(self.open.pop().expect("pushed above"));
+                return Ok(Tenant::Refused(TenantRefusal::Exclusive));
             }
-            let lease = match acquire_dir(&local, Self::holder()) {
-                Ok(lease) => lease,
-                Err(LeaseBusy::Live) => return Ok(Tenant::Refused(TenantRefusal::Exclusive)),
-                Err(LeaseBusy::Io(err)) => return Err(Fault::Io(err)),
-            };
-            let replica = match Replica::open(
-                self.store.clone(),
-                &self.prefix(id),
-                &local,
-                self.theory.clone(),
-            )? {
-                Opened::Ready(replica) => *replica,
-                Opened::Refused(refusal) => {
-                    drop(lease);
-                    return Ok(Tenant::Refused(TenantRefusal::Open(refusal)));
-                }
-            };
-            self.open.push(Entry {
-                id: id.to_string(),
-                replica,
-                lease,
-                pins: 1,
-            });
-            self.enforce_budget()?;
-            if let Some(last) = self.open.last_mut() {
-                last.pins = last.pins.saturating_sub(1);
-            }
+            self.open
+                .last()
+                .expect("pushed above")
+                .lease
+                .refresh(DIR_TTL_MS)?;
+            return self.finish_live();
         }
-        let replica = &mut self.open.last_mut().expect("pushed above").replica;
-        Ok(Tenant::Ready(replica))
+        let local = self.dir.join(id);
+        fs::create_dir_all(&local)?;
+        let lease = match acquire_dir(&local, Self::holder()) {
+            Ok(lease) => lease,
+            Err(LeaseBusy::Live) => return Ok(Tenant::Refused(TenantRefusal::Exclusive)),
+            Err(LeaseBusy::Io(err)) => return Err(Fault::Io(err)),
+        };
+        let replica = match Replica::open(
+            self.store.clone(),
+            &self.prefix(id),
+            &local,
+            self.theory.clone(),
+        )? {
+            Opened::Ready(replica) => *replica,
+            Opened::Refused(refusal) => {
+                drop(lease);
+                return Ok(Tenant::Refused(TenantRefusal::Open(refusal)));
+            }
+        };
+        self.open.push(Entry {
+            id: id.to_string(),
+            replica,
+            lease,
+            pins: Arc::new(AtomicUsize::new(0)),
+        });
+        self.finish_live()
     }
 
     /// Evicts one tenant by id: closes the replica and deletes its
-    /// directory. Pinned `_shared` refuses by doing nothing. The
-    /// returned [`Disposed`] is the handle type after eviction.
+    /// directory. Pinned `_shared` refuses by doing nothing. A live
+    /// pin refuses by doing nothing. The returned [`Disposed`] is the
+    /// handle type after eviction.
     pub fn evict(&mut self, id: &str) -> Result<Option<Disposed>, Fault> {
         if id == SHARED_TENANT {
             return Ok(None);
         }
         if let Some(index) = self.open.iter().position(|entry| entry.id == id) {
-            if self.open[index].pins > 0 {
+            if self.open[index].pins.load(Ordering::Acquire) > 0 {
                 return Ok(None);
             }
             let entry = self.open.remove(index);
             drop(entry.lease);
-            entry.replica.dispose().map_err(Fault::Io)?;
+            entry.replica.dispose()?;
             return Ok(Some(Disposed));
         }
         Ok(None)
@@ -223,9 +295,8 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
         Ok(total)
     }
 
-    /// Least-recent-first eviction, skipping the pinned tenant, any
-    /// pinned borrow, and the most recent entry, until both budgets
-    /// hold or nothing evictable remains.
+    /// Least-recent-first eviction, skipping the pinned tenant and any
+    /// live pin, until both budgets hold or nothing evictable remains.
     fn enforce_budget(&mut self) -> Result<(), Fault> {
         loop {
             let over_count = self.open.len() > self.options.max_open;
@@ -233,15 +304,14 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
             if !over_count && !over_bytes {
                 return Ok(());
             }
-            let last = self.open.len().saturating_sub(1);
-            let Some(index) = self.open.iter().enumerate().position(|(index, entry)| {
-                entry.id != SHARED_TENANT && index != last && entry.pins == 0
+            let Some(index) = self.open.iter().position(|entry| {
+                entry.id != SHARED_TENANT && entry.pins.load(Ordering::Acquire) == 0
             }) else {
                 return Ok(());
             };
             let entry = self.open.remove(index);
             drop(entry.lease);
-            entry.replica.dispose().map_err(Fault::Io)?;
+            entry.replica.dispose()?;
         }
     }
 }
