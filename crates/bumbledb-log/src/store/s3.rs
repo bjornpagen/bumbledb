@@ -121,6 +121,9 @@ impl S3Store {
         })
     }
 
+    /// The verbs are the sync surface. An async caller has no method;
+    /// this gate returns `Err` so the dedicated runtime never
+    /// `block_on`s from a foreign context.
     fn block<T>(&self, fut: impl std::future::Future<Output = T>) -> Result<T> {
         if Handle::try_current().is_ok() {
             return Err(StoreError {
@@ -519,6 +522,28 @@ mod tests {
         match opened {
             Err(err) => assert_eq!(err.op, "open"),
             Ok(_) => panic!("S3Store must refuse construction inside an async context"),
+        }
+    }
+
+    #[test]
+    fn verbs_refuse_inside_an_async_context() {
+        let store = S3Store::new(&S3Config {
+            endpoint: None,
+            region: "us-east-1".into(),
+            bucket: "example".into(),
+            credentials: static_keys(),
+            prefix: String::new(),
+        })
+        .expect("build");
+        let key = StoreKey::of("manifest.json");
+        let nested = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("nested runtime");
+        let got = nested.block_on(async { store.get(&key) });
+        match got {
+            Err(err) => assert_eq!(err.op, "block"),
+            Ok(_) => panic!("a sync verb is uncallable from an async context"),
         }
     }
 
