@@ -37,3 +37,34 @@ in `ckpt-scratch`). No new flex.
 
 The parent PRD set and the cutover folder retired into
 proposals/settlement/ (00-canon.md); doc references above are historical.
+
+## 20-one-encoding — the version byte stays 3 (b10ec531)
+
+20's new grammar could have taken a new version byte. It does not:
+documents begin with byte 3. The JSON v:3 interlude never shipped, so
+there is no phantom v:4. The parser refuses anything that is not the
+binary magic.
+
+## 40-one-identity — the theory file stays text (6c17e3d9)
+
+40's one-encoding law covers protocol objects — machines write binary.
+The theory file is hand-walked JSON: humans write text. That boundary
+is the law's other half, not an exemption.
+
+## 20-one-encoding — the lease counter is canonical decimal ASCII (baebdd85)
+
+20's binary grammar covers protocol documents. A lease is CAS'd
+metadata, not a protocol document: the counter body is a canonical
+decimal ASCII u64.
+
+## 40-one-identity — a digest in memory is bytes (73a5c542)
+
+40 tried hex strings as the TS in-memory digest. That surface is
+deleted. A digest is branded 32 bytes in both drivers; hex is a
+rendering.
+
+## 30-one-battery — the battery runs nextest (46b0412b, 650a2875)
+
+30's green is one script. The test lane is `cargo nextest run
+--workspace` — one process pool. The config is `.config/nextest.toml`
+at the workspace root.
