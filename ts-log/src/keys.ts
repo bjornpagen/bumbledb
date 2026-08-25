@@ -12,7 +12,8 @@
 
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
-import { digest32, digest32FromHex, hex32, U64_MAX } from "#bytes.ts"
+import { digest32, hex32, U64_MAX } from "#bytes.ts"
+import type { Digest32 } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 
 /** A segment wearing this suffix — after format characters are stripped — is not a key. */
@@ -137,15 +138,15 @@ function scratchCkptName(): string {
 const SCRATCH_VERSION = 3
 
 /** The scratch-lease body: version byte 3, then the 32-byte digest. */
-function encodeCkptScratch(digest: string): Uint8Array {
+function encodeCkptScratch(digest: Digest32): Uint8Array {
 	const out = new Uint8Array(33)
 	out[0] = SCRATCH_VERSION
-	out.set(digest32FromHex(digest), 1)
+	out.set(digest, 1)
 	return out
 }
 
 /** The digest a scratch-lease body names, or null. */
-function scratchCkptDigest(bytes: Uint8Array): string | null {
+function scratchCkptDigest(bytes: Uint8Array): Digest32 | null {
 	if (bytes.length !== 33) {
 		return null
 	}
@@ -153,10 +154,10 @@ function scratchCkptDigest(bytes: Uint8Array): string | null {
 	if (version !== SCRATCH_VERSION) {
 		return null
 	}
-	return hex32(digest32(bytes.subarray(1)))
+	return digest32(bytes.subarray(1))
 }
 
-function parseCkptScratch(bytes: Uint8Array): string | null {
+function parseCkptScratch(bytes: Uint8Array): Digest32 | null {
 	return scratchCkptDigest(bytes)
 }
 
@@ -187,8 +188,8 @@ function checkpointMdbKey(prefix: string, digest: string): StoreKey {
 	return assemble(prefix, `ckpt/${digest}.mdb`)
 }
 
-function checkpointJsonKey(prefix: string, digest: string): StoreKey {
-	return assemble(prefix, `ckpt/${digest}`)
+function ckptDocKey(prefix: string, digest: Digest32): StoreKey {
+	return assemble(prefix, `ckpt/${hex32(digest)}`)
 }
 
 function idsKey(prefix: string, relation: number, field: number): StoreKey {
@@ -205,7 +206,7 @@ function tenantPrefix(root: string, tenant: string): string {
 export type { Generation, StoreKey }
 export {
 	CKPT_SCRATCH_LEASE,
-	checkpointJsonKey,
+	ckptDocKey,
 	checkpointMdbKey,
 	encodeCkptScratch,
 	generation,
