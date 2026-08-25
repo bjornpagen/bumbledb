@@ -1,29 +1,37 @@
 /**
- * The writer (60): a replica plus the right to create log objects. One
- * commit path and one loss path: a lost slot's byte-equal occupant is
- * an ambiguous PUT absorbed; anything else discards the local
- * directory, re-opens through the replica to the current tip, and
- * re-judges the recorded ops once — the verdict IS a serial execution,
- * performed. Each loop iteration races once at the then-tip, so a
- * historical loss is structurally uncountable, and bounded live-tip
- * losses surface as ErrContention carrying the terminal re-judgment's
- * own violation or the racing tip.
+ * The writer (60): a replica plus the right to create log objects. Role
+ * is a field on the handle; this handle births the store. One commit
+ * path and one loss path: a lost slot's byte-equal occupant is an
+ * ambiguous PUT absorbed; anything else discards the local directory,
+ * re-opens through the replica to the current tip, and re-judges the
+ * recorded ops once — the verdict IS a serial execution, performed.
+ * Each loop iteration races once at the then-tip, so a historical loss
+ * is structurally uncountable, and bounded live-tip losses surface as
+ * ErrContention carrying the terminal re-judgment's own violation or
+ * the racing tip.
  */
 
 import * as crypto from "node:crypto"
-import type { Fact, FreshKeys, MemberRelation, SchemaRelations, Violation } from "@bjornpagen/bumbledb"
+import {
+	type Fact,
+	type FreshKeys,
+	internalBlake3,
+	type MemberRelation,
+	type SchemaRelations,
+	type Violation
+} from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { bytesEqual, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import { bytesEqual, checkedAddU64, digest32, digest32FromHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
 import type { Braid, RelationInfo } from "#descriptor.ts"
-import { ErrSpanningCommit, throwContention } from "#errors.ts"
+import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, throwContention } from "#errors.ts"
 import type { Generation } from "#keys.ts"
-import { generation, idsKey, logKey } from "#keys.ts"
+import { generation, idsKey, logKey, manifestKey } from "#keys.ts"
+import { renderManifest } from "#manifest.ts"
 import type { Core, Replica } from "#replica.ts"
 import {
 	applyOps,
-	blake3Hex,
 	chainEntry,
 	clearPending,
 	coreOf,
@@ -42,6 +50,11 @@ const LEASE_WIDTH = 4096n
 
 /** The live-loss bound (60): consecutive losses at the live tip, history never counts. */
 const LOSS_BOUND = 16
+
+/** Writer id in the fixed-layout header: magic + version + flags + fingerprint + braid + braid_gen + prev. */
+const WRITER_AT = 4 + 2 + 2 + 32 + 4 + 8 + 32
+
+const BATCH_MAGIC = utf8Encoder.encode("BDBL")
 
 type Durability = "published" | "local-pending"
 
@@ -84,9 +97,19 @@ interface Batch<Rels extends SchemaRelations> {
 	): readonly bigint[]
 }
 
+/** Ownership of a slot, read from the winner's header. */
+interface Deposition {
+	readonly braid: Braid
+	readonly slot: Generation
+	readonly resident: bigint
+	readonly usurper: bigint
+}
+
 interface Writer<Rels extends SchemaRelations> {
-	commit<R>(body: (batch: Batch<Rels>) => R): Promise<Commit<Rels, R>>
-	commitSplit<R>(body: (batch: Batch<Rels>) => R): Promise<CommitSplit<Rels, R>>
+	readonly role: "writer"
+	deposition(): Deposition | null
+	commit<R>(body: (batch: Batch<Rels>) => R | Promise<R>): Promise<Commit<Rels, R>>
+	commitSplit<R>(body: (batch: Batch<Rels>) => R | Promise<R>): Promise<CommitSplit<Rels, R>>
 }
 
 interface LeaseRange {
@@ -94,37 +117,81 @@ interface LeaseRange {
 	readonly end: bigint
 }
 
+/** The scream of an unbounded repair loop: the set of recent signatures,
+ *  a warning every eighth attempt, and an alarm the moment any
+ *  signature recurs. */
+interface Scream {
+	attempt(signature: string): void
+}
+
+function screamOf(context: string): Scream {
+	const seen = new Set<string>()
+	let attempts = 0
+	return {
+		attempt(signature) {
+			attempts += 1
+			if (seen.has(signature)) {
+				console.error(`bumbledb-log alarm: ${context} repair signature recurs: ${signature}`)
+			} else {
+				seen.add(signature)
+			}
+			if (attempts % 8 === 0) {
+				console.error(`bumbledb-log warning: ${context} repair attempt ${attempts}: ${signature}`)
+			}
+		}
+	}
+}
+
 interface WriterState {
 	readonly writerId: bigint
 	readonly pools: Map<string, LeaseRange[]>
+	readonly scream: Scream
+	deposition: Deposition | null
 }
-
-const ErrLeaseDrained = errors.new("bumbledb-log lease pool drained mid-recording")
-const leaseDemand = new WeakMap<Error, { relation: number; field: number }>()
 
 function poolKey(relation: number, field: number): string {
 	return `${relation}:${field}`
 }
 
-function drawIds(state: WriterState, relation: number, field: number, count: bigint): bigint[] {
+function remainingOf(state: WriterState, relation: number, field: number): bigint {
 	const pool = state.pools.get(poolKey(relation, field)) ?? []
+	let remaining = 0n
+	for (const range of pool) {
+		remaining += range.end - range.next
+	}
+	return remaining
+}
+
+function drawIds(state: WriterState, relation: number, field: number, count: bigint): bigint[] {
+	if (count < 0n) {
+		throw errors.new(`id-lease count is unsigned: ${count}`)
+	}
+	if (count > LEASE_WIDTH) {
+		refuseOverWidth({ requested: count }, `id-lease draw ${count} exceeds the lease width ${LEASE_WIDTH}`)
+	}
+	if (count === 0n) {
+		return []
+	}
+	const pool = state.pools.get(poolKey(relation, field)) ?? []
+	const range = pool[0]
+	if (range === undefined || range.end - range.next < count) {
+		refuseExhausted(
+			{ relation, field },
+			`id-lease relation ${relation} field ${field} cannot draw ${count} from the cached block`
+		)
+	}
+	if (checkedAddU64(range.next, count) === undefined) {
+		refuseExhausted({ relation, field }, `id-lease relation ${relation} field ${field} would leave u64`)
+	}
 	const ids: bigint[] = []
 	let remaining = count
-	while (remaining > 0n) {
-		const range = pool[0]
-		if (range === undefined) {
-			const fault = errors.wrap(ErrLeaseDrained, `relation ${relation} field ${field} needs ${remaining} more ids`)
-			leaseDemand.set(fault, { relation, field })
-			throw fault
-		}
-		while (remaining > 0n && range.next < range.end) {
-			ids.push(range.next)
-			range.next += 1n
-			remaining -= 1n
-		}
-		if (range.next >= range.end) {
-			pool.shift()
-		}
+	while (remaining > 0n && range.next < range.end) {
+		ids.push(range.next)
+		range.next += 1n
+		remaining -= 1n
+	}
+	if (range.next >= range.end) {
+		pool.shift()
 	}
 	state.pools.set(poolKey(relation, field), pool)
 	return ids
@@ -153,9 +220,13 @@ async function acquireLease<Rels extends SchemaRelations>(
 			throw errors.new(`id-lease counter ${key} is not a canonical decimal: ${body}`)
 		}
 		const next = BigInt(body)
-		const swapped = await core.store.putSwap(key, utf8Encoder.encode(String(next + LEASE_WIDTH)), fetched.etag)
+		const end = checkedAddU64(next, LEASE_WIDTH)
+		if (end === undefined) {
+			refuseExhausted({ relation, field }, `id-lease relation ${relation} field ${field} would leave u64`)
+		}
+		const swapped = await core.store.putSwap(key, utf8Encoder.encode(String(end)), fetched.etag)
 		if (swapped.tag === "swapped") {
-			pushRange(state, relation, field, next, next + LEASE_WIDTH)
+			pushRange(state, relation, field, next, end)
 			return
 		}
 	}
@@ -165,6 +236,19 @@ function pushRange(state: WriterState, relation: number, field: number, next: bi
 	const pool = state.pools.get(poolKey(relation, field)) ?? []
 	pool.push({ next, end })
 	state.pools.set(poolKey(relation, field), pool)
+}
+
+async function ensureFreshLeases<Rels extends SchemaRelations>(core: Core<Rels>, state: WriterState): Promise<void> {
+	for (const info of core.descriptor.relations) {
+		if (info.closed) {
+			continue
+		}
+		for (const [ordinal, field] of info.fields.entries()) {
+			if (field.fresh && remainingOf(state, info.id, ordinal) === 0n) {
+				await acquireLease(core, state, info.id, ordinal)
+			}
+		}
+	}
 }
 
 interface Recording {
@@ -254,29 +338,18 @@ function recorderOf<Rels extends SchemaRelations>(
 	return { batch, recording }
 }
 
-/** Runs the recording body, refilling the id-lease pool on a drained
- *  draw and re-running — recording is pure, so a re-run before any
- *  judgment invokes nothing twice that the store could observe. */
+/** Runs the recording body exactly once. The body is awaited to
+ *  completion before the batch is sealed; reserve draws from the
+ *  cached block (OverWidth | Exhausted | Drawn). */
 async function recordWithLeases<Rels extends SchemaRelations, R>(
 	core: Core<Rels>,
 	state: WriterState,
-	body: (batch: Batch<Rels>) => R
+	body: (batch: Batch<Rels>) => R | Promise<R>
 ): Promise<{ value: R; ops: Op[] }> {
-	for (let attempt = 0; attempt < 16; attempt++) {
-		const { batch, recording } = recorderOf(core, state)
-		const ran = errors.trySync(function runBody() {
-			return body(batch)
-		})
-		if (ran.error === undefined) {
-			return { value: ran.data, ops: recording.ops }
-		}
-		const demand = leaseDemand.get(ran.error) ?? leaseDemand.get(errors.cause(ran.error))
-		if (demand === undefined) {
-			throw ran.error
-		}
-		await acquireLease(core, state, demand.relation, demand.field)
-	}
-	throw errors.new("the id-lease pool could not satisfy the recording after 16 refills")
+	await ensureFreshLeases(core, state)
+	const { batch, recording } = recorderOf(core, state)
+	const value = await body(batch)
+	return { value, ops: recording.ops }
 }
 
 function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): Map<Braid, Op[]> {
@@ -297,9 +370,43 @@ function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: read
 	return partitioned
 }
 
+function u64leAt(bytes: Uint8Array, at: number): bigint | undefined {
+	if (bytes.length < at + 8) {
+		return undefined
+	}
+	const view = new DataView(bytes.buffer, bytes.byteOffset + at, 8)
+	return view.getBigUint64(0, true)
+}
+
+/** The usurper is a fact in the header. A body that refuses to decode
+ *  does not hide the slot's owner. */
+function headerWriter(bytes: Uint8Array): bigint | undefined {
+	if (bytes.length < BATCH_MAGIC.length || !bytesEqual(bytes.subarray(0, BATCH_MAGIC.length), BATCH_MAGIC)) {
+		return undefined
+	}
+	return u64leAt(bytes, WRITER_AT)
+}
+
+function headerTimestamp(bytes: Uint8Array): bigint | undefined {
+	return u64leAt(bytes, WRITER_AT + 8)
+}
+
+function noteDeposition(state: WriterState, braid: Braid, slot: Generation, winnerBytes: Uint8Array): void {
+	if (state.deposition !== null) {
+		return
+	}
+	const usurper = headerWriter(winnerBytes)
+	if (usurper === undefined) {
+		return
+	}
+	state.deposition = { braid, slot, resident: state.writerId, usurper }
+}
+
 /** The terminal contention scream: the re-judgment's own rejection names
  *  the hot statement and carries the offending facts' raw values; an
- *  accepted-but-outraced terminal loss carries the racing tip. */
+ *  accepted-but-outraced terminal loss carries the racing tip. A
+ *  rejection without a violation is refused — the empty statement is
+ *  unrepresentable. */
 function screamContention<Rels extends SchemaRelations>(
 	braid: Braid,
 	rejudged:
@@ -308,13 +415,16 @@ function screamContention<Rels extends SchemaRelations>(
 ): never {
 	if (rejudged.tag === "rejected") {
 		const violation = rejudged.violations[0]
+		if (violation === undefined) {
+			throw errors.new("a rejection carries at least one violation")
+		}
 		throwContention(
 			{
 				braid,
 				cause: {
 					kind: "hot-key",
-					statement: violation === undefined ? "" : violation.canonical,
-					determinants: (violation?.facts ?? []).map(function rawOf(offending) {
+					statement: violation.canonical,
+					determinants: violation.facts.map(function rawOf(offending) {
 						return offending.fact
 					})
 				}
@@ -353,9 +463,10 @@ async function publishPending<Rels extends SchemaRelations>(
 		const braid = pending.braid
 		const created = await core.store.putCreate(logKey(core.prefix, braid, pending.gen), pending.bytes)
 		let winnerBytes: Uint8Array | null = null
-		if (created.tag === "exists") {
+		if (created.tag !== "created") {
 			const fetched = await core.store.get(logKey(core.prefix, braid, pending.gen))
 			if (fetched === null) {
+				state.scream.attempt("slot vanished after create")
 				continue
 			}
 			if (!bytesEqual(fetched.bytes, pending.bytes)) {
@@ -363,14 +474,22 @@ async function publishPending<Rels extends SchemaRelations>(
 			}
 		}
 		if (winnerBytes === null) {
-			const header = decodeBatch(core.descriptor, pending.bytes).header
-			core.chain.set(braid, { g: pending.gen, prev: blake3Hex(pending.bytes), ts: header.timestamp })
+			const timestamp = headerTimestamp(pending.bytes)
+			if (timestamp === undefined) {
+				throw errors.new("pending batch header is shorter than the fixed layout")
+			}
+			core.chain.set(braid, {
+				g: pending.gen,
+				prev: digest32(new Uint8Array(internalBlake3(pending.bytes))),
+				ts: timestamp
+			})
 			await clearPending(core)
 			return { tag: "accepted", value: undefined, braid, generation: pending.gen, durability: "published" }
 		}
 
 		losses += 1
-		core.pendingApplied = false
+		state.scream.attempt("slot occupant is not ours")
+		noteDeposition(state, braid, pending.gen, winnerBytes)
 		await discardAndReopen(core)
 		const before = generationOf(core)
 		const rejudged = applyOps(core, ops)
@@ -411,7 +530,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	const bytes = encodeBatch(
 		core.descriptor,
 		{
-			fingerprint: core.descriptor.fingerprint,
+			fingerprint: digest32FromHex(core.descriptor.fingerprint),
 			braid,
 			braidGen: generation(entry.g + 1n),
 			prev: entry.prev,
@@ -422,7 +541,6 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	)
 	core.pending = { braid, gen: generation(entry.g + 1n), bytes }
 	core.pendingOps = ops
-	core.pendingApplied = false
 	await persistSidecar(core)
 
 	const before = generationOf(core)
@@ -435,31 +553,77 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 		await clearPending(core)
 		return { tag: "accepted", value: undefined, braid, generation: entry.g, durability: "published" }
 	}
-	core.pendingApplied = true
 	return publishPending(core, state, ops)
 }
 
-/** A recovered pending owed from a previous life publishes before any new commit. */
+/** An inherited pending is resolved-and-published by open. */
 async function settleInheritedPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState
 ): Promise<void> {
-	if (core.pending === null || !core.pendingApplied || core.pendingOps === null) {
+	if (core.pending === null) {
 		return
 	}
-	await publishPending(core, state, core.pendingOps)
+	let ops = core.pendingOps
+	if (ops === null) {
+		const decoded = errors.trySync(function decodePending() {
+			return decodeBatch(core.descriptor, (core.pending as { bytes: Uint8Array }).bytes)
+		})
+		if (decoded.error) {
+			await clearPending(core)
+			return
+		}
+		ops = decoded.data.ops
+	}
+	const published = await publishPending(core, state, ops)
+	if (published.tag === "rejected") {
+		return
+	}
+}
+
+/** Only the writer births a store: create-only PUT of a genesis manifest. */
+async function birthStore<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
+	const key = manifestKey(core.prefix)
+	for (;;) {
+		const fetched = await core.store.get(key)
+		if (fetched !== null) {
+			if (core.manifestEtag === null) {
+				core.manifestEtag = fetched.etag
+			}
+			return
+		}
+		const bytes = renderManifest({ fingerprint: core.descriptor.fingerprint, checkpoint: null })
+		const created = await core.store.putCreate(key, bytes)
+		if (created.tag === "created") {
+			core.manifestEtag = created.etag
+			core.checkpoint = null
+			core.checkpointDigest = null
+			return
+		}
+	}
 }
 
 function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Writer<Rels> {
 	const core = coreOf(replica)
 	const state: WriterState = {
 		writerId: crypto.randomBytes(8).readBigUInt64LE(),
-		pools: new Map()
+		pools: new Map(),
+		scream: screamOf("writer discard-and-re-pull"),
+		deposition: null
 	}
+	const opened = withGate(core, async function openTransition() {
+		await birthStore(core)
+		await ensureFreshLeases(core, state)
+		await settleInheritedPending(core, state)
+	})
 	return {
+		role: "writer",
+		deposition() {
+			return state.deposition
+		},
 		async commit(body) {
 			return withGate(core, async function commitBody() {
-				await settleInheritedPending(core, state)
+				await opened
 				const recorded = await recordWithLeases(core, state, body)
 				if (recorded.ops.length === 0) {
 					throw errors.new("commit recorded no ops — an empty transaction names no braid")
@@ -479,7 +643,7 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 
 		async commitSplit(body) {
 			return withGate(core, async function splitBody() {
-				await settleInheritedPending(core, state)
+				await opened
 				const recorded = await recordWithLeases(core, state, body)
 				if (recorded.ops.length === 0) {
 					throw errors.new("commitSplit recorded no ops — an empty transaction names no braid")
@@ -505,5 +669,5 @@ function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Write
 	}
 }
 
-export type { Batch, BraidOutcome, Commit, CommitSplit, Durability, Writer }
+export type { Batch, BraidOutcome, Commit, CommitSplit, Deposition, Durability, Writer }
 export { openWriter }
