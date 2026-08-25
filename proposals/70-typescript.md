@@ -20,9 +20,9 @@ import {
 const replica = await openReplica({ store: s3(env), prefix: "prod/main", dir: "/tmp/store", theory: Ledger })
 replica.db                                  // the SDK's Db<Rels>; reads are engine verbs
 replica.vector                              // ReadonlyMap<Braid, bigint>
-await replica.refresh()                     // all braids, round-robin → vector
-await replica.refresh(braid)                // one braid
-await replica.waitFor(vector)               // session vector: pointwise dominance —
+await replica.refresh()                     // one stepper, all braids, one slot each → vector
+await replica.refresh(braid)                // the same stepper, one braid, one slot
+await replica.waitFor(vector)               // the same stepper with a predicate:
                                             // read-your-writes across a split, monotone
                                             // reads across instances, one call; a
                                             // singleton map IS the single-braid form
@@ -165,9 +165,12 @@ destination of every five-verb test that never touches a disk. The `fs`
 store on Node `fs` is **tier-1, not a dev double** — it
 is deployment case 5's production backend (00) and speaks the one
 on-disk protocol of 40 verbatim: `wx`-opened synced temp published with
-`fs.link`, computed blake3 etags, the pid-lockfile beside the key —
-one protocol, two conforming implementations, raced against each other
-in the interop conformance lane. It runs every lane the S3 store runs
+`fs.link`, computed blake3 etags, the fenced CAS lease
+`{holder, token, expires}` — one protocol, two conforming
+implementations, raced against each other
+in the interop conformance lane. There is no pid-lockfile and no
+`kill(0)`. Document and sidecar `u64` fields parse to `bigint`, never
+`number`; pending bytes are the codec's lowercase hex. It runs every lane the S3 store runs
 (80); a lane that passes on one and not the other is a reported gap.
 Blake3 rides
 the engine package's existing native binding: the SDK's

@@ -10,7 +10,7 @@ ever added; that record remains exactly true.
 
 | Need | Existing surface |
 | --- | --- |
-| The per-braid index | `GenerationId` advances exactly once per state-changing commit; the vector sum equals the store generation (50's sidecar splits it per braid) |
+| The per-braid index | `GenerationId` advances exactly once per state-changing commit; `generation(chain)` equals the store generation (50's sidecar is `Settled \| Pending` and splits the vector per braid) |
 | Apply | the dyn collection write path inside one `db.write` |
 | Checkpoints | `Db::compact()` — read-txn-pinned; writers keep flowing |
 | Bootstrap | `Db::create` (empty-candidate admission) |

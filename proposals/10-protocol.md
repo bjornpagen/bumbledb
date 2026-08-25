@@ -76,18 +76,22 @@ advances the generation exactly once. Nothing else counts anything.
 Canonical single-line UTF-8 JSON, strict parse, field order fixed:
 
 ```json
-{"v":2,"fingerprint":"<64 hex>","checkpoint":"<64 hex digest>"}
+{"v":3,"fingerprint":"<64 hex>","checkpoint":"<64 hex digest>"}
 ```
 
-Three fields; `checkpoint` is `null` from store birth until the first
-checkpoint lands (a JSON null, a real sum arm — never `""`). The manifest
-is a **pure pointer**: every checkpoint fact (sum, vector, chain heads,
-backlink) lives in the immutable, content-addressed `ckpt/{digest}.json`
-it points to, so the mutable CAS surface of the entire protocol is one
-64-hex field. The deleted candidates are deletions on purpose: a `floors`
-head-hint answered "where is the head?" a second way (the probe is the
-way — one way per question) with no named consumer; a `writer` string was
-an advisory arrangement whose null was `""` — the house crime by name.
+Three fields; the parser refuses `v:2` — there is no translator. `v` is
+the version discriminator and the one JSON number the documents carry;
+every other numeric field in a protocol document is a decimal string, so
+a `u64` cannot lose precision through `number`. `checkpoint` is `null`
+from store birth until the first checkpoint lands (a JSON null, a real
+sum arm — never `""`). The manifest is a **pure pointer**: every
+checkpoint fact (sum, vector, chain heads, backlink) lives in the
+immutable, content-addressed `ckpt/{digest}.json` it points to, so the
+mutable CAS surface of the entire protocol is one 64-hex field. The
+deleted candidates are deletions on purpose: a `floors` head-hint
+answered "where is the head?" a second way (the probe is the way — one
+way per question) with no named consumer; a `writer` string was an
+advisory arrangement whose null was `""` — the house crime by name.
 Who may write is answered by slot arbitration and nothing else; writer
 identity for diagnostics rides in every batch header (20). Version
 evolution is a recorded reopen trigger (split `min_reader`/`min_writer`
@@ -95,19 +99,22 @@ gates, Delta's `protocol` action) that activates the first day two
 deployment versions coexist — not before.
 
 Heads are discovered by forward probing (`GET log/{braid}/{k+1}` until
-404), and the current checkpoint's vector doubles as the **gc floor**:
-the retention law never deletes a log object ≥ that vector, so a 404 at
-`k+1` is the tip if `k+1 > checkpoint vector[braid]` (or if `checkpoint`
-is null — nothing has ever been gc-eligible), and a gc'd hole
-(`GapDetected`) otherwise — the 404 is never ambiguous (50 owns the
-rule). The freshness this rule needs is cheap by construction: poll the
+404), and the current checkpoint's vector is the **gc floor**: a
+write-path invariant every slot create and delete asserts, not advice
+the reader consults. The retention law never deletes a log object ≥
+that vector, so a 404 at `k+1` is the tip if
+`k+1 > checkpoint vector[braid]` (or if `checkpoint` is null — nothing
+has ever been gc-eligible), and a gc'd hole (`GapDetected`) otherwise —
+the 404 is never ambiguous (50 owns the rule). The freshness this rule needs is cheap by construction: poll the
 manifest with `get_if_changed` (304 in the steady state), and fetch the
 checkpoint json once per checkpoint change — it is immutable and
 digest-keyed, so it caches forever. Manifest creation:
 `If-None-Match: *`; update (checkpoint publication): `If-Match: <etag>`;
 412 ⇒ re-read and apply the **checkpoint order**: the candidate replaces
 the incumbent iff its vector sum is strictly greater; otherwise the
-incumbent stays and the candidate's objects become `gc` fodder. Vectors
+incumbent stays and the candidate's objects are known-orphan by
+construction — a digest no manifest points at, addressable, and
+collected with the reachable complement (50). Vectors
 are pointwise-incomparable in general (two braids, two checkpointers),
 so "newer" needed a defined total order — sum is it; every checkpoint is
 a real serial state either way, and the gc exemption law is conservative
@@ -134,18 +141,22 @@ advanced the generation. Rejections never reach the network; net-no-op
 commits (all effects already present — e.g. a loser whose re-judgment
 found its effects already in the log) never reach it either. Consequence: every log slot is a
 state-changing commit, so `engine generation ≡ Σ vector` on every honest
-store at rest after catch-up (50 states the general form, with the
-applied-pending term) — the identity the whole recovery story leans on
-(50), kept true by construction at the only place it could break.
+store at rest after catch-up (50 states the general form:
+`generation ≡ generation(chain)`) — the identity the whole recovery
+story leans on (50), kept true by construction at the only place it
+could break.
 
 ## Checkpoints
 
-`compact()` output uploaded as `ckpt/{digest}.mdb` (digest = blake3 of
-the `.mdb` bytes), beside `ckpt/{digest}.json` — one map, one fact per
-braid, nothing derivable stored:
+`compact()` output uploaded as `ckpt/{digest}.mdb` beside
+`ckpt/{digest}.json` — one map, one fact per braid, nothing derivable
+stored. The digest names the **full checkpoint document**, blake3 of its
+bytes including `prev`; two documents with the same heads and a
+different backlink are different objects at different keys. The `.mdb`
+rides the same digest and is collected with its `.json` as one unit.
 
 ```json
-{"braids":{"c00000001":{"g":80,"hash":"<64 hex>","ts":1755801600000},"c00000005":{"g":43,"hash":"<64 hex>","ts":1755801599120}},"catalog":"<64 hex>","writer":12345,"prev":null}
+{"v":3,"braids":{"c00000001":{"g":"80","hash":"<64 hex>","ts":"1755801600000"},"c00000005":{"g":"43","hash":"<64 hex>","ts":"1755801599120"}},"catalog":"<64 hex>","writer":"12345","prev":null}
 ```
 
 Per braid: the applied count `g`, the blake3 of the head log object, and
@@ -176,19 +187,23 @@ the LIST half). Cadence — owned here; other files cite: every K = 256
 applied batches (vector-sum delta) or 16 MiB of log, whichever first
 (chosen constants; F11's cold-open and log-volume pins re-size them).
 `compact()` and the upload run **off the braid commit loops** —
-checkpoint duty never stalls a hot braid. Publication: `put_create` both
-objects in either order — both are immutable and unreferenced until the
-manifest CAS lands, which is the linearization point; a crash before the
-CAS leaves unreferenced `gc` fodder, never a dangling pointer. Restore
-verification: blake3(`.mdb`) = digest, opened generation = Σ `g`,
-fingerprint match — refusals, never warnings. Publication races are
-benign (the manifest CAS applies the checkpoint order above; losing
-checkpoint objects are `gc` fodder) — and `prev` is proven by the CAS
-that installs it: on a `Moved` CAS where the candidate still
-supersedes, the checkpoint json re-renders with `prev` = the incumbent
-actually being replaced and re-uploads before the retry, so every
-retained checkpoint is reachable from the manifest by construction,
-never by hope.
+checkpoint duty never stalls a hot braid. Compaction's input is a
+`Settled` chain (50); a `Pending` checkpointer cannot compact. The
+document is written **exactly once** with `put_create`; a second writer
+computing the same digest sees `Exists` and that is proof of
+byte-identity. There is no upsert and no re-render: `prev` is inside
+the hash, so a different backlink is a different key. Both objects are
+unreferenced until the manifest CAS lands, which is the linearization
+point; a crash before the CAS leaves a known-orphan pair, never a
+dangling pointer. Restore verification: blake3 of the document bytes
+(including `prev`) = digest, catalog claim audited at the one seed
+transition, opened generation = Σ `g`, fingerprint match — refusals,
+never warnings. Publication races are benign (the manifest CAS applies
+the checkpoint order above; a loser does not rewrite anything — its
+document is known-orphan by construction, collected as the complement
+of the reachable Merkle spine). The manifest points at the head of that
+immutable list; every retained checkpoint is reachable from it by the
+backlink, never by hope.
 
 ## Fresh-id leases
 
@@ -198,8 +213,12 @@ claims `[0, 4096)`; `Exists` at birth means someone else was first, and
 the ordinary path applies. A writer leases `[n, n+4096)` by
 CAS-incrementing (width owned here, cited by 40; chosen — it amortizes
 counter traffic 4096× below slot traffic, which is also the recorded
-reason the counter race needs no pressure valve of its own); commands
-carry concrete ids.
+reason the counter race needs no pressure valve of its own). The draw
+is one algebra, both drivers: `Refused(OverWidth)` when the demand
+exceeds the width, `Refused(Exhausted)` when `next + count` would
+exceed `u64`, otherwise `Drawn(range)` — `count` is unsigned, the
+commit body runs exactly once and is awaited to completion before the
+batch is sealed. Commands carry concrete ids.
 Cross-writer collision is structurally impossible; the counter object is
 the failover floor (adoption reads it — no in-log floor ops exist; the
 old FloorBump op is deleted from the codec). The counter is coordination,
@@ -231,7 +250,17 @@ leases into sequences later.
   objects and checkpoints older than window R, always exempting the
   current checkpoint and every log object ≥ its vector, per braid; a
   store whose manifest still says `checkpoint: null` has nothing
-  gc-eligible, by the same rule. The
+  gc-eligible, by the same rule. The published checkpoint vector is the
+  **floor**, a precondition every slot create and every slot delete
+  asserts against — a `put_create` below the floor is refused as
+  retired, not looped into a resurrection. Age is measured from a
+  **publish timestamp the checkpointer stamps**, never from the
+  writer-claimed batch header. The sweep is a resumable contiguous
+  bottom segment per braid: a durable `swept-below` marker, walking
+  **upward** over `[0, marker)` toward the floor, so an interruption
+  resumes where it stopped and a hole below the floor cannot exist. The
+  checkpoint sweep walks the immutable Merkle backlink and deletes
+  `.json` and `.mdb` as one unit. The
   default checkpoint window is generous (90 days): checkpoints live on
   standard-class storage where old versions are nearly free, and keeping
   them is what makes continuous backup a non-feature (Turso's diskless
@@ -255,10 +284,10 @@ Nothing else — no LIST consistency, no multi-key atomicity, no append.
 
 | Event | Outcome |
 | --- | --- |
-| Crash anywhere in a commit or catch-up | recovery **is** the apply loop: resolve `pending` (60), then replay forward; re-application of anything already applied is the engine's no-op arm (L10) — there is no separate recovery procedure to get wrong |
+| Crash anywhere in a commit or catch-up | recovery **is** the apply loop: match the `Chain` (50), resolve a `Pending` arm (60), then replay forward; re-application of anything already applied is the engine's no-op arm (L10) — there is no separate recovery procedure to get wrong |
 | CAS `Exists` on a log slot | fetch and compare: equal bytes ⇒ ours (ambiguous PUT absorbed); else the one loss path (60): discard, re-open to tip, re-judge the recorded ops — publish, `Accepted` at the current generation, or the serial `Rejected` |
 | Manifest CAS 412 | re-read, apply the checkpoint order (greater sum replaces; otherwise incumbent stays), retry |
-| `generation ≠ Σ vector` after full catch-up + pending resolution | phantom or torn store — discard the directory, re-pull (cache, never truth) |
+| `generation ≠ generation(chain)` after full catch-up | phantom or torn store — discard the directory, re-pull (cache, never truth) |
 | Chain discipline violated (`prev` ≠ predecessor hash, header gen ≠ key slot, or ts < predecessor's) | `ChainMismatch{Prev \| Slot \| Timestamp}` — one identity, three proved causes; corruption-class, naming braid, slot, and writer (the header carries the writer id) |
 | Batch rejected during steady-state replay | `ReplayDiverged` — corruption-class (the publish law + determinism make it impossible for honest writers) |
 | 404 at `vector+1` with `vector+1 ≤` the current checkpoint's `vector[braid]` | `GapDetected` (gc'd tail) — discard, re-open from the current checkpoint; the same 404 above that vector (or with no checkpoint yet) is the tip, by the gc exemption law |

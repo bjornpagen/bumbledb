@@ -8,14 +8,34 @@ catch-up loop itself (L10), not a procedure.
 
 ## The chain sidecar
 
-The store's engine generation is the vector **sum**; the per-braid split
-and chain position live in `dir/chain.json` (canonical one-line JSON:
-`{"v":2,"chain":{"c00000001":{"g":80,"prev":"<64 hex>","ts":1755801600000},…},"pending":null}`),
-written atomically (temp + rename, fsync). `prev` is the blake3 of the
-braid's head log object — what the next batch's header must cite — and
-`ts` its timestamp — what the next batch's header must dominate (20).
-`pending` is writer-only state (60); on a pure replica it is permanently
-null.
+The store's engine generation is a **total function of the chain**:
+
+```
+Chain = Settled { vector } | Pending { vector, batch }
+generation(Settled{v})    = v.sum()
+generation(Pending{v, _}) = v.sum() + 1
+```
+
+There is no `applied_pending` addend and no `pending: Option` beside
+the chain — `Pending` is a constructor every reader must match. The
+per-braid split and chain position live in `dir/chain.json` (canonical
+one-line JSON, `v:3`, refuse `v:2`; every numeric field other than the
+version discriminator is a decimal string; a `Pending` batch's bytes
+are lowercase hex of the codec's canonical rendering — one encoding,
+both drivers):
+
+```json
+{"v":3,"chain":{"c00000001":{"g":"80","prev":"<64 hex>","ts":"1755801600000"}},"pending":null}
+```
+
+A `Pending` document carries the batch instead of `null`. Written
+atomically (temp + rename, fsync). `prev` is the blake3 of the braid's
+head log object — what the next batch's header must cite — and `ts`
+its timestamp — what the next batch's header must dominate (20).
+`Pending` is writer-only state (60); on a pure replica the chain is
+permanently `Settled`. The sidecar read is a total sum —
+`Absent | Fault | Corrupt | Read(Chain)` — and `Absent` is NotFound
+only.
 
 The apply discipline is two steps, not three:
 
@@ -29,18 +49,18 @@ idempotent (20, L10): recovery is the ordinary catch-up loop, and
 re-applying the batch the sidecar missed is the engine's no-op arm — the
 vector catches up to the store, not the other way around. The sidecar is
 a **floor cache**, never a truth the store must reconcile against. What
-remains is one total check, *after* catch-up and pending resolution, in
+remains is one total check, *after* catch-up, in
 its honest general form:
 
-- `db.generation() == Σ chain[*].g + |applied pending|` → serve, where
-  the last term is 1 exactly when a pending batch is applied but not yet
-  published (a writer mid-commit, or an open that ended in
-  `Err::Contention` — 60) and 0 otherwise.
+- `db.generation() == generation(chain)` → serve. A `Pending` chain
+  accounts for the applied-but-unpublished batch by construction (a
+  writer mid-commit, or an open that ended in `Err::Contention` — 60);
+  a `Settled` chain accounts for none.
 - Anything else → a phantom (a local commit the log never assigned and
-  no pending accounts for — a state the pending slot makes unreachable
-  for writers, so reaching the check means the sidecar or store is
-  torn) → **discard the directory and re-pull** (the disposable law;
-  local state is cache, never truth).
+  no `Pending` arm accounts for — a state the constructor makes
+  unreachable for writers, so reaching the check means the sidecar or
+  store is torn) → **discard the directory and re-pull** (the
+  disposable law; local state is cache, never truth).
 
 One integer comparison replaced a three-case decision procedure, because
 set semantics made the decision unnecessary rather than making it
@@ -61,9 +81,14 @@ the representation deletes.
 
 ## Lifecycle
 
-`open(store, prefix, dir, theory)`:
+`open(store, prefix, dir, theory)` — the shared open transition, both
+drivers. Role is a field on the handle: a replica that finds no
+manifest refuses `ManifestMissing`; only the writer births a store. An
+inherited `Pending` is resolved-and-published here, not deferred to
+the next commit.
 
-1. GET `manifest.json`; refuse `v ≠ 2` or fingerprint mismatch; if
+1. GET `manifest.json`; refuse `v ≠ 3` (a well-formed `v:2` is
+   `Version` — no translator) or fingerprint mismatch; if
    `checkpoint` is non-null, GET `ckpt/{digest}.json` (immutable —
    cached forever once seen). Derive the braid set from the descriptor
    locally and refuse if the checkpoint's braid ids disagree (both are
@@ -81,9 +106,10 @@ the representation deletes.
    above the checkpoint vector — or when no checkpoint exists — the gc
    exemption law makes every slot durable, so probe `log/{braid}/{g+1}`
    … apply … until 404 = tip, honestly. Then the wholeness check
-   (`generation == Σ g`) and serve. Braid order is irrelevant (L9); the
-   loop interleaves round-robin so one hot braid cannot starve the
-   others' freshness. **Read legality follows provenance**: a
+   (`generation == generation(chain)`) and serve. Braid order is
+   irrelevant (L9); one stepper advances one slot per braid per round
+   so one hot braid cannot starve the others' freshness. **Read legality
+   follows provenance**: a
    checkpoint-seeded or bootstrapped store is whole by construction —
    verified digest and seeded chain, or a fresh create — so reads are
    legal the moment it opens, while the tail
@@ -96,6 +122,12 @@ the representation deletes.
 
 ## Refresh and read-your-writes
 
+There is **one stepper**. It advances a braid one slot and runs a
+pass; the heartbeat, the wholeness check, the pass counter, and the
+disposed-check live inside it. `refresh`, `wait_for`, catch-up, and
+open execute that stepper — `wait_for` is `refresh` with a predicate,
+not a transcription of it.
+
 - `refresh()` — one catch-up pass over all braids; returns the vector.
   Every N-th pass (default 16) begins with `get_if_changed` on the
   manifest — the **gc-safety heartbeat** that keeps the tip-vs-hole rule
@@ -104,17 +136,20 @@ the representation deletes.
   replica that never re-read the manifest could silently mistake a gc'd
   hole for the tip forever. Staleness of the hole-detection is therefore
   bounded by the heartbeat cadence, by law rather than by luck.
-- `refresh(braid)` — one braid (cheap point freshness for a known-hot
-  flow).
-- `wait_for(vector)` — refresh until the replica's vector dominates the
-  argument pointwise. Commits return `(braid, generation)`; a split
-  commit returns several; a session token is the pointwise max of every
-  pair a flow has seen. Passing the whole vector makes cross-braid
-  read-your-writes after a `commit_split` one call, and makes
-  cross-instance *monotone reads* representable (carry the token, wait
-  on it) instead of a host convention. There is no single-braid
-  overload: a singleton map is the single-braid form — one verb, one
-  question.
+  Adopting a new pointer and adopting its checkpoint is one
+  transition: the etag is not committed until the checkpoint is in
+  hand.
+- `refresh(braid)` — the same stepper, one braid, one slot (cheap
+  point freshness for a known-hot flow).
+- `wait_for(vector)` — the same stepper until the replica's vector
+  dominates the argument pointwise. Commits return `(braid,
+  generation)`; a split commit returns several; a session token is the
+  pointwise max of every pair a flow has seen. Passing the whole
+  vector makes cross-braid read-your-writes after a `commit_split` one
+  call, and makes cross-instance *monotone reads* representable (carry
+  the token, wait on it) instead of a host convention. There is no
+  single-braid overload: a singleton map is the single-braid form —
+  one verb, one question.
   The committing instance is always read-its-own without waiting.
 
 Idle probe cost: one 404 GET per braid per pass; braid counts are
@@ -159,8 +194,8 @@ scan the tenants you need into an `InstanceBuilder`, `admit`, query the
 | `ChainMismatch{Prev \| Slot \| Timestamp}` | corruption-class `Err` naming braid, slot, key, and writer; never retried |
 | Rejected replay in a pre-existing dir's open-phase catch-up | discard dir, re-pull (a whole-store verdict has not been earned yet) |
 | Rejected replay on a checkpoint-seeded or bootstrapped store, or after the wholeness check | `ReplayDiverged` — corruption-class; the publish law makes it impossible for honest writers, and a discard here would re-pull the poisoned slot forever |
-| Net-no-op replay of a *first-applied* slot (after the apply, `generation < Σ chain[*].g + |pending|`) | publish-law violation in the log — corruption-class naming slot and writer; distinguished from the legitimate crash-window absorption, where the store was already one ahead and the identity lands exact |
+| Net-no-op replay of a *first-applied* slot (after the apply, `generation < generation(chain)`) | publish-law violation in the log — corruption-class naming slot and writer; distinguished from the legitimate crash-window absorption, where the store was already one ahead and the identity lands exact |
 | Corruption-class refusal on one braid | that braid wedges read-only at its last good slot; **the other braids keep serving and accepting writes** — L9 is what makes partial service sound, and a one-braid poison never takes the store down |
-| `generation ≠ Σ vector` after full catch-up + pending resolution | discard dir, re-pull (cache, never truth) |
+| `generation ≠ generation(chain)` after full catch-up | discard dir, re-pull (cache, never truth) |
 | Checkpoint braid set ≠ locally derived braids | typed refusal (schema/checkpoint drift) |
 | Fingerprint mismatch anywhere | typed refusal at open |

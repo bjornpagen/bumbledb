@@ -48,10 +48,10 @@ carries a cause sourced from the terminal re-judgment itself:
 names the statement and the cited fact carries the offending raw
 values, engine-produced, never reconstructed — or `SlotRace{tip}` when
 the terminal apply was accepted but out-raced, with the batch retained
-in `pending`. Both are operational signals (declare a reservation
+as `Pending`. Both are operational signals (declare a reservation
 relation, move to resident mode), not expected outcomes. At *open*, a
-pending batch that terminates in `Err::Contention` stays pending: the
-store is whole (the identity counts it — 50), reads serve, and
+`Pending` batch that terminates in `Err::Contention` stays `Pending`:
+the store is whole (`generation(chain)` counts it — 50), reads serve, and
 publication retries on the next commit or
 refresh; an applied commit is never dropped because the tip was busy. `durability` makes the ack mode part of the value: a consumer
 holding `Accepted` can tell RPO≈0 from RPO=publish-lag without knowing
@@ -65,8 +65,9 @@ engine's `COMMIT_NOOP` arm, detected as `generation unchanged` — is
 `Accepted` at the current generation with **no object created**: the
 empty commit is not a commit, and the log never contains a slot whose
 replay changes nothing. This is what keeps the wholeness identity true
-everywhere (10; 50 states the general form), which is what makes
-recovery one integer compare.
+everywhere (10; 50 states the general form:
+`generation ≡ generation(chain)`), which is what makes recovery one
+integer compare.
 
 ## One braid per commit (spanning is a different verb)
 
@@ -84,31 +85,35 @@ unrepresentable. A host invariant spanning braids is by definition
 undeclared — declare it and the braids merge. No cross-braid claim
 protocol exists, deliberately.
 
-## The commit discipline (both modes; one sidecar shape)
+## The commit discipline (both modes; one chain sum)
 
-Per braid, with the chain sidecar of 50 (`pending` is the writer's one
-extra field — the same slot in both modes, not a resident specialty):
+Per braid, with the `Chain` of 50 (`Pending` is the writer's one extra
+constructor — the same arm in both modes, not a resident specialty).
+Durability is `Pending → durable → Settled`, in that order: the batch
+is fsynced as `Pending` before any apply; the transition to `Settled`
+is written after the re-judgment resolves. A refusal never advances
+the chain, because advancing *is* a new vector.
 
 1. Run `body` against a `Batch`; encode; set
    `braid_gen = chain[braid].g + 1`, `prev = chain[braid].prev`,
    `ts = max(now_ms, chain[braid].ts)` — the monotone clamp 20's apply
-   refuses violations of. Write `pending = {braid, gen, bytes}` (fsync).
-2. Apply locally (one `db.write`). `Rejected` → clear pending, return it —
+   refuses violations of. Persist `Pending { vector, batch }` (fsync).
+2. Apply locally (one `db.write`). `Rejected` → `Settled`, return it —
    the network was never touched; rejections are free. Generation
-   unchanged (net no-op) → clear pending, return
+   unchanged (net no-op) → `Settled`, return
    `Accepted{durability: Published}` at the current generation — the
    publish law: the effects were already durable in the log via whatever
    put them there.
 3. `put_create(log/{braid}/{gen})`:
-   - `Created` → advance the chain, clear pending, ack
+   - `Created` → advance to `Settled` at the new vector, ack
      `Accepted{durability: Published}`.
    - `Exists` → fetch, compare: byte-equal is *our* earlier ambiguous PUT
      (absorbed, proceed as Created); **anything else is a loss, and
      every loss takes the one path** — discard the local directory
      (the disposable law: the local store holds a commit the log never
      assigned, and a fork is never bookkeeping's business), re-open
-     through the replica to the current tip carrying the pending bytes
-     (re-persisted before any re-judgment, so recovery stays
+     through the replica to the current tip carrying the `Pending`
+     batch (re-persisted before any re-judgment, so recovery stays
      crash-idempotent at every prefix), and loop back into step 1:
      re-encode at the new head, re-judge the recorded ops in one
      `db.write` — never a body re-run, so a split sibling can never be
@@ -124,7 +129,10 @@ extra field — the same slot in both modes, not a resident specialty):
      law already answers it, a fully disjoint loser re-judges to the
      identical verdict and effects, and the measured latency of the
      deleted fast path was *higher* than this general path — the fsync
-     floor owns both.
+     floor owns both. Resolution is one fold over `Pending`, shared by
+     the detached publisher, the loss-path fallback, and open-recovery.
+     A batch already below the floor is *published*, not a candidate
+     to re-judge.
 
    The loss discard is cheap by construction: checkpoints are
    content-addressed, so the re-open revalidates the locally cached
@@ -148,43 +156,51 @@ extra field — the same slot in both modes, not a resident specialty):
    `published`.
 5. Checkpoint duty: after a publish that crosses 10's cadence (Σ ≥ the
    current checkpoint's Σ + K, or the log-volume bound — 10 owns both
-   constants): compact, digest, both uploads, and the manifest CAS run
-   **entirely off the commit lock**, on a detached duty thread handed a
+   constants). Compaction's input type is `Settled`; a `Pending`
+   checkpointer cannot compact. Compact, digest (blake3 of the
+   document's full bytes, `prev` inside the hash), both uploads
+   (`put_create`, write-once), and the manifest CAS run **entirely off
+   the commit lock**, on a detached duty thread handed a
    proven-consistent view — commits never wait on the duty, and a duty
-   that keeps failing screams legibly instead of capping. Races resolve
-   by 10's checkpoint order, with `prev` proven by the CAS that
-   installs it (10).
+   that keeps failing screams legibly instead of capping. The duty's
+   result is a total sum; `Refused` and `Kept` are non-success — the
+   binary's exit code is a total function of it. Races resolve by 10's
+   checkpoint order; a loser does not rewrite anything. The cadence
+   meter subtracts the snapshot's share rather than zeroing;
+   `ckpt_sum` is re-seeded on re-establish from the floor just adopted.
 
-**Recovery at open:** `pending` present → apply it, and the verdict plus
-the wholeness instrument decide everything — three arms, all forced:
+**Recovery at open:** the shared `open` transition matches the `Chain`.
+A `Pending` arm applies the batch, and the verdict plus
+`generation(chain)` decide everything — three arms, all forced:
 
-- **Rejected** → clear pending, publish nothing. The batch was fsynced
-  *before* its first judgment (step 1 precedes step 2), so a crash in
-  that window resurrects a batch that was never judged; its rejection at
-  recovery is the ordinary step-2 rejection, delivered late. Nothing was
-  acked; nothing is owed; a born-rejected batch reaching the log is the
-  publish law's cardinal sin, and this arm is where it is structurally
-  impossible.
-- **Accepted, and `generation == Σ vector`** after the apply → the batch
-  was born a net no-op (crash landed between step 2's no-op verdict and
-  its pending-clear): clear pending, publish nothing — the publish law
-  again.
+- **Rejected** → `Settled`, publish nothing. The batch was fsynced
+  *as `Pending`* before its first judgment (step 1 precedes step 2), so a
+  crash in that window resurrects a batch that was never judged; its
+  rejection at recovery is the ordinary step-2 rejection, delivered
+  late. Nothing was acked; nothing is owed; a born-rejected batch
+  reaching the log is the publish law's cardinal sin, and this arm is
+  where it is structurally impossible.
+- **Accepted, and `generation == generation(Settled{v})`** after the
+  apply → the batch was born a net no-op (crash landed between step 2's
+  no-op verdict and its `Settled` write): write `Settled`, publish
+  nothing — the publish law again.
 - **Otherwise** (state-changing now, or a no-op absorption of a commit
-  that landed pre-crash, distinguished by `generation == Σ vector + 1`)
+  that landed pre-crash, distinguished by
+  `generation == generation(Pending{v, _})`)
   → the commit is real and unpublished: `put_create` at the pending
   slot (byte-equal `Exists` = already published; a different winner =
   the one loss path above, whose re-open IS the catch-up — one race at
   tip, no intermediate-winner tests exist to run; `Created` = the crash
-  happened mid-publish), then clear.
+  happened mid-publish), then `Settled`.
 
 Composed with 50's catch-up-then-compare, every crash prefix of every
 step above recovers through the same two mechanisms — idempotent replay
 and create-or-compare — with zero mode-specific arms, and the one
-instrument (`generation` vs `Σ vector`) making every call. The
+instrument (`generation(chain)`) making every call. The
 serverless fork that the old design could manufacture (a locally
 committed batch the bucket never assigned, invisible to recovery,
 silently divergent thereafter) is unrepresentable: every local commit's
-bytes are in `pending` until its slot exists.
+bytes are in the `Pending` constructor until its slot exists.
 
 One recorded exposure rides publish-before-ack: a crash after `Created`
 but before the host's ack invites a host-level retry that mints fresh

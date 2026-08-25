@@ -15,11 +15,12 @@ pub trait ObjectStore: Send + Sync {
     /// manifest poll.
     fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll>;
 
-    /// PUT with If-None-Match: "*". Ok(Created(etag)) or Ok(Exists) on 412.
+    /// PUT with If-None-Match: "*". Created, Exists, or Ambiguous
+    /// (409 / timeout / a retried PUT the transport cannot prove).
     /// The log-slot arbitration primitive.
     fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create>;
 
-    /// PUT with If-Match: <etag>. Ok(Swapped(etag)) or Ok(Moved) on 412.
+    /// PUT with If-Match: <etag>. Swapped, Moved, or Ambiguous.
     /// The manifest CAS primitive.
     fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap>;
 
@@ -29,8 +30,8 @@ pub trait ObjectStore: Send + Sync {
 
 pub struct Fetched { pub bytes: Vec<u8>, pub etag: Etag }
 pub enum Poll   { Unchanged, Changed(Fetched) }
-pub enum Create { Created(Etag), Exists }
-pub enum Swap   { Swapped(Etag), Moved }
+pub enum Create { Created(Etag), Exists, Ambiguous }
+pub enum Swap   { Swapped(Etag), Moved, Ambiguous }
 ```
 
 House laws applied: outcomes are sums, never booleans (`Exists`/`Moved`
@@ -47,7 +48,7 @@ in our code (dependency internals exempt, per the engine's census law).
 | S3 Express One Zone | yes (directory buckets) | yes | single-digit-ms; the latency-tier ruling for serverless writers |
 | Cloudflare R2 | yes (S3-API extension) | yes | zero-egress checkpoint pulls; test wildcard-etag behavior (known dev-tool parity bugs) |
 | OCI Object Storage | native if-none-match | native if-match | case-3 target; resident mode doesn't even need CAS |
-| Local filesystem | link(2) create-only | pid-lockfile CAS | one on-disk protocol, two conforming implementations (Rust and TS), raced against each other in conformance; also the macOS sync target |
+| Local filesystem | link(2) create-only | fenced CAS lease | one on-disk protocol, two conforming implementations (Rust and TS), raced against each other in conformance; also the macOS sync target |
 
 ## Protocol consumers of the five verbs (nothing else is permitted)
 
@@ -79,21 +80,25 @@ verb.
    computed on every read and **never stored**: the bytes already
    answer the question, a sidecar or a random token would be a second
    answer waiting to disagree, and at protocol object sizes the hash
-   cost is noise. **The mutation lock** (put_swap's exclusivity) = a
-   pid-lockfile beside the key, published with the same
-   exclusive-temp-plus-link discipline so it can never exist without
-   its body — the owner pid; a contender probes the owner's liveness
-   and breaks the lock iff the owner is dead. `Created` and
-   `Swapped` return only after fsync of the object file and its parent
-   directory: 00 law 1 says an acked commit *exists*, and at power loss
-   a filesystem "exists" means nothing less — the sidecar's write
-   discipline (50), applied at the store. **One machine is
-   load-bearing, not descriptive** — and it is what makes the pid lock
-   sound: link exclusivity and pid liveness are the
-   arbitration primitives, and network filesystems historically weaken
-   both — an `FsStore` prefix on a network mount is a misdeployment; no
-   syscall can prove a mount local, so the refusal lives here in the
-   vendor row instead. **Production tier,
+   cost is noise. **The mutation lock** (put_swap's exclusivity) is a
+   fenced CAS lease `{holder, token, expires}` — an object acquired
+   and broken only through the store's own CAS, never through
+   read-owner → probe → unlink. A contender breaks a lease iff it is
+   *expired* (a fact of the lease's own bytes). Every write carries
+   its fencing token, so a stale holder's write is rejected by the
+   CAS it no longer wins. Liveness is `Alive | Dead | Unknown`;
+   `Unknown` never breaks a lease. There is no pid-lockfile and no
+   `kill(0)`. `Created` and `Swapped` return only after fsync of the
+   object file and its parent directory: 00 law 1 says an acked commit
+   *exists*, and at power loss a filesystem "exists" means nothing
+   less — the sidecar's write discipline (50), applied at the store.
+   **Keys are a grammar**; the temp and lease namespaces are disjoint
+   by construction (a reserved prefix no `StoreKey` can spell) and
+   swept at open. **One machine is load-bearing, not descriptive** —
+   link exclusivity is a local-filesystem primitive, and network
+   filesystems historically weaken it — an `FsStore` prefix on a
+   network mount is a misdeployment; no syscall can prove a mount
+   local, so the refusal lives here in the vendor row instead. **Production tier,
    not a test double**: it is the whole backend of deployment case 5
    (the local fleet — primer-spec's parallel scope loops), the macOS
    sync target of case 2, and the store 80's conformance lanes (crash
@@ -194,12 +199,15 @@ boundary; cold path. Zero other log-driver dyns.
 
 ## Retry law
 
-`put_create` and `put_swap` are **never retried blindly** on ambiguous
-outcomes (a timeout after the request may have landed): the follow-up is a
-GET of the target key — if the body matches what we tried to write, the
-operation succeeded (content-addressed comparison for log objects; etag
-re-read for the manifest). The same comparison is the first move on every
-`Exists` (10) — ambiguity absorption and slot loss are one rule, not two.
+A conditional write whose result the transport cannot prove (S3 409,
+timeout, a retried PUT) is `Ambiguous`, never a proved `Exists` or
+`Moved`. `put_create` and `put_swap` are **never retried blindly**
+on that arm: the machine resolves it with the GET-verify law — if the
+body matches what we tried to write, the operation succeeded
+(content-addressed comparison for log objects; etag re-read for the
+manifest). The same comparison is the first move on every `Exists`
+(10) — ambiguity absorption and slot loss are one rule, not two. `put_create`
+against a directory is a key-shape fault, not `Exists`.
 5xx/network on reads retry with jittered backoff (base 50 ms, cap 2 s,
 6 attempts — chosen constants of the ordinary exponential shape; the
 gated vendor smoke re-sizes them if a vendor's tail demands it) then

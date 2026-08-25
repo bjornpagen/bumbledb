@@ -1,13 +1,15 @@
 # 90 — Rollout: the build
 
-Self-contained dispatch plan. The normative truth is this directory; where
-this file and a numbered doc disagree, the numbered doc wins and this one
-gets fixed. This file is the only proposals/ file agents edit (receipts in
-the checklist). The receipts below were re-issued at the close of the
-one-path deletion campaign — the owner's post-audit ruling that collapsed
-the loser algebra to one path, unified the store protocol, and amended
-every doc in this set; the pass's own dispatch directory deleted itself as
-its final act and its record is git history.
+Self-contained dispatch plan. The numbered docs (`00`–`80`) are the
+living law — including the cutover spellings (v:3 refuse v:2,
+`Settled | Pending`, `generation(chain)`, the fenced CAS lease,
+write-once checkpoints with `prev` inside the hash, the upward
+`[0, marker)` sweep, publish-clock retention, one stepper). Where this
+file's lane specs and a numbered doc disagree, the numbered doc wins
+and this one gets fixed. The receipts below are historical: they record
+the one-path deletion campaign and are not a second spelling of the
+protocol. The pass's own dispatch directory deleted itself as its
+final act and its record is git history.
 
 ## Ground rules (binding on every lane)
 
@@ -50,9 +52,10 @@ lane's completion unblocks Lane D's no-forced-cases recovery.
 **Owns:** `crates/bumbledb-log/src/{codec.rs, braids.rs}` + tests +
 `conformance/corpus/*`. **Spec:** [20](20-command-codec.md),
 [10](10-protocol.md) §Braids.
-Batch encode/decode (v2: header — braid, braid_gen, prev chain hash,
+Batch encode/decode (v3: header — braid, braid_gen, prev chain hash,
 writer id, clamped timestamp — plus ops, nothing carried behind them;
-kind-3 and `ChainMismatch{Prev|Slot|Timestamp}` refusals);
+kind-3, `Version` on a well-formed v:2, and
+`ChainMismatch{Prev|Slot|Timestamp}` refusals);
 `braids(descriptor)` with serial-at-statements as typed data beside the
 map; the golden corpora; the decoder fuzz target; alloc windows (output
 buffers only).
@@ -60,10 +63,13 @@ buffers only).
 ## Lane B — the store capability
 
 **Owns:** `crates/bumbledb-log/src/store.rs`, `store/{fs,s3,mem}.rs`, tests.
-**Spec:** [40](40-object-store.md). Five verbs as sums; `FsStore` on the
+**Spec:** [40](40-object-store.md). Five verbs as sums including
+`Ambiguous`; `FsStore` on the
 one on-disk protocol both languages speak (O_EXCL temp + link(2)
-create-only, computed blake3 etags never stored, pid-lockfile CAS with
-dead-owner breaking under the one-machine law); `S3Store` over
+create-only, computed blake3 etags never stored, fenced CAS lease
+`{holder, token, expires}` acquired and broken only through the store
+CAS, expiry-only breaking, `Liveness = Alive | Dead | Unknown`);
+`S3Store` over
 `object_store`; `MemStore` as the third store (in-process, disk-free
 tests); the ambiguous-outcome GET-verify law; credential-gated
 smoke.
@@ -82,20 +88,22 @@ exported `Err*` values.
 
 **Owns:** `crates/bumbledb-log/src/{replica.rs, sidecar.rs, tenants.rs,
 gc.rs}`. **Spec:** [50](50-replica.md), [10](10-protocol.md).
-The chain sidecar (floor cache; no intent field, no forced recoveries —
-recovery is the catch-up loop plus 50's wholeness identity; parse held to
-the canonical fixpoint like its sibling documents);
+The chain sidecar (`Settled | Pending`; floor cache; no intent field, no
+forced recoveries — recovery is the catch-up loop plus
+`generation(chain)`; parse held to the canonical fixpoint like its
+sibling documents; `v:3`, refuse `v:2`);
 tip-vs-hole decided from the manifest checkpoint vector before probing;
-the gc-safety manifest heartbeat; open/catch-up round-robin across
-braids; chain recompute-and-refuse on replay; `refresh`/`wait_for`
-(session vectors); tenant LRU with the pinned `_shared`; `gc` per the
-retention law; checkpoint backlink walk for PITR.
+the gc-safety manifest heartbeat; one stepper shared by
+`refresh`/`wait_for`/catch-up/open (one slot per braid per round);
+chain recompute-and-refuse on replay; tenant LRU with the pinned
+`_shared`; `gc` per the retention law (upward `[0, marker)` sweep,
+publish-clock aging); checkpoint Merkle backlink walk for PITR.
 
 ## Lane E — writer (after A + B + D; recovery gated on Lane L)
 
 **Owns:** `crates/bumbledb-log/src/writer.rs` + tests. **Spec:**
 [60](60-writer.md).
-One commit discipline for both modes over the shared pending slot;
+One commit discipline for both modes over the `Settled | Pending` chain;
 `commit` (single braid, `Err::SpanningCommit` on spanning) +
 `commit_split` (the explicit verb, `BraidOutcome` vector); the publish
 law (`COMMIT_NOOP` ⇒ nothing published); the one loss path (byte-equal
@@ -106,8 +114,9 @@ DeltaRestriction**); one-rule pending recovery; `AckMode` as the whole
 ack representation, `durability` in the outcome; group commit with the
 drain-is-one-transaction law and one-by-one fallback;
 `Batch::reserve_capacity` sugar (the idiom is 60's); id-lease draw;
-checkpoint duty entirely off the commit lock with `prev` proven by the
-installing CAS; `LOSS_BOUND` iterations then `Err::Contention` with
+checkpoint duty entirely off the commit lock against a `Settled`
+chain, the document written once (`put_create`), `prev` inside the
+full-bytes hash; `LOSS_BOUND` iterations then `Err::Contention` with
 causes sourced from the terminal re-judgment's own violation.
 
 ## Lane F — integration and conformance (last)

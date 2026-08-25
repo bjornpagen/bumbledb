@@ -1,6 +1,6 @@
 # 20 — The command codec
 
-One binary format, implemented twice (Rust in `bumbledb-log`, TS in
+One grammar, one codec, two thin drivers (Rust in `bumbledb-log`, TS in
 `@bjornpagen/bumbledb-log`), pinned equal by cross-goldens (80). Commands
 carry **raw values, never intern ids** — interning is store-local and
 replays deterministically. A batch is a header and its ops, nothing
@@ -11,7 +11,8 @@ claim exists for a consumer to trust or a hostile writer to lie in.
 
 ```
 magic        4  bytes   "BDBL"
-version      u16 LE     2        (consumers refuse ≠ 2)
+version      u16 LE     3        (consumers refuse ≠ 3; a well-formed
+                                  v:2 batch is Version — no translator)
 flags        u16 LE     0        (bit 0 reserved for zstd; must be 0)
 fingerprint  32 bytes            (schema fingerprint; refuse mismatch)
 braid        u32 LE              (braid id = smallest RelationId in the component)
@@ -34,9 +35,9 @@ op_count     u32 LE
 ops          …
 ```
 
-The version stays **2** across the pass that deleted the carried
-section: no release ever shipped the sectioned format; it never existed
-outside this tree, so there is no reader to version against.
+The version is **3**. A well-formed v:2 batch is a typed `Version`
+refusal — there is no translator, no dual-read path. The one version
+number stands on both the wire and the documents (10, 50).
 
 One batch = one engine write transaction = one braid-generation advance.
 Group commit packs many host writes into one batch; the batch is the
@@ -65,22 +66,32 @@ Field values are `tag u8` + payload, tags mirroring `ValueType`:
 4 FixedBytes    raw, exactly the layout's declared width (no length field —
                 the layout already answers it; a length would be a second
                 answer that could disagree)
-5 Interval      2 × u64 LE (start, end; `start ≥ end` refuses at decode —
-                the engine's half-open law, `start < end`, enforced at the
-                wire boundary the way the engine enforces it at its own)
-6 FixedInterval u64 LE (start; width from the layout)
+5 Interval      2 × u64 LE (start, end; `start ≥ end` refuses at decode
+                as `EmptyInterval` — the engine's half-open law,
+                `start < end`, enforced at the wire boundary the way
+                the engine enforces it at its own)
+6 FixedInterval u64 LE (start; width from the layout). A start whose
+                end would be the domain ceiling is `IntervalOverflow`
+                — the ceiling is not a value; decode and the encode
+                gate refuse `end == MAX` identically.
 ```
 
 Row tags must match the relation's layout exactly; decode refuses with a
 typed error naming relation, row, and field. Decode is a full parse before
-any apply.
+any apply. The row count and the row bytes are **one length-delimited
+type**: a declared `row_count` or `op_count` the remaining bytes cannot
+back is `Truncated` immediately — a zero-field relation cannot amplify
+a hostile count into an unbounded loop. A string cell is
+`WellFormedUtf8` from a fatal encoder; lone surrogates refuse rather
+than emit U+FFFD. Every digest field is `[u8; 32]`; a short `prev`
+cannot encode.
 
 ## Apply
 
 `apply(db, chain, batch)` — `chain` is the replica's per-braid position
 `(g, prev_hash, prev_ts)` from the sidecar (50):
 
-1. Refuse version ≠ 2, flags ≠ 0, fingerprint mismatch, op relation
+1. Refuse version ≠ 3, flags ≠ 0, fingerprint mismatch, op relation
    outside `braid` — and the
    chain discipline, one identity with three proved causes:
    `ChainMismatch{Slot}` when `header.braid_gen ≠` the slot number in
@@ -97,8 +108,8 @@ any apply.
 
 **A first-applied slot must change state.** The publish law guarantees
 every log slot is a state-changing commit, and apply enforces it: a
-net-no-op apply that leaves `generation` *below* the post-advance
-`Σ vector + |pending|` identity is a publish-law violation in the log —
+   net-no-op apply that leaves `generation` *below* the post-advance
+   `generation(chain)` identity is a publish-law violation in the log —
 corruption-class, naming the slot's writer. The legitimate no-op — a
 crash-window re-absorption, where the store was already one generation
 ahead — lands the identity exact and passes. One instrument, both
@@ -133,9 +144,10 @@ tip-vs-hole from the manifest's current checkpoint before any fetch (50).
 6. **Replay idempotence (L10).** Applying a batch whose effects the store
    already contains is the engine's no-op commit: empty net delta, no
    judgment, no LMDB commit, no generation advance. Corollary: after full
-   catch-up, `db.generation() == Σ vector` on every honest store at rest
-   (50 adds the applied-pending term for writers mid-commit) — the
-   equality is the phantom detector, not a bookkeeping aspiration.
+   catch-up, `db.generation() == generation(chain)` on every honest
+   store — `generation(Settled{v}) = v.sum()`,
+   `generation(Pending{v, _}) = v.sum() + 1` (50) — the equality is the
+   phantom detector, not a bookkeeping aspiration.
 
 ## Refused alternatives (recorded ruling — reopen triggers only)
 

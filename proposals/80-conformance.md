@@ -2,7 +2,12 @@
 
 Determinism is a pinned oracle agreement; crashes are an iteration over
 reified protocol steps; every statement family's contention is raced
-against a plain serial execution; every law is a test. All lanes run on
+against a plain serial execution; every law is a test. Conformance
+executes the one transition table: a spanning commit asserts
+`Err::SpanningCommit`, a rejected commit asserts the slot is absent in
+the store, multiprocess recovery drives a deterministic `Pending`, and
+a divergence between drivers is a lane failure, not a design choice.
+All lanes run on
 `FsStore` — no cloud
 account in the suite; `S3Store` gets a credential-gated smoke lane
 (skipped-with-reason otherwise).
@@ -61,8 +66,8 @@ enum ReplicaStep { ApplyLocal, ChainAdvance }
 
 One writer enum, both modes (`AckLocal` only fires under `ack = local`).
 Every proper prefix of each: execute, kill, recover — where recovery is
-*nothing but* pending resolution + the ordinary catch-up loop + the
-`generation == Σ vector + |pending|` check (50/60; there are no
+*nothing but* matching the `Chain` + the ordinary catch-up loop + the
+`generation == generation(chain)` check (50/60; there are no
 forced-case tables left to consult). Postconditions: no acked commit
 lost; **no rejected and no net-no-op batch ever reaches the log** — the
 crash between PendingWrite and ApplyLocal resurrects an unjudged batch,
@@ -92,7 +97,7 @@ already performed re-judges to the engine's net no-op and lands
 disjoint-shaped loss re-judges and publishes with a fresh header at
 tip+1 passing every chain check; a conflicting loss produces the serial
 verdict; **the wholeness
-identity `generation ≡ Σ vector + |pending|` is asserted on every store after every
+identity `generation ≡ generation(chain)` is asserted on every store after every
 fixture in this lane** — it is the invariant the loss path must
 never bend; the ambiguous-outcome GET-verify law (40) resolves injected
 response drops; the loss bound surfaces `Err::Contention` under a
@@ -124,8 +129,8 @@ Adversarial additions, each with its published baseline to beat:
   and `HotKey` causes of `Err::Contention` each produced by a dedicated
   livelock fixture, the `HotKey` payload sourced from the terminal
   re-judgment's own violation; an open ending in `Err::Contention`
-  keeps its pending, serves reads, and passes the wholeness identity
-  with the pending term.
+  keeps its `Pending` arm, serves reads, and passes the wholeness
+  identity `generation(chain)`.
 - **The lying checkpoint**: a fixture checkpoint whose `.mdb` contains
   one extra row at the correct generation with honestly copied heads —
   refused at fresh open by the `catalog` claim (10), and refused by a
@@ -143,20 +148,24 @@ manifest to every retained checkpoint (no LIST anywhere in the suite —
 grep-enforced); by-time
 restore maps through the publish-clamped timestamps, and a fixture batch
 with a non-monotone timestamp is *refused at apply*, not mapped around;
-`gc` with window R deletes exactly the retention law's set per braid; a
+`gc` with window R deletes exactly the retention law's set per braid —
+age from the trusted publish clock, sweep walking `[0, marker)`
+upward, `.json`+`.mdb` as one unit; a
 404 at-or-below the current checkpoint's vector refuses `GapDetected`
 while the same 404 above it reads as the tip — both directions pinned; a
 hibernated-replica fixture (vector far behind a gc'd horizon) must
-refuse rather than serve stale reads as fresh.
+refuse rather than serve stale reads as fresh. A below-floor
+`put_create` is refused as retired.
 
 ## Lane 7 — parity goldens (Rust ⇄ TS, the mirrored pair)
 
 Checked-in corpora for the pure functions, regenerated as header + ops:
 `encode/decodeBatch`
 (every op kind, every tag, boundary values, every refusal — bad magic,
-version 1, flags ≠ 0, wrong fingerprint, wrong braid relation, kind 3,
+version ≠ 3 including a well-formed v:2, flags ≠ 0, wrong fingerprint, wrong braid relation, kind 3,
 `ChainMismatch` in all three causes (prev, slot,
-timestamp)) and `braidsOf`
+timestamp), `IntervalOverflow` on a fixed interval whose end is the
+domain ceiling, `Truncated` on an unbacked row count) and `braidsOf`
 (multi-component schemas, mirror statements, closed relations excluded,
 singleton = serial degenerate, serial-at-statements as typed data).
 Byte-exact both directions; refusals
@@ -175,7 +184,8 @@ against the trace names, since the whole recovery design stands on it).
 The batch decoder (offset-free sequential — prove it): arbitrary bytes
 and golden mutations; no panic, no overflow, every rejection typed, the
 trailing-bytes refusal landing at the exact end of the accepted prefix.
-The same harness shape runs over the manifest, checkpoint, and
+A JSON-number `u64` and a base64 pending are `Malformed`. The same
+harness shape runs over the manifest, checkpoint, and
 chain-sidecar parsers, where an accepted mutant must be a **canonical
 fixpoint**: parse-then-render reproduces the exact input bytes.
 

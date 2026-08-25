@@ -24,11 +24,11 @@ is the centerpiece; [90-rollout.md](90-rollout.md) is the fleet dispatch.
 | Doc | Contract |
 | --- | --- |
 | [00-product.md](00-product.md) | What it is, the laws, the five deployment cases, non-goals |
-| [10-protocol.md](10-protocol.md) | Braids, keys, manifest + vector, log slots, checkpoints, leases, PITR, gc |
-| [20-command-codec.md](20-command-codec.md) | The batch wire format (v2, header + ops), determinism laws, IDL refusal |
+| [10-protocol.md](10-protocol.md) | Braids, keys, v:3 manifest + vector, write-once checkpoints, leases, PITR, gc |
+| [20-command-codec.md](20-command-codec.md) | The batch wire format (v3, header + ops), determinism laws, IDL refusal |
 | [30-engine-seams.md](30-engine-seams.md) | The one engine addition; the engine never learned replication exists |
-| [40-object-store.md](40-object-store.md) | The five-verb capability, vendor matrix, verb-consumer map, dependency rulings |
-| [50-replica.md](50-replica.md) | The chain sidecar (recovery is replay), catch-up, gc heartbeat, Vercel, tenants |
+| [40-object-store.md](40-object-store.md) | The five-verb capability, Ambiguous + GET-verify, fenced CAS lease, vendor matrix |
+| [50-replica.md](50-replica.md) | Chain Settled\|Pending, generation(chain), one stepper, gc heartbeat, Vercel, tenants |
 | [60-writer.md](60-writer.md) | One commit discipline, the publish law, the one loss path, group commit, reservations idiom |
 | [70-typescript.md](70-typescript.md) | The TS surface, the mirrored pure pair, temporal law, error identities |
 | [80-conformance.md](80-conformance.md) | The lanes: determinism, braid convergence, serial verdicts, crash matrices, contention, PITR, parity, pins, fuzz, interop, multi-process |

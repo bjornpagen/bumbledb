@@ -68,7 +68,7 @@ There is no server in the architecture. A resident writer is a deployment
    crash window heals by replaying forward through the ordinary catch-up
    loop. There is no recovery procedure, no intent field, no forced-case
    table; the one residual instrument is the wholeness identity
-   `generation ≡ Σ vector + |applied pending|` (50), which decides
+   `generation ≡ generation(chain)` (50), which decides
    phantom detection, born-no-op pendings, and
    no-op-slot refusals alike — one compare, every verdict; its failure
    is a discard, never a repair.
