@@ -7,11 +7,10 @@
 //!
 //! The chain is a sum — `Settled` or `Pending` — and `generation()` is
 //! a total function of the value: the vector sum, plus one exactly when
-//! the arm is `Pending`. There is no `pending: Option` beside the
-//! vector. `Pending` is writer-only; on a pure replica the chain is
-//! permanently `Settled`. The read is a total sum too: `Absent` is
-//! NotFound only, an infra fault is never absence, and a parse refusal
-//! is `Corrupt`.
+//! the arm is `Pending`. `Pending` is writer-only; on a pure replica the
+//! chain is permanently `Settled`. The read is a total sum too: `Absent`
+//! is NotFound only, an infra fault is never absence, and a parse
+//! refusal is `Corrupt`.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
