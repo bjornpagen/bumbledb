@@ -1094,47 +1094,39 @@ fn sweep_local_litter(dir: &Path) -> io::Result<()> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => return Err(err),
     }
-    sweep_sidecar_temps(dir)?;
+    sweep_sidecar_temp(dir)?;
     sweep_sibling_scratch(dir)
 }
 
-fn sweep_sidecar_temps(dir: &Path) -> io::Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err),
-    };
-    let prefix = format!(".{CHAIN_FILE}.tmp.");
-    for entry in entries {
-        let name = entry?.file_name();
-        if name.to_string_lossy().starts_with(&prefix) {
-            let _ = fs::remove_file(dir.join(name));
-        }
+/// `{dir}/.chain.tmp` — known path.
+fn sidecar_temp_path(dir: &Path) -> PathBuf {
+    dir.join(format!(".{CHAIN_FILE}.tmp"))
+}
+
+/// `{dir}.ckpt` — known path. The resident duty writes here.
+pub(crate) fn compact_scratch_path(dir: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.ckpt", dir.display()))
+}
+
+/// `{dir}.duty-ckpt` — known path. The detached checkpointer writes here.
+pub(crate) fn duty_scratch_path(dir: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.duty-ckpt", dir.display()))
+}
+
+fn sweep_sidecar_temp(dir: &Path) -> io::Result<()> {
+    match fs::remove_file(sidecar_temp_path(dir)) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
     }
-    Ok(())
 }
 
 fn sweep_sibling_scratch(dir: &Path) -> io::Result<()> {
-    let Some(parent) = dir.parent() else {
-        return Ok(());
-    };
-    let Some(stem) = dir.file_name() else {
-        return Ok(());
-    };
-    let stem = stem.to_string_lossy();
-    let ckpt_prefix = format!("{stem}.ckpt");
-    let duty = format!("{stem}.duty-ckpt");
-    let entries = match fs::read_dir(parent) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err),
-    };
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == duty || name.starts_with(&ckpt_prefix) {
-            let _ = fs::remove_dir_all(entry.path());
+    for path in [compact_scratch_path(dir), duty_scratch_path(dir)] {
+        match fs::remove_dir_all(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
         }
     }
     Ok(())
@@ -1207,11 +1199,11 @@ mod sweep_tests {
         let tmp = dir.join(TEMP_NAMESPACE).join("litter");
         fs::create_dir_all(tmp.parent().expect("parent")).expect("tmp");
         fs::write(&tmp, b"tmp").expect("write tmp");
-        fs::write(dir.join(format!(".{CHAIN_FILE}.tmp.9")), b"sidecar").expect("sidecar");
-        let sibling = PathBuf::from(format!("{}.ckpt0", dir.display()));
+        fs::write(sidecar_temp_path(&dir), b"sidecar").expect("sidecar");
+        let sibling = compact_scratch_path(&dir);
         fs::create_dir_all(&sibling).expect("sibling");
         fs::write(sibling.join("data.mdb"), b"x").expect("scratch bytes");
-        let duty = PathBuf::from(format!("{}.duty-ckpt", dir.display()));
+        let duty = duty_scratch_path(&dir);
         fs::create_dir_all(&duty).expect("duty scratch");
 
         sweep_at_open(&store, "", &dir).expect("sweep");
@@ -1230,7 +1222,7 @@ mod sweep_tests {
         );
         assert!(!ckpt_scratch_path(&dir).exists());
         assert!(!dir.join(TEMP_NAMESPACE).exists());
-        assert!(!dir.join(format!(".{CHAIN_FILE}.tmp.9")).exists());
+        assert!(!sidecar_temp_path(&dir).exists());
         assert!(!sibling.exists());
         assert!(!duty.exists());
         let _ = fs::remove_dir_all(&dir);

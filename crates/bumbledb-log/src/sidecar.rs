@@ -301,7 +301,7 @@ impl Chain {
         Ok(chain)
     }
 
-    /// Atomic publication: exclusive temp beside the target, fsync,
+    /// Atomic publication: exclusive temp `{dir}/.chain.tmp`, fsync,
     /// rename over `chain`, fsync the directory — so a crash leaves
     /// either the incumbent sidecar or the successor, never a torn
     /// record.
@@ -309,7 +309,7 @@ impl Chain {
     /// # Errors
     pub fn write_atomic(&self, dir: &Path) -> io::Result<()> {
         let target = dir.join(CHAIN_FILE);
-        let temp = dir.join(format!(".{CHAIN_FILE}.tmp.{}", std::process::id()));
+        let temp = dir.join(format!(".{CHAIN_FILE}.tmp"));
         let _ = fs::remove_file(&temp);
         let mut file = OpenOptions::new()
             .write(true)

@@ -353,7 +353,6 @@ pub(crate) struct Inner<T: Theory + Clone, S: ObjectStore, H: StepHook> {
     pub(crate) queues: BTreeMap<BraidId, Mutex<VecDeque<Request>>>,
     pub(crate) core: Mutex<Core<T>>,
     pub(crate) threads: Mutex<Vec<JoinHandle<()>>>,
-    pub(crate) scratch_seq: AtomicU64,
 }
 
 /// Outcome of `Writer::open`.
@@ -520,7 +519,6 @@ where
                 duty_busy: false,
             }),
             threads: Mutex::new(Vec::new()),
-            scratch_seq: AtomicU64::new(0),
         });
 
         {

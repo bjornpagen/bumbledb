@@ -4,8 +4,6 @@
 //! is Replaced.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use bumbledb::Db;
@@ -13,6 +11,7 @@ use bumbledb::Db;
 use crate::braids::BraidId;
 use crate::checkpointer::compact_and_publish;
 use crate::manifest::{PublishRefusal, Published};
+use crate::replica::compact_scratch_path;
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
 use crate::vector::Vector;
@@ -92,8 +91,7 @@ where
     /// the duty.
     pub(crate) fn run_duty(self: &Arc<Self>) -> Ran {
         let _busy = DutyBusy { core: &self.core };
-        let seq = self.scratch_seq.fetch_add(1, Ordering::Relaxed);
-        let scratch = PathBuf::from(format!("{}.ckpt{seq}", self.dir.display()));
+        let scratch = compact_scratch_path(&self.dir);
         loop {
             let snapshot = {
                 let core = lock(&self.core);

@@ -19,8 +19,8 @@ use crate::manifest::{
     publish_checkpoint,
 };
 use crate::replica::{
-    Fault, OpenRefusal, Opened, Refreshed, Replica, clear_ckpt_scratch, reclaim_orphan,
-    record_ckpt_scratch,
+    Fault, OpenRefusal, Opened, Refreshed, Replica, clear_ckpt_scratch, duty_scratch_path,
+    reclaim_orphan, record_ckpt_scratch,
 };
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::{Create, ObjectStore, prove_create};
@@ -145,7 +145,7 @@ where
                         "replica is unmounted",
                     ))
                 })?;
-                let scratch = PathBuf::from(format!("{}.duty-ckpt", self.replica.dir().display()));
+                let scratch = duty_scratch_path(self.replica.dir());
                 // The detached binary is exclusive: compact cannot tear.
                 let Some(published) = compact_and_publish(
                     self.replica.store(),
