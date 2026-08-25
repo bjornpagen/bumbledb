@@ -168,7 +168,7 @@ function assemble(prefix: string, rest: string): StoreKey {
 }
 
 function manifestKey(prefix: string): StoreKey {
-	return assemble(prefix, "manifest.json")
+	return assemble(prefix, "manifest")
 }
 
 function logKey(prefix: string, braid: Braid, g: Generation): StoreKey {
@@ -180,7 +180,7 @@ function checkpointMdbKey(prefix: string, digest: string): StoreKey {
 }
 
 function checkpointJsonKey(prefix: string, digest: string): StoreKey {
-	return assemble(prefix, `ckpt/${digest}.json`)
+	return assemble(prefix, `ckpt/${digest}`)
 }
 
 function idsKey(prefix: string, relation: number, field: number): StoreKey {
