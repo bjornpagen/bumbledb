@@ -1,5 +1,6 @@
 {
   "kind": "manifest",
   "expect": "refusal",
-  "refusal": "Version"
+  "refusal": "Version",
+  "hex": "023c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c00"
 }

@@ -1,0 +1,10 @@
+{
+  "expect": "refusal",
+  "kind": "checkpoint",
+  "of": "documents/checkpoint/ok_linked",
+  "op": "truncate",
+  "len": 129,
+  "refusal": "Malformed",
+  "hex": "03010000000000000050000000000000000101010101010101010101010101010101010101010101010101010101010101e803000000000000abababababababababababababababababababababababababababababababab393000000000000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "schema": "kitchen"
+}

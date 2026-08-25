@@ -1,6 +1,0 @@
-{
-  "kind": "sidecar",
-  "expect": "refusal",
-  "schema": "kitchen",
-  "refusal": "Malformed"
-}

@@ -3,7 +3,8 @@
   "kind": "sidecar",
   "of": "documents/sidecar/ok_pending",
   "op": "truncate",
-  "len": 191,
+  "len": 57,
   "refusal": "Malformed",
+  "hex": "030100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
   "schema": "kitchen"
 }

@@ -4,5 +4,6 @@
   "of": "documents/manifest/ok_headed",
   "op": "truncate",
   "len": 5,
-  "refusal": "Malformed"
+  "refusal": "Malformed",
+  "hex": "033c3c3c3c"
 }

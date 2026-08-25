@@ -2,5 +2,6 @@
   "kind": "checkpoint",
   "expect": "refusal",
   "schema": "kitchen",
-  "refusal": "Malformed"
+  "refusal": "Malformed",
+  "hex": "03"
 }

@@ -1,0 +1,9 @@
+{
+  "expect": "refusal",
+  "kind": "manifest",
+  "of": "documents/manifest/ok_headed",
+  "op": "truncate",
+  "len": 65,
+  "refusal": "Malformed",
+  "hex": "033c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+}
