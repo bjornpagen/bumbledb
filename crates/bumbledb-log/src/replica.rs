@@ -1153,8 +1153,8 @@ mod sweep_tests {
         let digest = [0x11u8; 32];
         assert!(matches!(
             store
-                .put_create(&ckpt_json_key("", &digest), b"json")
-                .expect("json"),
+                .put_create(&ckpt_json_key("", &digest), b"doc")
+                .expect("doc"),
             Create::Created(_)
         ));
         assert!(matches!(
@@ -1185,8 +1185,8 @@ mod sweep_tests {
         let digest = [0x22u8; 32];
         record_ckpt_scratch(&dir, &digest).expect("lease");
         store
-            .put_create(&ckpt_json_key("", &digest), b"json")
-            .expect("json");
+            .put_create(&ckpt_json_key("", &digest), b"doc")
+            .expect("doc");
         store
             .put_create(&ckpt_mdb_key("", &digest), b"mdb")
             .expect("mdb");
@@ -1236,8 +1236,8 @@ mod sweep_tests {
             .put_create(&manifest_key(""), &manifest.render())
             .expect("manifest");
         store
-            .put_create(&ckpt_json_key("", &digest), b"json")
-            .expect("json");
+            .put_create(&ckpt_json_key("", &digest), b"doc")
+            .expect("doc");
         store
             .put_create(&ckpt_mdb_key("", &digest), b"mdb")
             .expect("mdb");
