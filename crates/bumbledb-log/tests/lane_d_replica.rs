@@ -419,7 +419,7 @@ fn pending_resolution_keeps_the_identity_and_clears_on_publication() {
 }
 
 #[test]
-fn wait_for_dominates_pointwise_and_refresh_braid_is_point_freshness() {
+fn wait_for_dominates_pointwise_and_refresh_advances_every_braid() {
     let root = temp_dir("rep_wait");
     let local = temp_dir("rep_wait_local");
     let mut log = TestLog::new(root.clone(), "");
@@ -441,11 +441,11 @@ fn wait_for_dominates_pointwise_and_refresh_braid_is_point_freshness() {
     }
 
     log.publish(kitchen, &[insert_recipe(3)], 300);
-    log.publish(notes, &[insert_note(2, "left behind")], 310);
-    match replica.refresh_braid(kitchen).expect("refresh braid") {
+    log.publish(notes, &[insert_note(2, "caught up")], 310);
+    match replica.refresh().expect("refresh") {
         Refreshed::Vector(vector) => {
             assert_eq!(vector[&kitchen], 3);
-            assert_eq!(vector[&notes], 1, "point freshness touches one braid");
+            assert_eq!(vector[&notes], 2);
         }
         Refreshed::Refused(refusal) => panic!("refused: {refusal:?}"),
     }

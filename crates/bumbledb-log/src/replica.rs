@@ -394,13 +394,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// N-th pass begins with the conditional manifest poll that keeps
     /// tip-vs-hole honest for long-lived replicas.
     pub fn refresh(&mut self) -> Result<Refreshed, Fault> {
-        self.step_pass(Phase::Steady, None)
-    }
-
-    /// One braid through the shared stepper — a thin entry, not a
-    /// second copy of the pass.
-    pub fn refresh_braid(&mut self, braid: BraidId) -> Result<Refreshed, Fault> {
-        self.step_pass(Phase::Steady, Some(braid))
+        self.step_pass(Phase::Steady)
     }
 
     /// `refresh` until `target` is dominated pointwise.
@@ -564,12 +558,11 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         }
     }
 
-    /// The one stepper: heartbeat, pending fold, one slot per braid
-    /// (or the one named braid), wholeness, then serve or reseed.
-    fn step_pass(&mut self, phase: Phase, only: Option<BraidId>) -> Result<Refreshed, Fault> {
+    /// The one stepper: heartbeat, pending fold, one slot per braid,
+    /// wholeness, then serve or reseed.
+    fn step_pass(&mut self, phase: Phase) -> Result<Refreshed, Fault> {
         self.passes += 1;
-        if only.is_none()
-            && self.passes.is_multiple_of(self.heartbeat_every)
+        if self.passes.is_multiple_of(self.heartbeat_every)
             && let Some(refusal) = self.heartbeat()?
         {
             return Ok(Refreshed::Refused(refusal));
@@ -577,11 +570,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         if matches!(self.chain, Chain::Pending { .. }) && self.resolve_pending()?.is_some() {
             return self.reseed();
         }
-        match self.catch_up(phase, only)? {
+        match self.catch_up(phase)? {
             CatchUpEnd::Tips => {
-                if only.is_some() {
-                    return Ok(Refreshed::Vector(self.chain.vector()));
-                }
                 if self.whole()? {
                     if let Some(refusal) = self.audit_reached_floor()? {
                         return Ok(Refreshed::Refused(refusal));
@@ -623,7 +613,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             Provenance::LocalDir => Phase::Open,
             Provenance::Bootstrap | Provenance::Checkpoint => Phase::Steady,
         };
-        match self.catch_up(phase, None)? {
+        match self.catch_up(phase)? {
             CatchUpEnd::Tips => {}
             CatchUpEnd::Gap => {
                 return Ok(AttemptEnd::Discard("catch-up hit a hole below the floor"));
@@ -817,15 +807,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
 
     /// Round-robin catch-up: one slot per braid per round, so a hot
     /// braid cannot starve the others' freshness.
-    fn catch_up(&mut self, phase: Phase, only: Option<BraidId>) -> Result<CatchUpEnd, Fault> {
-        let braids: Vec<BraidId> = self
-            .codec
-            .braids()
-            .components()
-            .keys()
-            .copied()
-            .filter(|braid| only.is_none_or(|want| want == *braid))
-            .collect();
+    fn catch_up(&mut self, phase: Phase) -> Result<CatchUpEnd, Fault> {
+        let braids: Vec<BraidId> = self.codec.braids().components().keys().copied().collect();
         let mut at_tip: std::collections::BTreeSet<BraidId> = std::collections::BTreeSet::new();
         loop {
             let mut progressed = false;
