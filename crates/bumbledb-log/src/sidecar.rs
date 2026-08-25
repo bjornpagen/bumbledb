@@ -4,8 +4,14 @@
 //! only check it ever faces, and a torn sidecar costs a re-pull, not a
 //! recovery procedure. Canonical one-line JSON, field order fixed,
 //! written atomically (exclusive temp, fsync, rename, fsync parent).
-//! `pending` is writer-only state; on a pure replica it is permanently
-//! null.
+//!
+//! The chain is a sum — `Settled` or `Pending` — and `generation()` is
+//! a total function of the value: the vector sum, plus one exactly when
+//! the arm is `Pending`. There is no `pending: Option` beside the
+//! vector. `Pending` is writer-only; on a pure replica the chain is
+//! permanently `Settled`. The read is a total sum too: `Absent` is
+//! NotFound only, an infra fault is never absence, and a parse refusal
+//! is `Corrupt`.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -76,13 +82,41 @@ impl SidecarError {
     }
 }
 
-/// The parsed sidecar: per-braid chain positions and the pending slot.
-/// Braids absent from the map sit at genesis; the canonical rendering
-/// materializes every braid explicitly.
+/// The sidecar read as a total sum. `Absent` is NotFound and nothing
+/// else — an infra fault is never "no sidecar"; a parse refusal is
+/// `Corrupt` and takes the disposable-law discard.
+#[derive(Debug)]
+pub enum SidecarRead {
+    Absent,
+    Fault(io::Error),
+    Corrupt(SidecarError),
+    Read(Chain),
+}
+
+impl SidecarRead {
+    #[must_use]
+    pub const fn identity(&self) -> &'static str {
+        match self {
+            Self::Absent => "Absent",
+            Self::Fault(_) => "Fault",
+            Self::Corrupt(_) => "Corrupt",
+            Self::Read(_) => "Read",
+        }
+    }
+}
+
+/// The parsed sidecar: a settled vector, or that vector plus the one
+/// pending batch. Braids absent from the map sit at genesis; the
+/// canonical rendering materializes every braid explicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chain {
-    pub entries: BTreeMap<BraidId, ChainEntry>,
-    pub pending: Option<Pending>,
+pub enum Chain {
+    Settled {
+        entries: BTreeMap<BraidId, ChainEntry>,
+    },
+    Pending {
+        entries: BTreeMap<BraidId, ChainEntry>,
+        batch: Pending,
+    },
 }
 
 impl Chain {
@@ -90,49 +124,74 @@ impl Chain {
     /// chain: zero vector, zero-hash heads, zero timestamps.
     #[must_use]
     pub fn genesis(braids: &Braids) -> Self {
-        Self {
+        Self::Settled {
             entries: braids
                 .components()
                 .keys()
                 .map(|braid| (*braid, ChainEntry::GENESIS))
                 .collect(),
-            pending: None,
+        }
+    }
+
+    /// The per-braid positions. Absent keys are genesis.
+    #[must_use]
+    pub fn entries(&self) -> &BTreeMap<BraidId, ChainEntry> {
+        match self {
+            Self::Settled { entries } | Self::Pending { entries, .. } => entries,
+        }
+    }
+
+    pub fn entries_mut(&mut self) -> &mut BTreeMap<BraidId, ChainEntry> {
+        match self {
+            Self::Settled { entries } | Self::Pending { entries, .. } => entries,
         }
     }
 
     /// The braid's position; absent entries are genesis.
     #[must_use]
     pub fn position(&self, braid: BraidId) -> ChainEntry {
-        self.entries
+        self.entries()
             .get(&braid)
             .copied()
             .unwrap_or(ChainEntry::GENESIS)
     }
 
-    /// The vector sum — the engine-generation side of the wholeness
-    /// identity.
+    /// The vector sum — the settled side of `generation`.
     #[must_use]
     pub fn sum(&self) -> u64 {
-        self.entries
+        self.entries()
             .values()
             .fold(0u64, |acc, entry| acc.saturating_add(entry.g))
+    }
+
+    /// The generation a store must show: the vector sum, plus one
+    /// exactly when the chain is `Pending`. There is no addend a
+    /// reader can forget.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        match self {
+            Self::Settled { .. } => self.sum(),
+            Self::Pending { .. } => self.sum().saturating_add(1),
+        }
     }
 
     /// The vector: applied counts keyed by braid.
     #[must_use]
     pub fn vector(&self) -> BTreeMap<BraidId, u64> {
-        self.entries
+        self.entries()
             .iter()
             .map(|(braid, entry)| (*braid, entry.g))
             .collect()
     }
 
-    /// The canonical single-line rendering.
+    /// The canonical single-line rendering. Wire `pending` is `null` on
+    /// `Settled` and the hex object on `Pending`; that is a rendering
+    /// of the constructor, not a field beside it.
     #[must_use]
     pub fn render(&self) -> Vec<u8> {
         use std::fmt::Write as _;
         let mut chain = String::new();
-        for (index, (braid, entry)) in self.entries.iter().enumerate() {
+        for (index, (braid, entry)) in self.entries().iter().enumerate() {
             if index > 0 {
                 chain.push(',');
             }
@@ -145,19 +204,19 @@ impl Chain {
             )
             .expect("write to string");
         }
-        let pending = match &self.pending {
-            Some(pending) => {
+        let pending = match self {
+            Self::Settled { .. } => "null".to_string(),
+            Self::Pending { batch, .. } => {
                 let mut body = format!(
                     "{{\"braid\":\"{}\",\"gen\":\"{}\",\"bytes\":\"",
-                    pending.braid, pending.slot
+                    batch.braid, batch.slot
                 );
-                for byte in &pending.bytes {
+                for byte in &batch.bytes {
                     write!(body, "{byte:02x}").expect("write to string");
                 }
                 body.push_str("\"}");
                 body
             }
-            None => "null".to_string(),
         };
         format!("{{\"v\":{DOC_VERSION},\"chain\":{{{chain}}},\"pending\":{pending}}}").into_bytes()
     }
@@ -167,7 +226,8 @@ impl Chain {
     /// mints, entries must ascend in the render's canonical braid order
     /// (which leaves a duplicate no place to stand), and an accepted
     /// document re-renders byte-identically. Braids the file omits sit
-    /// at genesis.
+    /// at genesis. `v:2` is a version refusal; every `g`/`ts`/`gen` is
+    /// a quoted decimal u64; pending bytes are lowercase hex.
     pub fn parse(bytes: &[u8], braids: &Braids) -> Result<Self, SidecarError> {
         let mal = |at| SidecarError::Malformed { at };
         let mut text = Text::new(bytes);
@@ -212,9 +272,9 @@ impl Chain {
             return Err(SidecarError::Overflow);
         }
         text.lit("},\"pending\":").map_err(mal)?;
-        let pending = if text.peek("null") {
+        let chain = if text.peek("null") {
             text.lit("null").map_err(mal)?;
-            None
+            Self::Settled { entries }
         } else {
             text.lit("{\"braid\":\"c").map_err(mal)?;
             let raw = text.hex_u32().map_err(mal)?;
@@ -226,15 +286,18 @@ impl Chain {
             text.lit(",\"bytes\":\"").map_err(mal)?;
             let body = text.hex_bytes().map_err(mal)?;
             text.lit("\"}").map_err(mal)?;
-            Some(Pending {
-                braid,
-                slot,
-                bytes: body,
-            })
+            Self::Pending {
+                entries,
+                batch: Pending {
+                    braid,
+                    slot,
+                    bytes: body,
+                },
+            }
         };
         text.lit("}").map_err(mal)?;
         text.end().map_err(mal)?;
-        Ok(Self { entries, pending })
+        Ok(chain)
     }
 
     /// Atomic publication: exclusive temp beside the target, fsync,
@@ -263,20 +326,25 @@ impl Chain {
         File::open(dir)?.sync_all()
     }
 
-    /// Reads `dir/chain.json`. `Ok(None)` when the file does not exist;
-    /// parse refusals surface so the caller can apply the disposable law.
-    pub fn read(dir: &Path, braids: &Braids) -> io::Result<Option<Result<Self, SidecarError>>> {
+    /// Reads `dir/chain.json` as a total sum. `Absent` is NotFound
+    /// only; every other io error is `Fault`; a parse refusal is
+    /// `Corrupt`.
+    #[must_use]
+    pub fn read(dir: &Path, braids: &Braids) -> SidecarRead {
         match fs::read(dir.join(CHAIN_FILE)) {
-            Ok(bytes) => Ok(Some(Self::parse(&bytes, braids))),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err),
+            Ok(bytes) => match Self::parse(&bytes, braids) {
+                Ok(chain) => SidecarRead::Read(chain),
+                Err(error) => SidecarRead::Corrupt(error),
+            },
+            Err(err) if err.kind() == io::ErrorKind::NotFound => SidecarRead::Absent,
+            Err(err) => SidecarRead::Fault(err),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Chain, SidecarError};
+    use super::{Chain, SidecarError, SidecarRead};
     use crate::braids::braids;
     use bumbledb::schema::{
         FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -311,6 +379,8 @@ mod tests {
         assert!(text.contains("\"g\":\"0\""));
         assert!(text.contains("\"ts\":\"0\""));
         assert!(text.contains("\"pending\":null"));
+        assert!(matches!(chain, Chain::Settled { .. }));
+        assert_eq!(chain.generation(), 0);
     }
 
     #[test]
@@ -335,14 +405,68 @@ mod tests {
         let braids = kitchen_braids();
         let hex = br#"{"v":3,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":{"braid":"c00000000","gen":"1","bytes":"4244424c"}}"#;
         let parsed = Chain::parse(hex, &braids).expect("hex pending");
+        let Chain::Pending { batch, .. } = parsed else {
+            panic!("pending constructor");
+        };
+        assert_eq!(batch.bytes, [0x42, 0x44, 0x42, 0x4c]);
+        assert_eq!(batch.slot, 1);
+        let numbered_gen = br#"{"v":3,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":{"braid":"c00000000","gen":1,"bytes":"4244424c"}}"#;
         assert_eq!(
-            parsed.pending.expect("pending").bytes,
-            [0x42, 0x44, 0x42, 0x4c]
+            Chain::parse(numbered_gen, &braids)
+                .expect_err("number gen")
+                .identity(),
+            "Malformed"
         );
         let b64 = br#"{"v":3,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":{"braid":"c00000000","gen":"1","bytes":"QkRCTAM="}}"#;
         assert_eq!(
             Chain::parse(b64, &braids).expect_err("base64").identity(),
             "Malformed"
         );
+    }
+
+    #[test]
+    fn generation_is_the_sum_plus_one_exactly_when_pending() {
+        let braids = kitchen_braids();
+        let settled = br#"{"v":3,"chain":{"c00000000":{"g":"40","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":null}"#;
+        let settled = Chain::parse(settled, &braids).expect("settled");
+        assert!(matches!(settled, Chain::Settled { .. }));
+        assert_eq!(settled.sum(), 40);
+        assert_eq!(settled.generation(), 40);
+        let pending = br#"{"v":3,"chain":{"c00000000":{"g":"40","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":{"braid":"c00000000","gen":"41","bytes":"4244424c"}}"#;
+        let pending = Chain::parse(pending, &braids).expect("pending");
+        assert!(matches!(pending, Chain::Pending { .. }));
+        assert_eq!(pending.sum(), 40);
+        assert_eq!(pending.generation(), 41);
+    }
+
+    #[test]
+    fn read_is_absent_corrupt_or_read() {
+        let braids = kitchen_braids();
+        let dir = std::env::temp_dir().join(format!(
+            "bumbledb-sidecar-read-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        assert_eq!(Chain::read(&dir, &braids).identity(), "Absent");
+        let v2 = br#"{"v":2,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":null}"#;
+        std::fs::write(dir.join(super::CHAIN_FILE), v2).expect("write v2");
+        let SidecarRead::Corrupt(SidecarError::Version { got: 2 }) = Chain::read(&dir, &braids)
+        else {
+            panic!("v2 is Corrupt, not Absent");
+        };
+        let chain = Chain::genesis(&braids);
+        chain.write_atomic(&dir).expect("write settled");
+        match Chain::read(&dir, &braids) {
+            SidecarRead::Read(got) => {
+                assert_eq!(got, chain);
+                assert_eq!(got.generation(), 0);
+            }
+            other => panic!("expected Read, got {}", other.identity()),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
