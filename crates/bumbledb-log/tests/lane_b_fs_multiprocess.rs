@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use bumbledb_log::store::fs::{FsStore, content_etag};
+use bumbledb_log::store::fs::{content_etag, FsStore};
 use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
 
 const ROLE_ENV: &str = "LANE_B_CHILD_ROLE";
@@ -100,12 +100,17 @@ fn child_env() -> Option<(String, PathBuf, u64)> {
 fn run_create_child(base: &Path, id: u64) {
     let store = store_at(base);
     wait_for_go(base);
-    let outcome = store
-        .put_create(&StoreKey::of(SLOT_KEY), &slot_body(id))
-        .expect("put_create");
+    let key = StoreKey::of(SLOT_KEY);
+    let body = slot_body(id);
+    let outcome = store.put_create(&key, &body).expect("put_create");
     let word = match outcome {
         Create::Created(_) => "created",
         Create::Exists => "exists",
+        Create::Ambiguous => match store.get(&key).expect("verify") {
+            Some(fetched) if fetched.bytes == body => "created",
+            Some(_) => "exists",
+            None => panic!("Ambiguous create left no occupant"),
+        },
     };
     println!("LANE_B create id={id} outcome={word}");
 }
@@ -139,6 +144,7 @@ fn run_swap_child(base: &Path, id: u64) {
         {
             Swap::Swapped(_) => swapped += 1,
             Swap::Moved => moved += 1,
+            Swap::Ambiguous => {}
         }
     }
     println!("LANE_B swap id={id} swapped={swapped} moved={moved}");

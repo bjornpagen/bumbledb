@@ -3,24 +3,24 @@
 
 mod lane_d_support;
 
-use bumbledb_log::sidecar::{CHAIN_FILE, Chain, ChainEntry, Pending, SidecarError};
+use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarError, SidecarRead, CHAIN_FILE};
 use lane_d_support::{codec, kitchen_braid, note_braid, temp_dir};
 
 #[test]
 fn genesis_materializes_every_braid() {
     let codec = codec();
     let chain = Chain::genesis(codec.braids());
-    assert_eq!(chain.entries.len(), 2);
+    assert_eq!(chain.entries().len(), 2);
     assert_eq!(chain.sum(), 0);
     assert_eq!(chain.position(kitchen_braid(&codec)), ChainEntry::GENESIS);
-    assert!(chain.pending.is_none());
+    assert!(matches!(chain, Chain::Settled { .. }));
 }
 
 #[test]
 fn render_parse_fixpoint_with_and_without_pending() {
     let codec = codec();
     let mut chain = Chain::genesis(codec.braids());
-    chain.entries.insert(
+    chain.entries_mut().insert(
         kitchen_braid(&codec),
         ChainEntry {
             g: 80,
@@ -31,11 +31,17 @@ fn render_parse_fixpoint_with_and_without_pending() {
     let bytes = chain.render();
     assert_eq!(Chain::parse(&bytes, codec.braids()), Ok(chain.clone()));
 
-    chain.pending = Some(Pending {
-        braid: note_braid(&codec),
-        slot: 81,
-        bytes: vec![0xde, 0xad, 0xbe, 0xef],
-    });
+    let Chain::Settled { entries } = chain else {
+        panic!("genesis is Settled");
+    };
+    let chain = Chain::Pending {
+        entries,
+        batch: Pending {
+            braid: note_braid(&codec),
+            slot: 81,
+            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+        },
+    };
     let bytes = chain.render();
     assert_eq!(Chain::parse(&bytes, codec.braids()), Ok(chain));
 }
@@ -68,7 +74,7 @@ fn parse_refuses_version_whitespace_and_unknown_braids() {
 fn parse_is_order_strict_like_the_checkpoint_parser() {
     let codec = codec();
     let mut chain = Chain::genesis(codec.braids());
-    chain.entries.insert(
+    chain.entries_mut().insert(
         kitchen_braid(&codec),
         ChainEntry {
             g: 3,
@@ -76,7 +82,7 @@ fn parse_is_order_strict_like_the_checkpoint_parser() {
             ts: 100,
         },
     );
-    chain.entries.insert(
+    chain.entries_mut().insert(
         note_braid(&codec),
         ChainEntry {
             g: 5,
@@ -131,12 +137,12 @@ fn vector_and_sum_agree_with_entries() {
     let codec = codec();
     let mut chain = Chain::genesis(codec.braids());
     chain
-        .entries
+        .entries_mut()
         .get_mut(&kitchen_braid(&codec))
         .expect("kitchen entry")
         .g = 5;
     chain
-        .entries
+        .entries_mut()
         .get_mut(&note_braid(&codec))
         .expect("note entry")
         .g = 2;
@@ -151,21 +157,21 @@ fn write_atomic_then_read_roundtrips_and_replaces() {
     let dir = temp_dir("sidecar_atomic");
     let mut chain = Chain::genesis(codec.braids());
     chain.write_atomic(&dir).expect("first write");
-    assert_eq!(
-        Chain::read(&dir, codec.braids()).expect("read"),
-        Some(Ok(chain.clone()))
-    );
+    match Chain::read(&dir, codec.braids()) {
+        SidecarRead::Read(got) => assert_eq!(got, chain),
+        other => panic!("expected Read, got {}", other.identity()),
+    }
 
     chain
-        .entries
+        .entries_mut()
         .get_mut(&kitchen_braid(&codec))
         .expect("kitchen entry")
         .g = 9;
     chain.write_atomic(&dir).expect("second write");
-    assert_eq!(
-        Chain::read(&dir, codec.braids()).expect("read"),
-        Some(Ok(chain))
-    );
+    match Chain::read(&dir, codec.braids()) {
+        SidecarRead::Read(got) => assert_eq!(got, chain),
+        other => panic!("expected Read, got {}", other.identity()),
+    }
 
     let leftovers: Vec<_> = std::fs::read_dir(&dir)
         .expect("read dir")
@@ -179,5 +185,8 @@ fn write_atomic_then_read_roundtrips_and_replaces() {
 fn read_of_a_missing_sidecar_is_none() {
     let codec = codec();
     let dir = temp_dir("sidecar_missing");
-    assert_eq!(Chain::read(&dir, codec.braids()).expect("read"), None);
+    assert!(matches!(
+        Chain::read(&dir, codec.braids()),
+        SidecarRead::Absent
+    ));
 }

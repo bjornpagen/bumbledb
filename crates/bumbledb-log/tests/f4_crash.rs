@@ -20,7 +20,7 @@ use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Op, OpKind};
 use bumbledb_log::manifest::{Manifest, create_manifest, log_key};
 use bumbledb_log::replica::{Opened, Provenance, Replica};
-use bumbledb_log::sidecar::{Chain, ChainEntry};
+use bumbledb_log::sidecar::{Chain, ChainEntry, SidecarRead};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{
@@ -600,10 +600,10 @@ fn replica_crash_matrix_every_prefix_recovers_through_catch_up_alone() {
                 .bytes;
             let batch = codec.decode(&bytes).expect("decode slot 2");
             let db: Db<SchemaDescriptor> = Db::open(&dir, theory()).expect("raw open");
-            let mut chain = Chain::read(&dir, codec.braids())
-                .expect("read sidecar")
-                .expect("sidecar present")
-                .expect("sidecar parses");
+            let mut chain = match Chain::read(&dir, codec.braids()) {
+                SidecarRead::Read(chain) => chain,
+                other => panic!("expected Read, got {}", other.identity()),
+            };
             for step in &REPLICA_STEPS[..len] {
                 match step {
                     ReplicaStep::ApplyLocal => {
@@ -625,7 +625,7 @@ fn replica_crash_matrix_every_prefix_recovers_through_catch_up_alone() {
                         assert!(matches!(admission, Admission::Accepted(_)));
                     }
                     ReplicaStep::ChainAdvance => {
-                        chain.entries.insert(
+                        chain.entries_mut().insert(
                             notes,
                             ChainEntry {
                                 g: 2,
@@ -783,7 +783,7 @@ fn double_apply_every_batch_at_every_prefix_leaves_digest_generation_vector_unmo
         };
         let bytes = codec.encode(&header, ops).expect("encode");
         let applied =
-            apply(&db_build, &mut chain_build, &codec, *braid, slot, &bytes, 0).expect("apply");
+            apply(&db_build, &mut chain_build, &codec, *braid, slot, &bytes).expect("apply");
         assert!(
             matches!(applied, Applied::Advanced { .. }),
             "batch {index} must be state-changing: {applied:?}"
@@ -800,22 +800,13 @@ fn double_apply_every_batch_at_every_prefix_leaves_digest_generation_vector_unmo
     let mut chain_replay = Chain::genesis(codec.braids());
     for (index, (braid, slot, bytes)) in encoded.iter().enumerate() {
         let mut stale = chain_replay.clone();
-        let first = apply(
-            &db_replay,
-            &mut chain_replay,
-            &codec,
-            *braid,
-            *slot,
-            bytes,
-            0,
-        )
-        .expect("apply");
+        let first =
+            apply(&db_replay, &mut chain_replay, &codec, *braid, *slot, bytes).expect("apply");
         assert!(matches!(first, Applied::Advanced { .. }), "prefix {index}");
         let generation = db_replay.generation().expect("generation").value();
         let digest = db_replay.catalog_digest().expect("digest");
         let vector = chain_replay.vector();
-        let second =
-            apply(&db_replay, &mut stale, &codec, *braid, *slot, bytes, 0).expect("re-apply");
+        let second = apply(&db_replay, &mut stale, &codec, *braid, *slot, bytes).expect("re-apply");
         match second {
             Applied::Absorbed {
                 generation: absorbed,

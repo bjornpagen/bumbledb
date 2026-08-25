@@ -21,7 +21,7 @@ use bumbledb::schema::{
 };
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Codec, DecodeError};
-use bumbledb_log::manifest::{Checkpoint, CheckpointError, Head, Manifest, ManifestError, hex32};
+use bumbledb_log::manifest::{hex32, Checkpoint, CheckpointError, Head, Manifest, ManifestError};
 use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarError};
 
 struct XorShift(u64);
@@ -297,7 +297,10 @@ fn assert_manifest_refusal_in_bounds(error: ManifestError, len: usize) {
 fn assert_checkpoint_refusal_in_bounds(error: CheckpointError, len: usize) {
     match error {
         CheckpointError::Malformed { at } => assert!(at <= len, "offset in bounds"),
-        CheckpointError::UnknownBraid { .. } | CheckpointError::BraidSet => {}
+        CheckpointError::UnknownBraid { .. }
+        | CheckpointError::BraidSet
+        | CheckpointError::Version { .. }
+        | CheckpointError::Overflow => {}
     }
 }
 
@@ -587,7 +590,7 @@ fn fixture_codec() -> Codec {
 
 fn chain_goldens(codec: &Codec) -> Vec<Chain> {
     let mut advanced = Chain::genesis(codec.braids());
-    for (index, entry) in advanced.entries.values_mut().enumerate() {
+    for (index, entry) in advanced.entries_mut().values_mut().enumerate() {
         let fill = u8::try_from(index + 1).expect("small index");
         *entry = ChainEntry {
             g: 40 + u64::try_from(index).expect("small index") * 3,
@@ -595,20 +598,27 @@ fn chain_goldens(codec: &Codec) -> Vec<Chain> {
             ts: 9_000 + u64::try_from(index).expect("small index"),
         };
     }
-    let braid = *advanced.entries.keys().next().expect("a braid exists");
-    let mut pending = advanced.clone();
-    pending.pending = Some(Pending {
-        braid,
-        slot: 41,
-        bytes: vec![0xde, 0xad, 0xbe, 0xef],
-    });
+    let braid = *advanced.entries().keys().next().expect("a braid exists");
+    let Chain::Settled { entries } = advanced.clone() else {
+        panic!("genesis is Settled");
+    };
+    let pending = Chain::Pending {
+        entries,
+        batch: Pending {
+            braid,
+            slot: 41,
+            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+        },
+    };
     vec![Chain::genesis(codec.braids()), advanced, pending]
 }
 
 fn assert_sidecar_refusal_in_bounds(error: SidecarError, len: usize) {
     match error {
         SidecarError::Malformed { at } => assert!(at <= len, "offset in bounds"),
-        SidecarError::Version { .. } | SidecarError::UnknownBraid { .. } => {}
+        SidecarError::Version { .. }
+        | SidecarError::UnknownBraid { .. }
+        | SidecarError::Overflow => {}
     }
 }
 

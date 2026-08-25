@@ -10,16 +10,16 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use bumbledb::{Db, SchemaDescriptor, Value};
-use bumbledb_log::apply::{ApplyRefusal, ChainCause, apply};
+use bumbledb_log::apply::{apply, ApplyRefusal, ChainCause};
 use bumbledb_log::codec::BatchHeader;
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::replica::{Corruption, Opened, Provenance, Refreshed, Replica, Waited};
-use bumbledb_log::sidecar::{Chain, ChainEntry, Pending};
-use bumbledb_log::store::ObjectStore;
+use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 use bumbledb_log::store::fs::FsStore;
+use bumbledb_log::store::ObjectStore;
 use lane_d_support::{
-    NOTE, RECIPE, TestLog, insert_note, insert_recipe, insert_step, kitchen_braid, note_braid,
-    temp_dir, theory,
+    insert_note, insert_recipe, insert_step, kitchen_braid, note_braid, temp_dir, theory, TestLog,
+    NOTE, RECIPE,
 };
 
 type TestReplica = Replica<SchemaDescriptor, FsStore>;
@@ -126,11 +126,11 @@ fn crash_window_reopen_absorbs_and_the_vector_catches_up() {
     // The crash window: the engine committed slot 1 but the sidecar
     // bump never landed. Rewind the sidecar one step by hand.
     let braids = log.codec.braids();
-    let mut chain = Chain::read(&dir, braids)
-        .expect("read sidecar")
-        .expect("sidecar present")
-        .expect("sidecar parses");
-    chain.entries.insert(kitchen, ChainEntry::GENESIS);
+    let mut chain = match Chain::read(&dir, braids) {
+        SidecarRead::Read(chain) => chain,
+        other => panic!("expected Read, got {}", other.identity()),
+    };
+    chain.entries_mut().insert(kitchen, ChainEntry::GENESIS);
     chain.write_atomic(&dir).expect("rewind sidecar");
 
     let replica = open_at(&root, &dir);
@@ -371,11 +371,11 @@ fn pending_resolution_keeps_the_identity_and_clears_on_publication() {
     assert_eq!(slot, 2);
     let db: Db<SchemaDescriptor> = Db::open(&dir, theory()).expect("raw open");
     let braids = log.codec.braids();
-    let mut chain = Chain::read(&dir, braids)
-        .expect("read")
-        .expect("present")
-        .expect("parses");
-    let applied = apply(&db, &mut chain, &log.codec, kitchen, 2, &bytes, 0).expect("apply");
+    let mut chain = match Chain::read(&dir, braids) {
+        SidecarRead::Read(chain) => chain,
+        other => panic!("expected Read, got {}", other.identity()),
+    };
+    let applied = apply(&db, &mut chain, &log.codec, kitchen, 2, &bytes).expect("apply");
     assert!(matches!(
         applied,
         bumbledb_log::apply::Applied::Advanced { generation: 2 }
@@ -383,16 +383,22 @@ fn pending_resolution_keeps_the_identity_and_clears_on_publication() {
     drop(db);
     // The sidecar the crash left behind: chain still at slot 1 (the
     // manual apply never rewrote the file), the batch in pending.
-    let mut crashed = Chain::read(&dir, braids)
-        .expect("read")
-        .expect("present")
-        .expect("parses");
+    let crashed = match Chain::read(&dir, braids) {
+        SidecarRead::Read(chain) => chain,
+        other => panic!("expected Read, got {}", other.identity()),
+    };
     assert_eq!(crashed.position(kitchen).g, 1);
-    crashed.pending = Some(Pending {
-        braid: kitchen,
-        slot: 2,
-        bytes: bytes.clone(),
-    });
+    let Chain::Settled { entries } = crashed else {
+        panic!("replica sidecar is Settled");
+    };
+    let crashed = Chain::Pending {
+        entries,
+        batch: Pending {
+            braid: kitchen,
+            slot: 2,
+            bytes: bytes.clone(),
+        },
+    };
     crashed.write_atomic(&dir).expect("write crashed sidecar");
 
     // A pure replica opens the writer's dir: the applied-but-unpublished

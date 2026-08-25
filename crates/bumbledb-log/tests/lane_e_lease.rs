@@ -206,8 +206,8 @@ fn child_env() -> Option<(String, PathBuf, u64)> {
 fn run_lease_child(base: &Path, id: u64) {
     let store = FsStore::new(base.join("store"));
     for _ in 0..BLOCKS_PER_CHILD {
-        match lease_block(&store, "", NOTE, FieldId(0)).expect("lease") {
-            Leased::Range(range) => {
+        match lease_block(&store, "", NOTE, FieldId(0), 0, 1).expect("lease") {
+            Leased::Drawn { range, .. } => {
                 println!(
                     "LANE_E lease id={id} start={} end={}",
                     range.start, range.end

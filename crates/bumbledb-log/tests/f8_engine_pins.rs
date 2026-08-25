@@ -19,15 +19,15 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValidateDescriptor as _, ValueType,
 };
-use bumbledb::{Db, Value, Violation, obs};
-use bumbledb_log::apply::{Applied, apply};
+use bumbledb::{obs, Db, Value, Violation};
+use bumbledb_log::apply::{apply, Applied};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, OpKind};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::sidecar::Chain;
-use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
+use bumbledb_log::store::ObjectStore;
 use bumbledb_log::writer::{Commit, Durability, Options, Writer, WriterOpened};
 
 const RECIPE: RelationId = RelationId(0);
@@ -274,18 +274,14 @@ fn intern_mint_determinism_lands_byte_identical_catalog_digests_across_replicas(
         replayed,
         "identical batches against identical stores mint identical ids"
     );
-    assert!(
-        replay_one
-            .db()
-            .read(|instance| instance.contains_dyn(NOTE, &note_row(3, "poolish overnight")))
-            .expect("read")
-    );
-    assert!(
-        replay_one
-            .db()
-            .read(|instance| instance.contains_dyn(RECIPE, &recipe_row(3, "barm")))
-            .expect("read")
-    );
+    assert!(replay_one
+        .db()
+        .read(|instance| instance.contains_dyn(NOTE, &note_row(3, "poolish overnight")))
+        .expect("read"));
+    assert!(replay_one
+        .db()
+        .read(|instance| instance.contains_dyn(RECIPE, &recipe_row(3, "barm")))
+        .expect("read"));
 }
 
 #[test]
@@ -607,7 +603,7 @@ fn crash_window_reapply_lands_in_the_engine_noop_arm_on_the_trace() {
         )
         .expect("encode");
     assert_eq!(
-        apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply"),
+        apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply"),
         Applied::Advanced { generation: 1 }
     );
 
@@ -617,7 +613,7 @@ fn crash_window_reapply_lands_in_the_engine_noop_arm_on_the_trace() {
     // state.
     let mut rewound = Chain::genesis(codec.braids());
     obs::start_capture();
-    let reapplied = apply(&db, &mut rewound, &codec, braid, 1, &bytes, 0).expect("reapply");
+    let reapplied = apply(&db, &mut rewound, &codec, braid, 1, &bytes).expect("reapply");
     let events = obs::finish_capture();
 
     assert_eq!(reapplied, Applied::Absorbed { generation: 1 });

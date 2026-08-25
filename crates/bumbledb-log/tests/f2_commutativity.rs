@@ -15,7 +15,7 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::{Db, Value};
-use bumbledb_log::apply::{Applied, apply};
+use bumbledb_log::apply::{apply, Applied};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::sidecar::Chain;
@@ -189,7 +189,7 @@ fn apply_sequence(codec: &Codec, order: &[&(BraidId, u64, Vec<u8>)]) -> ([u8; 32
             .expect("theory admits empty store");
         let mut chain = Chain::genesis(codec.braids());
         for (braid, slot, bytes) in order {
-            let applied = apply(&db, &mut chain, codec, *braid, *slot, bytes, 0).expect("apply io");
+            let applied = apply(&db, &mut chain, codec, *braid, *slot, bytes).expect("apply io");
             assert!(
                 matches!(applied, Applied::Advanced { .. }),
                 "every history batch advances: braid {braid:?} slot {slot}: {applied:?}"

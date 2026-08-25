@@ -1,7 +1,7 @@
 //! Checkpoint duty: cadence crossings publish `ckpt/{digest}.mdb` and
 //! `ckpt/{digest}.json` and run the manifest CAS off the commit loop;
 //! races resolve by the checkpoint order (greater sum replaces,
-//! otherwise the incumbent stays and the candidate is gc fodder).
+//! otherwise the incumbent stays and the loser is a known orphan).
 
 mod lane_e_support;
 
@@ -154,18 +154,19 @@ fn the_checkpoint_order_keeps_a_greater_incumbent() {
             )
         })
         .collect();
-    let incumbent_digest = [1u8; 32];
+    let prev = store
+        .get(&manifest_key(""))
+        .expect("get")
+        .and_then(|fetched| Manifest::parse(&fetched.bytes).ok()?.checkpoint);
+    let incumbent = Checkpoint {
+        braids: heads,
+        catalog: [9u8; 32],
+        writer: 999,
+        prev,
+    };
+    let incumbent_digest = incumbent.digest();
     assert!(matches!(
-        publish_checkpoint(
-            &store,
-            "",
-            codec.braids(),
-            incumbent_digest,
-            &heads,
-            [9u8; 32],
-            999,
-        )
-        .expect("publish"),
+        publish_checkpoint(&store, "", codec.braids(), &incumbent).expect("publish"),
         bumbledb_log::manifest::Published::Replaced
     ));
 
@@ -189,6 +190,6 @@ fn the_checkpoint_order_keeps_a_greater_incumbent() {
     assert_eq!(
         manifest.checkpoint,
         Some(incumbent_digest),
-        "the incumbent's sum is at least the candidate's; the candidate is gc fodder"
+        "the incumbent's sum is at least the candidate's; the loser is a known orphan"
     );
 }

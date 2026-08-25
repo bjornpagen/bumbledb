@@ -121,7 +121,7 @@ fn render_checkpoint(parsed: &Checkpoint) -> Json {
 
 fn render_sidecar(parsed: &Chain) -> Json {
     let mut chain = serde_json::Map::new();
-    for (braid, entry) in &parsed.entries {
+    for (braid, entry) in parsed.entries() {
         chain.insert(
             braid.to_string(),
             serde_json::json!({
@@ -131,13 +131,14 @@ fn render_sidecar(parsed: &Chain) -> Json {
             }),
         );
     }
-    let pending = parsed.pending.as_ref().map(|pending| {
-        serde_json::json!({
-            "braid": pending.braid.to_string(),
-            "gen": pending.slot.to_string(),
-            "bytes": support::hex(&pending.bytes),
-        })
-    });
+    let pending = match parsed {
+        Chain::Pending { batch, .. } => Some(serde_json::json!({
+            "braid": batch.braid.to_string(),
+            "gen": batch.slot.to_string(),
+            "bytes": support::hex(&batch.bytes),
+        })),
+        Chain::Settled { .. } => None,
+    };
     serde_json::json!({
         "chain": chain,
         "pending": pending,
@@ -540,9 +541,9 @@ fn inventory_chain_goldens_decode_and_verify() {
             .expect("create")
             .expect("theory admits empty store");
         let mut chain = Chain::genesis(codec.braids());
-        chain.entries.insert(fetched, position);
+        chain.entries_mut().insert(fetched, position);
         let applied =
-            apply(&db, &mut chain, &codec, fetched, slot, &bytes, 0).expect("apply infrastructure");
+            apply(&db, &mut chain, &codec, fetched, slot, &bytes).expect("apply infrastructure");
         match sidecar["expect"].as_str().expect("expect") {
             "ok" => {
                 assert_eq!(

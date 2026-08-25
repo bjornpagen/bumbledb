@@ -9,7 +9,7 @@
 mod support;
 
 use bumbledb::{Interval, Value};
-use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
+use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
 use bumbledb_log::braids::braids;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::sidecar::{Chain, ChainEntry};
@@ -498,8 +498,8 @@ fn chain_corpus_pins_the_three_causes() {
             .expect("create")
             .expect("theory admits empty store");
         let mut chain = Chain::genesis(codec.braids());
-        chain.entries.insert(braid, case.position);
-        let applied = apply(&db, &mut chain, codec, braid, case.slot, &case.bytes, 0)
+        chain.entries_mut().insert(braid, case.position);
+        let applied = apply(&db, &mut chain, codec, braid, case.slot, &case.bytes)
             .expect("apply infrastructure");
         match case.expect {
             ChainExpect::Advance => {

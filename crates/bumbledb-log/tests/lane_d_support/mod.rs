@@ -16,7 +16,8 @@ use bumbledb::{Db, Theory, Value};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{
-    Head, Manifest, ckpt_mdb_key, create_manifest, log_key, publish_checkpoint,
+    ckpt_mdb_key, create_manifest, log_key, manifest_key, publish_checkpoint, Checkpoint, Head,
+    Manifest,
 };
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{Create, ObjectStore};
@@ -237,22 +238,25 @@ impl TestLog {
         let compact_dir = scratch.join(format!("compact_{seq}"));
         db.compact(&compact_dir).expect("compact");
         let bytes = std::fs::read(compact_dir.join("data.mdb")).expect("compacted store file");
-        let digest = *blake3::hash(&bytes).as_bytes();
+        let prev = self
+            .store
+            .get(&manifest_key(&self.prefix))
+            .expect("manifest get")
+            .and_then(|fetched| Manifest::parse(&fetched.bytes).ok()?.checkpoint);
+        let doc = Checkpoint {
+            braids: self.heads.clone(),
+            catalog: db.catalog_digest().expect("catalog digest"),
+            writer: self.writer,
+            prev,
+        };
+        let digest = doc.digest();
 
         let _ = self
             .store
             .put_create(&ckpt_mdb_key(&self.prefix, &digest), &bytes)
             .expect("put checkpoint object");
-        let published = publish_checkpoint(
-            &self.store,
-            &self.prefix,
-            self.codec.braids(),
-            digest,
-            &self.heads,
-            db.catalog_digest().expect("catalog digest"),
-            self.writer,
-        )
-        .expect("publish checkpoint");
+        let published = publish_checkpoint(&self.store, &self.prefix, self.codec.braids(), &doc)
+            .expect("publish checkpoint");
         assert!(matches!(
             published,
             bumbledb_log::manifest::Published::Replaced

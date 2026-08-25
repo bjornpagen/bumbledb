@@ -15,11 +15,13 @@ use bumbledb::schema::{
     Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::{Admission, Db, Value};
-use bumbledb_log::apply::{Applied, apply};
+use bumbledb_log::apply::{apply, Applied};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Codec, Op, OpKind};
-use bumbledb_log::gc::{Restore, restore_to_vector};
-use bumbledb_log::manifest::{Head, Published, ckpt_mdb_key, log_key, publish_checkpoint};
+use bumbledb_log::gc::{restore_to_vector, Restore};
+use bumbledb_log::manifest::{
+    ckpt_mdb_key, log_key, manifest_key, publish_checkpoint, Checkpoint, Head, Manifest, Published,
+};
 use bumbledb_log::replica::{Opened, Provenance, Replica, Vector};
 use bumbledb_log::sidecar::Chain;
 use bumbledb_log::store::fs::FsStore;
@@ -363,9 +365,8 @@ fn publish_hop_checkpoint(
     let bytes = std::fs::read(scratch.join("data.mdb")).expect("read compacted store");
     let _ = std::fs::remove_dir_all(scratch);
     let catalog = db.catalog_digest().expect("hop catalog digest");
-    let digest = *blake3::hash(&bytes).as_bytes();
     let heads: std::collections::BTreeMap<_, Head> = chain
-        .entries
+        .entries()
         .iter()
         .map(|(braid, entry)| {
             (
@@ -378,23 +379,24 @@ fn publish_hop_checkpoint(
             )
         })
         .collect();
+    let prev = store
+        .get(&manifest_key(""))
+        .expect("manifest get")
+        .and_then(|fetched| Manifest::parse(&fetched.bytes).ok()?.checkpoint);
+    let doc = Checkpoint {
+        braids: heads,
+        catalog,
+        writer: 4200 + seed,
+        prev,
+    };
+    let digest = doc.digest();
     assert!(matches!(
         store
             .put_create(&ckpt_mdb_key("", &digest), &bytes)
             .expect("upload checkpoint object"),
         Create::Created(_)
     ));
-    match publish_checkpoint(
-        store,
-        "",
-        codec.braids(),
-        digest,
-        &heads,
-        catalog,
-        4200 + seed,
-    )
-    .expect("manifest CAS")
-    {
+    match publish_checkpoint(store, "", codec.braids(), &doc).expect("manifest CAS") {
         Published::Replaced | Published::Kept { .. } => {}
         Published::Refused(refusal) => panic!("seed {seed}: checkpoint refused: {refusal:?}"),
     }
@@ -431,7 +433,7 @@ fn run_world(seed: u64) {
     let mut hop: Option<(Vector, Chain)> = None;
     for (index, (braid, slot)) in published.iter().enumerate() {
         let bytes = fetch_slot(&store, *braid, *slot, seed);
-        match apply(&replay_db, &mut chain, &codec, *braid, *slot, &bytes, 0).expect("engine") {
+        match apply(&replay_db, &mut chain, &codec, *braid, *slot, &bytes).expect("engine") {
             Applied::Advanced { .. } => {}
             other => panic!(
                 "TROPHY seed {seed}: replay of probe {index} ({braid}/{slot}) \
@@ -484,8 +486,7 @@ fn run_world(seed: u64) {
         );
         for (index, (braid, slot)) in published.iter().enumerate().skip(hop_pos) {
             let bytes = fetch_slot(&store, *braid, *slot, seed);
-            match apply(&hop_db, &mut hop_chain, &codec, *braid, *slot, &bytes, 0).expect("engine")
-            {
+            match apply(&hop_db, &mut hop_chain, &codec, *braid, *slot, &bytes).expect("engine") {
                 Applied::Advanced { .. } => {}
                 other => panic!(
                     "TROPHY seed {seed}: checkpoint-hop tail replay of probe {index} \

@@ -19,13 +19,13 @@ use bumbledb::schema::{
     StatementDescriptor, ValidateDescriptor as _, ValueType,
 };
 use bumbledb::{Admission, Db, Theory, Value};
-use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
+use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
-use bumbledb_log::gc::{Gc, Restore, RestoreRefusal, gc, restore_by_time, restore_to_vector};
+use bumbledb_log::gc::{gc, restore_by_time, restore_to_vector, Gc, Restore, RestoreRefusal};
 use bumbledb_log::manifest::{
-    Checkpoint, Head, Manifest, Published, ckpt_json_key, ckpt_mdb_key, create_manifest, hex32,
-    log_key, manifest_key, publish_checkpoint,
+    ckpt_json_key, ckpt_mdb_key, create_manifest, hex32, log_key, manifest_key, publish_checkpoint,
+    Checkpoint, Head, Manifest, Published,
 };
 use bumbledb_log::replica::{OpenRefusal, Opened, Provenance, Refreshed, Replica, Vector};
 use bumbledb_log::sidecar::Chain;
@@ -237,7 +237,6 @@ impl TestLog {
         let compact_dir = scratch.join(format!("compact_{seq}"));
         db.compact(&compact_dir).expect("compact");
         let bytes = std::fs::read(compact_dir.join("data.mdb")).expect("compacted store file");
-        let digest = *blake3::hash(&bytes).as_bytes();
         let manifest_bytes = self
             .store
             .get(&manifest_key(&self.prefix))
@@ -250,26 +249,19 @@ impl TestLog {
             writer: self.writer,
             prev: manifest.checkpoint,
         };
-        self.publish_checkpoint_doc(&bytes, &doc, digest);
-        digest
+        self.publish_checkpoint_doc(&bytes, &doc)
     }
 
-    fn publish_checkpoint_doc(&self, mdb: &[u8], doc: &Checkpoint, digest: [u8; 32]) {
+    fn publish_checkpoint_doc(&self, mdb: &[u8], doc: &Checkpoint) -> [u8; 32] {
+        let digest = doc.digest();
         let _ = self
             .store
             .put_create(&ckpt_mdb_key(&self.prefix, &digest), mdb)
             .expect("put checkpoint object");
-        let published = publish_checkpoint(
-            &self.store,
-            &self.prefix,
-            self.codec.braids(),
-            digest,
-            &doc.braids,
-            doc.catalog,
-            doc.writer,
-        )
-        .expect("publish checkpoint");
+        let published = publish_checkpoint(&self.store, &self.prefix, self.codec.braids(), doc)
+            .expect("publish checkpoint");
         assert!(matches!(published, Published::Replaced));
+        digest
     }
 }
 
@@ -297,7 +289,7 @@ fn replay_forward(
                 .get(&log_key(prefix, *braid, slot))
                 .expect("get slot")
                 .expect("slot exists");
-            match apply(db, chain, codec, *braid, slot, &fetched.bytes, 0).expect("apply") {
+            match apply(db, chain, codec, *braid, slot, &fetched.bytes).expect("apply") {
                 Applied::Advanced { .. } | Applied::Absorbed { .. } => {}
                 other => panic!("replay stopped at {braid}/{slot}: {other:?}"),
             }
@@ -574,10 +566,10 @@ fn a_non_monotone_timestamp_batch_is_refused_at_apply() {
         .expect("slot 1")
         .bytes;
     assert!(matches!(
-        apply(&db, &mut chain, &log.codec, kitchen, 1, &slot1, 0).expect("apply"),
+        apply(&db, &mut chain, &log.codec, kitchen, 1, &slot1).expect("apply"),
         Applied::Advanced { .. }
     ));
-    match apply(&db, &mut chain, &log.codec, kitchen, 2, &bytes, 0).expect("apply") {
+    match apply(&db, &mut chain, &log.codec, kitchen, 2, &bytes).expect("apply") {
         Applied::Refused(ApplyRefusal::ChainMismatch {
             cause:
                 ChainCause::Timestamp {
@@ -869,7 +861,7 @@ fn poisoned_checkpoint(log: &TestLog, dir: &Path, scratch: &Path) -> (Vec<u8>, [
                 .get(&log_key(&log.prefix, *braid, slot))
                 .expect("get slot")
                 .expect("slot exists");
-            match apply(&db, &mut chain, codec, *braid, slot, &fetched.bytes, 0).expect("apply") {
+            match apply(&db, &mut chain, codec, *braid, slot, &fetched.bytes).expect("apply") {
                 Applied::Advanced { .. } => {}
                 other => panic!("poison replay stopped at {braid}/{slot}: {other:?}"),
             }
@@ -936,7 +928,6 @@ fn a_lying_checkpoint_with_an_honest_claim_is_refused_at_fresh_open() {
 
     let (poison_bytes, poison_catalog) = poisoned_checkpoint(&log, &local.join("poison"), &scratch);
     assert_ne!(poison_catalog, honest_catalog);
-    let poison_digest = *blake3::hash(&poison_bytes).as_bytes();
     let liar = 666;
     let doc = Checkpoint {
         braids: log.heads.clone(),
@@ -944,7 +935,7 @@ fn a_lying_checkpoint_with_an_honest_claim_is_refused_at_fresh_open() {
         writer: liar,
         prev: None,
     };
-    log.publish_checkpoint_doc(&poison_bytes, &doc, poison_digest);
+    let poison_digest = log.publish_checkpoint_doc(&poison_bytes, &doc);
 
     // Fresh open seeds from the lie: digest and generation both check
     // out, honestly copied heads check out — the catalog claim is the
@@ -1015,7 +1006,6 @@ fn a_self_consistent_lying_checkpoint_is_refused_by_a_replay_reaching_store() {
     // catalog digest, so a fresh seed verifies clean. Only a store that
     // reached the same vector by its own replay can convict it.
     let (poison_bytes, poison_catalog) = poisoned_checkpoint(&log, &local.join("poison"), &scratch);
-    let poison_digest = *blake3::hash(&poison_bytes).as_bytes();
     let liar = 667;
     let doc = Checkpoint {
         braids: log.heads.clone(),
@@ -1023,7 +1013,7 @@ fn a_self_consistent_lying_checkpoint_is_refused_by_a_replay_reaching_store() {
         writer: liar,
         prev: None,
     };
-    log.publish_checkpoint_doc(&poison_bytes, &doc, poison_digest);
+    let poison_digest = log.publish_checkpoint_doc(&poison_bytes, &doc);
 
     // The heartbeat adopts the lying floor; the witness stands at
     // exactly its vector and the comparison convicts the publisher.

@@ -5,12 +5,12 @@
 mod lane_d_support;
 
 use bumbledb::{Db, Value};
-use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
+use bumbledb_log::apply::{apply, Applied, ApplyRefusal, ChainCause};
 use bumbledb_log::codec::{BatchHeader, Op, OpKind};
 use bumbledb_log::sidecar::{Chain, ChainEntry};
 use lane_d_support::{
-    NOTE, RECIPE, codec, insert_note, insert_recipe, insert_step, kitchen_braid, note_braid,
-    temp_dir, theory,
+    codec, insert_note, insert_recipe, insert_step, kitchen_braid, note_braid, temp_dir, theory,
+    NOTE, RECIPE,
 };
 
 fn fresh_db(tag: &str) -> Db<bumbledb::SchemaDescriptor> {
@@ -41,16 +41,15 @@ fn first_apply_advances_and_moves_the_chain() {
     let bytes = codec
         .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(1)])
         .expect("encode");
-    let applied = apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply");
+    let applied = apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply");
     assert_eq!(applied, Applied::Advanced { generation: 1 });
     let position = chain.position(braid);
     assert_eq!(position.g, 1);
     assert_eq!(position.prev, *blake3::hash(&bytes).as_bytes());
     assert_eq!(position.ts, 500);
-    assert!(
-        db.read(|instance| instance.contains_dyn(RECIPE, &[Value::U64(1)]))
-            .expect("read")
-    );
+    assert!(db
+        .read(|instance| instance.contains_dyn(RECIPE, &[Value::U64(1)]))
+        .expect("read"));
 }
 
 #[test]
@@ -64,7 +63,7 @@ fn crash_window_reapply_is_absorbed_with_the_identity_exact() {
         .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(7)])
         .expect("encode");
     assert_eq!(
-        apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply"),
+        apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply"),
         Applied::Advanced { generation: 1 }
     );
 
@@ -72,7 +71,7 @@ fn crash_window_reapply_is_absorbed_with_the_identity_exact() {
     // lost. Recovery re-applies the same slot from a rewound chain.
     let mut rewound = Chain::genesis(codec.braids());
     assert_eq!(
-        apply(&db, &mut rewound, &codec, braid, 1, &bytes, 0).expect("reapply"),
+        apply(&db, &mut rewound, &codec, braid, 1, &bytes).expect("reapply"),
         Applied::Absorbed { generation: 1 }
     );
     assert_eq!(rewound.position(braid).g, 1);
@@ -89,7 +88,7 @@ fn slot_cause_convicts_header_key_disagreement() {
     let bytes = codec
         .encode(&header(braid, 2, [0u8; 32], 500), &[insert_recipe(1)])
         .expect("encode");
-    match apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply") {
+    match apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply") {
         Applied::Refused(ApplyRefusal::ChainMismatch {
             cause: ChainCause::Slot { header_gen, .. },
             slot,
@@ -115,7 +114,7 @@ fn prev_cause_convicts_a_wrong_base() {
     let bytes = codec
         .encode(&header(braid, 1, [0x77; 32], 500), &[insert_recipe(1)])
         .expect("encode");
-    match apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply") {
+    match apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply") {
         Applied::Refused(ApplyRefusal::ChainMismatch {
             cause:
                 ChainCause::Prev {
@@ -137,7 +136,7 @@ fn timestamp_cause_convicts_a_clock_that_ran_backward() {
     let braid = kitchen_braid(&codec);
     let db = fresh_db("apply_ts");
     let mut chain = Chain::genesis(codec.braids());
-    chain.entries.insert(
+    chain.entries_mut().insert(
         braid,
         ChainEntry {
             g: 0,
@@ -149,7 +148,7 @@ fn timestamp_cause_convicts_a_clock_that_ran_backward() {
     let bytes = codec
         .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(1)])
         .expect("encode");
-    match apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply") {
+    match apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply") {
         Applied::Refused(ApplyRefusal::ChainMismatch {
             cause:
                 ChainCause::Timestamp {
@@ -176,7 +175,7 @@ fn decode_refusals_surface_as_the_battery() {
         .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(1)])
         .expect("encode");
     bytes[4] = 9;
-    match apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply") {
+    match apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply") {
         Applied::Refused(ApplyRefusal::Decode(error)) => {
             assert_eq!(error.identity(), "Version");
         }
@@ -195,7 +194,7 @@ fn a_first_applied_net_noop_is_a_publish_law_violation() {
         .encode(&header(braid, 1, [0u8; 32], 500), &[insert_recipe(3)])
         .expect("encode");
     assert_eq!(
-        apply(&db, &mut chain, &codec, braid, 1, &first, 0).expect("apply"),
+        apply(&db, &mut chain, &codec, braid, 1, &first).expect("apply"),
         Applied::Advanced { generation: 1 }
     );
 
@@ -206,7 +205,7 @@ fn a_first_applied_net_noop_is_a_publish_law_violation() {
             &[insert_recipe(3)],
         )
         .expect("encode");
-    match apply(&db, &mut chain, &codec, braid, 2, &second, 0).expect("apply") {
+    match apply(&db, &mut chain, &codec, braid, 2, &second).expect("apply") {
         Applied::Refused(ApplyRefusal::PublishLawViolation {
             writer,
             generation,
@@ -237,7 +236,7 @@ fn an_engine_rejection_is_data_for_the_caller() {
             &[insert_step(99, "stir")],
         )
         .expect("encode");
-    match apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply") {
+    match apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply") {
         Applied::Rejected(_) => {}
         other => panic!("expected the engine rejection, got {other:?}"),
     }
@@ -268,7 +267,7 @@ fn ops_apply_in_listed_order_within_one_write() {
         .encode(&header(braid, 1, [0u8; 32], 500), &ops)
         .expect("encode");
     assert_eq!(
-        apply(&db, &mut chain, &codec, braid, 1, &bytes, 0).expect("apply"),
+        apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply"),
         Applied::Advanced { generation: 1 }
     );
     db.read(|instance| {
@@ -298,28 +297,18 @@ fn braids_apply_independently() {
         )
         .expect("encode");
     assert_eq!(
-        apply(&db, &mut chain, &codec, note_braid(&codec), 1, &note, 0).expect("apply"),
+        apply(&db, &mut chain, &codec, note_braid(&codec), 1, &note).expect("apply"),
         Applied::Advanced { generation: 1 }
     );
     assert_eq!(
-        apply(
-            &db,
-            &mut chain,
-            &codec,
-            kitchen_braid(&codec),
-            1,
-            &kitchen,
-            0
-        )
-        .expect("apply"),
+        apply(&db, &mut chain, &codec, kitchen_braid(&codec), 1, &kitchen).expect("apply"),
         Applied::Advanced { generation: 2 }
     );
     assert_eq!(chain.sum(), 2);
-    assert!(
-        db.read(|instance| instance.contains_dyn(
+    assert!(db
+        .read(|instance| instance.contains_dyn(
             NOTE,
             &[Value::U64(1), Value::String("remember the salt".into())]
         ))
-        .expect("read")
-    );
+        .expect("read"));
 }

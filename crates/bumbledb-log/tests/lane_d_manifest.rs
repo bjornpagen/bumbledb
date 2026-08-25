@@ -7,8 +7,8 @@ mod lane_d_support;
 use std::collections::BTreeMap;
 
 use bumbledb_log::manifest::{
-    Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, log_key,
-    manifest_key, publish_checkpoint,
+    ckpt_json_key, log_key, manifest_key, publish_checkpoint, Checkpoint, CheckpointError, Head,
+    Manifest, ManifestError, Published,
 };
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
@@ -164,11 +164,9 @@ fn key_layout_matches_the_protocol() {
         log_key("", kitchen_braid(&codec), 0x2a).as_str(),
         "log/c00000000/000000000000002a"
     );
-    assert!(
-        ckpt_json_key("p", &digest(0x01))
-            .as_str()
-            .starts_with("p/ckpt/")
-    );
+    assert!(ckpt_json_key("p", &digest(0x01))
+        .as_str()
+        .starts_with("p/ckpt/"));
     assert_eq!(
         ckpt_json_key("p", &digest(0x01))
             .as_str()
@@ -178,19 +176,20 @@ fn key_layout_matches_the_protocol() {
     );
 }
 
+fn candidate(seed: u8, kitchen_g: u64, note_g: u64, prev: Option<[u8; 32]>) -> Checkpoint {
+    Checkpoint {
+        braids: heads(kitchen_g, note_g),
+        catalog: digest(seed),
+        writer: u64::from(seed),
+        prev,
+    }
+}
+
 fn publish(store: &FsStore, seed: u8, kitchen_g: u64, note_g: u64) -> ([u8; 32], Published) {
     let codec = codec();
-    let id = digest(seed);
-    let published = publish_checkpoint(
-        store,
-        "",
-        codec.braids(),
-        id,
-        &heads(kitchen_g, note_g),
-        digest(seed),
-        u64::from(seed),
-    )
-    .expect("publish");
+    let doc = candidate(seed, kitchen_g, note_g, manifest_checkpoint(store));
+    let id = doc.digest();
+    let published = publish_checkpoint(store, "", codec.braids(), &doc).expect("publish");
     (id, published)
 }
 
@@ -257,8 +256,8 @@ fn every_incumbent_stays_reachable_by_the_backlink_walk() {
 }
 
 /// Injects a competing publication between a caller's manifest read and
-/// its CAS attempt: the first swap lands `Moved`, forcing the caller
-/// through the rebuild-prev arm.
+/// its CAS attempt: the first swap lands `Moved`, and the caller
+/// retries the same candidate document.
 struct SwapInterloper {
     inner: FsStore,
     root: std::path::PathBuf,
@@ -282,14 +281,20 @@ impl ObjectStore for SwapInterloper {
         if key == &manifest_key("") && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             let plain = FsStore::new(self.root.clone());
             let codec = codec();
+            let incumbent = Manifest::parse(
+                &plain
+                    .get(&manifest_key(""))
+                    .expect("get")
+                    .expect("manifest")
+                    .bytes,
+            )
+            .expect("parses")
+            .checkpoint;
             let published = publish_checkpoint(
                 &plain,
                 "",
                 codec.braids(),
-                digest(0xb1),
-                &heads(4, 4),
-                digest(0xb1),
-                0xb1,
+                &candidate(0xb1, 4, 4, incumbent),
             )
             .expect("interloper publishes");
             assert!(matches!(published, Published::Replaced));
@@ -303,7 +308,7 @@ impl ObjectStore for SwapInterloper {
 }
 
 #[test]
-fn a_moved_cas_rebuilds_prev_to_the_incumbent_actually_replaced() {
+fn a_moved_cas_retries_the_same_document() {
     let root = temp_dir("ckpt_moved");
     let log = lane_d_support::TestLog::new(root.clone(), "");
     let plain = &log.store;
@@ -311,36 +316,26 @@ fn a_moved_cas_rebuilds_prev_to_the_incumbent_actually_replaced() {
     let (first, _) = publish(plain, 0xc1, 1, 1);
     assert_eq!(manifest_checkpoint(plain), Some(first));
 
-    // The caller reads incumbent `first`, but the interloper lands a
-    // greater checkpoint before the caller's CAS: the caller's first
-    // swap is Moved, and the rebuild must re-point prev at the
-    // interloper — the incumbent the winning swap actually replaces.
+    // The caller bakes `first` into prev. The interloper lands before
+    // the caller's CAS; Moved retries the same bytes, so the winner's
+    // digest still names that baked prev and the interloper is orphan.
     let racing = SwapInterloper {
         inner: FsStore::new(root.clone()),
         root: root.clone(),
         armed: std::sync::atomic::AtomicBool::new(true),
     };
     let codec = codec();
-    let winner = digest(0xc2);
-    let published = publish_checkpoint(
-        &racing,
-        "",
-        codec.braids(),
-        winner,
-        &heads(9, 9),
-        digest(0xc2),
-        0xc2,
-    )
-    .expect("publish through the race");
+    let winner_doc = candidate(0xc2, 9, 9, Some(first));
+    let winner = winner_doc.digest();
+    let published = publish_checkpoint(&racing, "", codec.braids(), &winner_doc)
+        .expect("publish through the race");
     assert!(matches!(published, Published::Replaced));
 
     assert_eq!(manifest_checkpoint(plain), Some(winner));
-    assert_eq!(
-        doc_of(plain, winner).prev,
-        Some(digest(0xb1)),
-        "prev is proven by the CAS: it names the interloper, never the stale read"
-    );
-    assert_eq!(doc_of(plain, digest(0xb1)).prev, Some(first));
+    assert_eq!(doc_of(plain, winner).prev, Some(first));
+    let interloper = candidate(0xb1, 4, 4, Some(first)).digest();
+    assert_eq!(doc_of(plain, interloper).prev, Some(first));
+    assert_ne!(manifest_checkpoint(plain), Some(interloper));
 }
 
 #[test]
@@ -352,34 +347,21 @@ fn checkpoint_order_race_converges_on_the_greater_sum() {
         let a = scope.spawn(|| {
             let store = FsStore::new(root.clone());
             let codec = codec();
-            publish_checkpoint(
-                &store,
-                "",
-                codec.braids(),
-                digest(0x91),
-                &heads(2, 1),
-                digest(0x91),
-                0x91,
-            )
-            .expect("small racer")
+            publish_checkpoint(&store, "", codec.braids(), &candidate(0x91, 2, 1, None))
+                .expect("small racer")
         });
         let b = scope.spawn(|| {
             let store = FsStore::new(root.clone());
             let codec = codec();
-            publish_checkpoint(
-                &store,
-                "",
-                codec.braids(),
-                digest(0x92),
-                &heads(8, 8),
-                digest(0x92),
-                0x92,
-            )
-            .expect("big racer")
+            publish_checkpoint(&store, "", codec.braids(), &candidate(0x92, 8, 8, None))
+                .expect("big racer")
         });
         let _ = a.join().expect("small thread");
         b.join().expect("big thread")
     });
     assert!(matches!(outcome_b, Published::Replaced));
-    assert_eq!(manifest_checkpoint(&log.store), Some(digest(0x92)));
+    assert_eq!(
+        manifest_checkpoint(&log.store),
+        Some(candidate(0x92, 8, 8, None).digest())
+    );
 }
