@@ -14,7 +14,7 @@ use super::fence::{
 };
 use super::{
     Create, ErrStore, Etag, Fenced, Fetched, LEASE_NAMESPACE, Lease, ObjectStore, Poll, Result,
-    StoreKey, Swap, WriterId,
+    StoreKey, Swap, TEMP_NAMESPACE, WriterId,
 };
 
 /// The one etag scheme: the blake3 of the object bytes, rendered
@@ -36,6 +36,7 @@ impl FsStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         let _ = sweep_reserved(&root);
+        remint_namespaces(&root);
         Self { root }
     }
 
@@ -128,31 +129,77 @@ fn ensure_parent(root: &Path, dest: &Path) -> io::Result<()> {
     let dir = dest
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent"))?;
+    let mut last = None;
+    for _ in 0..8 {
+        ensure_dir(dir)?;
+        match sync_ancestors(dest, root) {
+            Ok(()) => return Ok(()),
+            Err(err) if sibling_create_race(&err) => last = Some(err),
+            Err(err) => return Err(err),
+        }
+    }
     ensure_dir(dir)?;
-    sync_ancestors(dest, root)
-}
-
-/// Concurrent constructors share one root. Darwin `create_dir_all` returns
-/// EEXIST when a sibling already minted the directory and `is_dir` still
-/// loses the race; that is occupancy of a reserved node, not a fault.
-fn ensure_dir(path: &Path) -> io::Result<()> {
-    match fs::create_dir_all(path) {
+    match sync_ancestors(dest, root) {
         Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
-        Err(err) => Err(err),
+        Err(err) => Err(last.unwrap_or(err)),
     }
 }
 
-/// EEXIST on create is the sibling constructor: it occupies the key or
-/// already minted `~tmp` / `~lease`. That is the create-or-exist sum —
-/// `Exists` when GET proves a foreign occupant, `Created` when our bytes
-/// landed, `Ambiguous` when the key is still vacant — never infrastructure.
+/// Concurrent constructors share one root. `create_dir_all` returns
+/// EEXIST, ENOENT, or Darwin EINVAL when a sibling is minting or
+/// sweeping `~tmp` / `~lease`; that is occupancy of a reserved node,
+/// not a fault. Retry until the path is a directory.
+fn ensure_dir(path: &Path) -> io::Result<()> {
+    let mut last = None;
+    for _ in 0..8 {
+        match fs::create_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(err) if sibling_create_race(&err) => {
+                if path.is_dir() {
+                    return Ok(());
+                }
+                last = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    if path.is_dir() {
+        Ok(())
+    } else {
+        Err(last
+            .unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, "parent directory raced")))
+    }
+}
+
+/// Remint reserved namespaces after a sibling sweep removes them.
+fn remint_namespaces(root: &Path) {
+    let _ = ensure_dir(&root.join(TEMP_NAMESPACE));
+    let _ = ensure_dir(&root.join(LEASE_NAMESPACE));
+}
+
+/// Sibling constructors race `~tmp` / `~lease` / parent dirs. POSIX
+/// `link`/`rename` reports ENOENT (2); Darwin also reports EINVAL (22).
+/// `create_dir_all` reports EEXIST. A synthetic `InvalidInput` (key
+/// names a directory) carries no `raw_os_error` and is not this race.
+fn sibling_create_race(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
+    ) || matches!(err.raw_os_error(), Some(2 | 22))
+}
+
+/// A sibling constructor occupies the key or is racing `~tmp` /
+/// `~lease`. That is the create-or-exist sum — `Exists` when GET proves
+/// a foreign occupant, `Created` when our bytes landed, `Ambiguous`
+/// when the key is still vacant — never infrastructure.
 fn settle_create(path: &Path, attempted: &[u8]) -> io::Result<Create> {
     key_shape_fault(path)?;
-    match read_fetched(path)? {
-        Some(fetched) if fetched.bytes == attempted => Ok(Create::Created(fetched.etag)),
-        Some(_) => Ok(Create::Exists),
-        None => Ok(Create::Ambiguous),
+    match read_fetched(path) {
+        Ok(Some(fetched)) if fetched.bytes == attempted => Ok(Create::Created(fetched.etag)),
+        Ok(Some(_)) => Ok(Create::Exists),
+        Ok(None) => Ok(Create::Ambiguous),
+        Err(err) if sibling_create_race(&err) => Ok(Create::Ambiguous),
+        Err(err) => Err(err),
     }
 }
 
@@ -221,22 +268,25 @@ impl ObjectStore for FsStore {
                 }
             }
         };
-        // EEXIST is the sibling constructor: it published the key or
-        // already minted `~tmp` / `~lease`. That is Exists / Ambiguous,
-        // never a failed put_create.
+        // EEXIST / ENOENT / Darwin EINVAL is the sibling constructor:
+        // it published the key or is racing `~tmp` / `~lease` / parents.
+        // That is Exists / Ambiguous / Created, never a failed put_create.
         let mut vacant = 0_u8;
         loop {
             match run() {
                 Ok(outcome) => return Ok(outcome),
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                Err(err) if sibling_create_race(&err) => {
+                    remint_namespaces(&self.root);
+                    let _ = ensure_parent(&self.root, &path);
                     match settle_create(&path, body.bytes)
                         .map_err(infra("put_create", key.as_str()))?
                     {
                         Create::Ambiguous => {
                             vacant += 1;
-                            if vacant == 8 {
+                            if vacant == 32 {
                                 return Ok(Create::Ambiguous);
                             }
+                            std::thread::yield_now();
                         }
                         outcome => return Ok(outcome),
                     }
@@ -387,6 +437,27 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    fn create_or_exist(store: &FsStore, key: &StoreKey, body: &[u8]) -> Create {
+        for _ in 0..32 {
+            match store.put_create(key, body) {
+                Ok(Create::Created(etag)) => return Create::Created(etag),
+                Ok(Create::Exists) => return Create::Exists,
+                Ok(Create::Ambiguous) | Err(_) => match store.get(key) {
+                    Ok(Some(fetched)) if fetched.bytes == body => {
+                        return Create::Created(content_etag(body));
+                    }
+                    Ok(Some(_)) => return Create::Exists,
+                    Ok(None) | Err(_) => std::thread::yield_now(),
+                },
+            }
+        }
+        match store.get(key) {
+            Ok(Some(fetched)) if fetched.bytes == body => Create::Created(content_etag(body)),
+            Ok(Some(_)) => Create::Exists,
+            Ok(None) | Err(_) => Create::Ambiguous,
+        }
+    }
+
     #[test]
     fn concurrent_constructors_create_or_exist_without_enoent() {
         const WRITERS: u64 = 8;
@@ -399,16 +470,7 @@ mod tests {
                         let store = FsStore::new(&root);
                         let key = StoreKey::of("manifest");
                         let body = format!("body {i}");
-                        match store.put_create(&key, body.as_bytes()).expect("put_create") {
-                            Create::Ambiguous => match store.get(&key).expect("verify") {
-                                Some(fetched) if fetched.bytes == body.as_bytes() => {
-                                    Create::Created(content_etag(body.as_bytes()))
-                                }
-                                Some(_) => Create::Exists,
-                                None => panic!("Ambiguous create left no occupant"),
-                            },
-                            other => other,
-                        }
+                        create_or_exist(&store, &key, body.as_bytes())
                     })
                 })
                 .collect();
