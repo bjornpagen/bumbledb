@@ -184,8 +184,8 @@ function logKey(prefix: string, braid: Braid, g: Generation): StoreKey {
 	return assemble(prefix, `log/${braid}/${hex16(g)}`)
 }
 
-function checkpointMdbKey(prefix: string, digest: string): StoreKey {
-	return assemble(prefix, `ckpt/${digest}.mdb`)
+function checkpointMdbKey(prefix: string, digest: Digest32): StoreKey {
+	return assemble(prefix, `ckpt/${hex32(digest)}.mdb`)
 }
 
 function ckptDocKey(prefix: string, digest: Digest32): StoreKey {
