@@ -11,9 +11,29 @@ use crate::braids::BraidId;
 use crate::codec::{ByteSink, Op, append_value};
 
 use super::{
-    Core, DRAIN_MAX_BYTES, DRAIN_MAX_WRITES, Durability, Error, Inner, Live, ObjectStore, Settled,
-    StepHook, Theory, lock,
+    Core, DRAIN_MAX_BYTES, DRAIN_MAX_WRITES, Durability, Error, Inner, Live, ObjectStore, Result,
+    Settled, StepHook, Theory, lock,
 };
+
+/// The detached publisher's result — a value the writer must consume.
+/// Standing down is not a swallow: another drain already resolved
+/// these bytes. `Ran` is `resolve_backlog`'s own outcome.
+#[must_use = "the writer consumes the publisher result"]
+enum Publisher {
+    StoodDown,
+    Ran(Result<()>),
+}
+
+impl Publisher {
+    fn consume(self) {
+        match self {
+            Self::StoodDown | Self::Ran(Ok(())) => {}
+            Self::Ran(Err(error)) => {
+                eprintln!("bumbledb-log: detached publisher: {error}");
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) enum Resolved {
@@ -106,6 +126,7 @@ where
     /// A composite rejection falls back one-by-one in queue order so an
     /// innocent write never fails for a neighbor's violation.
     pub(crate) fn drain(self: &Arc<Self>, core: &mut Core<T>, braid: BraidId) {
+        self.reap();
         let mut picked: Vec<Request> = Vec::new();
         {
             let mut queue = lock(&self.queues[&braid]);
@@ -219,7 +240,8 @@ where
     /// The detached publisher: acks moved to the end of the local
     /// apply, so publication continues off the caller. Keyed by the
     /// pending bytes — if another drain resolved the backlog first, the
-    /// publisher finds different bytes and stands down.
+    /// publisher finds different bytes and stands down. The result is a
+    /// `#[must_use]` value; the writer consumes it.
     pub(crate) fn spawn_publisher(
         self: &Arc<Self>,
         _braid: BraidId,
@@ -227,17 +249,32 @@ where
         segments: Vec<Vec<Op>>,
     ) {
         let inner = Arc::clone(self);
-        let handle = std::thread::spawn(move || {
-            let mut core = lock(&inner.core);
-            let matches = core
-                .chain
-                .pending
-                .as_ref()
-                .is_some_and(|pending| pending.bytes == bytes);
-            if matches {
-                let _ = inner.resolve_backlog(&mut core, Some(&segments), &mut Live::default());
-            }
-        });
+        let handle = std::thread::spawn(move || inner.publisher(&bytes, &segments).consume());
+        self.reap();
         lock(&self.threads).push(handle);
+    }
+
+    /// Finished publisher and duty handles leave the vector here, on
+    /// the drain, not only at `quiesce` — a writer's lifetime does not
+    /// accumulate `JoinHandle`s.
+    fn reap(&self) {
+        let mut threads = lock(&self.threads);
+        for handle in threads.extract_if(.., std::thread::JoinHandle::is_finished) {
+            let _ = handle.join();
+        }
+    }
+
+    fn publisher(self: &Arc<Self>, bytes: &[u8], segments: &[Vec<Op>]) -> Publisher {
+        let mut core = lock(&self.core);
+        let matches = core
+            .chain
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.bytes == bytes);
+        if matches {
+            Publisher::Ran(self.resolve_backlog(&mut core, Some(segments), &mut Live::default()))
+        } else {
+            Publisher::StoodDown
+        }
     }
 }
