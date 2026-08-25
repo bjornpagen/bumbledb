@@ -236,10 +236,14 @@ where
     T: Theory + Clone,
     S: ObjectStore,
 {
+    // The lease directory is the compact→publish window. Compact
+    // writes into a child because the engine refuses a dest that
+    // already exists.
+    let scratch = Scratch::new(scratch.to_path_buf()).map_err(Fault::Io)?;
+    let dest = scratch.path.join("compact");
     let bytes = {
-        let scratch = Scratch::new(scratch.to_path_buf());
-        db.compact(&scratch.path).map_err(Fault::Engine)?;
-        fs::read(scratch.path.join(DATA_FILE)).map_err(Fault::Io)?
+        db.compact(&dest).map_err(Fault::Engine)?;
+        fs::read(dest.join(DATA_FILE)).map_err(Fault::Io)?
     };
     let catalog = db.catalog_digest().map_err(Fault::Engine)?;
     if !hold() {
@@ -309,14 +313,16 @@ impl Drop for DutyBusyFlag {
 }
 
 /// Scratch dir as a lease: any drop, including panic, reclaims it.
+/// The directory exists for the whole compact→publish transition.
 struct Scratch {
     path: PathBuf,
 }
 
 impl Scratch {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf) -> io::Result<Self> {
         let _ = fs::remove_dir_all(&path);
-        Self { path }
+        fs::create_dir_all(&path)?;
+        Ok(Self { path })
     }
 }
 
