@@ -6,7 +6,12 @@ mod lane_d_support;
 
 use std::collections::BTreeMap;
 
+use bumbledb::schema::{
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, StatementDescriptor,
+    ValueType,
+};
 use bumbledb::{SchemaDescriptor, Value};
+use bumbledb_log::braids::braids;
 use bumbledb_log::gc::{Gc, Restore, RestoreRefusal, gc, restore_by_time, restore_to_vector};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::replica::{Opened, Replica};
@@ -291,4 +296,47 @@ fn by_time_restore_maps_the_instant_per_braid() {
     );
     assert_eq!(vector, BTreeMap::from([(kitchen, 0), (notes, 0)]));
     assert_eq!(db.generation().expect("generation").value(), 0);
+}
+
+fn braid_nine() -> bumbledb_log::braids::BraidId {
+    let field = FieldDescriptor {
+        name: "id".into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    let relations = (0..10)
+        .map(|index| RelationDescriptor {
+            name: format!("r{index}").into(),
+            fields: vec![field.clone()],
+            extension: (index < 9).then_some(Vec::new()),
+        })
+        .collect();
+    let descriptor = SchemaDescriptor {
+        relations,
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(9),
+            projection: Box::from([FieldId(0)]),
+        }],
+    };
+    braids(&descriptor).parse(9).expect("ordinary braid")
+}
+
+#[test]
+fn restore_refuses_a_braid_the_schema_never_minted() {
+    let root = temp_dir("gc_unknown_braid");
+    let local = temp_dir("gc_unknown_braid_local");
+    let log = TestLog::new(root.clone(), "");
+    match restore_to_vector(
+        &log.store,
+        "",
+        &local.join("r"),
+        &theory(),
+        &BTreeMap::from([(braid_nine(), 0)]),
+    )
+    .expect("restore")
+    {
+        Restore::Refused(RestoreRefusal::UnknownBraid { got }) => assert_eq!(got, 9),
+        Restore::Refused(other) => panic!("wrong refusal: {other:?}"),
+        Restore::Restored { .. } => panic!("unknown braid must refuse"),
+    }
 }

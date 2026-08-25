@@ -184,6 +184,10 @@ pub enum RestoreRefusal {
     /// The restore destination already exists; restores materialize
     /// into fresh directories only.
     DirExists,
+    /// A braid id the schema's own decomposition does not mint.
+    UnknownBraid {
+        got: u32,
+    },
 }
 
 /// Outcome of a restore: the opened store and the restored vector —
@@ -216,6 +220,13 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     };
     if dir.exists() {
         return Ok(Restore::Refused(RestoreRefusal::DirExists));
+    }
+    for braid in target.keys() {
+        if codec.braids().parse(braid.raw()).is_none() {
+            return Ok(Restore::Refused(RestoreRefusal::UnknownBraid {
+                got: braid.raw(),
+            }));
+        }
     }
 
     let mut base: Option<([u8; 32], Checkpoint)> = None;
