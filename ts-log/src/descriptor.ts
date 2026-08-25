@@ -86,21 +86,65 @@ function braid(raw: string): Braid {
 	return raw as Braid
 }
 
+function refuseShape(why: string): never {
+	throw errors.new(`theory: ${why}`)
+}
+
+/** `{name}.id` — the closed relation's generator class. */
+function idClassOwner(newtype: string): string | undefined {
+	const match = /^(.*)\.id$/.exec(newtype)
+	const owner = match?.[1]
+	if (owner === undefined || owner.length === 0) {
+		return undefined
+	}
+	return owner
+}
+
+function indexRelations(relations: readonly RelationInfo[]): Map<number, RelationInfo> {
+	const byId = new Map<number, RelationInfo>()
+	for (const relation of relations) {
+		if (byId.has(relation.id)) {
+			refuseShape(`duplicate relation id ${relation.id}`)
+		}
+		byId.set(relation.id, relation)
+	}
+	return byId
+}
+
+function relationOfId(byId: ReadonlyMap<number, RelationInfo>, id: number): RelationInfo {
+	const relation = byId.get(id)
+	if (relation === undefined) {
+		refuseShape(`unknown relation id ${id}`)
+	}
+	return relation
+}
+
+function fieldNamed(relation: RelationInfo, name: string): { readonly ordinal: number; readonly field: FieldInfo } {
+	let ordinal = 0
+	for (const field of relation.fields) {
+		if (field.name === name) {
+			return { ordinal, field }
+		}
+		ordinal += 1
+	}
+	refuseShape(`relation ${relation.name} has no field ${name}`)
+}
+
 interface SerialStatement {
 	readonly statement: number
 	readonly braid: Braid
 }
 
 function serialAtOf(
-	relations: readonly RelationInfo[],
+	byId: ReadonlyMap<number, RelationInfo>,
 	statements: readonly StatementInfo[],
 	braidOfRelation: ReadonlyMap<number, Braid>
 ): SerialStatement[] {
 	const serialAt: SerialStatement[] = []
 	for (const statement of statements) {
 		if (statement.kind === "functionality" && statement.projection.length === 0) {
-			const relation = relations[statement.relation]
-			if (relation !== undefined && relation.fields.length > 0) {
+			const relation = relationOfId(byId, statement.relation)
+			if (relation.fields.length > 0) {
 				const braid = braidOfRelation.get(statement.relation)
 				if (braid !== undefined) {
 					serialAt.push({ statement: statement.id, braid })
@@ -108,12 +152,13 @@ function serialAtOf(
 			}
 		}
 		if (statement.kind === "capacity" && statement.target.projection.length === 0) {
-			const targetRelation = relations[statement.target.relation]
-			if (targetRelation !== undefined && !targetRelation.closed) {
+			const targetRelation = relationOfId(byId, statement.target.relation)
+			if (!targetRelation.closed) {
 				const braid = braidOfRelation.get(statement.target.relation)
-				if (braid !== undefined) {
-					serialAt.push({ statement: statement.id, braid })
+				if (braid === undefined) {
+					refuseShape(`capacity ${statement.id} target ${targetRelation.name} is not in the derived braid set`)
 				}
+				serialAt.push({ statement: statement.id, braid })
 			}
 		}
 	}
@@ -175,7 +220,7 @@ function asValue(raw: unknown): Value {
 			return { start: interval.start, end: interval.end }
 		}
 	}
-	throw errors.new("sealed value is not a raw fact value")
+	refuseShape("sealed value is not a raw fact value")
 }
 
 function sideOf(side: SealedSide): SideInfo {
@@ -214,11 +259,13 @@ function statementOf(statement: SealedStatement): StatementInfo {
 
 function fromSealed(spec: SchemaSpec): Descriptor {
 	const sealed: SealedDescriptor = internalDescriptor(spec)
-	const specByName = new Map(
-		spec.relations.map(function byName(relation) {
-			return [relation.name, relation]
-		})
-	)
+	const specByName = new Map<string, SchemaSpec["relations"][number]>()
+	for (const relation of spec.relations) {
+		if (specByName.has(relation.name)) {
+			refuseShape(`duplicate relation ${relation.name}`)
+		}
+		specByName.set(relation.name, relation)
+	}
 	const closedOwners = new Set(
 		spec.relations
 			.filter(function closedOf(relation) {
@@ -231,21 +278,21 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 
 	const relations: RelationInfo[] = sealed.relations.map(function relationOf(relation) {
 		const declared = specByName.get(relation.name)
+		if (declared === undefined) {
+			refuseShape(`sealed relation ${relation.name} is not in the spec`)
+		}
 		const closed = relation.extension !== undefined
 		const fields: FieldInfo[] = relation.fields.map(function fieldOf(field) {
 			if (field.name === "id" && closed) {
 				return { name: field.name, type: field.valueType, fresh: false, closedRef: relation.name }
 			}
-			const specField = declared?.fields.find(function named(candidate) {
+			const specField = declared.fields.find(function named(candidate) {
 				return candidate.name === field.name
 			})
 			let closedRef: string | undefined
-			const newtype = specField?.newtype
-			if (newtype?.endsWith(".id")) {
-				const owner = newtype.slice(0, -3)
-				if (closedOwners.has(owner)) {
-					closedRef = owner
-				}
+			const owner = specField?.newtype === undefined ? undefined : idClassOwner(specField.newtype)
+			if (owner !== undefined && closedOwners.has(owner)) {
+				closedRef = owner
 			}
 			return {
 				name: field.name,
@@ -274,7 +321,7 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 				if (field.name === "id" && named.has("id")) {
 					return row.id
 				}
-				throw errors.new(`closed relation ${relation.name}: sealed row ${row.handle} missing field ${field.name}`)
+				return refuseShape(`closed relation ${relation.name}: sealed row ${row.handle} missing field ${field.name}`)
 			})
 		})
 		return {
@@ -291,12 +338,16 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 
 	const byName = new Map<string, RelationInfo>()
 	for (const relation of relations) {
+		if (byName.has(relation.name)) {
+			refuseShape(`duplicate relation ${relation.name}`)
+		}
 		byName.set(relation.name, relation)
 	}
 
 	const statements = sealed.statements.map(statementOf)
-	const { braidOfRelation, braidMembers } = deriveBraids(relations, statements)
-	const serialAtStatements = serialAtOf(relations, statements, braidOfRelation)
+	const byId = indexRelations(relations)
+	const { braidOfRelation, braidMembers } = deriveBraids(byId, statements)
+	const serialAtStatements = serialAtOf(byId, statements, braidOfRelation)
 
 	const fingerprint = sealed.fingerprint
 	return {
@@ -353,8 +404,39 @@ function rawValue(value: ValueSpec): Value {
 
 interface SpecTables {
 	readonly spec: SchemaSpec
-	readonly relations: RelationInfo[]
 	readonly byName: Map<string, RelationInfo>
+	readonly byId: Map<number, RelationInfo>
+}
+
+function zipClosedPayload(
+	relation: RelationInfo,
+	handle: string,
+	literals: readonly LiteralSpec[]
+): Array<readonly [FieldInfo, LiteralSpec]> {
+	const pairs: Array<readonly [FieldInfo, LiteralSpec]> = []
+	const pending = literals[Symbol.iterator]()
+	let seenId = false
+	for (const field of relation.fields) {
+		if (!seenId) {
+			if (field.name !== "id") {
+				refuseShape(`closed relation ${relation.name} has no sealed id field`)
+			}
+			seenId = true
+			continue
+		}
+		const next = pending.next()
+		if (next.done) {
+			refuseShape(`closed row ${handle} of ${relation.name}: fewer cells than payload fields`)
+		}
+		pairs.push([field, next.value])
+	}
+	if (!seenId) {
+		refuseShape(`closed relation ${relation.name} has no sealed id field`)
+	}
+	if (!pending.next().done) {
+		refuseShape(`closed row ${handle} of ${relation.name}: more cells than payload fields`)
+	}
+	return pairs
 }
 
 function fieldsOf(
@@ -372,8 +454,8 @@ function fieldsOf(
 	}
 	for (const field of relation.fields) {
 		let closedRef: string | undefined
-		if (field.newtype?.endsWith(".id")) {
-			const owner = field.newtype.slice(0, -3)
+		const owner = field.newtype === undefined ? undefined : idClassOwner(field.newtype)
+		if (owner !== undefined) {
 			const target = tables.get(owner)
 			if (target?.closed === true) {
 				closedRef = owner
@@ -389,17 +471,15 @@ function resolveLiteral(tables: SpecTables, relation: RelationInfo, field: Field
 		return rawValue(literal.value)
 	}
 	if (field.closedRef === undefined) {
-		throw errors.new(
-			`handle literal ${literal.handle} on ${relation.name}.${field.name}, which references no closed roster`
-		)
+		refuseShape(`handle literal ${literal.handle} on ${relation.name}.${field.name}, which references no closed roster`)
 	}
 	const target = tables.byName.get(field.closedRef)
 	if (target === undefined) {
-		throw errors.new(`handle literal ${literal.handle}: unknown closed relation ${field.closedRef}`)
+		refuseShape(`handle literal ${literal.handle}: unknown closed relation ${field.closedRef}`)
 	}
 	const id = target.handles.indexOf(literal.handle)
 	if (id === -1) {
-		throw errors.new(`handle literal ${literal.handle} is not in the ${target.name} roster`)
+		refuseShape(`handle literal ${literal.handle} is not in the ${target.name} roster`)
 	}
 	return BigInt(id)
 }
@@ -414,29 +494,19 @@ function literalSetOf(tables: SpecTables, relation: RelationInfo, field: FieldIn
 }
 
 function fieldOrdinal(relation: RelationInfo, name: string): number {
-	const ordinal = relation.fields.findIndex(function byName(field) {
-		return field.name === name
-	})
-	if (ordinal === -1) {
-		throw errors.new(`relation ${relation.name} has no field ${name}`)
-	}
-	return ordinal
+	return fieldNamed(relation, name).ordinal
 }
 
 function specSideOf(tables: SpecTables, side: SideSpec): SideInfo {
 	const relation = tables.byName.get(side.relation)
 	if (relation === undefined) {
-		throw errors.new(`statement cites unknown relation ${side.relation}`)
+		refuseShape(`statement cites unknown relation ${side.relation}`)
 	}
 	const projection = side.projection.map(function ordinalOf(name) {
 		return fieldOrdinal(relation, name)
 	})
 	const selection = side.selection.map(function bindingOf(binding) {
-		const ordinal = fieldOrdinal(relation, binding[0])
-		const field = relation.fields[ordinal]
-		if (field === undefined) {
-			throw errors.new(`relation ${relation.name} has no field ordinal ${ordinal}`)
-		}
+		const { ordinal, field } = fieldNamed(relation, binding[0])
 		return { field: ordinal, values: literalSetOf(tables, relation, field, binding[1]) }
 	})
 	return { relation: relation.id, projection, selection }
@@ -444,7 +514,7 @@ function specSideOf(tables: SpecTables, side: SideSpec): SideInfo {
 
 function boundValue(context: string, bound: { readonly kind: string }): bigint {
 	if (bound.kind !== "lit") {
-		throw errors.new(`${context}: dependent floors are refused by the schema grammar`)
+		refuseShape(`${context}: dependent floors are refused by the schema grammar`)
 	}
 	return (bound as { readonly kind: "lit"; readonly value: bigint }).value
 }
@@ -459,7 +529,7 @@ function capacityOf(
 	const sourceRelation = tables.byName.get(statement.source.relation)
 	const targetRelation = tables.byName.get(statement.target.relation)
 	if (sourceRelation === undefined || targetRelation === undefined) {
-		throw errors.new("capacity statement cites unknown relations")
+		refuseShape("capacity statement cites unknown relations")
 	}
 	let weight: WeightInfo
 	switch (statement.weight.kind) {
@@ -515,51 +585,59 @@ function capacityOf(
 function assembleFromSpec(spec: SchemaSpec): Descriptor {
 	const prepass = new Map<string, { closed: boolean; handles: readonly string[] }>()
 	for (const relation of spec.relations) {
+		if (prepass.has(relation.name)) {
+			refuseShape(`duplicate relation ${relation.name}`)
+		}
 		prepass.set(relation.name, {
 			closed: relation.closed !== undefined,
 			handles: relation.closed === undefined ? [] : relation.closed.rows.map((row) => row.handle)
 		})
 	}
 
-	const relations: RelationInfo[] = []
 	const byName = new Map<string, RelationInfo>()
-	spec.relations.forEach(function buildRelation(relation, id) {
-		const fields = fieldsOf(prepass, relation)
+	const byId = new Map<number, RelationInfo>()
+	let nextId = 0
+	for (const relation of spec.relations) {
+		const table = prepass.get(relation.name)
+		if (table === undefined) {
+			refuseShape(`relation ${relation.name} missing from the closedness table`)
+		}
 		const info: RelationInfo = {
-			id,
+			id: nextId,
 			name: relation.name,
-			closed: relation.closed !== undefined,
-			handles: prepass.get(relation.name)?.handles ?? [],
-			fields,
+			closed: table.closed,
+			handles: table.handles,
+			fields: fieldsOf(prepass, relation),
 			rows: []
 		}
-		relations.push(info)
+		nextId += 1
 		byName.set(relation.name, info)
-	})
-	const tables: SpecTables = { spec, relations, byName }
+		byId.set(info.id, info)
+	}
 
-	spec.relations.forEach(function resolveRows(relation, id) {
+	const tables: SpecTables = { spec, byName, byId }
+
+	for (const relation of spec.relations) {
 		if (relation.closed === undefined) {
-			return
+			continue
 		}
-		const info = relations[id]
+		const info = byName.get(relation.name)
 		if (info === undefined) {
-			throw errors.new(`relation ordinal ${id} missing`)
+			refuseShape(`closed relation ${relation.name} missing`)
 		}
 		const rows = relation.closed.rows.map(function resolveRow(row, rowId) {
 			const values: Value[] = [BigInt(rowId)]
-			row.values.forEach(function resolveCell(literal, column) {
-				const field = info.fields[column + 1]
-				if (field === undefined) {
-					throw errors.new(`closed row ${row.handle} of ${relation.name}: no field at column ${column}`)
-				}
+			for (const [field, literal] of zipClosedPayload(info, row.handle, row.values)) {
 				values.push(resolveLiteral(tables, info, field, literal))
-			})
+			}
 			return values
 		})
-		relations[id] = { ...info, rows }
-		byName.set(relation.name, relations[id])
-	})
+		const updated = { ...info, rows }
+		byName.set(relation.name, updated)
+		byId.set(info.id, updated)
+	}
+
+	const relations = [...byId.values()]
 
 	const statements: StatementInfo[] = []
 	relations.forEach(function freshKeys(relation) {
@@ -579,7 +657,7 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 			case "fd": {
 				const relation = byName.get(statement.relation)
 				if (relation === undefined) {
-					throw errors.new(`key statement cites unknown relation ${statement.relation}`)
+					refuseShape(`key statement cites unknown relation ${statement.relation}`)
 				}
 				statements.push({
 					id: statements.length,
@@ -607,8 +685,8 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 		}
 	}
 
-	const { braidOfRelation, braidMembers } = deriveBraids(relations, statements)
-	const serialAtStatements = serialAtOf(relations, statements, braidOfRelation)
+	const { braidOfRelation, braidMembers } = deriveBraids(byId, statements)
+	const serialAtStatements = serialAtOf(byId, statements, braidOfRelation)
 
 	const fingerprint = "00".repeat(32)
 	return {
@@ -624,11 +702,11 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 }
 
 function deriveBraids(
-	relations: readonly RelationInfo[],
+	byId: ReadonlyMap<number, RelationInfo>,
 	statements: readonly StatementInfo[]
 ): { braidOfRelation: Map<number, Braid>; braidMembers: Map<Braid, readonly number[]> } {
 	const parent = new Map<number, number>()
-	for (const relation of relations) {
+	for (const relation of byId.values()) {
 		if (!relation.closed) {
 			parent.set(relation.id, relation.id)
 		}
@@ -654,9 +732,9 @@ function deriveBraids(
 		if (statement.kind === "functionality") {
 			continue
 		}
-		const source = relations[statement.source.relation]
-		const target = relations[statement.target.relation]
-		if (source === undefined || target === undefined || source.closed || target.closed) {
+		const source = relationOfId(byId, statement.source.relation)
+		const target = relationOfId(byId, statement.target.relation)
+		if (source.closed || target.closed) {
 			continue
 		}
 		union(source.id, target.id)
