@@ -1,6 +1,6 @@
 //! Leases-adjacent recording: the host writes into a `Batch` and the
-//! driver never re-invokes the body. Reservation sugar is an ordinary
-//! insert whose shape was derived at open.
+//! driver never re-invokes the body (10 §3). Reservation sugar is an
+//! ordinary insert whose shape was derived at open.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -18,9 +18,10 @@ use crate::store::ObjectStore;
 
 use super::{Error, Result, lock};
 
-/// The recorded transaction: typed inserts and deletes, id draws from
-/// the lease, and the reservation sugar. Recording is pure — the engine
-/// judges at apply, and the driver never re-invokes the body.
+/// The recorded transaction: typed inserts and deletes, one unsigned
+/// lease draw (`OverWidth | Exhausted | Drawn`), and the reservation
+/// sugar. Recording is pure — the engine judges at apply, and the
+/// driver never re-invokes the body.
 pub struct Batch<'w, S: ObjectStore> {
     pub(crate) ops: Vec<Op>,
     pub(crate) store: &'w S,
@@ -46,8 +47,9 @@ impl<S: ObjectStore> Batch<'_, S> {
         });
     }
 
-    /// Draws `count` fresh ids for `(relation, field)` from the lease;
-    /// the resulting inserts carry the concrete values, and id
+    /// One draw of `count` (unsigned) for `(relation, field)`:
+    /// `OverWidth | Exhausted | Drawn`. The body is not re-run; the
+    /// resulting inserts carry the concrete values, and id
     /// reservations never appear in the log.
     pub fn reserve(
         &mut self,
@@ -55,11 +57,11 @@ impl<S: ObjectStore> Batch<'_, S> {
         field: FieldId,
         count: u64,
     ) -> Result<Range<u64>> {
-        let drawn = lock(self.leases)
+        match lock(self.leases)
             .draw(self.store, self.prefix, relation, field, count)
-            .map_err(|err| Error::Fault(Fault::Store(err)))?;
-        match drawn {
-            Leased::Range(range) => Ok(range),
+            .map_err(|err| Error::Fault(Fault::Store(err)))?
+        {
+            Leased::Drawn { range, .. } => Ok(range),
             Leased::Refused(refusal) => Err(Error::Lease(refusal)),
         }
     }
