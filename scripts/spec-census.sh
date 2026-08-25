@@ -2,6 +2,8 @@
 # (a) every `mechanism` token of `lean/Bumbledb/Bridge.lean` greps to
 # (c) every `lean/…` citation in the surviving markdown (lean/README.md,
 # lean/conformance/README.md, docs/cookbook.md, ts/COOKBOOK.md,
+# (k) the banned-token roster (scripts/banned-tokens.txt) is empty of
+# hits in crates/bumbledb-log/src, ts-log/src, examples/lambda/src.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -428,8 +430,311 @@ for name in "${one_owner_ts[@]}"; do
   fi
 done
 
+# ---- (k): banned-token roster (50 §1) --------------------------------
+# The cutover's absence list is data. Each roster line is a (token, scope)
+# pair; a hit prints that line so the violation names its own law.
+# Allowlist is what 40/canon already name: hex at inspect / refusal /
+# key-grammar / test-metadata; theory-file JSON numbers in schema_file.rs
+# (text half); lease decimal ASCII is not quoted-decimal u64.
+
+ROSTER=scripts/banned-tokens.txt
+if [ ! -f "$ROSTER" ]; then
+  echo "spec-census: FAIL — $ROSTER missing" >&2
+  fail=1
+fi
+
+roster_lines=0
+roster_files=0
+
+roster_allowed() {
+  local allow="$1" path="$2" text="$3"
+  [ -n "$allow" ] || return 1
+  local frag
+  IFS=',' read -r -a parts <<< "$allow"
+  for frag in "${parts[@]}"; do
+    [ -n "$frag" ] || continue
+    case "$path" in *"$frag"*) return 0 ;; esac
+    case "$text" in *"$frag"*) return 0 ;; esac
+  done
+  return 1
+}
+
+is_protocol_codec() {
+  case "$1" in
+    crates/bumbledb-log/src/manifest.rs | \
+    crates/bumbledb-log/src/sidecar.rs | \
+    crates/bumbledb-log/src/codec.rs | \
+    crates/bumbledb-log/src/vector.rs | \
+    ts-log/src/manifest.ts | \
+    ts-log/src/chain.ts | \
+    ts-log/src/codec.ts | \
+    ts-log/src/bytes.ts | \
+    ts-log/src/vector.ts)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Hex survives at inspect, refusal text, the key grammar's digest-to-key
+# function, and test metadata (40). Definitions and imports of that
+# rendering are the same boundary.
+is_hex_allow() {
+  local path="$1" text="$2"
+  case "$path" in
+    */inspect.rs | */bin/duty.rs | *tests.rs | *.test.ts) return 0 ;;
+  esac
+  printf '%s' "$text" | grep -qE '(^|[[:space:]])(pub[[:space:]]+)?(fn|function)[[:space:]]+(hex32|digest32FromHex)\b' && return 0
+  printf '%s' "$text" | grep -qE '^[[:space:]]*(use |import |export )' && return 0
+  printf '%s' "$text" | grep -qE '^[[:space:]]*(hex32|digest32FromHex),?[[:space:]]*$' && return 0
+  printf '%s' "$text" | grep -qE 'ckpt/|ckpt_mdb_key|ckpt_doc_key|checkpointMdbKey|ckptDocKey' && return 0
+  printf '%s' "$text" | grep -qE '\b(refuse|refuseManifestMissing|errors\.new|throw)[[:space:](]' && return 0
+  printf '%s' "$text" | grep -qE 'kind:|carried:|`' && return 0
+  printf '%s' "$text" | grep -qE 'assert!|assert_eq!|assert\.' && return 0
+  return 1
+}
+
+scan_tsre() {
+  python3 - "$1" <<'PY'
+import sys
+
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+n = len(src)
+i = 0
+line = 1
+line_start = 0
+last = "op"
+hits: list[tuple[int, str]] = []
+
+def line_text(at: int) -> str:
+    end = src.find("\n", at)
+    if end < 0:
+        end = len(src)
+    return src[at:end]
+
+def is_word(idx: int, word: str) -> bool:
+    if not src.startswith(word, idx):
+        return False
+    if idx > 0 and (src[idx - 1].isalnum() or src[idx - 1] == "_"):
+        return False
+    end = idx + len(word)
+    if end < n and (src[end].isalnum() or src[end] == "_"):
+        return False
+    return True
+
+ops = set("=([,!&|?:;{+%^~<>")
+while i < n:
+    ch = src[i]
+    if ch == "\n":
+        line += 1
+        line_start = i + 1
+        i += 1
+        continue
+    if ch in " \t\r":
+        i += 1
+        continue
+    if src.startswith("//", i):
+        i = src.find("\n", i)
+        if i < 0:
+            break
+        continue
+    if src.startswith("/*", i):
+        end = src.find("*/", i + 2)
+        if end < 0:
+            break
+        chunk = src[i:end]
+        line += chunk.count("\n")
+        if "\n" in chunk:
+            line_start = i + chunk.rfind("\n") + 1
+        i = end + 2
+        continue
+    if ch in "'\"`":
+        q = ch
+        i += 1
+        while i < n:
+            if src[i] == "\\":
+                i += 2
+                continue
+            if src[i] == "\n":
+                line += 1
+                line_start = i + 1
+            if q == "`" and src.startswith("${", i):
+                i += 2
+                depth = 1
+                while i < n and depth:
+                    if src[i] == "\n":
+                        line += 1
+                        line_start = i + 1
+                    if src[i] == "{":
+                        depth += 1
+                    elif src[i] == "}":
+                        depth -= 1
+                    i += 1
+                continue
+            if src[i] == q:
+                i += 1
+                break
+            i += 1
+        last = "val"
+        continue
+    if is_word(i, "new"):
+        j = i + 3
+        while j < n and src[j] in " \t":
+            j += 1
+        if is_word(j, "RegExp"):
+            hits.append((line, line_text(line_start)))
+            i = j + 6
+            last = "val"
+            continue
+    if ch == "/" and last == "op":
+        hits.append((line, line_text(line_start)))
+        i += 1
+        while i < n and src[i] != "\n":
+            if src[i] == "\\":
+                i += 2
+                continue
+            if src[i] == "/":
+                i += 1
+                while i < n and src[i] in "gimsuyvd":
+                    i += 1
+                break
+            i += 1
+        last = "val"
+        continue
+    if ch.isalpha() or ch == "_" or ch == "$":
+        while i < n and (src[i].isalnum() or src[i] in "_$"):
+            i += 1
+        last = "val"
+        continue
+    if ch.isdigit():
+        while i < n and (src[i].isalnum() or src[i] in "._"):
+            i += 1
+        last = "val"
+        continue
+    if ch in ")]":
+        last = "val"
+        i += 1
+        continue
+    if ch in ops or ch in "-*/":
+        last = "op"
+        i += 1
+        continue
+    i += 1
+
+for lineno, text in hits:
+    print(f"{lineno}:{text}")
+PY
+}
+
+fail_roster() {
+  local path="$1" hit="$2" raw="$3"
+  echo "spec-census: FAIL — banned token: $path:$hit" >&2
+  echo "  roster: $raw" >&2
+  fail=1
+}
+
+if [ -f "$ROSTER" ]; then
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    trimmed="${raw#"${raw%%[![:space:]]*}"}"
+    case "$trimmed" in
+      '' | '#'*) continue ;;
+    esac
+    roster_lines=$((roster_lines + 1))
+    IFS=$'\t' read -r token scope kind needle allow <<< "$trimmed"
+    if [ -z "${token:-}" ] || [ -z "${scope:-}" ] || [ -z "${kind:-}" ]; then
+      echo "spec-census: FAIL — unparseable roster line: $trimmed" >&2
+      fail=1
+      continue
+    fi
+    if [ ! -d "$scope" ]; then
+      echo "spec-census: FAIL — roster scope '$scope' does not exist (token '$token')" >&2
+      fail=1
+      continue
+    fi
+    case "$kind" in
+      fixed | regex | ident | hex | tsre) ;;
+      *)
+        echo "spec-census: FAIL — roster kind '$kind' is not fixed|regex|ident|hex|tsre: $trimmed" >&2
+        fail=1
+        continue
+        ;;
+    esac
+    if [ "$kind" != "tsre" ] && [ -z "${needle:-}" ]; then
+      echo "spec-census: FAIL — roster needle empty: $trimmed" >&2
+      fail=1
+      continue
+    fi
+    scope_hits=0
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      roster_files=$((roster_files + 1))
+      scope_hits=$((scope_hits + 1))
+      case "$kind" in
+        hex)
+          if ! is_protocol_codec "$path"; then
+            continue
+          fi
+          ;;
+        tsre)
+          case "$path" in
+            *.ts) ;;
+            *) continue ;;
+          esac
+          ;;
+      esac
+      hits=""
+      case "$kind" in
+        fixed)
+          hits=$(grep -nF -- "$needle" "$path" || true)
+          ;;
+        regex)
+          hits=$(grep -nE -- "$needle" "$path" || true)
+          ;;
+        ident)
+          hits=$(grep -nE -- "\\b[[:alnum:]]*${needle}[[:alnum:]]*\\b" "$path" || true)
+          ;;
+        hex)
+          hits=$(grep -nE -- "$needle" "$path" || true)
+          ;;
+        tsre)
+          hits=$(scan_tsre "$path" || true)
+          ;;
+      esac
+      [ -n "$hits" ] || continue
+      while IFS= read -r hit; do
+        [ -n "$hit" ] || continue
+        text="${hit#*:}"
+        if roster_allowed "${allow:-}" "$path" "$text"; then
+          continue
+        fi
+        if [ "$kind" = "hex" ] && is_hex_allow "$path" "$text"; then
+          continue
+        fi
+        fail_roster "$path" "$hit" "$trimmed"
+      done <<< "$hits"
+    done < <(find "$scope" -type f \( -name '*.rs' -o -name '*.ts' \) \
+      ! -path '*/target/*' ! -path '*/node_modules/*' | sort)
+    if [ "$scope_hits" -eq 0 ]; then
+      echo "spec-census: FAIL — roster scope '$scope' contains zero source files (token '$token')" >&2
+      fail=1
+    fi
+  done < "$ROSTER"
+fi
+
+if [ "$roster_lines" -eq 0 ]; then
+  echo "spec-census: FAIL — $ROSTER has zero data lines (vacuous pass)" >&2
+  fail=1
+fi
+if [ "$roster_files" -eq 0 ]; then
+  echo "spec-census: FAIL — banned-token roster scanned zero files (vacuous pass)" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean"
