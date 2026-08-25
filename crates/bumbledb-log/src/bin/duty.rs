@@ -1,5 +1,6 @@
 //! The duty binary: one body, two modes. `--once` is the Lambda arm;
-//! the default is the resident sleep loop. Argv is parsed once.
+//! the default is the resident sleep loop. Argv is a parsed grammar;
+//! the exit code is a total function of [`Ran`].
 
 use std::env;
 use std::fmt;
@@ -9,7 +10,9 @@ use std::thread;
 use std::time::Duration;
 
 use bumbledb::SchemaDescriptor;
-use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Ran};
+use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
+use bumbledb_log::gc::Gc;
+use bumbledb_log::manifest::{hex32, Published};
 use bumbledb_log::replica::{Fault, OpenRefusal};
 use bumbledb_log::schema_file::{self, TheoryFile};
 use bumbledb_log::store::fs::FsStore;
@@ -59,6 +62,14 @@ enum Error {
     Credentials,
 }
 
+/// One argv atom. A value is bound in the same token (`--name=value`)
+/// or is the next bare token — never another flag.
+enum Atom {
+    Flag(String),
+    Bound { name: String, value: String },
+    Bare(String),
+}
+
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -78,7 +89,7 @@ impl fmt::Display for Error {
             Self::Theory(error) => write!(f, "{error}"),
             Self::Store(error) => write!(f, "{error}"),
             Self::Fault(error) => write!(f, "{error}"),
-            Self::Refused(refusal) => write!(f, "open refused: {refusal:?}"),
+            Self::Refused(refusal) => write!(f, "duty refused: {refusal:?}"),
             Self::Credentials => write!(f, "missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY"),
         }
     }
@@ -86,7 +97,10 @@ impl fmt::Display for Error {
 
 fn main() -> ExitCode {
     match start(env::args().skip(1)) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(ran) => {
+            scream(&ran);
+            ExitCode::from(code(&ran))
+        }
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
@@ -94,7 +108,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn start(args: impl Iterator<Item = String>) -> Result<(), Error> {
+fn start(args: impl Iterator<Item = String>) -> Result<Ran, Error> {
     let config = Config::parse(args).map_err(Error::Config)?;
     let theory = schema_file::load(&config.theory).map_err(Error::Theory)?;
     match &config.backend {
@@ -103,7 +117,11 @@ fn start(args: impl Iterator<Item = String>) -> Result<(), Error> {
     }
 }
 
-fn cycle<S: ObjectStore>(store: S, config: &Config, theory: SchemaDescriptor) -> Result<(), Error> {
+fn cycle<S: ObjectStore>(
+    store: S,
+    config: &Config,
+    theory: SchemaDescriptor,
+) -> Result<Ran, Error> {
     let mut duty =
         match Checkpointer::open(store, &config.prefix, &config.dir, theory, config.writer_id)
             .map_err(Error::Fault)?
@@ -112,14 +130,51 @@ fn cycle<S: ObjectStore>(store: S, config: &Config, theory: SchemaDescriptor) ->
             CheckpointerOpened::Refused(refusal) => return Err(Error::Refused(refusal)),
         };
     loop {
-        match duty.run().map_err(Error::Fault)? {
-            Ran::Ready { .. } => {}
-            Ran::RefreshRefused(refusal) => return Err(Error::Refused(refusal)),
-        }
-        if config.once {
-            return Ok(());
+        let ran = duty.run().map_err(Error::Fault)?;
+        if config.once || !ready(&ran) {
+            return Ok(ran);
         }
         thread::sleep(config.sleep);
+    }
+}
+
+/// Exit status of one body. Total on [`Ran`]: 0 only for a successful
+/// compact (`Quiet` / `Replaced`) and a successful sweep; `Kept` and
+/// every `Refused` arm are 1.
+fn code(ran: &Ran) -> u8 {
+    match ran {
+        Ran::Ready { compact, gc } => match (compact, gc) {
+            (Compact::Quiet, Gc::Swept(_) | Gc::NothingEligible)
+            | (Compact::Published(Published::Replaced), Gc::Swept(_) | Gc::NothingEligible) => 0,
+            (Compact::Published(Published::Kept { .. }), _)
+            | (Compact::Published(Published::Refused(_)), _)
+            | (_, Gc::Refused(_)) => 1,
+        },
+        Ran::RefreshRefused(_) => 1,
+    }
+}
+
+fn ready(ran: &Ran) -> bool {
+    code(ran) == 0
+}
+
+fn scream(ran: &Ran) {
+    match ran {
+        Ran::Ready { compact, gc } => {
+            match compact {
+                Compact::Quiet | Compact::Published(Published::Replaced) => {}
+                Compact::Published(Published::Kept { incumbent }) => {
+                    eprintln!("duty kept: incumbent {}", hex32(incumbent));
+                }
+                Compact::Published(Published::Refused(refusal)) => {
+                    eprintln!("duty refused: publish {refusal:?}");
+                }
+            }
+            if let Gc::Refused(refusal) = gc {
+                eprintln!("duty refused: gc {refusal:?}");
+            }
+        }
+        Ran::RefreshRefused(refusal) => eprintln!("duty refused: {refusal:?}"),
     }
 }
 
@@ -152,15 +207,34 @@ fn open_s3(config: &Config) -> Result<S3Store, Error> {
     .map_err(Error::Store)
 }
 
-fn take_value(
-    args: &mut std::iter::Peekable<impl Iterator<Item = String>>,
-    name: &'static str,
-) -> Result<String, ConfigError> {
-    match args.peek() {
-        Some(next) if next.starts_with("--") => Err(ConfigError::MissingValue(name)),
-        None => Err(ConfigError::MissingValue(name)),
-        Some(_) => args.next().ok_or(ConfigError::MissingValue(name)),
+fn atom(raw: String) -> Atom {
+    match raw.strip_prefix("--") {
+        Some(rest) if !rest.is_empty() => match rest.split_once('=') {
+            Some((name, value)) if !name.is_empty() => Atom::Bound {
+                name: name.to_string(),
+                value: value.to_string(),
+            },
+            _ => Atom::Flag(rest.to_string()),
+        },
+        _ => Atom::Bare(raw),
     }
+}
+
+fn valued(name: &str) -> Result<&'static str, ConfigError> {
+    Ok(match name {
+        "dir" => "dir",
+        "prefix" => "prefix",
+        "theory" => "theory",
+        "writer" => "writer",
+        "sleep-ms" => "sleep-ms",
+        "store" => "store",
+        "root" => "root",
+        "bucket" => "bucket",
+        "region" => "region",
+        "endpoint" => "endpoint",
+        "s3-prefix" => "s3-prefix",
+        other => return Err(ConfigError::Unknown(format!("--{other}"))),
+    })
 }
 
 impl Config {
@@ -177,30 +251,55 @@ impl Config {
         let mut region = "us-east-1".to_string();
         let mut endpoint = None;
         let mut key_prefix = String::new();
-        let mut args = args.peekable();
-        while let Some(flag) = args.next() {
-            match flag.as_str() {
-                "--once" => once = true,
-                "--dir" => dir = Some(PathBuf::from(take_value(&mut args, "dir")?)),
-                "--prefix" => prefix = take_value(&mut args, "prefix")?,
-                "--theory" => theory = Some(PathBuf::from(take_value(&mut args, "theory")?)),
-                "--writer" => {
-                    writer_id = take_value(&mut args, "writer")?
-                        .parse()
-                        .map_err(|_| ConfigError::BadInt("writer"))?;
+        let mut args = args.map(atom).peekable();
+        while let Some(next) = args.next() {
+            let (name, value) = match next {
+                Atom::Flag(name) if name == "once" => {
+                    once = true;
+                    continue;
                 }
-                "--sleep-ms" => {
-                    sleep_ms = take_value(&mut args, "sleep-ms")?
-                        .parse()
-                        .map_err(|_| ConfigError::BadInt("sleep-ms"))?;
+                Atom::Bound { name, .. } if name == "once" => {
+                    return Err(ConfigError::Unknown("--once".into()));
                 }
-                "--store" => store = Some(take_value(&mut args, "store")?),
-                "--root" => root = Some(PathBuf::from(take_value(&mut args, "root")?)),
-                "--bucket" => bucket = Some(take_value(&mut args, "bucket")?),
-                "--region" => region = take_value(&mut args, "region")?,
-                "--endpoint" => endpoint = Some(take_value(&mut args, "endpoint")?),
-                "--s3-prefix" => key_prefix = take_value(&mut args, "s3-prefix")?,
-                other => return Err(ConfigError::Unknown(other.to_string())),
+                Atom::Flag(name) => {
+                    let name = valued(&name)?;
+                    let value = match args.peek() {
+                        Some(Atom::Bare(_)) => match args.next() {
+                            Some(Atom::Bare(value)) => value,
+                            _ => unreachable!("peeked a bare atom"),
+                        },
+                        Some(Atom::Flag(_) | Atom::Bound { .. }) | None => {
+                            return Err(ConfigError::MissingValue(name));
+                        }
+                    };
+                    (name, value)
+                }
+                Atom::Bound { name, value } => {
+                    let name = valued(&name)?;
+                    if value.is_empty() {
+                        return Err(ConfigError::MissingValue(name));
+                    }
+                    (name, value)
+                }
+                Atom::Bare(raw) => return Err(ConfigError::Unknown(raw)),
+            };
+            match name {
+                "dir" => dir = Some(PathBuf::from(value)),
+                "prefix" => prefix = value,
+                "theory" => theory = Some(PathBuf::from(value)),
+                "writer" => {
+                    writer_id = value.parse().map_err(|_| ConfigError::BadInt("writer"))?;
+                }
+                "sleep-ms" => {
+                    sleep_ms = value.parse().map_err(|_| ConfigError::BadInt("sleep-ms"))?;
+                }
+                "store" => store = Some(value),
+                "root" => root = Some(PathBuf::from(value)),
+                "bucket" => bucket = Some(value),
+                "region" => region = value,
+                "endpoint" => endpoint = Some(value),
+                "s3-prefix" => key_prefix = value,
+                _ => unreachable!("valued() only yields the arms above"),
             }
         }
         let backend = match store.as_deref() {
@@ -225,5 +324,87 @@ impl Config {
             sleep: Duration::from_millis(sleep_ms),
             backend,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{atom, code, ready, Atom, Config, ConfigError};
+    use bumbledb_log::checkpointer::{Compact, Ran};
+    use bumbledb_log::gc::{Gc, GcRefusal};
+    use bumbledb_log::manifest::{PublishRefusal, Published};
+    use bumbledb_log::replica::OpenRefusal;
+
+    fn argv(args: &[&str]) -> impl Iterator<Item = String> {
+        args.iter().map(|s| (*s).to_string())
+    }
+
+    fn parse_err(args: &[&str]) -> String {
+        Config::parse(argv(args))
+            .err()
+            .expect("refused")
+            .to_string()
+    }
+
+    #[test]
+    fn a_flag_is_not_another_flag_s_value() {
+        let err = parse_err(&["--dir", "--theory", "/tmp/x"]);
+        assert!(err.contains("needs a value"), "{err}");
+    }
+
+    #[test]
+    fn equals_binds_the_value() {
+        let cfg = Config::parse(argv(&[
+            "--once",
+            "--store=fs",
+            "--root=/tmp/r",
+            "--dir=/tmp/d",
+            "--theory=/tmp/t",
+        ]))
+        .expect("parse");
+        assert!(cfg.once);
+        assert!(matches!(cfg.backend, super::Backend::Fs { .. }));
+    }
+
+    #[test]
+    fn an_unknown_atom_is_refused() {
+        let err = parse_err(&["--once", "--nope"]);
+        assert!(err.contains("unknown flag"), "{err}");
+        assert!(matches!(atom("--nope".into()), Atom::Flag(name) if name == "nope"));
+        assert!(matches!(
+            Config::parse(argv(&["--once", "--nope"])).expect_err("unknown"),
+            ConfigError::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn ready_quiet_exits_zero() {
+        let ran = Ran::Ready {
+            compact: Compact::Quiet,
+            gc: Gc::NothingEligible,
+        };
+        assert!(ready(&ran));
+        assert_eq!(code(&ran), 0);
+    }
+
+    #[test]
+    fn kept_and_refused_exit_one() {
+        let kept = Ran::Ready {
+            compact: Compact::Published(Published::Kept { incumbent: [0; 32] }),
+            gc: Gc::NothingEligible,
+        };
+        let publish = Ran::Ready {
+            compact: Compact::Published(Published::Refused(PublishRefusal::ManifestMissing)),
+            gc: Gc::NothingEligible,
+        };
+        let gc = Ran::Ready {
+            compact: Compact::Quiet,
+            gc: Gc::Refused(GcRefusal::ManifestMissing),
+        };
+        let refresh = Ran::RefreshRefused(OpenRefusal::ManifestMissing);
+        for ran in [&kept, &publish, &gc, &refresh] {
+            assert!(!ready(ran));
+            assert_eq!(code(ran), 1);
+        }
     }
 }
