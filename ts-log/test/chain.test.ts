@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import { digest32, digest32FromHex, hex32, toHex } from "#bytes.ts"
+import { digest32, digest32FromHex, toHex } from "#bytes.ts"
 import type { Chain } from "#chain.ts"
 import { parseSidecar, renderSidecar } from "#chain.ts"
 import type { Braid } from "#descriptor.ts"
@@ -40,7 +40,6 @@ describe("the chain sidecar", function suite() {
 		assert.ok(entry !== undefined)
 		assert.ok(entry.prev instanceof Uint8Array)
 		assert.equal(entry.prev.length, 32)
-		assert.equal(hex32(entry.prev), ZERO_HEX)
 		assert.deepEqual(entry.prev, digest32FromHex(ZERO_HEX))
 		assert.equal(toHex(renderSidecar(parsed)), toHex(bytes))
 	})

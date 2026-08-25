@@ -3,6 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
+import { digest32 } from "#bytes.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { manifestKey, tenantPrefix } from "#keys.ts"
 import { renderManifest } from "#manifest.ts"
@@ -19,7 +20,7 @@ after(function cleanup() {
 async function birthTenant(store: ReturnType<typeof memStore>, root: string, tenant: string): Promise<void> {
 	const created = await store.putCreate(
 		manifestKey(tenantPrefix(root, tenant)),
-		renderManifest({ fingerprint: descriptorOf(Ledger).fingerprint, checkpoint: null })
+		renderManifest({ fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes), checkpoint: null })
 	)
 	assert.equal(created.tag, "created")
 }

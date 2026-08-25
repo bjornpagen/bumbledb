@@ -5,7 +5,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { bytesEqual, digest32, digest32FromHex } from "#bytes.ts"
+import { bytesEqual, digest32 } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
@@ -142,7 +142,7 @@ describe("writer encode site", function suite() {
 	})
 })
 
-const ZERO_DIGEST = "0".repeat(64)
+const ZERO_DIGEST = digest32(new Uint8Array(32))
 
 function floorFacts(homeG: bigint): CheckpointFacts {
 	const braids = new Map()
@@ -203,7 +203,7 @@ describe("the floor is a write-path invariant", function suite() {
 		const zombie = encodeBatch(
 			descriptor,
 			{
-				fingerprint: digest32FromHex(descriptor.fingerprint),
+				fingerprint: digest32(descriptor.fingerprintBytes),
 				braid: HOME,
 				braidGen: generation(1n),
 				prev: digest32(new Uint8Array(32)),

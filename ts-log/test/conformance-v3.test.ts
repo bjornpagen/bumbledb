@@ -12,6 +12,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
+import type { Digest32 } from "#bytes.ts"
 import { digest32FromHex, fromHex, toHex } from "#bytes.ts"
 import { parseSidecar, renderSidecar } from "#chain.ts"
 import type { BatchHeader, DecodedBatch, EncodeHeader, Op } from "#codec.ts"
@@ -154,17 +155,29 @@ function knownOf(descriptor: Descriptor): Set<ReturnType<typeof braid>> {
 	return new Set(descriptor.braidMembers.keys())
 }
 
-function digestHex(value: Uint8Array | string): string {
-	return typeof value === "string" ? value : toHex(value)
-}
-
-function renderHeader(header: BatchHeader): Record<string, string> {
+function renderHeader(header: BatchHeader): {
+	braid: string
+	braidGen: string
+	prev: Digest32
+	writer: string
+	timestamp: string
+} {
 	return {
 		braid: header.braid,
 		braidGen: header.braidGen.toString(),
-		prev: digestHex(header.prev),
+		prev: header.prev,
 		writer: header.writer.toString(),
 		timestamp: header.timestamp.toString()
+	}
+}
+
+function expectedHeader(label: string, header: NonNullable<BatchSidecar["header"]>): ReturnType<typeof renderHeader> {
+	return {
+		braid: header.braid,
+		braidGen: assertDecimalString(`${label}.header.braidGen`, header.braidGen),
+		prev: digest32FromHex(assertLowercaseHex(`${label}.header.prev`, header.prev)),
+		writer: assertDecimalString(`${label}.header.writer`, header.writer),
+		timestamp: assertDecimalString(`${label}.header.timestamp`, header.timestamp)
 	}
 }
 
@@ -247,8 +260,18 @@ function renderManifestValue(parsed: ReturnType<typeof parseManifest>): unknown 
 	return { fingerprint: parsed.fingerprint, checkpoint: parsed.checkpoint }
 }
 
+function expectedManifest(label: string, value: unknown): unknown {
+	assert.ok(value !== null && typeof value === "object", `${label}: value object`)
+	const record = value as Record<string, unknown>
+	return {
+		fingerprint: digest32FromHex(assertLowercaseHex(`${label}.fingerprint`, record.fingerprint)),
+		checkpoint:
+			record.checkpoint === null ? null : digest32FromHex(assertLowercaseHex(`${label}.checkpoint`, record.checkpoint))
+	}
+}
+
 function renderCheckpointValue(parsed: ReturnType<typeof parseCheckpoint>): unknown {
-	const braids: Record<string, { g: string; hash: string; ts: string }> = {}
+	const braids: Record<string, { g: string; hash: Digest32; ts: string }> = {}
 	for (const [id, head] of parsed.braids) {
 		assert.equal(typeof head.g, "bigint", `${id}.g is bigint`)
 		assert.equal(typeof head.ts, "bigint", `${id}.ts is bigint`)
@@ -260,6 +283,26 @@ function renderCheckpointValue(parsed: ReturnType<typeof parseCheckpoint>): unkn
 		catalog: parsed.catalog,
 		writer: parsed.writer.toString(),
 		prev: parsed.prev
+	}
+}
+
+function expectedCheckpoint(label: string, value: unknown): unknown {
+	assert.ok(value !== null && typeof value === "object", `${label}: value object`)
+	const record = value as Record<string, unknown>
+	const braidsIn = record.braids as Record<string, Record<string, unknown>>
+	const braids: Record<string, { g: string; hash: Digest32; ts: string }> = {}
+	for (const [id, head] of Object.entries(braidsIn)) {
+		braids[id] = {
+			g: assertDecimalString(`${label}.${id}.g`, head.g),
+			hash: digest32FromHex(assertLowercaseHex(`${label}.${id}.hash`, head.hash)),
+			ts: assertDecimalString(`${label}.${id}.ts`, head.ts)
+		}
+	}
+	return {
+		braids,
+		catalog: digest32FromHex(assertLowercaseHex(`${label}.catalog`, record.catalog)),
+		writer: assertDecimalString(`${label}.writer`, record.writer),
+		prev: record.prev === null ? null : digest32FromHex(assertLowercaseHex(`${label}.prev`, record.prev))
 	}
 }
 
@@ -277,11 +320,11 @@ function sidecarPending(
 }
 
 function renderSidecarValue(parsed: ReturnType<typeof parseSidecar>): unknown {
-	const chain: Record<string, { g: string; prev: string; ts: string }> = {}
+	const chain: Record<string, { g: string; prev: Digest32; ts: string }> = {}
 	for (const [id, entry] of sidecarEntries(parsed)) {
 		assert.equal(typeof entry.g, "bigint", `${id}.g is bigint`)
 		assert.equal(typeof entry.ts, "bigint", `${id}.ts is bigint`)
-		chain[id] = { g: entry.g.toString(), prev: digestHex(entry.prev), ts: entry.ts.toString() }
+		chain[id] = { g: entry.g.toString(), prev: entry.prev, ts: entry.ts.toString() }
 	}
 	const pending = sidecarPending(parsed)
 	if (pending === null) {
@@ -293,21 +336,59 @@ function renderSidecarValue(parsed: ReturnType<typeof parseSidecar>): unknown {
 	return { chain, pending: { braid: pending.braid, gen: pending.gen.toString(), bytes } }
 }
 
+function expectedSidecar(label: string, value: unknown): unknown {
+	assert.ok(value !== null && typeof value === "object", `${label}: value object`)
+	const record = value as Record<string, unknown>
+	const chainIn = record.chain as Record<string, Record<string, unknown>>
+	const chain: Record<string, { g: string; prev: Digest32; ts: string }> = {}
+	for (const [id, entry] of Object.entries(chainIn)) {
+		chain[id] = {
+			g: assertDecimalString(`${label}.${id}.g`, entry.g),
+			prev: digest32FromHex(assertLowercaseHex(`${label}.${id}.prev`, entry.prev)),
+			ts: assertDecimalString(`${label}.${id}.ts`, entry.ts)
+		}
+	}
+	if (record.pending === null) {
+		return { chain, pending: null }
+	}
+	const pending = record.pending as Record<string, unknown>
+	return {
+		chain,
+		pending: {
+			braid: pending.braid,
+			gen: assertDecimalString(`${label}.pending.gen`, pending.gen),
+			bytes: assertLowercaseHex(`${label}.pending.bytes`, pending.bytes)
+		}
+	}
+}
+
 function assertDocumentValueNumbers(label: string, kind: DocumentSidecar["kind"], value: unknown): void {
 	assert.ok(value !== null && typeof value === "object", `${label}: value object`)
 	const record = value as Record<string, unknown>
+	if (kind === "manifest") {
+		assertLowercaseHex(`${label}.fingerprint`, record.fingerprint)
+		if (record.checkpoint !== null) {
+			assertLowercaseHex(`${label}.checkpoint`, record.checkpoint)
+		}
+	}
 	if (kind === "checkpoint") {
 		const braids = record.braids as Record<string, Record<string, unknown>>
 		for (const [id, head] of Object.entries(braids)) {
 			assertDecimalString(`${label}.${id}.g`, head.g)
+			assertLowercaseHex(`${label}.${id}.hash`, head.hash)
 			assertDecimalString(`${label}.${id}.ts`, head.ts)
 		}
+		assertLowercaseHex(`${label}.catalog`, record.catalog)
 		assertDecimalString(`${label}.writer`, record.writer)
+		if (record.prev !== null) {
+			assertLowercaseHex(`${label}.prev`, record.prev)
+		}
 	}
 	if (kind === "sidecar") {
 		const chain = record.chain as Record<string, Record<string, unknown>>
 		for (const [id, entry] of Object.entries(chain)) {
 			assertDecimalString(`${label}.${id}.g`, entry.g)
+			assertLowercaseHex(`${label}.${id}.prev`, entry.prev)
 			assertDecimalString(`${label}.${id}.ts`, entry.ts)
 		}
 		if (record.pending !== null && record.pending !== undefined) {
@@ -403,7 +484,7 @@ if (!present) {
 				assert.equal(sidecar.fingerprint, descriptor.fingerprint, `${stem}: fingerprint`)
 				const decoded = decodeBatch(descriptor, bytes)
 				assertDecodedU64s(stem, decoded)
-				assert.deepEqual(renderHeader(decoded.header), sidecar.header, `${stem}: header`)
+				assert.deepEqual(renderHeader(decoded.header), expectedHeader(stem, sidecar.header), `${stem}: header`)
 				assert.deepEqual(renderOps(descriptor, decoded.ops), sidecar.ops, `${stem}: ops`)
 				const again = encodeBatch(descriptor, decoded.header, decoded.ops)
 				assert.equal(toHex(again), toHex(bytes), `${stem}: byte-exact re-encode`)
@@ -457,7 +538,11 @@ if (!present) {
 					assertDocumentValueNumbers(rel, sidecar.kind, sidecar.value)
 					if (sidecar.kind === "manifest") {
 						const parsed = parseManifest(bytes)
-						assert.deepEqual(renderManifestValue(parsed), sidecar.value, `${rel}: manifest value`)
+						assert.deepEqual(
+							renderManifestValue(parsed),
+							expectedManifest(rel, sidecar.value),
+							`${rel}: manifest value`
+						)
 						assert.equal(toHex(renderManifest(parsed)), toHex(bytes), `${rel}: manifest fixpoint`)
 						return
 					}
@@ -466,12 +551,16 @@ if (!present) {
 					const known = knownOf(descriptor)
 					if (sidecar.kind === "checkpoint") {
 						const parsed = parseCheckpoint(bytes, known)
-						assert.deepEqual(renderCheckpointValue(parsed), sidecar.value, `${rel}: checkpoint value`)
+						assert.deepEqual(
+							renderCheckpointValue(parsed),
+							expectedCheckpoint(rel, sidecar.value),
+							`${rel}: checkpoint value`
+						)
 						assert.equal(toHex(renderCheckpoint(parsed)), toHex(bytes), `${rel}: checkpoint fixpoint`)
 						return
 					}
 					const parsed = parseSidecar(bytes, known)
-					assert.deepEqual(renderSidecarValue(parsed), sidecar.value, `${rel}: sidecar value`)
+					assert.deepEqual(renderSidecarValue(parsed), expectedSidecar(rel, sidecar.value), `${rel}: sidecar value`)
 					assert.equal(toHex(renderSidecar(parsed)), toHex(bytes), `${rel}: sidecar fixpoint`)
 					return
 				}

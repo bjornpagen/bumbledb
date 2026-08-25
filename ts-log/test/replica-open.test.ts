@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import { digest32 } from "#bytes.ts"
+import { digest32, digest32FromHex } from "#bytes.ts"
 import type { Chain } from "#chain.ts"
 import { CHAIN_FILE, renderSidecar } from "#chain.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
@@ -40,7 +40,7 @@ describe("replica open refusals", function suite() {
 		const descriptor = descriptorOf(Ledger)
 		const created = await store.putCreate(
 			manifestKey("prod/main"),
-			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: null })
+			renderManifest({ fingerprint: digest32(descriptor.fingerprintBytes), checkpoint: null })
 		)
 		assert.equal(created.tag, "created")
 		const dir = path.join(tmpRoot, "unknown-braid")
@@ -65,7 +65,7 @@ describe("adoptManifest is one transition", function suite() {
 		const end = source.indexOf("async function refreshManifest")
 		assert.ok(start !== -1 && end > start)
 		const body = source.slice(start, end)
-		const facts = body.indexOf("await core.store.get(checkpointJsonKey")
+		const facts = body.indexOf("await core.store.get(ckptDocKey")
 		const checkpoint = body.indexOf("core.checkpoint = checkpoint")
 		const etag = body.indexOf("core.manifestEtag = etag")
 		assert.ok(facts !== -1, "checkpoint bytes are fetched")
@@ -81,7 +81,7 @@ describe("adoptManifest is one transition", function suite() {
 		const descriptor = descriptorOf(Ledger)
 		const created = await store.putCreate(
 			manifestKey("prod/main"),
-			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: null })
+			renderManifest({ fingerprint: digest32(descriptor.fingerprintBytes), checkpoint: null })
 		)
 		assert.equal(created.tag, "created")
 		const replica = await openReplica({
@@ -95,7 +95,10 @@ describe("adoptManifest is one transition", function suite() {
 		assert.ok(genesis !== null)
 		const swapped = await store.putSwap(
 			manifestKey("prod/main"),
-			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: "ab".repeat(32) }),
+			renderManifest({
+				fingerprint: digest32(descriptor.fingerprintBytes),
+				checkpoint: digest32FromHex("ab".repeat(32))
+			}),
 			genesis
 		)
 		assert.equal(swapped.tag, "swapped")

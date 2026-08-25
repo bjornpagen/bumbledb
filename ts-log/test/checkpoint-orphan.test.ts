@@ -4,12 +4,13 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
-import { toHex } from "#bytes.ts"
+import type { Digest32 } from "#bytes.ts"
+import { bytesEqual, digest32, hex32 } from "#bytes.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
 import {
 	CKPT_SCRATCH_LEASE,
-	checkpointJsonKey,
 	checkpointMdbKey,
+	ckptDocKey,
 	encodeCkptScratch,
 	generation,
 	LEASE_NAMESPACE,
@@ -23,7 +24,7 @@ import { Ledger } from "#test/fixtures.ts"
 import { publishCheckpoint } from "#writer.ts"
 
 const HOME = braid("c00000000")
-const ZERO_DIGEST = "0".repeat(64)
+const ZERO_DIGEST = digest32(new Uint8Array(32))
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-ckpt-orphan-"))
 
 after(function cleanup() {
@@ -33,6 +34,7 @@ after(function cleanup() {
 const encoder = new TextEncoder()
 const descriptor = descriptorOf(Ledger)
 const known = new Set(descriptor.braidMembers.keys())
+const fingerprint = digest32(descriptor.fingerprintBytes)
 
 function facts(homeG: bigint): CheckpointFacts {
 	const braids = new Map()
@@ -45,38 +47,39 @@ function facts(homeG: bigint): CheckpointFacts {
 	return { braids, catalog: ZERO_DIGEST, writer: 0n, prev: null, sum }
 }
 
-function digestOf(candidate: CheckpointFacts): string {
-	return toHex(new Uint8Array(internalBlake3(renderCheckpoint(candidate))))
+function digestOf(candidate: CheckpointFacts): Digest32 {
+	return digest32(new Uint8Array(internalBlake3(renderCheckpoint(candidate))))
 }
 
 function scratchPath(dir: string): string {
 	return path.join(dir, LEASE_NAMESPACE, CKPT_SCRATCH_LEASE)
 }
 
+function mdbKey(prefix: string, digest: Digest32) {
+	return checkpointMdbKey(prefix, hex32(digest))
+}
+
 async function birth(store: ReturnType<typeof memStore>, prefix: string): Promise<void> {
-	const created = await store.putCreate(
-		manifestKey(prefix),
-		renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: null })
-	)
+	const created = await store.putCreate(manifestKey(prefix), renderManifest({ fingerprint, checkpoint: null }))
 	assert.equal(created.tag, "created")
 }
 
 describe("the loser self-deletes its ckpt pair", function suite() {
-	test("Kept deletes the candidate json and mdb and releases the scratch", async function kept() {
+	test("Kept deletes the candidate document and mdb and releases the scratch", async function kept() {
 		const store = memStore()
 		const prefix = "prod/main"
 		const dir = path.join(tmpRoot, "kept")
 		await birth(store, prefix)
 		const incumbent = facts(10n)
 		const incumbentDigest = digestOf(incumbent)
-		const planted = await store.putCreate(checkpointJsonKey(prefix, incumbentDigest), renderCheckpoint(incumbent))
+		const planted = await store.putCreate(ckptDocKey(prefix, incumbentDigest), renderCheckpoint(incumbent))
 		assert.equal(planted.tag, "created")
-		await store.putCreate(checkpointMdbKey(prefix, incumbentDigest), encoder.encode("incumbent-mdb"))
+		await store.putCreate(mdbKey(prefix, incumbentDigest), encoder.encode("incumbent-mdb"))
 		const fetched = await store.get(manifestKey(prefix))
 		assert.ok(fetched !== null)
 		const swapped = await store.putSwap(
 			manifestKey(prefix),
-			renderManifest({ fingerprint: descriptor.fingerprint, checkpoint: incumbentDigest }),
+			renderManifest({ fingerprint, checkpoint: incumbentDigest }),
 			fetched.etag
 		)
 		assert.equal(swapped.tag, "swapped")
@@ -86,15 +89,15 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 		const published = await publishCheckpoint(store, prefix, dir, known, candidate, encoder.encode("loser-mdb"))
 		assert.equal(published.tag, "kept")
 		if (published.tag === "kept") {
-			assert.equal(published.incumbent, incumbentDigest)
+			assert.ok(bytesEqual(published.incumbent, incumbentDigest))
 		}
-		assert.equal(await store.get(checkpointJsonKey(prefix, digest)), null)
-		assert.equal(await store.get(checkpointMdbKey(prefix, digest)), null)
+		assert.equal(await store.get(ckptDocKey(prefix, digest)), null)
+		assert.equal(await store.get(mdbKey(prefix, digest)), null)
 		assert.equal(fs.existsSync(scratchPath(dir)), false)
-		assert.ok((await store.get(checkpointJsonKey(prefix, incumbentDigest))) !== null)
+		assert.ok((await store.get(ckptDocKey(prefix, incumbentDigest))) !== null)
 	})
 
-	test("a refused publish deletes the candidate json and mdb", async function refused() {
+	test("a refused publish deletes the candidate document and mdb", async function refused() {
 		const store = memStore()
 		const prefix = "prod/main"
 		const dir = path.join(tmpRoot, "refused")
@@ -105,8 +108,8 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 		if (published.tag === "refused") {
 			assert.equal(published.reason, "manifest-missing")
 		}
-		assert.equal(await store.get(checkpointJsonKey(prefix, digest)), null)
-		assert.equal(await store.get(checkpointMdbKey(prefix, digest)), null)
+		assert.equal(await store.get(ckptDocKey(prefix, digest)), null)
+		assert.equal(await store.get(mdbKey(prefix, digest)), null)
 		assert.equal(fs.existsSync(scratchPath(dir)), false)
 	})
 
@@ -119,8 +122,8 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 		const digest = digestOf(candidate)
 		const published = await publishCheckpoint(store, prefix, dir, known, candidate, encoder.encode("winner-mdb"))
 		assert.equal(published.tag, "replaced")
-		assert.ok((await store.get(checkpointJsonKey(prefix, digest))) !== null)
-		assert.ok((await store.get(checkpointMdbKey(prefix, digest))) !== null)
+		assert.ok((await store.get(ckptDocKey(prefix, digest))) !== null)
+		assert.ok((await store.get(mdbKey(prefix, digest))) !== null)
 		assert.equal(fs.existsSync(scratchPath(dir)), false)
 	})
 })
@@ -133,8 +136,8 @@ describe("open sweeps reserved scratch", function suite() {
 		await birth(store, prefix)
 		const stranded = facts(1n)
 		const digest = digestOf(stranded)
-		await store.putCreate(checkpointJsonKey(prefix, digest), renderCheckpoint(stranded))
-		await store.putCreate(checkpointMdbKey(prefix, digest), encoder.encode("strand-mdb"))
+		await store.putCreate(ckptDocKey(prefix, digest), renderCheckpoint(stranded))
+		await store.putCreate(mdbKey(prefix, digest), encoder.encode("strand-mdb"))
 		fs.mkdirSync(path.join(dir, LEASE_NAMESPACE), { recursive: true })
 		fs.writeFileSync(scratchPath(dir), encodeCkptScratch(digest))
 
@@ -144,8 +147,8 @@ describe("open sweeps reserved scratch", function suite() {
 			dir,
 			theory: Ledger
 		})
-		assert.equal(await store.get(checkpointJsonKey(prefix, digest)), null)
-		assert.equal(await store.get(checkpointMdbKey(prefix, digest)), null)
+		assert.equal(await store.get(ckptDocKey(prefix, digest)), null)
+		assert.equal(await store.get(mdbKey(prefix, digest)), null)
 		assert.equal(fs.existsSync(scratchPath(dir)), false)
 		await replica[Symbol.asyncDispose]()
 	})
@@ -157,8 +160,8 @@ describe("open sweeps reserved scratch", function suite() {
 		const body = source.slice(start, start + 900)
 		assert.ok(body.includes("CKPT_SCRATCH_LEASE"))
 		assert.ok(body.includes("parseCkptScratch"))
-		assert.ok(body.includes("digest !== core.checkpointDigest"))
-		assert.ok(body.includes("checkpointJsonKey"))
+		assert.ok(body.includes("bytesEqual(digest, core.checkpointDigest)"))
+		assert.ok(body.includes("ckptDocKey"))
 		assert.ok(body.includes("checkpointMdbKey"))
 		assert.ok(body.includes("TEMP_NAMESPACE"))
 		assert.ok(body.includes("LEASE_NAMESPACE"))

@@ -313,7 +313,7 @@ if (!present) {
 				}
 				const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as BatchFixture
 				const label = new TextEncoder().encode(`bumbledb-log corpus fingerprint: ${fixture.schema}`)
-				assert.equal(toHex(new Uint8Array(internalBlake3(label))), fixture.fingerprint, file)
+				assert.deepEqual(digest32(new Uint8Array(internalBlake3(label))), digest32FromHex(fixture.fingerprint), file)
 			}
 		})
 	})
