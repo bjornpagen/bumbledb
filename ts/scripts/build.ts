@@ -157,7 +157,10 @@ function isVersionBearing(repoRoot: string, relPath: string): boolean {
 }
 
 function trackedManifests(repoRoot: string): string[] {
-	const listed = spawnSync("git", ["-C", repoRoot, "ls-files", "-z"])
+	// `-c safe.directory` is process-scoped so `git ls-files` works when
+	// the checkout owner differs from the process (Actions containers,
+	// docker, odd mounts) without writing the user's global gitconfig.
+	const listed = spawnSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, "ls-files", "-z"])
 	if (listed.error) {
 		throw errors.wrap(listed.error, "spawn git ls-files")
 	}

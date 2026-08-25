@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::{jittered, unix_ms, Lease, WriterId, LEASE_NAMESPACE, TEMP_NAMESPACE};
+use super::{LEASE_NAMESPACE, Lease, TEMP_NAMESPACE, WriterId, jittered, unix_ms};
 
 /// How long a mutation lease stays current, in milliseconds.
 pub const MUTATION_TTL_MS: u64 = 5_000;
