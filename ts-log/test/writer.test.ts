@@ -70,6 +70,22 @@ describe("writer encode site", function suite() {
 		await reader[Symbol.asyncDispose]()
 	})
 
+	test("openWriter on a replica wraps and settles without birthing", async function wrapBorn() {
+		const { store, prefix, dir } = lane()
+		const born = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		await born.replica[Symbol.asyncDispose]()
+		const replica = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
+		const writer = await openWriter(replica)
+		assert.equal(writer.role, "writer")
+		assert.equal(writer.replica, replica)
+		const out = await writer.commit(function record(batch) {
+			batch.insert(Holder, [{ id: 1n, name: "ada" }])
+			return 0
+		})
+		assert.equal(out.tag, "accepted")
+		await replica[Symbol.asyncDispose]()
+	})
+
 	test("a Digest32 chain prev encodes as 32 predecessor bytes", async function digestPrev() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })

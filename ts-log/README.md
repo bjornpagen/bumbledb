@@ -40,7 +40,7 @@ Async ⟺ network: `openReplica`, `refresh`, `waitFor`, `commit`,
 import { fsStore, openReplica, openWriter } from "@bjornpagen/bumbledb-log"
 
 export const replica = await openReplica({ store: s3(env), prefix: "prod/main", dir: "/tmp/store", theory: Ledger })
-export const writer = openWriter(replica)
+export const writer = await openWriter(replica)
 
 // route handler
 const out = await writer.commit((batch) => batch.insert(Booking, [row]))
@@ -78,7 +78,7 @@ const replica = await openReplica({
 	dir: `/data/primer/replicas/${scopeName}`, // per-process local dir — never shared
 	theory: Explanation
 })
-const writer = openWriter(replica)
+const writer = await openWriter(replica)
 
 // one pass = refresh, render, emit, lower, one commit
 await replica.refresh()
