@@ -2,15 +2,17 @@
  * The chain sidecar in `dir/chain.json`: a floor cache of chain
  * position, written atomically (temp + rename, fsync). The chain is
  * Settled or Pending — generation is the vector sum, plus one exactly
- * when the value is Pending. Pending batch bytes are lowercase hex.
- * Every numeric field is a bigint u64. The document version is 3.
+ * when the value is Pending. Each entry's prev is Digest32; the v3
+ * document renders it as 64 lowercase hex. Pending batch bytes are
+ * lowercase hex. Every numeric field is a bigint u64. The document
+ * version is 3.
  */
 
 import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
-import { checkedAddU64, hex32, saturatingAddU64 } from "#bytes.ts"
+import { checkedAddU64, digest32, hex32, saturatingAddU64 } from "#bytes.ts"
 import type { ChainEntry } from "#codec.ts"
 import type { Braid } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
@@ -60,7 +62,7 @@ function renderSidecar(chain: Chain): string {
 			if (entry === undefined) {
 				throw errors.new(`sidecar chain lost braid ${id}`)
 			}
-			return `"${id}":{"g":"${entry.g}","prev":"${entry.prev}","ts":"${entry.ts}"}`
+			return `"${id}":{"g":"${entry.g}","prev":"${hex32(entry.prev)}","ts":"${entry.ts}"}`
 		})
 		.join(",")
 	const pending =
@@ -134,7 +136,7 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 		if (next === undefined) {
 			refuse({ kind: "Overflow" }, "sidecar chain sum overflows u64")
 		}
-		entries.set(name, { g: generation(g), prev: hex32(prev), ts })
+		entries.set(name, { g: generation(g), prev: digest32(prev), ts })
 		sum = next
 	}
 	if (!text.lit('},"pending":')) {
