@@ -10,6 +10,7 @@ use bumbledb_log::manifest::{
     Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, hex32,
     log_key, manifest_key, publish_checkpoint,
 };
+use bumbledb_log::replica::Vector;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
     Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
@@ -110,7 +111,10 @@ fn checkpoint_render_parse_fixpoint_and_sum() {
     assert_eq!(parsed.sum(), 7);
     assert_eq!(
         parsed.vector(),
-        BTreeMap::from([(kitchen_braid(&codec), 4), (note_braid(&codec), 3)])
+        Vector::from(BTreeMap::from([
+            (kitchen_braid(&codec), 4),
+            (note_braid(&codec), 3),
+        ]))
     );
 }
 
@@ -133,6 +137,7 @@ fn checkpoint_refuses_missing_braid_as_set_drift() {
 
 #[test]
 fn checkpoint_refuses_a_braid_the_schema_never_minted() {
+    const HEAD: usize = 52;
     let codec = codec();
     let doc = Checkpoint {
         braids: heads(1, 1),
@@ -144,7 +149,6 @@ fn checkpoint_refuses_a_braid_the_schema_never_minted() {
     let kitchen = kitchen_braid(&codec);
     let note = note_braid(&codec);
     assert!(kitchen < note, "BTreeMap order puts kitchen first");
-    const HEAD: usize = 52;
     bytes[5 + HEAD..5 + HEAD + 4].copy_from_slice(&9u32.to_le_bytes());
     assert_eq!(
         Checkpoint::parse(&bytes, codec.braids()),

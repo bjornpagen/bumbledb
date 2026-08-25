@@ -169,11 +169,17 @@ fn open_replica(root: PathBuf, dir: &Path) -> FsReplica {
 }
 
 fn writer_digest(writer: &FsWriter) -> [u8; 32] {
-    writer.with_db(|db| db.catalog_digest().expect("catalog digest"))
+    writer
+        .with_db(|db| db.catalog_digest().expect("catalog digest"))
+        .expect("db")
 }
 
 fn replica_digest(replica: &FsReplica) -> [u8; 32] {
-    replica.db().catalog_digest().expect("catalog digest")
+    replica
+        .db()
+        .expect("db")
+        .catalog_digest()
+        .expect("catalog digest")
 }
 
 fn accepted_generation<R>(outcome: &Commit<R>) -> u64 {
@@ -277,12 +283,14 @@ fn intern_mint_determinism_lands_byte_identical_catalog_digests_across_replicas(
     assert!(
         replay_one
             .db()
+            .expect("db")
             .read(|instance| instance.contains_dyn(NOTE, &note_row(3, "poolish overnight")))
             .expect("read")
     );
     assert!(
         replay_one
             .db()
+            .expect("db")
             .read(|instance| instance.contains_dyn(RECIPE, &recipe_row(3, "barm")))
             .expect("read")
     );
@@ -324,12 +332,17 @@ fn fresh_in_command_ids_replay_and_a_collision_rejects_as_ordinary_functionality
         store.get(&log_key("", braid, 2)).expect("get").is_none(),
         "a rejected collision publishes nothing"
     );
-    assert_eq!(writer.vector()[&braid], 1, "the rejection advanced nothing");
+    assert_eq!(
+        writer.vector().at(braid),
+        1,
+        "the rejection advanced nothing"
+    );
 
     let replica = open_replica(root.clone(), &root.join("r"));
     assert!(
         replica
             .db()
+            .expect("db")
             .read(|instance| instance.contains_dyn(TICKET, &ticket_row(7, "first")))
             .expect("read"),
         "the fresh-keyed row replays with the id carried in the command"
@@ -379,7 +392,7 @@ fn concurrent_fresh_double_mint_re_judges_to_the_serial_functionality_rejection(
         "the loser's rejection publishes nothing"
     );
     assert_eq!(
-        writer_b.vector()[&braid],
+        writer_b.vector().at(braid),
         1,
         "the loser holds the winner's slot"
     );
@@ -526,9 +539,11 @@ fn a_net_noop_commit_takes_the_engine_noop_arm_and_publishes_nothing() {
         store.get(&log_key("", braid, 2)).expect("get").is_none(),
         "no generation advance means nothing to publish"
     );
-    assert_eq!(writer.vector()[&braid], 1);
+    assert_eq!(writer.vector().at(braid), 1);
     assert_eq!(
-        writer.with_db(|db| db.generation().expect("generation").value()),
+        writer
+            .with_db(|db| db.generation().expect("generation").value())
+            .expect("db"),
         1,
         "the wholeness identity holds with no pending term"
     );
@@ -569,9 +584,11 @@ fn a_rejected_commit_leaves_no_lmdb_commit_no_object_and_no_advance() {
         store.get(&log_key("", braid, 1)).expect("get").is_none(),
         "rejected commits create no objects"
     );
-    assert_eq!(writer.vector()[&braid], 0);
+    assert_eq!(writer.vector().at(braid), 0);
     assert_eq!(
-        writer.with_db(|db| db.generation().expect("generation").value()),
+        writer
+            .with_db(|db| db.generation().expect("generation").value())
+            .expect("db"),
         0,
         "rejected commits advance nothing"
     );

@@ -16,7 +16,7 @@ use bumbledb_log::gc::{
     Gc, PublishClock, Restore, RestoreRefusal, gc, gc_at, restore_by_time, restore_to_vector,
 };
 use bumbledb_log::manifest::{ckpt_json_key, ckpt_mdb_key, log_key};
-use bumbledb_log::replica::{Opened, Replica};
+use bumbledb_log::replica::{Opened, Replica, Vector};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use lane_d_support::{
@@ -98,7 +98,7 @@ fn the_exemption_law_is_exact() {
     log.publish(kitchen, &[insert_recipe(4)], 4_000);
     log.publish(notes, &[insert_note(1, "keep me")], 1_500);
     let builder = open_replica(&root, &local.join("builder"));
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     // Window 1500 at now 4000 against publish 2000: the below-floor
@@ -164,12 +164,12 @@ fn old_checkpoints_die_behind_the_current_one() {
 
     log.publish(kitchen, &[insert_recipe(1)], 1_000);
     let builder = open_replica(&root, &local.join("b1"));
-    let old_digest = log.checkpoint(builder.db(), &scratch);
+    let old_digest = log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     log.publish(kitchen, &[insert_recipe(2)], 900_000);
     let builder = open_replica(&root, &local.join("b2"));
-    let current_digest = log.checkpoint(builder.db(), &scratch);
+    let current_digest = log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);
@@ -212,7 +212,7 @@ fn old_checkpoints_die_behind_the_current_one() {
         "",
         &local.join("beyond"),
         &theory(),
-        &BTreeMap::from([(kitchen, 1)]),
+        &Vector::from(BTreeMap::from([(kitchen, 1)])),
     )
     .expect("restore")
     {
@@ -238,7 +238,7 @@ fn restore_lands_exactly_on_the_recorded_vector() {
     log.publish(notes, &[insert_note(1, "first")], 150);
     log.publish(notes, &[insert_note(2, "second")], 250);
 
-    let target = BTreeMap::from([(kitchen, 2), (notes, 1)]);
+    let target = Vector::from(BTreeMap::from([(kitchen, 2), (notes, 1)]));
     let (db, vector) = restored(
         restore_to_vector(&log.store, "", &local.join("r"), &theory(), &target).expect("restore"),
     );
@@ -257,7 +257,7 @@ fn restore_lands_exactly_on_the_recorded_vector() {
     // as a replica resumes from the restored vector.
     drop(db);
     let replica = open_replica(&root, &local.join("r"));
-    assert!(replica.vector()[&kitchen] >= 2);
+    assert!(replica.vector().at(kitchen) >= 2);
 }
 
 #[test]
@@ -271,7 +271,7 @@ fn restore_seeds_from_a_checkpoint_when_one_qualifies() {
     log.publish(kitchen, &[insert_recipe(1)], 100);
     log.publish(kitchen, &[insert_recipe(2)], 200);
     let builder = open_replica(&root, &local.join("builder"));
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
     log.publish(kitchen, &[insert_recipe(3)], 300);
 
@@ -280,7 +280,7 @@ fn restore_seeds_from_a_checkpoint_when_one_qualifies() {
     log.store.delete(&log_key("", kitchen, 1)).expect("delete");
     log.store.delete(&log_key("", kitchen, 2)).expect("delete");
 
-    let target = BTreeMap::from([(kitchen, 3), (note_braid(&log.codec), 0)]);
+    let target = Vector::from(BTreeMap::from([(kitchen, 3), (note_braid(&log.codec), 0)]));
     let (db, vector) = restored(
         restore_to_vector(&log.store, "", &local.join("r"), &theory(), &target).expect("restore"),
     );
@@ -294,7 +294,7 @@ fn restore_seeds_from_a_checkpoint_when_one_qualifies() {
         "",
         &local.join("r2"),
         &theory(),
-        &BTreeMap::from([(kitchen, 1)]),
+        &Vector::from(BTreeMap::from([(kitchen, 1)])),
     )
     .expect("restore")
     {
@@ -321,17 +321,26 @@ fn by_time_restore_maps_the_instant_per_braid() {
     let (_, vector) = restored(
         restore_by_time(&log.store, "", &local.join("t250"), &theory(), 250).expect("restore"),
     );
-    assert_eq!(vector, BTreeMap::from([(kitchen, 2), (notes, 2)]));
+    assert_eq!(
+        vector,
+        Vector::from(BTreeMap::from([(kitchen, 2), (notes, 2)]))
+    );
 
     let (_, vector) = restored(
         restore_by_time(&log.store, "", &local.join("t120"), &theory(), 120).expect("restore"),
     );
-    assert_eq!(vector, BTreeMap::from([(kitchen, 1), (notes, 0)]));
+    assert_eq!(
+        vector,
+        Vector::from(BTreeMap::from([(kitchen, 1), (notes, 0)]))
+    );
 
     let (db, vector) = restored(
         restore_by_time(&log.store, "", &local.join("t0"), &theory(), 0).expect("restore"),
     );
-    assert_eq!(vector, BTreeMap::from([(kitchen, 0), (notes, 0)]));
+    assert_eq!(
+        vector,
+        Vector::from(BTreeMap::from([(kitchen, 0), (notes, 0)]))
+    );
     assert_eq!(db.generation().expect("generation").value(), 0);
 }
 
@@ -368,7 +377,7 @@ fn restore_refuses_a_braid_the_schema_never_minted() {
         "",
         &local.join("r"),
         &theory(),
-        &BTreeMap::from([(braid_nine(), 0)]),
+        &Vector::from(BTreeMap::from([(braid_nine(), 0)])),
     )
     .expect("restore")
     {
@@ -391,7 +400,7 @@ fn an_interrupted_sweep_resumes_past_a_hole() {
     log.publish(kitchen, &[insert_recipe(3)], 3_000);
     log.publish(kitchen, &[insert_recipe(4)], 4_000);
     let builder = open_replica(&root, &local.join("builder"));
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     log.store
@@ -442,7 +451,7 @@ fn a_writer_claimed_timestamp_does_not_age_the_slot() {
     log.publish(kitchen, &[insert_recipe(1)], 1_000_000);
     log.publish(kitchen, &[insert_recipe(2)], 1_000_000);
     let builder = open_replica(&root, &local.join("builder"));
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);
@@ -476,12 +485,12 @@ fn a_missing_checkpoint_document_still_drops_its_mdb() {
 
     log.publish(kitchen, &[insert_recipe(1)], 1_000);
     let builder = open_replica(&root, &local.join("b1"));
-    let old_digest = log.checkpoint(builder.db(), &scratch);
+    let old_digest = log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     log.publish(kitchen, &[insert_recipe(2)], 2_000);
     let builder = open_replica(&root, &local.join("b2"));
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     log.store

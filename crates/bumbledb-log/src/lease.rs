@@ -21,7 +21,7 @@
 //! Exhausted is that draw, not the block increment: a last partial
 //! block still leases when `next + count` fits. Counter mutations
 //! carry the writer's fencing token (20): a stale holder's write is
-//! the token the store CAS no longer wins. A cache-hit `Drawn` is
+//! the token the store CAS does not win. A cache-hit `Drawn` is
 //! not a write; a write always names the token it rides.
 
 use std::collections::BTreeMap;
@@ -81,7 +81,7 @@ pub enum Leased {
 
 /// Counter birth. The write is [`Fenced`]: `token` is an argument of
 /// `put_create`, not a field discarded before the call. A stale holder
-/// is the token the store CAS no longer wins (20). `Drawn` takes this
+/// is the token the store CAS does not win (20). `Drawn` takes this
 /// token, not a token that skipped the write.
 fn put_create<S: ObjectStore>(
     store: &S,
@@ -95,7 +95,7 @@ fn put_create<S: ObjectStore>(
 
 /// Counter CAS. The write is [`Fenced`]: `token` is an argument of
 /// `put_swap`, not a field discarded before the call. A stale holder
-/// is the token the store CAS no longer wins (20). `Drawn` takes this
+/// is the token the store CAS does not win (20). `Drawn` takes this
 /// token, not a token that skipped the write.
 fn put_swap<S: ObjectStore>(
     store: &S,

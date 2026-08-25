@@ -620,44 +620,32 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 	await fs.rm(target, { recursive: true, force: true })
 	await fs.mkdir(core.dir, { recursive: true })
 	if (core.checkpoint !== null && core.checkpointDigest !== null) {
-		for (let attempt = 0; ; attempt++) {
-			const mdb = await core.store.get(checkpointMdbKey(core.prefix, core.checkpointDigest))
-			if (mdb === null) {
-				throw errors.new(`checkpoint ${core.checkpointDigest} names an absent .mdb`)
-			}
-			const digest = blake3Hex(mdb.bytes)
-			if (digest !== core.checkpointDigest) {
-				if (attempt === 0) {
-					continue
-				}
-				refuse(
-					{ kind: "CheckpointDigest", expected: core.checkpointDigest, computed: digest },
-					"checkpoint bytes do not hash to their own name"
-				)
-			}
-			await fs.mkdir(target, { recursive: true })
-			await fs.writeFile(path.join(target, "data.mdb"), mdb.bytes)
-			core.db = await SdkDb.open(target, core.theory)
-			core.chain = {
-				tag: "settled",
-				entries: new Map(
-					[...core.checkpoint.braids.entries()].map(function seed([raw, head]) {
-						const braid = braidOf(core.theory, raw)
-						return [braid, { g: head.g, prev: digest32FromHex(head.hash), ts: head.ts }] as const
-					})
-				)
-			}
-			const opened = generationOf(core)
-			if (opened !== chainGeneration(core.chain)) {
-				throw errors.new(
-					`checkpoint store opened at generation ${opened}, chain generation is ${chainGeneration(core.chain)}`
-				)
-			}
-			auditCatalog(core.checkpoint, catalogDigestOf(core))
-			core.provenance = { tag: "checkpoint-seeded", catalog: core.checkpointDigest }
-			await persistSidecar(core)
-			return
+		const mdb = await core.store.get(checkpointMdbKey(core.prefix, core.checkpointDigest))
+		if (mdb === null) {
+			throw errors.new(`checkpoint ${core.checkpointDigest} names an absent .mdb`)
 		}
+		await fs.mkdir(target, { recursive: true })
+		await fs.writeFile(path.join(target, "data.mdb"), mdb.bytes)
+		core.db = await SdkDb.open(target, core.theory)
+		core.chain = {
+			tag: "settled",
+			entries: new Map(
+				[...core.checkpoint.braids.entries()].map(function seed([raw, head]) {
+					const braid = braidOf(core.theory, raw)
+					return [braid, { g: head.g, prev: digest32FromHex(head.hash), ts: head.ts }] as const
+				})
+			)
+		}
+		const opened = generationOf(core)
+		if (opened !== chainGeneration(core.chain)) {
+			throw errors.new(
+				`checkpoint store opened at generation ${opened}, chain generation is ${chainGeneration(core.chain)}`
+			)
+		}
+		auditCatalog(core.checkpoint, catalogDigestOf(core))
+		core.provenance = { tag: "checkpoint-seeded", catalog: core.checkpointDigest }
+		await persistSidecar(core)
+		return
 	}
 	const created = await SdkDb.create(target, core.theory)
 	if (created.tag === "rejected") {

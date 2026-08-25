@@ -295,13 +295,22 @@ fn converged_digest(root: &Path) -> [u8; 32] {
         replica.wedged().is_empty(),
         "no corruption-class refusal anywhere in the log"
     );
-    let generation = replica.db().generation().expect("generation").value();
-    let sum: u64 = replica.vector().values().sum();
+    let generation = replica
+        .db()
+        .expect("db")
+        .generation()
+        .expect("generation")
+        .value();
+    let sum: u64 = replica.vector().sum().expect("sum");
     assert_eq!(
         generation, sum,
         "the wholeness identity on the verifying replica"
     );
-    replica.db().catalog_digest().expect("catalog digest")
+    replica
+        .db()
+        .expect("db")
+        .catalog_digest()
+        .expect("catalog digest")
 }
 
 fn writer_digest<S, H>(writer: &Writer<SchemaDescriptor, S, H>) -> [u8; 32]
@@ -309,7 +318,9 @@ where
     S: ObjectStore + 'static,
     H: StepHook + 'static,
 {
-    writer.with_db(|db| db.catalog_digest().expect("catalog digest"))
+    writer
+        .with_db(|db| db.catalog_digest().expect("catalog digest"))
+        .expect("db")
 }
 
 /// A test-side publisher with its own chain state, for planting
@@ -697,14 +708,16 @@ fn disjoint_loss_rejudges_once_and_publishes_at_tip_plus_one() {
         converged_digest(&root),
         "the re-opened loser applied in log order and converges byte-for-byte"
     );
-    writer_b.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(1, "theirs"))?);
-            assert!(instance.contains_dyn(NOTE, &note_row(2, "ours"))?);
-            Ok(())
+    writer_b
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(1, "theirs"))?);
+                assert!(instance.contains_dyn(NOTE, &note_row(2, "ours"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -781,17 +794,19 @@ fn strict_superset_race_lands_accepted_with_the_residue_present() {
     assert_eq!(generation, 1, "accepted at the current generation");
     assert_eq!(writer_b.losses(), 1);
 
-    writer_b.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(11, "shared"))?);
-            assert!(
-                instance.contains_dyn(NOTE, &note_row(12, "residue"))?,
-                "the winner's residue is present after the re-open"
-            );
-            Ok(())
+    writer_b
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(11, "shared"))?);
+                assert!(
+                    instance.contains_dyn(NOTE, &note_row(12, "residue"))?,
+                    "the winner's residue is present after the re-open"
+                );
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
     let batches = verify_log(&root);
     assert_eq!(batches[&braid].len(), 1, "the log never gains a no-op slot");
     assert_whole(&writer_b, "the rebuilt loser");
@@ -835,14 +850,16 @@ fn conflicting_loss_produces_the_serial_verdict() {
     let batches = verify_log(&root);
     assert_eq!(batches[&braid].len(), 1, "a rejection publishes nothing");
     assert_whole(&writer_b, "the rejected loser");
-    writer_b.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(1, "winner"))?);
-            assert!(!instance.contains_dyn(RECIPE, &recipe_row(1, "loser"))?);
-            Ok(())
+    writer_b
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(1, "winner"))?);
+                assert!(!instance.contains_dyn(RECIPE, &recipe_row(1, "loser"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
     assert_eq!(writer_digest(&writer_b), converged_digest(&root));
 }
 
@@ -865,7 +882,7 @@ fn evaporating_loss_rejudges_to_the_net_noop_and_publishes_nothing() {
         Commit::Accepted { generation: 1, .. }
     ));
     let writer_b = open_at(root.clone(), &root.join("wb"), 2);
-    assert_eq!(writer_b.vector()[&braid], 1);
+    assert_eq!(writer_b.vector().at(braid), 1);
 
     // The winner takes slot 2 with the shared insert plus residue.
     assert!(matches!(
@@ -942,7 +959,7 @@ fn stale_pending_resolves_through_re_open_with_one_race_at_tip() {
 
     let recovered = open_at(root.clone(), &dir, 5);
     assert_eq!(recovered.backlog(), None, "resolved at open");
-    assert_eq!(recovered.vector()[&braid], 41, "catch-up plus our slot");
+    assert_eq!(recovered.vector().at(braid), 41, "catch-up plus our slot");
     assert_eq!(
         recovered.losses(),
         1,
@@ -955,16 +972,18 @@ fn stale_pending_resolves_through_re_open_with_one_race_at_tip() {
     assert_eq!(slots[40].header.writer, 5, "our commit landed at tip+1");
     assert_whole(&recovered, "the recovered stale writer");
     converged_digest(&root);
-    recovered.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(1, "mine"))?);
-            for slot in 0..40u64 {
-                assert!(instance.contains_dyn(NOTE, &note_row(100 + slot, "foreign"))?);
-            }
-            Ok(())
+    recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(1, "mine"))?);
+                for slot in 0..40u64 {
+                    assert!(instance.contains_dyn(NOTE, &note_row(100 + slot, "foreign"))?);
+                }
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -989,16 +1008,18 @@ fn slot_race_livelock_surfaces_contention_with_pending_kept() {
     assert_eq!(planter.plants(), 16);
     assert_eq!(writer.backlog(), Some(braid), "the applied commit is kept");
     assert_whole(&writer, "the contended writer with its pending term");
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(
-                instance.contains_dyn(NOTE, &note_row(1_000, "starved"))?,
-                "reads serve the applied pending"
-            );
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(
+                    instance.contains_dyn(NOTE, &note_row(1_000, "starved"))?,
+                    "reads serve the applied pending"
+                );
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 
     // The planter is spent: the next commit publishes the retained
     // batch at the tip before its own.
@@ -1015,13 +1036,15 @@ fn slot_race_livelock_surfaces_contention_with_pending_kept() {
     assert_eq!(batches[&braid].len(), 18);
     assert_eq!(batches[&braid][16].header.writer, 6);
     converged_digest(&root);
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(2_000, "later"))?);
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(2_000, "later"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -1159,14 +1182,16 @@ fn dropped_response_on_a_lost_slot_takes_the_one_path() {
     assert_eq!(slots[1].header.writer, 9);
     assert_whole(&writer, "the loser behind the dropped response");
     converged_digest(&root);
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(50, "competitor"))?);
-            assert!(instance.contains_dyn(NOTE, &note_row(51, "ours"))?);
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(50, "competitor"))?);
+                assert!(instance.contains_dyn(NOTE, &note_row(51, "ours"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 /// One writer's ledger from a fleet run: what it acked, and what it
@@ -1935,6 +1960,7 @@ fn feral_association_storm_zero_orphans() {
     assert!(replica.wedged().is_empty(), "serial verdicts throughout");
     replica
         .db()
+        .expect("db")
         .read(|instance| {
             for r in 0..ROUNDS {
                 let recipe_present =

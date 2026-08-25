@@ -170,6 +170,7 @@ pub enum Provenance {
 
 /// Presence of the local store. The stepper matches this sum;
 /// `Unmounted` refuses — a missing store is not a pointer.
+#[allow(clippy::large_enum_variant)]
 pub enum ReplicaState<T: Theory + Clone> {
     Mounted { db: Db<T> },
     Unmounted,
@@ -925,33 +926,25 @@ pub(crate) fn derive_codec<T: Theory + Clone>(
     Ok((codec, fingerprint, schema))
 }
 
-/// Fetches `ckpt/{digest}.mdb` and verifies the digest, retrying the
-/// transfer once — the retry distinguishes a torn transfer from a
-/// corrupt object; a second mismatch refuses.
+/// Fetches the store snapshot paired with the checkpoint document
+/// `ckpt/{digest}`. The pair shares the document digest as its name;
+/// the catalog claim is audited after open, not against this object's
+/// bytes.
 pub(crate) fn fetch_checkpoint_bytes<S: ObjectStore>(
     store: &S,
     prefix: &str,
     digest: [u8; 32],
 ) -> Result<Result<Vec<u8>, OpenRefusal>, Fault> {
     let key = ckpt_mdb_key(prefix, &digest);
-    for attempt in 0..2 {
-        let Some(fetched) = store.get(&key)? else {
-            return Ok(Err(OpenRefusal::CheckpointObjectMissing { digest }));
-        };
-        let got = *blake3::hash(&fetched.bytes).as_bytes();
-        if got == digest {
-            return Ok(Ok(fetched.bytes));
-        }
-        if attempt == 1 {
-            return Ok(Err(OpenRefusal::CheckpointDigestMismatch { digest, got }));
-        }
+    match store.get(&key)? {
+        Some(fetched) => Ok(Ok(fetched.bytes)),
+        None => Ok(Err(OpenRefusal::CheckpointObjectMissing { digest })),
     }
-    unreachable!("two attempts always return")
 }
 
-/// Writes digest-verified checkpoint bytes into a fresh directory as
-/// the store file, fsynced — the shared materialization step under both
-/// the replica's checkpoint seed and the restore verbs in `crate::gc`.
+/// Writes checkpoint bytes into a fresh directory as the store file,
+/// fsynced — the shared materialization step under both the replica's
+/// checkpoint seed and the restore verbs in `crate::gc`.
 pub(crate) fn write_checkpoint_bytes(dir: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let data = dir.join(DATA_FILE);

@@ -64,6 +64,6 @@ describe("the chain sidecar", function suite() {
 		const bytes = renderSidecar(genesis())
 		const padded = new Uint8Array(bytes.length + 1)
 		padded.set(bytes)
-		assert.equal(refuseKind(padded), "TrailingBytes")
+		assert.equal(refuseKind(padded), "Malformed")
 	})
 })

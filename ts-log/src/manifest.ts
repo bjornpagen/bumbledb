@@ -31,14 +31,14 @@ interface Manifest {
 function readerOf(bytes: Uint8Array): ByteReader {
 	return new ByteReader(bytes, {
 		fail(what: string): never {
-			refuse({ kind: "Truncated", at: what }, `document truncated at ${what}`)
+			refuse({ kind: "Malformed", at: bytes.length }, `document truncated at ${what}`)
 		}
 	})
 }
 
 function finish(reader: ByteReader, at: string): void {
 	if (reader.remaining() !== 0) {
-		refuse({ kind: "TrailingBytes", bytes: reader.remaining() }, `${reader.remaining()} trailing bytes after ${at}`)
+		refuse({ kind: "Malformed", at: reader.remaining() }, `${reader.remaining()} trailing bytes after ${at}`)
 	}
 }
 
@@ -47,7 +47,7 @@ function refuseUnbacked(count: bigint, remaining: number, minItem: bigint, at: s
 		return
 	}
 	if (minItem === 0n || BigInt(remaining) / minItem < count) {
-		refuse({ kind: "Truncated", at }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
+		refuse({ kind: "Malformed", at: remaining }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
 	}
 }
 

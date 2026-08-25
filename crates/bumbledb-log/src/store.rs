@@ -375,7 +375,7 @@ pub trait ObjectStore: Send + Sync {
     /// a proved etag mismatch or a stale fencing token; `Ok(Ambiguous)`
     /// when the transport cannot prove the result. The write is
     /// [`Fenced`]: `body.token <` the stored generation is `Moved` — a
-    /// stale holder is the token the CAS no longer wins (20).
+    /// stale holder is the token the CAS does not win (20).
     fn put_swap<'a>(
         &self,
         key: &StoreKey,

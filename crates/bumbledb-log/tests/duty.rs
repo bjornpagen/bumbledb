@@ -193,7 +193,7 @@ fn note_writer(root: &Path) -> Writer<Desc, FsStore> {
 
 fn cross_the_byte_cadence(writer: &Writer<Desc, FsStore>) {
     writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    let body = "p".repeat(CHECKPOINT_EVERY_BYTES as usize);
+    let body = "p".repeat(usize::try_from(CHECKPOINT_EVERY_BYTES).expect("cadence fits"));
     assert!(matches!(
         writer
             .commit(|batch| {

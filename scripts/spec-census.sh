@@ -60,7 +60,7 @@ if [ -z "$asserted" ] || [ "$rows" -ne "$asserted" ]; then
   fail=1
 fi
 
-docs=(lean/README.md lean/conformance/README.md docs/cookbook.md ts/COOKBOOK.md proposals/README.md)
+docs=(lean/README.md lean/conformance/README.md docs/cookbook.md ts/COOKBOOK.md)
 if [ "${#docs[@]}" -eq 0 ]; then
   echo "spec-census: FAIL — lane (c) scanned zero markdown files (vacuous pass)" >&2
   fail=1

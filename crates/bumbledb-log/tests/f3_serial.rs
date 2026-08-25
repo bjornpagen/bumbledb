@@ -438,14 +438,17 @@ fn double_booking_rejudges_to_the_serial_fd_rejection() {
         fixture.planter.slot_absent(slot_braid, 2),
         "a rejected loser publishes nothing"
     );
-    fixture.writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(SLOT, &slot_row(5, 2))?);
-            assert!(!instance.contains_dyn(SLOT, &slot_row(5, 1))?);
-            Ok(())
+    fixture
+        .writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(SLOT, &slot_row(5, 2))?);
+                assert!(!instance.contains_dyn(SLOT, &slot_row(5, 1))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 // --- the containment family: the dangling reference, per order ---
@@ -635,15 +638,18 @@ fn reservation_spend_outraced_by_a_fill_publishes_at_the_tip() {
         "the spend re-judges clean and publishes behind the winner"
     );
     assert_eq!(fixture.writer.losses(), 1);
-    fixture.writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(!instance.contains_dyn(RES, &res_row(9, 3, 99))?);
-            assert!(instance.contains_dyn(RES, &res_row(9, 3, 0))?);
-            assert!(instance.contains_dyn(RES, &res_row(9, 2, 50))?);
-            Ok(())
+    fixture
+        .writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(!instance.contains_dyn(RES, &res_row(9, 3, 99))?);
+                assert!(instance.contains_dyn(RES, &res_row(9, 3, 0))?);
+                assert!(instance.contains_dyn(RES, &res_row(9, 2, 50))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]

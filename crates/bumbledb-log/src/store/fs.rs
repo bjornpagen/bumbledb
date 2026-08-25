@@ -67,8 +67,7 @@ fn read_generation(path: &Path) -> u64 {
     fs::read(path)
         .ok()
         .and_then(|bytes| Lease::parse(&bytes))
-        .map(|lease| lease.token)
-        .unwrap_or(0)
+        .map_or(0, |lease| lease.token)
 }
 
 fn write_generation(root: &Path, dest: &Path, token: u64) -> io::Result<()> {
@@ -221,7 +220,7 @@ impl ObjectStore for FsStore {
             if current.etag != *etag {
                 return Ok(Swap::Moved);
             }
-            // 20: a stale holder's write is the token the CAS no longer wins.
+            // 20: a stale holder's write is the token the CAS does not win.
             if body.token < read_generation(&generation) {
                 return Ok(Swap::Moved);
             }
@@ -271,8 +270,7 @@ pub fn durable_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp = {
         let seq = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         let name = format!(".{}.{}", std::process::id(), seq);
         let temp = parent.join(name);
         let mut file = OpenOptions::new()

@@ -72,14 +72,14 @@ function chainGeneration(chain: Chain): bigint {
 	return chain.tag === "settled" ? sum : saturatingAddU64(sum, 1n)
 }
 
-/** A declared count the remaining bytes cannot open is Truncated
+/** A declared count the remaining bytes cannot open is Malformed
  *  before the loop. */
 function refuseUnbacked(count: bigint, remaining: number, minItem: bigint, at: string): void {
 	if (count === 0n) {
 		return
 	}
 	if (minItem === 0n || BigInt(remaining) / minItem < count) {
-		refuse({ kind: "Truncated", at }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
+		refuse({ kind: "Malformed", at: remaining }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
 	}
 }
 
@@ -119,7 +119,7 @@ function renderSidecar(chain: Chain): Uint8Array {
 function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 	const reader = new ByteReader(bytes, {
 		fail(what: string): never {
-			refuse({ kind: "Truncated", at: what }, `sidecar truncated at ${what}`)
+			refuse({ kind: "Malformed", at: bytes.length }, `sidecar truncated at ${what}`)
 		}
 	})
 	const at = function offset(): number {
@@ -154,10 +154,7 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 	const tag = reader.u8("pending")
 	if (tag === SETTLED) {
 		if (reader.remaining() !== 0) {
-			refuse(
-				{ kind: "TrailingBytes", bytes: reader.remaining() },
-				`${reader.remaining()} trailing bytes after the sidecar`
-			)
+			refuse({ kind: "Malformed", at: reader.remaining() }, `${reader.remaining()} trailing bytes after the sidecar`)
 		}
 		return { tag: "settled", entries }
 	}
@@ -173,10 +170,7 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 	const length = reader.u32le("pending length")
 	const body = reader.bytes(length, "pending bytes")
 	if (reader.remaining() !== 0) {
-		refuse(
-			{ kind: "TrailingBytes", bytes: reader.remaining() },
-			`${reader.remaining()} trailing bytes after the sidecar`
-		)
+		refuse({ kind: "Malformed", at: reader.remaining() }, `${reader.remaining()} trailing bytes after the sidecar`)
 	}
 	return {
 		tag: "pending",

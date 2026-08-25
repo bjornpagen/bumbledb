@@ -372,7 +372,7 @@ pub struct Writer<T: Theory + Clone, S: ObjectStore, H: StepHook = NoFaults> {
 
 /// The legible scream of an unbounded repair loop: a warning every
 /// eighth attempt naming the current signature, and an alarm the
-/// moment a previously-seen signature recurs. The scream tracks the
+/// moment a seen signature recurs. The scream tracks the
 /// *set* of recent signatures, not the last one, so an A,B,A,B loop
 /// trips on the first recurrence of either.
 pub(crate) struct Scream {

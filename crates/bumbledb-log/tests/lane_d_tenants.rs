@@ -53,6 +53,7 @@ fn tenants_open_lazily_and_serve_their_own_prefixes() {
     assert!(
         live(tenants.tenant("acme").expect("acme"))
             .db()
+            .expect("db")
             .read(|instance| instance
                 .contains_dyn(NOTE, &[Value::U64(0), Value::String("acme".into())]))
             .expect("read")
@@ -60,6 +61,7 @@ fn tenants_open_lazily_and_serve_their_own_prefixes() {
     assert!(
         live(tenants.tenant("bravo").expect("bravo"))
             .db()
+            .expect("db")
             .read(|instance| instance
                 .contains_dyn(NOTE, &[Value::U64(1), Value::String("bravo".into())]))
             .expect("read")

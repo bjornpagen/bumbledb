@@ -15,7 +15,7 @@ use crate::checkpointer::compact_and_publish;
 use crate::manifest::{PublishRefusal, Published};
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
-use crate::vector::{Overflow, Vector};
+use crate::vector::Vector;
 
 use super::{Core, Inner, StepHook, Theory, WriterState, lock};
 
@@ -45,9 +45,9 @@ impl<T: Theory + Clone> Drop for DutyBusy<'_, T> {
     }
 }
 
-fn settled_view<T: Theory + Clone>(
-    core: &Core<T>,
-) -> Option<(Arc<Db<T>>, BTreeMap<BraidId, ChainEntry>)> {
+type SettledSnap<T> = (Arc<Db<T>>, BTreeMap<BraidId, ChainEntry>);
+
+fn settled_view<T: Theory + Clone>(core: &Core<T>) -> Option<SettledSnap<T>> {
     match (&core.db, &core.chain) {
         (WriterState::Mounted { db }, Chain::Settled { entries }) => {
             Some((Arc::clone(db), entries.clone()))
@@ -104,15 +104,12 @@ where
                 // cadence crossing re-arms the duty.
                 return Ran::Deferred;
             };
-            let sum = match entries
+            let sum = entries
                 .iter()
                 .map(|(&braid, entry)| (braid, entry.g))
                 .collect::<Vector>()
                 .sum()
-            {
-                Ok(n) => n,
-                Err(Overflow) => u64::MAX,
-            };
+                .unwrap_or(u64::MAX);
             let mut snap_bytes = 0u64;
             let published = match compact_and_publish(
                 self.store.as_ref(),

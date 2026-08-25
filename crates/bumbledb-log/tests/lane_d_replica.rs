@@ -13,7 +13,7 @@ use bumbledb::{Db, SchemaDescriptor, Value};
 use bumbledb_log::apply::{ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::BatchHeader;
 use bumbledb_log::manifest::log_key;
-use bumbledb_log::replica::{Corruption, Opened, Provenance, Refreshed, Replica, Waited};
+use bumbledb_log::replica::{Corruption, Opened, Provenance, Refreshed, Replica, Vector, Waited};
 use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
@@ -36,12 +36,18 @@ fn open_at(root: &Path, dir: &Path) -> TestReplica {
 }
 
 fn generation(replica: &TestReplica) -> u64 {
-    replica.db().generation().expect("generation").value()
+    replica
+        .db()
+        .expect("db")
+        .generation()
+        .expect("generation")
+        .value()
 }
 
 fn contains_recipe(replica: &TestReplica, id: u64) -> bool {
     replica
         .db()
+        .expect("db")
         .read(|instance| instance.contains_dyn(RECIPE, &[Value::U64(id)]))
         .expect("read")
 }
@@ -56,7 +62,10 @@ fn bootstrap_at_the_zero_vector() {
     assert_eq!(generation(&replica), 0);
     assert_eq!(
         replica.vector(),
-        BTreeMap::from([(kitchen_braid(&log.codec), 0), (note_braid(&log.codec), 0)])
+        Vector::from(BTreeMap::from([
+            (kitchen_braid(&log.codec), 0),
+            (note_braid(&log.codec), 0),
+        ]))
     );
     assert!(replica.wedged().is_empty());
 }
@@ -80,7 +89,10 @@ fn open_catches_up_and_reopen_resumes_from_the_local_dir() {
     let dir = local.join("r");
     let replica = open_at(&root, &dir);
     assert_eq!(generation(&replica), 3);
-    assert_eq!(replica.vector(), BTreeMap::from([(kitchen, 2), (notes, 1)]));
+    assert_eq!(
+        replica.vector(),
+        Vector::from(BTreeMap::from([(kitchen, 2), (notes, 1)]))
+    );
     assert!(contains_recipe(&replica, 2));
     drop(replica);
 
@@ -88,7 +100,7 @@ fn open_catches_up_and_reopen_resumes_from_the_local_dir() {
     let replica = open_at(&root, &dir);
     assert_eq!(replica.provenance(), Provenance::LocalDir);
     assert_eq!(generation(&replica), 4);
-    assert_eq!(replica.vector()[&notes], 2);
+    assert_eq!(replica.vector().at(notes), 2);
 }
 
 #[test]
@@ -104,7 +116,7 @@ fn refresh_picks_up_new_slots() {
 
     log.publish(kitchen, &[insert_recipe(2)], 200);
     match replica.refresh().expect("refresh") {
-        Refreshed::Vector(vector) => assert_eq!(vector[&kitchen], 2),
+        Refreshed::Vector(vector) => assert_eq!(vector.at(kitchen), 2),
         Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
     }
     assert!(contains_recipe(&replica, 2));
@@ -136,7 +148,7 @@ fn crash_window_reopen_absorbs_and_the_vector_catches_up() {
     let replica = open_at(&root, &dir);
     assert_eq!(replica.provenance(), Provenance::LocalDir);
     assert_eq!(generation(&replica), 1, "the engine absorbed the replay");
-    assert_eq!(replica.vector()[&kitchen], 1, "the vector caught up");
+    assert_eq!(replica.vector().at(kitchen), 1, "the vector caught up");
 }
 
 #[test]
@@ -175,6 +187,7 @@ fn a_phantom_generation_discards_the_directory() {
     assert!(
         !replica
             .db()
+            .expect("db")
             .read(|instance| {
                 instance.contains_dyn(NOTE, &[Value::U64(99), Value::String("phantom".into())])
             })
@@ -203,7 +216,7 @@ fn tip_vs_hole_a_404_below_the_floor_is_a_gap_and_above_it_the_tip() {
     log.publish(kitchen, &[insert_recipe(3)], 300);
     let builder = open_at(&root, &local.join("builder"));
     assert_eq!(generation(&builder), 4);
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     // gc-eligible tail below the floor (kitchen 3, notes 1).
@@ -219,13 +232,16 @@ fn tip_vs_hole_a_404_below_the_floor_is_a_gap_and_above_it_the_tip() {
     let healed = open_at(&root, &stale_dir);
     assert_eq!(healed.provenance(), Provenance::Checkpoint);
     assert_eq!(generation(&healed), 4);
-    assert_eq!(healed.vector(), BTreeMap::from([(kitchen, 3), (notes, 1)]));
+    assert_eq!(
+        healed.vector(),
+        Vector::from(BTreeMap::from([(kitchen, 3), (notes, 1)]))
+    );
     assert!(contains_recipe(&healed, 3));
     // And the same 404 above the floor is the tip, honestly: a fresh
     // refresh finds nothing and changes nothing.
     let mut healed = healed;
     match healed.refresh().expect("refresh") {
-        Refreshed::Vector(vector) => assert_eq!(vector[&kitchen], 3),
+        Refreshed::Vector(vector) => assert_eq!(vector.at(kitchen), 3),
         Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
     }
 }
@@ -240,14 +256,14 @@ fn the_heartbeat_bounds_hole_detection_staleness_by_law() {
 
     log.publish(kitchen, &[insert_recipe(1)], 100);
     let mut replica = open_at(&root, &local.join("r"));
-    assert_eq!(replica.vector()[&kitchen], 1);
+    assert_eq!(replica.vector().at(kitchen), 1);
 
     // Behind the replica's back: two more slots, a checkpoint, and a gc
     // of the tail below it.
     log.publish(kitchen, &[insert_recipe(2)], 200);
     log.publish(kitchen, &[insert_recipe(3)], 300);
     let builder = open_at(&root, &local.join("builder"));
-    log.checkpoint(builder.db(), &scratch);
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
     log.store
         .delete(&log_key("", kitchen, 2))
@@ -258,7 +274,7 @@ fn the_heartbeat_bounds_hole_detection_staleness_by_law() {
     for pass in 1..=15 {
         match replica.refresh().expect("refresh") {
             Refreshed::Vector(vector) => {
-                assert_eq!(vector[&kitchen], 1, "stale at pass {pass}");
+                assert_eq!(vector.at(kitchen), 1, "stale at pass {pass}");
             }
             Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
         }
@@ -267,7 +283,7 @@ fn the_heartbeat_bounds_hole_detection_staleness_by_law() {
     // 404 at slot 2 becomes a gap, and the replica heals from the
     // checkpoint.
     match replica.refresh().expect("refresh") {
-        Refreshed::Vector(vector) => assert_eq!(vector[&kitchen], 3),
+        Refreshed::Vector(vector) => assert_eq!(vector.at(kitchen), 3),
         Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
     }
     assert_eq!(replica.provenance(), Provenance::Checkpoint);
@@ -302,8 +318,8 @@ fn a_poisoned_braid_wedges_while_the_others_keep_serving() {
     log.publish_raw(kitchen, &poisoned, 100);
 
     let mut replica = open_at(&root, &local.join("r"));
-    assert_eq!(replica.vector()[&notes], 1);
-    assert_eq!(replica.vector()[&kitchen], 0);
+    assert_eq!(replica.vector().at(notes), 1);
+    assert_eq!(replica.vector().at(kitchen), 0);
     match replica.wedged().get(&kitchen) {
         Some(Corruption::Refused(ApplyRefusal::ChainMismatch {
             cause: ChainCause::Prev { .. },
@@ -317,8 +333,8 @@ fn a_poisoned_braid_wedges_while_the_others_keep_serving() {
     log.publish(notes, &[insert_note(2, "still serving")], 200);
     match replica.refresh().expect("refresh") {
         Refreshed::Vector(vector) => {
-            assert_eq!(vector[&notes], 2);
-            assert_eq!(vector[&kitchen], 0);
+            assert_eq!(vector.at(notes), 2);
+            assert_eq!(vector.at(kitchen), 0);
         }
         Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
     }
@@ -346,7 +362,7 @@ fn rejected_replay_discards_in_the_open_phase_and_wedges_once_whole() {
     // rejection there earns the corruption-class verdict.
     let replica = open_at(&root, &dir);
     assert_eq!(replica.provenance(), Provenance::Bootstrap);
-    assert_eq!(replica.vector()[&kitchen], 1);
+    assert_eq!(replica.vector().at(kitchen), 1);
     match replica.wedged().get(&kitchen) {
         Some(Corruption::ReplayDiverged { slot, .. }) => assert_eq!(*slot, 2),
         other => panic!("expected the diverged wedge, got {other:?}"),
@@ -405,13 +421,13 @@ fn pending_resolution_keeps_the_identity_and_clears_on_publication() {
     // pending is exactly the identity's last term.
     let mut replica = open_at(&root, &dir);
     assert_eq!(generation(&replica), 2);
-    assert_eq!(replica.vector()[&kitchen], 1);
+    assert_eq!(replica.vector().at(kitchen), 1);
 
     // The slot lands in the log; the next refresh resolves the pending
     // and the replay absorbs into the same commit.
     log.publish_raw(kitchen, &bytes, 200);
     match replica.refresh().expect("refresh") {
-        Refreshed::Vector(vector) => assert_eq!(vector[&kitchen], 2),
+        Refreshed::Vector(vector) => assert_eq!(vector.at(kitchen), 2),
         Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
     }
     assert_eq!(generation(&replica), 2);
@@ -431,11 +447,11 @@ fn wait_for_dominates_pointwise_and_refresh_advances_every_braid() {
 
     log.publish(kitchen, &[insert_recipe(2)], 200);
     log.publish(notes, &[insert_note(1, "target")], 210);
-    let target = BTreeMap::from([(kitchen, 2), (notes, 1)]);
+    let target = Vector::from(BTreeMap::from([(kitchen, 2), (notes, 1)]));
     match replica.wait_for(&target).expect("wait") {
         Waited::Reached(vector) => {
-            assert!(vector[&kitchen] >= 2);
-            assert!(vector[&notes] >= 1);
+            assert!(vector.at(kitchen) >= 2);
+            assert!(vector.at(notes) >= 1);
         }
         other => panic!("expected the target, got {other:?}"),
     }
@@ -444,8 +460,8 @@ fn wait_for_dominates_pointwise_and_refresh_advances_every_braid() {
     log.publish(notes, &[insert_note(2, "caught up")], 310);
     match replica.refresh().expect("refresh") {
         Refreshed::Vector(vector) => {
-            assert_eq!(vector[&kitchen], 3);
-            assert_eq!(vector[&notes], 2);
+            assert_eq!(vector.at(kitchen), 3);
+            assert_eq!(vector.at(notes), 2);
         }
         Refreshed::Refused(refusal) => panic!("refused: {refusal:?}"),
     }

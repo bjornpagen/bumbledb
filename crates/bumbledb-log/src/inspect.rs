@@ -56,13 +56,19 @@ impl fmt::Display for InspectError {
 
 /// The object kind the key spelling names. `.mdb` is a store snapshot,
 /// not a protocol document.
-#[must_use]
 pub fn kind(key: &str) -> Result<Kind, InspectError> {
     let segs: Vec<&str> = key.split('/').filter(|s| !s.is_empty()).collect();
     match segs.as_slice() {
         [.., "manifest"] => Ok(Kind::Manifest),
         [.., "chain"] => Ok(Kind::Sidecar),
-        [.., "ckpt", name] if !name.ends_with(".mdb") && !name.is_empty() => Ok(Kind::Checkpoint),
+        [.., "ckpt", name]
+            if !std::path::Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mdb"))
+                && !name.is_empty() =>
+        {
+            Ok(Kind::Checkpoint)
+        }
         [.., "log", braid, slot] if !braid.is_empty() && !slot.is_empty() => Ok(Kind::Batch),
         _ => Err(InspectError::Kind),
     }

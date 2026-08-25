@@ -187,24 +187,24 @@ fn assert_typed_in_bounds(name: &str, refusal: &DecodeError, len: usize) {
     }
 }
 
-fn assert_manifest_in_bounds(name: &str, error: ManifestError, len: usize) {
+fn assert_manifest_in_bounds(name: &str, error: &ManifestError, len: usize) {
     assert!(!error.identity().is_empty(), "{name}: named identity");
     if let ManifestError::Malformed { at } = error {
-        assert!(at <= len, "{name}: offset in bounds");
+        assert!(*at <= len, "{name}: offset in bounds");
     }
 }
 
-fn assert_checkpoint_in_bounds(name: &str, error: CheckpointError, len: usize) {
+fn assert_checkpoint_in_bounds(name: &str, error: &CheckpointError, len: usize) {
     assert!(!error.identity().is_empty(), "{name}: named identity");
     if let CheckpointError::Malformed { at } = error {
-        assert!(at <= len, "{name}: offset in bounds");
+        assert!(*at <= len, "{name}: offset in bounds");
     }
 }
 
-fn assert_sidecar_in_bounds(name: &str, error: SidecarError, len: usize) {
+fn assert_sidecar_in_bounds(name: &str, error: &SidecarError, len: usize) {
     assert!(!error.identity().is_empty(), "{name}: named identity");
     if let SidecarError::Malformed { at } = error {
-        assert!(at <= len, "{name}: offset in bounds");
+        assert!(*at <= len, "{name}: offset in bounds");
     }
 }
 
@@ -258,7 +258,7 @@ enum DocRefusal {
     Sidecar(SidecarError),
 }
 
-fn assert_doc_refusal(name: &str, refusal: DocRefusal, len: usize) {
+fn assert_doc_refusal(name: &str, refusal: &DocRefusal, len: usize) {
     match refusal {
         DocRefusal::Manifest(error) => assert_manifest_in_bounds(name, error, len),
         DocRefusal::Checkpoint(error) => assert_checkpoint_in_bounds(name, error, len),
@@ -471,7 +471,7 @@ fn byte_soup_over_the_document_parsers_refuses_in_bounds() {
         let golden = &goldens[pick];
         let soup = soup_from(&mut prng, &golden.bytes, alphabet, 120);
         if let Err(refusal) = parse_doc(golden, &soup) {
-            assert_doc_refusal(&golden.name, refusal, soup.len());
+            assert_doc_refusal(&golden.name, &refusal, soup.len());
         }
     }
 }
@@ -488,7 +488,7 @@ fn sidecar_byte_soup_refuses_in_bounds() {
         let golden = &goldens[pick];
         let soup = soup_from(&mut prng, &golden.bytes, alphabet, 120);
         if let Err(refusal) = parse_doc(golden, &soup) {
-            assert_doc_refusal(&golden.name, refusal, soup.len());
+            assert_doc_refusal(&golden.name, &refusal, soup.len());
         }
     }
 }
@@ -516,7 +516,7 @@ fn document_storm(section: &str, kind: DocKind, seed_name: &str) {
                     "{}: an accepted document is canonical",
                     golden.name
                 ),
-                Err(refusal) => assert_doc_refusal(&golden.name, refusal, mutated.len()),
+                Err(refusal) => assert_doc_refusal(&golden.name, &refusal, mutated.len()),
             }
         }
     }
@@ -597,7 +597,7 @@ fn materialised_fuzz_refuses_by_the_named_identity() {
                 if rel.contains("manifest_") {
                     let error = Manifest::parse(&bytes).expect_err("{rel}: prefix refuses");
                     assert_eq!(error.identity(), identity, "{rel}: refusal identity");
-                    assert_manifest_in_bounds(&rel, error, bytes.len());
+                    assert_manifest_in_bounds(&rel, &error, bytes.len());
                     continue;
                 }
                 let kitchen = codec_named("kitchen");
@@ -605,14 +605,14 @@ fn materialised_fuzz_refuses_by_the_named_identity() {
                     let error = Checkpoint::parse(&bytes, kitchen.braids())
                         .expect_err("{rel}: prefix refuses");
                     assert_eq!(error.identity(), identity, "{rel}: refusal identity");
-                    assert_checkpoint_in_bounds(&rel, error, bytes.len());
+                    assert_checkpoint_in_bounds(&rel, &error, bytes.len());
                     continue;
                 }
                 if rel.contains("sidecar_") {
                     let error =
                         Chain::parse(&bytes, kitchen.braids()).expect_err("{rel}: prefix refuses");
                     assert_eq!(error.identity(), identity, "{rel}: refusal identity");
-                    assert_sidecar_in_bounds(&rel, error, bytes.len());
+                    assert_sidecar_in_bounds(&rel, &error, bytes.len());
                     continue;
                 }
                 panic!("{rel}: unknown fuzz kind");

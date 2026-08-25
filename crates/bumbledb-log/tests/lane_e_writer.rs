@@ -74,7 +74,7 @@ fn accepted_publish_advances_the_chain() {
     let batch = codec.decode(&slot.bytes).expect("published batch decodes");
     assert_eq!(batch.header.writer, 11);
     assert_eq!(batch.header.braid_gen, 1);
-    assert_eq!(writer.vector()[&braid], 1);
+    assert_eq!(writer.vector().at(braid), 1);
     assert_eq!(writer.backlog(), None, "pending cleared");
 }
 
@@ -205,8 +205,8 @@ fn commit_split_is_the_explicit_verb() {
             durability: Durability::Published,
         } if braid == note_braid(&codec)
     ));
-    assert_eq!(writer.vector()[&kitchen_braid(&codec)], 1);
-    assert_eq!(writer.vector()[&note_braid(&codec)], 1);
+    assert_eq!(writer.vector().at(kitchen_braid(&codec)), 1);
+    assert_eq!(writer.vector().at(note_braid(&codec)), 1);
 }
 
 #[test]
@@ -274,7 +274,11 @@ fn identical_effects_race_lands_accepted_at_the_winners_generation() {
         store.get(&log_key("", braid, 2)).expect("get").is_none(),
         "the log never gains a no-op slot"
     );
-    assert_eq!(writer.vector()[&braid], 1, "the winner's slot is accounted");
+    assert_eq!(
+        writer.vector().at(braid),
+        1,
+        "the winner's slot is accounted"
+    );
 }
 
 #[test]
@@ -313,15 +317,17 @@ fn strict_superset_race_lands_accepted_with_the_residue_present() {
         "the winner strictly contains us; the re-judgment nets a no-op"
     );
     assert_eq!(writer.losses(), 1);
-    assert_eq!(writer.vector()[&braid], 1);
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(5, "same"))?);
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(6, "extra"))?);
-            Ok(())
+    assert_eq!(writer.vector().at(braid), 1);
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(5, "same"))?);
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(6, "extra"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
     let store = FsStore::new(root);
     assert!(store.get(&log_key("", braid, 2)).expect("get").is_none());
 }
@@ -348,15 +354,21 @@ fn conflict_loss_rejudges_to_the_serial_rejection() {
         "exactly the verdict serial execution would have produced"
     );
     assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
-    assert_eq!(writer.vector()[&braid], 1, "winner-current after the loss");
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(1, "winner"))?);
-            assert!(!instance.contains_dyn(RECIPE, &recipe_row(1, "loser"))?);
-            Ok(())
+    assert_eq!(
+        writer.vector().at(braid),
+        1,
+        "winner-current after the loss"
+    );
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(1, "winner"))?);
+                assert!(!instance.contains_dyn(RECIPE, &recipe_row(1, "loser"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
     let store = FsStore::new(root);
     assert!(store.get(&log_key("", braid, 2)).expect("get").is_none());
 }
@@ -407,14 +419,16 @@ fn disjoint_loss_rejudges_and_publishes_at_tip_plus_one() {
         *blake3::hash(&slot1.bytes).as_bytes(),
         "the fresh header cites the winner as its base"
     );
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(2, "theirs"))?);
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(3, "ours"))?);
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(2, "theirs"))?);
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(3, "ours"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -438,7 +452,7 @@ fn adoption_catches_up_and_continues_the_chain() {
     drop(writer_a);
 
     let writer_b = open_at(root, &dir_b, 2);
-    assert_eq!(writer_b.vector()[&braid], 1, "adopt = open as replica");
+    assert_eq!(writer_b.vector().at(braid), 1, "adopt = open as replica");
     assert!(matches!(
         writer_b
             .commit(|batch| {
@@ -448,12 +462,14 @@ fn adoption_catches_up_and_continues_the_chain() {
             .expect("commit"),
         Commit::Accepted { generation: 2, .. }
     ));
-    writer_b.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(1, "first"))?);
-            assert!(instance.contains_dyn(NOTE, &note_row(2, "second"))?);
-            Ok(())
+    writer_b
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(1, "first"))?);
+                assert!(instance.contains_dyn(NOTE, &note_row(2, "second"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }

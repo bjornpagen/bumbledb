@@ -91,8 +91,10 @@ where
     /// batch); an accepted no-op at the exact vector sum was born a
     /// no-op and clears; a slot at or below the floor is already
     /// published and clears; otherwise the commit is real and
-    /// unpublished — publish create-or-compare, and a lost slot takes
-    /// the one path: re-open to tip and race once. One-by-one leftover
+    /// unpublished. A never-judged absent pending applies then
+    /// publishes; a pending that already moved generation re-applies
+    /// in the engine no-op arm, then publishes. A lost slot takes the
+    /// one path: re-open to tip and race once. One-by-one leftover
     /// work is `Remaining`, never an abort.
     pub(crate) fn resolve_backlog(
         self: &Arc<Self>,
@@ -154,6 +156,9 @@ where
                 segments,
             ),
             PendingFold::AbsentApplied => {
+                // Generation already moved: re-apply is the engine
+                // no-op arm, then publish the surviving pending.
+                let _ = self.apply_local(core, &ops)?;
                 match self.publish(
                     core,
                     braid,
@@ -272,15 +277,14 @@ where
         segments: Option<&[Vec<Op>]>,
     ) -> Result<()> {
         let settled = self.discipline(core, braid, ops, live, None)?;
-        if matches!(settled, Settled::Rejected(_)) {
-            if let Some(segments) = segments {
-                if segments.len() > 1 {
-                    let mut rest = segments;
-                    while !rest.is_empty() {
-                        let Remaining(next) = self.fold_remaining(core, braid, rest);
-                        rest = next;
-                    }
-                }
+        if matches!(settled, Settled::Rejected(_))
+            && let Some(segments) = segments
+            && segments.len() > 1
+        {
+            let mut rest = segments;
+            while !rest.is_empty() {
+                let Remaining(next) = self.fold_remaining(core, braid, rest);
+                rest = next;
             }
         }
         Ok(())

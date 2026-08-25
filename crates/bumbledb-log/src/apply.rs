@@ -125,9 +125,11 @@ pub enum Applied {
 
 /// Applies the log object at `(braid, slot)` to the store: full decode,
 /// chain discipline, one `db.write` with ops in listed order, then the
-/// state-change instrument. The identity is `generation(chain)` with
-/// this braid's count replaced by `slot` — `Pending` already counts
-/// one. On `Advanced`/`Absorbed` the in-memory chain has advanced;
+/// state-change instrument. The identity is the vector sum with this
+/// braid's count replaced by `slot`. `Pending` already counts one in
+/// `generation(chain)` — that extra is the store the engine shows, not
+/// a second addend here. On `Advanced`/`Absorbed` the in-memory chain
+/// has advanced;
 /// persisting it is the caller's step two.
 pub fn apply<T>(
     db: &Db<T>,
@@ -189,7 +191,7 @@ pub fn apply<T>(
     };
     let generation = committed.generation.value();
 
-    let identity = chain.generation() - position.g + slot;
+    let identity = chain.sum() - position.g + slot;
     if generation < identity {
         return Ok(Applied::Refused(ApplyRefusal::PublishLawViolation {
             braid,

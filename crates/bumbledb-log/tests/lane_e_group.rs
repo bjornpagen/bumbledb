@@ -213,12 +213,14 @@ fn a_rejected_composite_falls_back_one_by_one() {
     let batch = codec.decode(&slot.bytes).expect("decode");
     assert_eq!(batch.ops.len(), 1);
     assert_eq!(batch.ops[0].relation, RECIPE);
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(RECIPE, &recipe_row(50, "pie"))?);
-            assert!(!instance.contains_dyn(STEP, &step_row(99, "orphan"))?);
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(RECIPE, &recipe_row(50, "pie"))?);
+                assert!(!instance.contains_dyn(STEP, &step_row(99, "orphan"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }

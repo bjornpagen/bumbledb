@@ -259,7 +259,7 @@ fn start(args: impl Iterator<Item = String>) -> Result<Outcome, Error> {
     match &config.mode {
         Mode::Inspect { key } => match &config.backend {
             Backend::Fs { root } => {
-                inspect(FsStore::new(root.clone()), &config, theory, key).map(Outcome::Inspected)
+                inspect(&FsStore::new(root.clone()), &config, &theory, key).map(Outcome::Inspected)
             }
             Backend::S3 {
                 bucket,
@@ -267,9 +267,9 @@ fn start(args: impl Iterator<Item = String>) -> Result<Outcome, Error> {
                 endpoint,
                 key_prefix,
             } => inspect(
-                open_s3(bucket, region, endpoint.as_deref(), key_prefix)?,
+                &open_s3(bucket, region, endpoint.as_deref(), key_prefix)?,
                 &config,
-                theory,
+                &theory,
                 key,
             )
             .map(Outcome::Inspected),
@@ -295,9 +295,9 @@ fn start(args: impl Iterator<Item = String>) -> Result<Outcome, Error> {
 
 /// Fetch the object and render it through the crate parsers.
 fn inspect<S: ObjectStore>(
-    store: S,
+    store: &S,
     config: &Config,
-    theory: SchemaDescriptor,
+    theory: &SchemaDescriptor,
     key: &str,
 ) -> Result<String, Error> {
     let kind = inspect::kind(key).map_err(Error::Inspect)?;
@@ -320,7 +320,7 @@ fn inspect<S: ObjectStore>(
                 .bytes
         }
     };
-    inspect::render(kind, &bytes, &theory).map_err(Error::Inspect)
+    inspect::render(kind, &bytes, theory).map_err(Error::Inspect)
 }
 
 fn object_key(prefix: &str, rest: &str) -> Result<StoreKey, Error> {
@@ -358,10 +358,11 @@ fn cycle<S: ObjectStore>(
 fn code(ran: &Ran) -> u8 {
     match ran {
         Ran::Ready { compact, gc } => match (compact, gc) {
-            (Compact::Quiet, Gc::Swept(_) | Gc::NothingEligible)
-            | (Compact::Published(Published::Replaced), Gc::Swept(_) | Gc::NothingEligible) => 0,
-            (Compact::Published(Published::Kept { .. }), _)
-            | (Compact::Published(Published::Refused(_)), _)
+            (
+                Compact::Quiet | Compact::Published(Published::Replaced),
+                Gc::Swept(_) | Gc::NothingEligible,
+            ) => 0,
+            (Compact::Published(Published::Kept { .. } | Published::Refused(_)), _)
             | (_, Gc::Refused(_)) => 1,
         },
         Ran::RefreshRefused(_) => 1,
@@ -938,7 +939,7 @@ mod tests {
         };
         assert!(ready(&ran));
         assert_eq!(code(&ran), 0);
-        assert!(scream(&ran).is_empty());
+        assert_eq!(scream(&ran), "");
     }
 
     #[test]

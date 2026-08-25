@@ -316,16 +316,22 @@ fn run_direct(
                     continue;
                 }
                 assert_eq!(
-                    after[&braid],
-                    before[&braid] + 1,
+                    after.at(braid),
+                    before.at(braid) + 1,
                     "seed {seed}: one batch advances its braid by exactly one"
                 );
                 assert_eq!(
-                    generation, after[&braid],
+                    generation,
+                    after.at(braid),
                     "seed {seed}: the reported generation is the slot number"
                 );
                 published.push((braid, generation));
-                digests.push(writer.with_db(Db::catalog_digest).expect("direct digest"));
+                digests.push(
+                    writer
+                        .with_db(Db::catalog_digest)
+                        .expect("db")
+                        .expect("direct digest"),
+                );
             }
             Commit::Rejected(_) => {
                 assert_eq!(
@@ -338,11 +344,12 @@ fn run_direct(
     let vector = writer.vector();
     let generation = writer
         .with_db(Db::generation)
+        .expect("db")
         .expect("direct generation")
         .value();
     assert_eq!(
         generation,
-        vector.values().sum::<u64>(),
+        vector.sum().expect("sum"),
         "seed {seed}: the direct store ends whole"
     );
     writer.quiesce();
@@ -473,7 +480,10 @@ fn run_world(seed: u64) {
         let restored = restore_to_vector(&store, "", &root.join("hop"), &theory(), &hop_vector)
             .expect("restore infrastructure");
         let Restore::Restored { db: hop_db, vector } = restored else {
-            panic!("TROPHY seed {seed}: restore to the hop vector refused");
+            let Restore::Refused(refusal) = restored else {
+                unreachable!("restore is Restored or Refused");
+            };
+            panic!("TROPHY seed {seed}: restore to the hop vector refused: {refusal:?}");
         };
         assert_eq!(
             vector, hop_vector,
@@ -558,13 +568,19 @@ fn the_writers_own_duty_checkpoint_hops_to_the_direct_digest() {
     );
     writer.quiesce();
     let direct_vector = writer.vector();
-    let direct_digest = writer.with_db(Db::catalog_digest).expect("direct digest");
+    let direct_digest = writer
+        .with_db(Db::catalog_digest)
+        .expect("db")
+        .expect("direct digest");
     drop(writer);
 
     let opened = Replica::open(FsStore::new(root.clone()), "", &root.join("r"), theory())
         .expect("replica open");
     let Opened::Ready(replica) = opened else {
-        panic!("the replica opens against the duty's checkpoint");
+        let Opened::Refused(refusal) = opened else {
+            unreachable!("open is Ready or Refused");
+        };
+        panic!("the replica opens against the duty's checkpoint: {refusal:?}");
     };
     assert_eq!(
         replica.provenance(),
@@ -573,7 +589,11 @@ fn the_writers_own_duty_checkpoint_hops_to_the_direct_digest() {
     );
     assert_eq!(replica.vector(), direct_vector);
     assert_eq!(
-        replica.db().catalog_digest().expect("replica digest"),
+        replica
+            .db()
+            .expect("db")
+            .catalog_digest()
+            .expect("replica digest"),
         direct_digest,
         "TROPHY: the duty-checkpoint hop disagrees with direct apply at the tip"
     );

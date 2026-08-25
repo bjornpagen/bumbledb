@@ -47,16 +47,18 @@ fn mint_is_an_ordinary_judged_insert() {
         })
         .expect("mint");
     assert!(matches!(outcome, Commit::Accepted { .. }));
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(
-                instance.contains_dyn(HOLD, &hold_row(1, 3, 999))?,
-                "the reservation is a row, nothing more"
-            );
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(
+                    instance.contains_dyn(HOLD, &hold_row(1, 3, 999))?,
+                    "the reservation is a row, nothing more"
+                );
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -85,14 +87,18 @@ fn spend_deletes_the_reservation_and_inserts_children_in_one_commit() {
         })
         .expect("spend");
     assert!(matches!(outcome, Commit::Accepted { .. }));
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(!instance.contains_dyn(HOLD, &hold_row(1, 3, 999))?);
-            assert!(instance.contains_dyn(BOOKING, &[Value::U64(1), Value::U64(3)] as &[Value])?);
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(!instance.contains_dyn(HOLD, &hold_row(1, 3, 999))?);
+                assert!(
+                    instance.contains_dyn(BOOKING, &[Value::U64(1), Value::U64(3)] as &[Value])?
+                );
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]

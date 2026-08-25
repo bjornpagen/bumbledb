@@ -91,14 +91,14 @@ fn temp_root(tag: &str) -> std::path::PathBuf {
 /// Every inventory batch golden, decoded from disk against its sidecar:
 /// ok fixtures must yield the sidecar's header and ops and re-encode to
 /// the identical bytes; refusal fixtures must carry the sidecar's
-/// typed identity; encode-only fixtures name DigestWidth and have no
+/// typed identity; encode-only fixtures name `DigestWidth` and have no
 /// wire bytes.
 #[test]
 fn batch_corpus_decodes_recomputes_and_reencodes() {
     let roster = inventory();
     let mut fixtures = Vec::new();
     for stem in stems(&roster["batch_ok"]) {
-        fixtures.push((stem, sidecar("batch", &stem)));
+        fixtures.push((stem.clone(), sidecar("batch", &stem)));
     }
     for stem in stems(&roster["batch_refusal"]) {
         fixtures.push((stem.clone(), sidecar("batch", &stem)));

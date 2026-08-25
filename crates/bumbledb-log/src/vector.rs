@@ -57,7 +57,6 @@ impl Vector {
     }
 
     /// The wholeness arithmetic. The one overflow site.
-    #[must_use]
     pub fn sum(&self) -> Result<u64, Overflow> {
         self.counts
             .values()

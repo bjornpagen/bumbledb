@@ -41,8 +41,7 @@ fn missing_required() -> Vec<&'static str> {
 fn unique_prefix(tag: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     format!(
         "smoke/{}/{}/{}/{tag}",
         std::process::id(),
@@ -241,6 +240,7 @@ fn s3_smoke_replica_writer_round_trip() {
     let replica = open_replica(store, &root.join("r"));
     let present = replica
         .db()
+        .expect("db")
         .read(|instance| instance.contains_dyn(NOTE, &note_row(7, "s3-smoke")))
         .expect("read");
     assert!(present, "reopen restores the committed note");

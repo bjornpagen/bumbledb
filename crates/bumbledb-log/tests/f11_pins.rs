@@ -479,7 +479,7 @@ fn pin_cold_open_vs_checkpoint_size() {
         Opened::Refused(refusal) => panic!("cold open refused: {refusal:?}"),
     };
     let cold = start.elapsed();
-    let cold_slots: u64 = replayed.vector().values().sum();
+    let cold_slots: u64 = replayed.vector().sum().expect("sum");
     assert_eq!(cold_slots, PER_BRAID * 3);
 
     force_checkpoint(&writer, 90_000);
@@ -514,7 +514,7 @@ fn pin_cold_open_vs_checkpoint_size() {
     };
     let warm = start.elapsed();
     assert_eq!(seeded.provenance(), Provenance::Checkpoint);
-    let seeded_slots: u64 = seeded.vector().values().sum();
+    let seeded_slots: u64 = seeded.vector().sum().expect("sum");
 
     println!(
         "PIN f11 cold open: full-replay open of {cold_slots} slots across 3 braids = {:.1}ms \

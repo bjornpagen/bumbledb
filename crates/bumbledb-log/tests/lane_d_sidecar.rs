@@ -75,6 +75,7 @@ fn parse_refuses_version_trailing_bytes_and_unknown_braids() {
 
 #[test]
 fn parse_is_order_strict_like_the_checkpoint_parser() {
+    const ENTRY: usize = 52;
     let codec = codec();
     let mut chain = Chain::genesis(codec.braids());
     chain.entries_mut().insert(
@@ -98,7 +99,6 @@ fn parse_is_order_strict_like_the_checkpoint_parser() {
         kitchen_braid(&codec) < note_braid(&codec),
         "canonical order"
     );
-    const ENTRY: usize = 52;
     let kitchen = canonical[5..5 + ENTRY].to_vec();
     let note = canonical[5 + ENTRY..5 + 2 * ENTRY].to_vec();
 
@@ -137,8 +137,8 @@ fn vector_and_sum_agree_with_entries() {
         .expect("note entry")
         .g = 2;
     assert_eq!(chain.sum(), 7);
-    assert_eq!(chain.vector()[&kitchen_braid(&codec)], 5);
-    assert_eq!(chain.vector()[&note_braid(&codec)], 2);
+    assert_eq!(chain.vector().at(kitchen_braid(&codec)), 5);
+    assert_eq!(chain.vector().at(note_braid(&codec)), 2);
 }
 
 #[test]

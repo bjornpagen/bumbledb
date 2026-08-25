@@ -15,7 +15,7 @@ use super::{
 
 /// Writer id lives at a fixed offset in the batch header: magic (4) +
 /// version (2) + flags (2) + fingerprint (32) + braid (4) +
-/// braid_gen (8) + prev (32). The body never has to decode.
+/// `braid_gen` (8) + prev (32). The body never has to decode.
 const WRITER_AT: usize = 4 + 2 + 2 + 32 + 4 + 8 + 32;
 
 /// The usurper is a fact in the header. A body that refuses to decode

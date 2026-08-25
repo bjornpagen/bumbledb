@@ -220,6 +220,7 @@ where
 /// `hold` is the snapshot still that Settled value after compact. The
 /// resident entry proves it; the detached entry is exclusive. `None`
 /// is a torn view — the entry retries.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compact_and_publish<T, S>(
     store: &S,
     prefix: &str,

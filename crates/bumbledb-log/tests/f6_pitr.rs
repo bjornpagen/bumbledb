@@ -282,14 +282,14 @@ fn replay_forward(
     chain: &mut Chain,
     target: &Vector,
 ) {
-    for (braid, goal) in target {
-        while chain.position(*braid).g < *goal {
-            let slot = chain.position(*braid).g + 1;
+    for (braid, goal) in target.iter() {
+        while chain.position(braid).g < goal {
+            let slot = chain.position(braid).g + 1;
             let fetched = store
-                .get(&log_key(prefix, *braid, slot))
+                .get(&log_key(prefix, braid, slot))
                 .expect("get slot")
                 .expect("slot exists");
-            match apply(db, chain, codec, *braid, slot, &fetched.bytes).expect("apply") {
+            match apply(db, chain, codec, braid, slot, &fetched.bytes).expect("apply") {
                 Applied::Advanced { .. } | Applied::Absorbed { .. } => {}
                 other => panic!("replay stopped at {braid}/{slot}: {other:?}"),
             }
@@ -382,7 +382,9 @@ fn five_hundred_commits_restore_to_every_recorded_vector() {
             .expect("commit");
         assert!(matches!(outcome, Commit::Accepted { .. }));
         writer.quiesce();
-        let digest = writer.with_db(|db| db.catalog_digest().expect("catalog digest"));
+        let digest = writer
+            .with_db(|db| db.catalog_digest().expect("catalog digest"))
+            .expect("db");
         records.push((writer.vector(), digest));
     }
     drop(writer);
@@ -455,7 +457,10 @@ fn five_hundred_commits_restore_to_every_recorded_vector() {
         drop(db);
         std::fs::remove_dir_all(&dir).expect("clear restore dir");
         for braid in braids {
-            assert!(target.contains_key(&braid), "records carry every braid");
+            assert!(
+                target.braids().any(|id| id == braid),
+                "records carry every braid"
+            );
         }
     }
 }
@@ -522,12 +527,12 @@ fn by_time_restore_maps_through_publish_clamped_timestamps() {
 
     // At 2999 nothing qualifies: the clamped timestamp, not the host's
     // 2500, is what the mapping consults.
-    assert_eq!(mapped(2_999, "t2999")[&kitchen], 0);
+    assert_eq!(mapped(2_999, "t2999").at(kitchen), 0);
     // At 3000 both clamped slots qualify at once — the mapped set is a
     // prefix by construction.
-    assert_eq!(mapped(3_000, "t3000")[&kitchen], 2);
-    assert_eq!(mapped(3_499, "t3499")[&kitchen], 2);
-    assert_eq!(mapped(3_500, "t3500")[&kitchen], 3);
+    assert_eq!(mapped(3_000, "t3000").at(kitchen), 2);
+    assert_eq!(mapped(3_499, "t3499").at(kitchen), 2);
+    assert_eq!(mapped(3_500, "t3500").at(kitchen), 3);
 }
 
 #[test]
@@ -615,7 +620,7 @@ fn gc_deletes_exactly_the_retention_laws_set_per_braid() {
     log.publish(kitchen, &[insert_recipe(4)], 4_950);
     log.publish(notes, &[insert_note(1, "floor")], 1_000);
     let builder = open_replica(&root, &local.join("b1"));
-    let first_digest = log.checkpoint(builder.db(), &scratch);
+    let first_digest = log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
     log.publish(notes, &[insert_note(2, "old but above the floor")], 1_100);
 
@@ -670,7 +675,7 @@ fn gc_deletes_exactly_the_retention_laws_set_per_braid() {
     log.publish(kitchen, &[insert_recipe(5)], 9_000);
     log.publish(notes, &[insert_note(3, "third")], 9_000);
     let builder = open_replica(&root, &local.join("b2"));
-    let second_digest = log.checkpoint(builder.db(), &scratch);
+    let second_digest = log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     let swept = match gc(&log.store, "", &log.codec, 1_500, 100_000).expect("gc") {
@@ -706,7 +711,7 @@ fn gc_deletes_exactly_the_retention_laws_set_per_braid() {
         "",
         &local.join("beyond"),
         &theory(),
-        &BTreeMap::from([(kitchen, 4), (notes, 1)]),
+        &Vector::from(BTreeMap::from([(kitchen, 4), (notes, 1)])),
     )
     .expect("restore")
     {
@@ -741,7 +746,7 @@ fn the_404_duality_is_pinned_both_directions() {
     log.publish(kitchen, &[insert_recipe(4)], 4_000);
 
     let builder = open_replica(&root, &local.join("b"));
-    let floor_digest = log.checkpoint(builder.db(), &scratch);
+    let floor_digest = log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     // Manufacture 404s below and exactly at the floor vector.
@@ -753,19 +758,19 @@ fn the_404_duality_is_pinned_both_directions() {
     // checkpoint instead of serving its old vector as fresh.
     let replica = open_replica(&root, &below);
     assert_eq!(replica.provenance(), Provenance::Checkpoint);
-    assert_eq!(replica.vector()[&kitchen], 4);
+    assert_eq!(replica.vector().at(kitchen), 4);
     drop(replica);
 
     // Exactly at the floor vector: still a hole (at-or-below).
     let replica = open_replica(&root, &at_floor);
     assert_eq!(replica.provenance(), Provenance::Checkpoint);
-    assert_eq!(replica.vector()[&kitchen], 4);
+    assert_eq!(replica.vector().at(kitchen), 4);
 
     // Above the floor: the same 404 is the tip. The seeded store probes
     // one past the floor, finds nothing, and serves honestly.
     let mut replica = replica;
     match replica.refresh().expect("refresh") {
-        Refreshed::Vector(vector) => assert_eq!(vector[&kitchen], 4),
+        Refreshed::Vector(vector) => assert_eq!(vector.at(kitchen), 4),
         Refreshed::Refused(refusal) => panic!("refresh refused: {refusal:?}"),
     }
     drop(replica);
@@ -777,7 +782,7 @@ fn the_404_duality_is_pinned_both_directions() {
     drop(replica);
     let replica = open_replica(&root, &fresh);
     assert_eq!(replica.provenance(), Provenance::LocalDir);
-    assert_eq!(replica.vector()[&kitchen], 4);
+    assert_eq!(replica.vector().at(kitchen), 4);
 
     // The checkpoint document itself is what decides the split.
     let doc = walk_backlinks(&log.store, "", &log.codec);
@@ -804,8 +809,12 @@ fn a_hibernated_replica_behind_a_gcd_horizon_never_serves_stale_as_fresh() {
     }
     log.publish(notes, &[insert_note(1, "awake")], 8_000);
     let builder = open_replica(&root, &local.join("b"));
-    let fresh_digest = builder.db().catalog_digest().expect("catalog digest");
-    log.checkpoint(builder.db(), &scratch);
+    let fresh_digest = builder
+        .db()
+        .expect("db")
+        .catalog_digest()
+        .expect("catalog digest");
+    log.checkpoint(builder.db().expect("db"), &scratch);
     drop(builder);
 
     // Real retention passes the sleeper's vector: everything below the
@@ -821,15 +830,20 @@ fn a_hibernated_replica_behind_a_gcd_horizon_never_serves_stale_as_fresh() {
     // discards it and re-seeds from the current checkpoint.
     let replica = open_replica(&root, &sleeper);
     assert_eq!(replica.provenance(), Provenance::Checkpoint);
-    assert_eq!(replica.vector()[&kitchen], 8);
-    assert_eq!(replica.vector()[&notes], 1);
+    assert_eq!(replica.vector().at(kitchen), 8);
+    assert_eq!(replica.vector().at(notes), 1);
     assert_eq!(
-        replica.db().catalog_digest().expect("catalog digest"),
+        replica
+            .db()
+            .expect("db")
+            .catalog_digest()
+            .expect("catalog digest"),
         fresh_digest,
         "the woken store serves the fresh state, whole"
     );
     replica
         .db()
+        .expect("db")
         .read(|instance| {
             assert!(instance.contains_dyn(RECIPE, &[Value::U64(8)])?);
             Ok(())
@@ -852,16 +866,16 @@ fn poisoned_checkpoint(log: &TestLog, dir: &Path, scratch: &Path) -> (Vec<u8>, [
         .iter()
         .map(|(braid, head)| (*braid, head.g))
         .collect();
-    for (braid, goal) in &target {
-        let honest_goal = if *braid == kitchen { goal - 1 } else { *goal };
-        while chain.position(*braid).g < honest_goal {
-            let slot = chain.position(*braid).g + 1;
+    for (braid, goal) in target.iter() {
+        let honest_goal = if braid == kitchen { goal - 1 } else { goal };
+        while chain.position(braid).g < honest_goal {
+            let slot = chain.position(braid).g + 1;
             let fetched = log
                 .store
-                .get(&log_key(&log.prefix, *braid, slot))
+                .get(&log_key(&log.prefix, braid, slot))
                 .expect("get slot")
                 .expect("slot exists");
-            match apply(&db, &mut chain, codec, *braid, slot, &fetched.bytes).expect("apply") {
+            match apply(&db, &mut chain, codec, braid, slot, &fetched.bytes).expect("apply") {
                 Applied::Advanced { .. } => {}
                 other => panic!("poison replay stopped at {braid}/{slot}: {other:?}"),
             }
@@ -894,7 +908,7 @@ fn poisoned_checkpoint(log: &TestLog, dir: &Path, scratch: &Path) -> (Vec<u8>, [
         })
         .expect("engine write");
     assert!(matches!(admission, Admission::Accepted(_)));
-    let sum: u64 = target.values().sum();
+    let sum = target.sum().expect("sum");
     assert_eq!(
         db.generation().expect("generation").value(),
         sum,
@@ -923,7 +937,11 @@ fn a_lying_checkpoint_with_an_honest_claim_is_refused_at_fresh_open() {
     log.publish(notes, &[insert_note(2, "two")], 2_000);
 
     let honest = open_replica(&root, &local.join("honest"));
-    let honest_catalog = honest.db().catalog_digest().expect("catalog digest");
+    let honest_catalog = honest
+        .db()
+        .expect("db")
+        .catalog_digest()
+        .expect("catalog digest");
     drop(honest);
 
     let (poison_bytes, poison_catalog) = poisoned_checkpoint(&log, &local.join("poison"), &scratch);
@@ -969,7 +987,7 @@ fn a_lying_checkpoint_with_an_honest_claim_is_refused_at_fresh_open() {
         "",
         &local.join("restore"),
         &theory(),
-        &BTreeMap::from([(kitchen, 3), (notes, 2)]),
+        &Vector::from(BTreeMap::from([(kitchen, 3), (notes, 2)])),
     )
     .expect("restore")
     {
@@ -1000,7 +1018,7 @@ fn a_self_consistent_lying_checkpoint_is_refused_by_a_replay_reaching_store() {
     let witness_dir = local.join("witness");
     let mut witness = open_replica(&root, &witness_dir);
     assert_eq!(witness.provenance(), Provenance::Bootstrap);
-    assert_eq!(witness.vector()[&kitchen], 3);
+    assert_eq!(witness.vector().at(kitchen), 3);
 
     // The lie is self-consistent: the poisoned bytes carry their own
     // catalog digest, so a fresh seed verifies clean. Only a store that

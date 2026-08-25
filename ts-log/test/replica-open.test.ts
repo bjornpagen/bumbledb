@@ -48,9 +48,7 @@ describe("replica open refusals", function suite() {
 		const unknown = braid("c0000ffff")
 		const planted: Chain = {
 			tag: "settled",
-			entries: new Map([
-				[unknown, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n }]
-			])
+			entries: new Map([[unknown, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n }]])
 		}
 		fs.writeFileSync(path.join(dir, CHAIN_FILE), renderSidecar(planted))
 		const caught = await errors.try(openReplica({ store, prefix: "prod/main", dir, theory: Ledger }))

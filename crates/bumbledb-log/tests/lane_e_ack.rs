@@ -124,7 +124,7 @@ fn crashed_publisher_retains_pending_and_the_next_commit_publishes() {
     assert!(matches!(second, Commit::Accepted { generation: 2, .. }));
     writer.quiesce();
     assert_eq!(writer.backlog(), None);
-    assert_eq!(writer.vector()[&braid], 2);
+    assert_eq!(writer.vector().at(braid), 2);
     let slot1 = store
         .get(&log_key("", braid, 1))
         .expect("get")
@@ -146,5 +146,5 @@ fn body_errors_propagate_without_touching_state() {
         .expect_err("the body's own refusal propagates");
     assert!(matches!(err, Error::EmptyCommit));
     let codec = codec();
-    assert_eq!(writer.vector()[&note_braid(&codec)], 0);
+    assert_eq!(writer.vector().at(note_braid(&codec)), 0);
 }

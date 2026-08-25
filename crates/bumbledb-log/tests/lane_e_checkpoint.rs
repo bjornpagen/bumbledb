@@ -92,7 +92,7 @@ fn crossing_the_sum_cadence_publishes_a_checkpoint() {
         panic!("replica seeds from the writer's checkpoint");
     };
     assert_eq!(replica.provenance(), Provenance::Checkpoint);
-    assert_eq!(replica.vector()[&note_braid(&codec)], 2);
+    assert_eq!(replica.vector().at(note_braid(&codec)), 2);
 }
 
 #[test]

@@ -212,7 +212,7 @@ fn crash_case(mode: Mode, step: WriterStep) {
     let codec = codec();
     let braid = note_braid(&codec);
     assert_eq!(
-        recovered.vector()[&braid],
+        recovered.vector().at(braid),
         u64::from(lands(step)),
         "{mode:?}/{step:?}"
     );
@@ -234,10 +234,12 @@ fn crash_case(mode: Mode, step: WriterStep) {
             .is_none(),
         "{mode:?}/{step:?}: recovery never double-publishes"
     );
-    let row_present = recovered.with_db(|db| {
-        db.read(|instance| instance.contains_dyn(NOTE, &note_row(7, "matrix")))
-            .expect("read")
-    });
+    let row_present = recovered
+        .with_db(|db| {
+            db.read(|instance| instance.contains_dyn(NOTE, &note_row(7, "matrix")))
+                .expect("read")
+        })
+        .expect("db");
     assert_eq!(row_present, lands(step), "{mode:?}/{step:?}");
     if acked(mode, step) {
         assert!(
@@ -245,8 +247,10 @@ fn crash_case(mode: Mode, step: WriterStep) {
             "{mode:?}/{step:?}: no acked commit is ever lost"
         );
     }
-    let sum: u64 = recovered.vector().values().sum();
-    let generation = recovered.with_db(|db| db.generation().expect("generation").value());
+    let sum: u64 = recovered.vector().sum().expect("sum");
+    let generation = recovered
+        .with_db(|db| db.generation().expect("generation").value())
+        .expect("db");
     assert_eq!(
         generation, sum,
         "{mode:?}/{step:?}: the wholeness identity is exact after recovery"
@@ -261,7 +265,9 @@ fn crash_case(mode: Mode, step: WriterStep) {
         dir.join("marker").exists(),
         "{mode:?}/{step:?}: recovery resolved in place — the absorption arm, never a discard"
     );
-    let digest = recovered.with_db(|db| db.catalog_digest().expect("digest"));
+    let digest = recovered
+        .with_db(|db| db.catalog_digest().expect("digest"))
+        .expect("db");
     drop(recovered);
 
     // One pass: a further reopen observes zero writer steps and moves
@@ -273,7 +279,9 @@ fn crash_case(mode: Mode, step: WriterStep) {
         "{mode:?}/{step:?}: recovery converged in one pass"
     );
     assert_eq!(
-        settled.with_db(|db| db.catalog_digest().expect("digest")),
+        settled
+            .with_db(|db| db.catalog_digest().expect("digest"))
+            .expect("db"),
         digest,
         "{mode:?}/{step:?}"
     );
@@ -285,7 +293,7 @@ fn crash_case(mode: Mode, step: WriterStep) {
     let replica = open_replica(&root, &root.join("probe"));
     assert!(replica.wedged().is_empty(), "{mode:?}/{step:?}");
     assert_eq!(
-        replica.db().catalog_digest().expect("digest"),
+        replica.db().expect("db").catalog_digest().expect("digest"),
         digest,
         "{mode:?}/{step:?}: the log's replay agrees with the recovered writer"
     );
@@ -348,7 +356,7 @@ fn crash_at_the_loss_re_persist_recovers_through_pending_resolution() {
         Recorder::default(),
     );
     assert_eq!(recovered.backlog(), None, "resolved at open");
-    assert_eq!(recovered.vector()[&braid], 2, "the tip plus our slot");
+    assert_eq!(recovered.vector().at(braid), 2, "the tip plus our slot");
     let store = FsStore::new(root);
     let slot2 = store
         .get(&log_key("", braid, 2))
@@ -360,17 +368,21 @@ fn crash_at_the_loss_re_persist_recovers_through_pending_resolution() {
         store.get(&log_key("", braid, 3)).expect("get").is_none(),
         "never twice"
     );
-    let sum: u64 = recovered.vector().values().sum();
-    let generation = recovered.with_db(|db| db.generation().expect("generation").value());
+    let sum: u64 = recovered.vector().sum().expect("sum");
+    let generation = recovered
+        .with_db(|db| db.generation().expect("generation").value())
+        .expect("db");
     assert_eq!(generation, sum, "whole after the windowed crash");
-    recovered.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(50, "competitor"))?);
-            assert!(instance.contains_dyn(NOTE, &note_row(51, "carried"))?);
-            Ok(())
+    recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(50, "competitor"))?);
+                assert!(instance.contains_dyn(NOTE, &note_row(51, "carried"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -406,18 +418,22 @@ fn resurrected_unjudged_batch_rejects_at_recovery_and_never_reaches_the_log() {
         assert_eq!(recovered.backlog(), None, "{mode:?}: rejection cleared");
         let codec = codec();
         let braid = kitchen_braid(&codec);
-        assert_eq!(recovered.vector()[&braid], 0, "{mode:?}");
+        assert_eq!(recovered.vector().at(braid), 0, "{mode:?}");
         let store = FsStore::new(root);
         assert!(
             store.get(&log_key("", braid, 1)).expect("get").is_none(),
             "{mode:?}: a born-rejected batch never reaches the log"
         );
-        let present = recovered.with_db(|db| {
-            db.read(|instance| instance.contains_dyn(STEP, &step_row(9, "orphan")))
-                .expect("read")
-        });
+        let present = recovered
+            .with_db(|db| {
+                db.read(|instance| instance.contains_dyn(STEP, &step_row(9, "orphan")))
+                    .expect("read")
+            })
+            .expect("db");
         assert!(!present, "{mode:?}");
-        let generation = recovered.with_db(|db| db.generation().expect("generation").value());
+        let generation = recovered
+            .with_db(|db| db.generation().expect("generation").value())
+            .expect("db");
         assert_eq!(generation, 0, "{mode:?}: nothing was owed, nothing moved");
     }
 }
@@ -471,13 +487,15 @@ fn born_noop_batch_clears_at_the_exact_vector_sum_and_never_reaches_the_log() {
         assert_eq!(recovered.backlog(), None, "{mode:?}/{step:?}");
         let codec = codec();
         let braid = note_braid(&codec);
-        assert_eq!(recovered.vector()[&braid], 1, "{mode:?}/{step:?}");
+        assert_eq!(recovered.vector().at(braid), 1, "{mode:?}/{step:?}");
         let store = FsStore::new(root);
         assert!(
             store.get(&log_key("", braid, 2)).expect("get").is_none(),
             "{mode:?}/{step:?}: a born no-op publishes nothing"
         );
-        let generation = recovered.with_db(|db| db.generation().expect("generation").value());
+        let generation = recovered
+            .with_db(|db| db.generation().expect("generation").value())
+            .expect("db");
         assert_eq!(
             generation, 1,
             "{mode:?}/{step:?}: cleared at the exact vector sum"
@@ -535,20 +553,26 @@ fn a_phantom_writer_commit_discards_with_the_directory_never_silently_divergent(
         "the torn directory was discarded and rebuilt from the log"
     );
     assert_eq!(recovered.backlog(), None);
-    let phantom = recovered.with_db(|db| {
-        db.read(|instance| {
-            instance.contains_dyn(NOTE, &[Value::U64(99), Value::String("phantom".into())])
-        })
-        .expect("read")
-    });
-    assert!(!phantom, "the phantom died with the directory");
-    let acked_row = recovered.with_db(|db| {
-        db.read(|instance| instance.contains_dyn(NOTE, &note_row(1, "acked")))
+    let phantom = recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                instance.contains_dyn(NOTE, &[Value::U64(99), Value::String("phantom".into())])
+            })
             .expect("read")
-    });
+        })
+        .expect("db");
+    assert!(!phantom, "the phantom died with the directory");
+    let acked_row = recovered
+        .with_db(|db| {
+            db.read(|instance| instance.contains_dyn(NOTE, &note_row(1, "acked")))
+                .expect("read")
+        })
+        .expect("db");
     assert!(acked_row, "the acked commit survived through its slot");
-    let sum: u64 = recovered.vector().values().sum();
-    let generation = recovered.with_db(|db| db.generation().expect("generation").value());
+    let sum: u64 = recovered.vector().sum().expect("sum");
+    let generation = recovered
+        .with_db(|db| db.generation().expect("generation").value())
+        .expect("db");
     assert_eq!(generation, sum);
 }
 
@@ -585,7 +609,7 @@ fn replica_crash_matrix_every_prefix_recovers_through_catch_up_alone() {
         log.publish(notes, &[insert(NOTE, note_row(1, "one"))], 100);
         let dir = root.join("replica");
         let replica = open_replica(&root, &dir);
-        assert_eq!(replica.vector()[&notes], 1);
+        assert_eq!(replica.vector().at(notes), 1);
         drop(replica);
         let slot = log.publish(notes, &[insert(NOTE, note_row(2, "two"))], 200);
         assert_eq!(slot, 2);
@@ -649,15 +673,21 @@ fn replica_crash_matrix_every_prefix_recovers_through_catch_up_alone() {
             "prefix {len}: recovery is the catch-up loop, never a discard"
         );
         assert!(replica.wedged().is_empty(), "prefix {len}");
-        assert_eq!(replica.vector()[&notes], 2, "prefix {len}");
-        let sum: u64 = replica.vector().values().sum();
+        assert_eq!(replica.vector().at(notes), 2, "prefix {len}");
+        let sum: u64 = replica.vector().sum().expect("sum");
         assert_eq!(
-            replica.db().generation().expect("generation").value(),
+            replica
+                .db()
+                .expect("db")
+                .generation()
+                .expect("generation")
+                .value(),
             sum,
             "prefix {len}: the wholeness identity is exact"
         );
         let present = replica
             .db()
+            .expect("db")
             .read(|instance| instance.contains_dyn(NOTE, &note_row(2, "two")))
             .expect("read");
         assert!(present, "prefix {len}");
@@ -669,8 +699,8 @@ fn replica_crash_matrix_every_prefix_recovers_through_catch_up_alone() {
         }
         let probe = open_replica(&root, &root.join("probe"));
         assert_eq!(
-            replica.db().catalog_digest().expect("digest"),
-            probe.db().catalog_digest().expect("digest"),
+            replica.db().expect("db").catalog_digest().expect("digest"),
+            probe.db().expect("db").catalog_digest().expect("digest"),
             "prefix {len}: the recovered directory agrees with a fresh replay"
         );
     }

@@ -17,7 +17,7 @@
 //! a total function of the value: the vector sum, plus one exactly when
 //! the arm is `Pending`. `Pending` is writer-only; on a pure replica the
 //! chain is permanently `Settled`. The read is a total sum too: `Absent`
-//! is NotFound only, an infra fault is never absence, and a parse
+//! is `NotFound` only, an infra fault is never absence, and a parse
 //! refusal is `Corrupt`.
 
 use std::collections::BTreeMap;
@@ -27,7 +27,7 @@ use std::path::Path;
 
 use crate::braids::{BraidId, Braids};
 use crate::manifest::{Cursor, DOC_VERSION};
-use crate::vector::{Overflow, Vector};
+use crate::vector::Vector;
 
 /// The sidecar's file name inside a replica directory.
 pub const CHAIN_FILE: &str = "chain";
@@ -94,7 +94,7 @@ impl SidecarError {
     }
 }
 
-/// The sidecar read as a total sum. `Absent` is NotFound and nothing
+/// The sidecar read as a total sum. `Absent` is `NotFound` and nothing
 /// else — an infra fault is never "no sidecar"; a parse refusal is
 /// `Corrupt` and takes the disposable-law discard.
 #[derive(Debug)]
@@ -172,10 +172,7 @@ impl Chain {
     /// [`Vector::sum`].
     #[must_use]
     pub fn sum(&self) -> u64 {
-        match self.vector().sum() {
-            Ok(n) => n,
-            Err(Overflow) => u64::MAX,
-        }
+        self.vector().sum().unwrap_or(u64::MAX)
     }
 
     /// The generation a store must show: the vector sum, plus one
@@ -327,7 +324,7 @@ impl Chain {
         File::open(dir)?.sync_all()
     }
 
-    /// Reads `dir/chain` as a total sum. `Absent` is NotFound only;
+    /// Reads `dir/chain` as a total sum. `Absent` is `NotFound` only;
     /// every other io error is `Fault`; a parse refusal is `Corrupt`.
     #[must_use]
     pub fn read(dir: &Path, braids: &Braids) -> SidecarRead {

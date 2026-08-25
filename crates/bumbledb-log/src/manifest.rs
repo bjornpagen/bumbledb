@@ -16,7 +16,7 @@ use crate::braids::{BraidId, Braids};
 use crate::store::{
     Create, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
 };
-use crate::vector::{CheckpointOrder, Overflow, Vector};
+use crate::vector::{CheckpointOrder, Vector};
 
 /// The one accepted document version; it is the leading byte of every
 /// manifest and checkpoint record. The binary format is v:3.
@@ -367,10 +367,7 @@ impl Checkpoint {
     /// [`Vector::sum`].
     #[must_use]
     pub fn sum(&self) -> u64 {
-        match self.vector().sum() {
-            Ok(n) => n,
-            Err(Overflow) => u64::MAX,
-        }
+        self.vector().sum().unwrap_or(u64::MAX)
     }
 
     /// The vector: the `g` column keyed by braid.

@@ -82,13 +82,15 @@ fn arm_one_resurrected_never_judged_batch_rejects_and_publishes_nothing() {
         store.get(&log_key("", braid, 1)).expect("get").is_none(),
         "a born-rejected batch never reaches the log"
     );
-    recovered.with_db(|db| {
-        db.read(|instance| {
-            assert!(!instance.contains_dyn(STEP, &step_row(9, "orphan"))?);
-            Ok(())
+    recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(!instance.contains_dyn(STEP, &step_row(9, "orphan"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -122,7 +124,7 @@ fn arm_two_born_noop_clears_and_publishes_nothing() {
     assert_eq!(recovered.backlog(), None);
     let codec = codec();
     let braid = note_braid(&codec);
-    assert_eq!(recovered.vector()[&braid], 1);
+    assert_eq!(recovered.vector().at(braid), 1);
     let store = FsStore::new(root);
     assert!(
         store.get(&log_key("", braid, 2)).expect("get").is_none(),
@@ -157,7 +159,7 @@ fn arm_three_applied_unpublished_commit_publishes_at_recovery() {
     assert_eq!(recovered.backlog(), None, "published and cleared");
     let codec = codec();
     let braid = note_braid(&codec);
-    assert_eq!(recovered.vector()[&braid], 1);
+    assert_eq!(recovered.vector().at(braid), 1);
     let store = FsStore::new(root);
     let slot = store
         .get(&log_key("", braid, 1))
@@ -166,13 +168,15 @@ fn arm_three_applied_unpublished_commit_publishes_at_recovery() {
     let batch = codec.decode(&slot.bytes).expect("decode");
     assert_eq!(batch.ops.len(), 1);
     assert_eq!(batch.ops[0].kind, OpKind::Insert);
-    recovered.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(1, "survives"))?);
-            Ok(())
+    recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(1, "survives"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 #[test]
@@ -198,7 +202,7 @@ fn crash_mid_publish_absorbs_the_byte_equal_slot() {
     assert_eq!(recovered.backlog(), None);
     let codec = codec();
     let braid = note_braid(&codec);
-    assert_eq!(recovered.vector()[&braid], 1);
+    assert_eq!(recovered.vector().at(braid), 1);
     let store = FsStore::new(root);
     assert!(store.get(&log_key("", braid, 2)).expect("get").is_none());
 }
@@ -224,7 +228,7 @@ fn crash_between_chain_advance_and_pending_clear_recovers() {
     let recovered = reopen(root, &dir);
     assert_eq!(recovered.backlog(), None);
     let codec = codec();
-    assert_eq!(recovered.vector()[&note_braid(&codec)], 1);
+    assert_eq!(recovered.vector().at(note_braid(&codec)), 1);
 }
 
 #[test]
@@ -253,7 +257,7 @@ fn stale_writer_catches_up_through_history_then_attempts_at_tip() {
 
     let recovered = reopen(root.clone(), &dir);
     assert_eq!(recovered.backlog(), None, "published at the tip");
-    assert_eq!(recovered.vector()[&braid], 3);
+    assert_eq!(recovered.vector().at(braid), 3);
     let store = FsStore::new(root);
     let slot3 = store
         .get(&log_key("", braid, 3))
@@ -261,15 +265,17 @@ fn stale_writer_catches_up_through_history_then_attempts_at_tip() {
         .expect("our commit landed at tip+1");
     let batch = codec.decode(&slot3.bytes).expect("decode");
     assert_eq!(batch.header.writer, 31);
-    recovered.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(1, "mine"))?);
-            assert!(instance.contains_dyn(NOTE, &note_row(100, "w1"))?);
-            assert!(instance.contains_dyn(NOTE, &note_row(101, "w2"))?);
-            Ok(())
+    recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(1, "mine"))?);
+                assert!(instance.contains_dyn(NOTE, &note_row(100, "w1"))?);
+                assert!(instance.contains_dyn(NOTE, &note_row(101, "w2"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 }
 
 const RECOVERY_ROLE: &str = "LANE_E_SCRIPTED_PENDING";
@@ -323,14 +329,16 @@ fn run_scripted_recovery_child() {
     );
     let codec = codec();
     let braid = note_braid(&codec);
-    assert_eq!(recovered.vector()[&braid], 1);
-    recovered.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(7, "scripted"))?);
-            Ok(())
+    assert_eq!(recovered.vector().at(braid), 1);
+    recovered
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(7, "scripted"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
     let store = FsStore::new(root);
     assert!(
         store
@@ -363,7 +371,7 @@ fn scripted_pending_recovers_in_a_second_process() {
     plant_scripted_pending(&root, &dir);
     match Chain::read(&dir, codec().braids()) {
         SidecarRead::Read(Chain::Pending { batch, .. }) => {
-            assert_eq!(batch.slot, 1, "the test script wrote Pending at slot 1")
+            assert_eq!(batch.slot, 1, "the test script wrote Pending at slot 1");
         }
         other => panic!("expected planted Pending, got {other:?}"),
     }

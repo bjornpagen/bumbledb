@@ -299,7 +299,7 @@ fn stored_generation(attributes: &Attributes) -> u64 {
         .unwrap_or(0)
 }
 
-/// 20: a stale holder's write is the token the CAS no longer wins.
+/// 20: a stale holder's write is the token the CAS does not win.
 /// A matching etag is not a waiver.
 fn swap_fence(token: u64, stored: u64) -> Option<Swap> {
     if token < stored {
@@ -318,16 +318,19 @@ fn fenced_put(mode: PutMode, token: u64) -> PutOptions {
 }
 
 /// 409 Conflict, a timed-out PUT, and any other unproved transport
-/// result. object_store maps 409 onto `AlreadyExists`, so the walk
+/// result. `object_store` maps 409 onto `AlreadyExists`, so the walk
 /// has to read the status out of the source chain — the variant
 /// alone is not a proof.
-fn is_unproved(err: &(dyn std::error::Error + 'static)) -> bool {
-    let mut current = Some(err);
+fn is_unproved(err: &ObjError) -> bool {
+    if unproved_text(&err.to_string()) {
+        return true;
+    }
+    let mut current = std::error::Error::source(err);
     while let Some(e) = current {
         if unproved_text(&e.to_string()) {
             return true;
         }
-        current = e.source();
+        current = std::error::Error::source(e);
     }
     false
 }
@@ -499,7 +502,7 @@ impl ObjectStore for S3Store {
                         return Ok(moved);
                     }
                 }
-                Err(ObjError::NotFound { .. }) | Err(ObjError::Precondition { .. }) => {
+                Err(ObjError::NotFound { .. } | ObjError::Precondition { .. }) => {
                     return Ok(Swap::Moved);
                 }
                 Err(source) => return Err(infra("put_swap", key, source)),
@@ -666,7 +669,7 @@ mod tests {
         assert!(
             !matches!(
                 create_from_put(&key, conflict_exists(key.as_str())),
-                Ok(Create::Exists) | Ok(Create::Created(_))
+                Ok(Create::Exists | Create::Created(_))
             ),
             "409 is not a proved occupation"
         );
@@ -687,7 +690,7 @@ mod tests {
         assert!(
             !matches!(
                 swap_from_put(&key, conflict_exists(key.as_str())),
-                Ok(Swap::Moved) | Ok(Swap::Swapped(_))
+                Ok(Swap::Moved | Swap::Swapped(_))
             ),
             "409 is not a proved mismatch"
         );

@@ -73,16 +73,18 @@ fn sixteen_disjoint_losses_surface_slot_race_and_keep_pending() {
         Some(braid),
         "the applied commit is never dropped because the tip was busy"
     );
-    writer.with_db(|db| {
-        db.read(|instance| {
-            assert!(
-                instance.contains_dyn(NOTE, &note_row(1_000, "starved"))?,
-                "reads serve the applied pending"
-            );
-            Ok(())
+    writer
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(
+                    instance.contains_dyn(NOTE, &note_row(1_000, "starved"))?,
+                    "reads serve the applied pending"
+                );
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 
     // The racer is spent; the next commit publishes the retained
     // batch first, then lands its own.
@@ -94,7 +96,7 @@ fn sixteen_disjoint_losses_surface_slot_race_and_keep_pending() {
         .expect("commit after the race");
     assert!(matches!(outcome, Commit::Accepted { generation: 18, .. }));
     assert_eq!(writer.backlog(), None);
-    assert_eq!(writer.vector()[&braid], 18);
+    assert_eq!(writer.vector().at(braid), 18);
     let fs = FsStore::new(root);
     let retained = fs
         .get(&log_key("", braid, 17))
@@ -170,8 +172,10 @@ fn a_rejecting_terminal_rejudgment_surfaces_hot_key_from_the_violation() {
         None,
         "a rejected terminal re-judgment clears the pending — nothing is owed"
     );
-    let generation = writer.with_db(|db| db.generation().expect("generation").value());
-    let sum: u64 = writer.vector().values().sum();
+    let generation = writer
+        .with_db(|db| db.generation().expect("generation").value())
+        .expect("db");
+    let sum: u64 = writer.vector().sum().expect("sum");
     assert_eq!(generation, sum, "whole with nothing pending");
 }
 
@@ -214,13 +218,15 @@ fn open_ending_in_contention_keeps_pending_and_serves() {
         "an open ending in Contention keeps its pending"
     );
     assert_eq!(racer.plants(), 16);
-    reopened.with_db(|db| {
-        db.read(|instance| {
-            assert!(instance.contains_dyn(NOTE, &note_row(7, "pending"))?);
-            Ok(())
+    reopened
+        .with_db(|db| {
+            db.read(|instance| {
+                assert!(instance.contains_dyn(NOTE, &note_row(7, "pending"))?);
+                Ok(())
+            })
+            .expect("read");
         })
-        .expect("read");
-    });
+        .expect("db");
 
     let outcome = reopened
         .commit(|batch| {
