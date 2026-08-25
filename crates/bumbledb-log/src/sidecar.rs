@@ -198,6 +198,8 @@ impl Chain {
     /// The one rendering: version byte 3, counted entries in braid
     /// order, then the constructor arm. `Pending` carries its batch as
     /// raw bytes.
+    ///
+    /// # Panics
     #[must_use]
     pub fn render(&self) -> Vec<u8> {
         let entries = self.entries();
@@ -231,6 +233,8 @@ impl Chain {
     /// Braids the file omits sit at genesis. A leading byte other than
     /// 3 is a version refusal. The `g`/`ts`/`gen` columns are `u64le`;
     /// pending bytes are a length-delimited payload.
+    ///
+    /// # Errors
     pub fn parse(bytes: &[u8], braids: &Braids) -> Result<Self, SidecarError> {
         let mal = |at| SidecarError::Malformed { at };
         let mut cur = Cursor::new(bytes);
@@ -301,6 +305,8 @@ impl Chain {
     /// rename over `chain`, fsync the directory — so a crash leaves
     /// either the incumbent sidecar or the successor, never a torn
     /// record.
+    ///
+    /// # Errors
     pub fn write_atomic(&self, dir: &Path) -> io::Result<()> {
         let target = dir.join(CHAIN_FILE);
         let temp = dir.join(format!(".{CHAIN_FILE}.tmp.{}", std::process::id()));

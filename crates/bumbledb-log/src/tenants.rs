@@ -206,6 +206,9 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
     /// The tenant's replica, opening it on a miss and evicting the
     /// least-recent unpinned replicas past the budget. The returned
     /// handle is live: its pin holds eviction off until drop.
+    ///
+    /// # Errors
+    /// # Panics
     pub fn tenant(&mut self, id: &str) -> Result<Tenant<'_, T, S>, Fault> {
         if !segment_ok(id) {
             return Ok(Tenant::Refused(TenantRefusal::Id));
@@ -264,6 +267,8 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
     /// directory. Pinned `_shared` refuses by doing nothing. A live
     /// pin refuses by doing nothing. The returned [`Disposed`] is the
     /// handle type after eviction.
+    ///
+    /// # Errors
     pub fn evict(&mut self, id: &str) -> Result<Option<Disposed>, Fault> {
         if id == SHARED_TENANT {
             return Ok(None);

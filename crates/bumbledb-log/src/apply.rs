@@ -131,6 +131,8 @@ pub enum Applied {
 /// a second addend here. On `Advanced`/`Absorbed` the in-memory chain
 /// has advanced;
 /// persisting it is the caller's step two.
+///
+/// # Errors
 pub fn apply<T>(
     db: &Db<T>,
     chain: &mut Chain,

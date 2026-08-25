@@ -49,6 +49,8 @@ impl From<io::Error> for LeaseBusy {
 }
 
 /// Exclusive temp under `{root}/~tmp`, fsynced.
+///
+/// # Errors
 pub fn synced_temp(root: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     let dir = root.join(TEMP_NAMESPACE);
     fs::create_dir_all(&dir)?;
@@ -67,6 +69,8 @@ pub fn synced_temp(root: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
 }
 
 /// Fsync `path`'s parent directory.
+///
+/// # Errors
 pub fn sync_parent(path: &Path) -> io::Result<()> {
     let dir = path
         .parent()
@@ -75,6 +79,8 @@ pub fn sync_parent(path: &Path) -> io::Result<()> {
 }
 
 /// Fsync every ancestor of `path` up to and including `root`.
+///
+/// # Errors
 pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
     let mut current = path.parent();
     while let Some(dir) = current {
@@ -88,6 +94,8 @@ pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
 }
 
 /// Sweep crash litter: stale temps, and every expired lease token file.
+///
+/// # Errors
 pub fn sweep_reserved(root: &Path) -> io::Result<()> {
     sweep_stale_temps(&root.join(TEMP_NAMESPACE))?;
     sweep_expired_leases(&root.join(LEASE_NAMESPACE), unix_ms())?;
@@ -245,6 +253,8 @@ fn acquire_once(
 }
 
 /// Wait out a live mutation lease; take it when expired or absent.
+///
+/// # Errors
 pub fn acquire_mutation(root: &Path, key: &str, holder: WriterId) -> io::Result<HeldLease> {
     let dir = root.join(LEASE_NAMESPACE).join(key);
     loop {
@@ -260,6 +270,8 @@ pub fn acquire_mutation(root: &Path, key: &str, holder: WriterId) -> io::Result<
 }
 
 /// One-shot directory exclusivity: a live holder is `Live`, not waited.
+///
+/// # Errors
 pub fn acquire_dir(root: &Path, holder: WriterId) -> Result<HeldLease, LeaseBusy> {
     let dir = root.join(LEASE_NAMESPACE);
     loop {
@@ -280,6 +292,8 @@ impl HeldLease {
 
     /// True iff this token is still the max — a stale holder lost the
     /// CAS and must not publish.
+    ///
+    /// # Errors
     pub fn still_current(&self) -> io::Result<bool> {
         match current_lease(&self.dir)? {
             Some((token, _)) => Ok(token == self.token),
@@ -288,6 +302,8 @@ impl HeldLease {
     }
 
     /// Push `expires` forward under the same token (directory heartbeat).
+    ///
+    /// # Errors
     pub fn refresh(&self, ttl_ms: u64) -> io::Result<()> {
         if !self.still_current()? {
             return Err(io::Error::new(

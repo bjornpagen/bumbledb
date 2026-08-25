@@ -287,12 +287,12 @@ pub enum Restore<T> {
 }
 
 /// Restores to `target`: walks the checkpoint backlink chain from the
-///
-/// # Errors
 /// manifest to the first checkpoint whose vector is pointwise at or
 /// below the target (bootstrapping from zero when the walk runs out at
 /// the first checkpoint), opens it at `dir`, then replays each braid to
 /// its target — braid order irrelevant (L8).
+///
+/// # Errors
 pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -379,13 +379,14 @@ pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
     })
 }
 
-/// # Errors
 /// Maps a wall-clock instant through the batch timestamps — per braid
 /// the largest g with `ts ≤ T`; timestamps are clamped monotone per
 /// braid at publish, so the mapped set is a prefix by construction —
 /// then restores to the mapped vector. Cross-braid, wall clocks are
 /// writer-local: the restored vector, not the instant, is the reported
 /// truth.
+///
+/// # Errors
 pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
     store: &S,
     prefix: &str,

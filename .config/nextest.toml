@@ -1,0 +1,14 @@
+# nextest runs every unit and integration test in one process pool.
+# cargo test compiles each tests/*.rs as its own binary and runs those
+# binaries one after another.
+#
+# The workspace command:
+#   cargo nextest run --workspace
+
+[profile.default]
+# One thread per CPU. The win is the shared pool across binaries.
+test-threads = "num-cpus"
+
+# Multiprocess lanes sit on disk; they outlast nextest's default 60s
+# slow mark. Warn, do not terminate.
+slow-timeout = { period = "180s" }

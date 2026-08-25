@@ -74,6 +74,7 @@ pub struct S3Store {
 }
 
 impl S3Store {
+    /// # Errors
     pub fn new(config: &S3Config) -> Result<Self> {
         if Handle::try_current().is_ok() {
             return Err(StoreError {
@@ -140,6 +141,8 @@ impl S3Store {
 
     /// Delete every object under this store's prefix. The smoke lane's
     /// bucket cleanup.
+    ///
+    /// # Errors
     pub fn sweep_prefix(&self) -> Result<u64> {
         let raw = if self.prefix.is_empty() {
             return Err(StoreError {

@@ -477,6 +477,7 @@ impl Vocabulary {
         }
     }
 
+    /// # Panics
     #[must_use]
     pub fn relation(&self, id: RelationId) -> Option<&RelationInfo> {
         self.relations
@@ -521,6 +522,8 @@ impl Codec {
     }
 
     /// Encodes a batch: header, then ops. Nothing else rides the wire.
+    ///
+    /// # Errors
     pub fn encode(&self, header: &BatchHeader, ops: &[Op]) -> Result<Vec<u8>, EncodeError> {
         if header.fingerprint != self.fingerprint {
             return Err(EncodeError::FingerprintMismatch);
@@ -598,6 +601,9 @@ impl Codec {
     /// Decodes a batch: a full sequential parse of every byte before
     /// any apply, refusing version, flags, fingerprint, braid
     /// membership, malformed values, and any byte past the last op.
+    ///
+    /// # Errors
+    /// # Panics
     pub fn decode(&self, bytes: &[u8]) -> Result<Batch, DecodeError> {
         let mut cur = Cursor::new(bytes);
 

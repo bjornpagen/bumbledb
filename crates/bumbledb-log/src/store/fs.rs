@@ -357,6 +357,8 @@ impl ObjectStore for FsStore {
 /// parent — the checkpoint-seed durability law, available to any
 /// caller that materializes an mdb beside a sidecar. Newly created
 /// ancestors are dir-fsynced before the ack.
+///
+/// # Errors
 pub fn durable_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path.parent().unwrap_or(path);
     fs::create_dir_all(parent)?;

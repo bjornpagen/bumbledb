@@ -46,6 +46,8 @@ impl std::error::Error for KeyError {}
 
 impl StoreKey {
     /// Parse at the boundary. Every later verb takes the proof.
+    ///
+    /// # Errors
     pub fn parse(raw: &str) -> std::result::Result<Self, KeyError> {
         let well_formed = !raw.is_empty()
             && !raw.starts_with('/')
@@ -62,6 +64,8 @@ impl StoreKey {
 
     /// Protocol and fixture assembly: a well-formed key is a
     /// programming error to get wrong, not a runtime outcome.
+    ///
+    /// # Panics
     #[must_use]
     pub fn of(raw: &str) -> Self {
         Self::parse(raw).unwrap_or_else(|err| panic!("{err}"))
@@ -142,6 +146,8 @@ fn is_cf(c: char) -> bool {
 
 /// A store prefix: empty, or a [`StoreKey`] spelling (the same segment
 /// grammar, no leading or trailing slash).
+///
+/// # Errors
 pub fn parse_prefix(raw: &str) -> std::result::Result<String, KeyError> {
     if raw.is_empty() {
         return Ok(String::new());
@@ -359,16 +365,22 @@ impl<'a> From<&'a Vec<u8>> for Fenced<'a> {
 /// context — it returns `Err` instead.
 pub trait ObjectStore: Send + Sync {
     /// GET. `Ok(None)` on 404.
+    ///
+    /// # Errors
     fn get(&self, key: &StoreKey) -> Result<Option<Fetched>>;
 
     /// GET with `If-None-Match: <etag>`. `Ok(Unchanged)` on 304 — the
     /// cheap manifest poll.
+    ///
+    /// # Errors
     fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll>;
 
     /// PUT with `If-None-Match: "*"`. `Ok(Created(etag))` or `Ok(Exists)`
     /// on a proved occupation; `Ok(Ambiguous)` when the transport cannot
     /// prove the result. The write is [`Fenced`]: create records the
     /// token as the generation a later swap can lose to.
+    ///
+    /// # Errors
     fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create>;
 
     /// PUT with `If-Match: <etag>`. `Ok(Swapped(etag))` or `Ok(Moved)` on
@@ -376,6 +388,8 @@ pub trait ObjectStore: Send + Sync {
     /// when the transport cannot prove the result. The write is
     /// [`Fenced`]: `body.token <` the stored generation is `Moved` — a
     /// stale holder is the token the CAS does not win (20).
+    ///
+    /// # Errors
     fn put_swap<'a>(
         &self,
         key: &StoreKey,
@@ -385,6 +399,8 @@ pub trait ObjectStore: Send + Sync {
 
     /// DELETE (unconditional). The gc verb's tool. Success means the
     /// parent directory is durable.
+    ///
+    /// # Errors
     fn delete(&self, key: &StoreKey) -> Result<()>;
 }
 
@@ -416,6 +432,8 @@ pub enum SwapProbe {
 }
 
 /// Collapse an `Ambiguous` create through the GET-verify law.
+///
+/// # Errors
 pub fn prove_create<S: ObjectStore>(
     store: &S,
     key: &StoreKey,
@@ -433,6 +451,8 @@ pub fn prove_create<S: ObjectStore>(
 }
 
 /// Collapse an `Ambiguous` swap through the GET-verify law.
+///
+/// # Errors
 pub fn prove_swap<S: ObjectStore>(
     store: &S,
     key: &StoreKey,
@@ -452,6 +472,8 @@ pub fn prove_swap<S: ObjectStore>(
 /// retried after an ambiguous outcome (a timeout after the request may
 /// have landed). The follow-up is a GET of the target key comparing
 /// content — byte-equal means the operation succeeded.
+///
+/// # Errors
 pub fn resolve_ambiguous_create<S: ObjectStore>(
     store: &S,
     key: &StoreKey,
@@ -468,6 +490,8 @@ pub fn resolve_ambiguous_create<S: ObjectStore>(
 /// GET of the target key re-reading its etag. Bytes equal to the attempted
 /// body prove the swap landed under that fresh tag; anything else is the
 /// state to re-decide from.
+///
+/// # Errors
 pub fn resolve_ambiguous_swap<S: ObjectStore>(
     store: &S,
     key: &StoreKey,
@@ -482,6 +506,8 @@ pub fn resolve_ambiguous_swap<S: ObjectStore>(
 
 /// Read attempts, jittered exponential backoff base 50 ms cap 2 s, six
 /// attempts total, then the last failure surfaces as `Err`.
+///
+/// # Errors
 pub fn retry_read<T, F: FnMut() -> Result<T>>(mut op: F) -> Result<T> {
     const ATTEMPTS: u32 = 6;
     const BASE_MS: u64 = 50;

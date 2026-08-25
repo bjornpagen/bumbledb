@@ -86,6 +86,8 @@ where
 {
     /// Opens the prefix as a checkpointer — the replica gauntlet, then
     /// the protocol cadence knobs.
+    ///
+    /// # Errors
     pub fn open(
         store: S,
         prefix: &str,
@@ -121,6 +123,8 @@ where
     /// The one body: refresh, compact and publish if the cadence is
     /// crossed, then the retention law against the trusted publish
     /// clock.
+    ///
+    /// # Errors
     pub fn run(&mut self) -> Result<Ran, Fault> {
         let busy = Arc::clone(&self.duty_busy);
         busy.store(true, Ordering::Release);

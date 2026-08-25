@@ -37,12 +37,16 @@ impl std::error::Error for TheoryFile {}
 
 /// Parse `{relations, statements}` once. Every later open takes the
 /// descriptor.
+///
+/// # Errors
 pub fn load(path: &Path) -> Result<SchemaDescriptor, TheoryFile> {
     let raw = fs::read_to_string(path).map_err(TheoryFile::Io)?;
     parse(&raw)
 }
 
 /// Parse the theory-file grammar from bytes already in memory.
+///
+/// # Errors
 pub fn parse(raw: &str) -> Result<SchemaDescriptor, TheoryFile> {
     parse_schema(&read_tree(raw)?)
 }

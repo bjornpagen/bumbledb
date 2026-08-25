@@ -116,6 +116,8 @@ fn put_swap<S: ObjectStore>(
 /// `next + count`, decided before the CAS; a last partial block
 /// saturates at `u64::MAX` when the width would overflow but the draw
 /// still fits. `OverWidth` is not this function's refusal.
+///
+/// # Errors
 pub fn lease_block<S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -212,6 +214,8 @@ impl Leases {
     /// holds enough, otherwise from one fresh CAS lease. `count` is
     /// unsigned. A cache hit is not a write; a miss writes under
     /// `self.token`.
+    ///
+    /// # Errors
     pub fn draw<S: ObjectStore>(
         &mut self,
         store: &S,

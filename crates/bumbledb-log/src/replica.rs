@@ -317,6 +317,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// decided from the current checkpoint vector before probing; and
     /// the wholeness identity before anything serves from a
     /// pre-existing directory. A missing manifest is `ManifestMissing`.
+    ///
+    /// # Errors
     pub fn open(store: S, prefix: &str, dir: &Path, theory: T) -> Result<Opened<T, S>, Fault> {
         let (codec, fingerprint, _) = match derive_codec(&theory) {
             Ok(derived) => derived,
@@ -351,6 +353,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
 
     /// The engine's own surface — no wrapper query API exists.
     /// Unmounted refuses; the stepper never dereferences a missing store.
+    ///
+    /// # Errors
     pub fn db(&self) -> Result<&Db<T>, OpenRefusal> {
         self.state.db()
     }
@@ -394,11 +398,15 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// One catch-up pass over all braids; returns the vector. Every
     /// N-th pass begins with the conditional manifest poll that keeps
     /// tip-vs-hole honest for long-lived replicas.
+    ///
+    /// # Errors
     pub fn refresh(&mut self) -> Result<Refreshed, Fault> {
         self.step_pass(Phase::Steady)
     }
 
     /// `refresh` until this vector dominates `target`.
+    ///
+    /// # Errors
     pub fn wait_for(&mut self, target: &Vector) -> Result<Waited, Fault> {
         loop {
             let have = self.chain.vector();
@@ -420,6 +428,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
 
     /// Closes the replica and deletes its directory — the disposable
     /// law's verb, used by tenant eviction.
+    ///
+    /// # Errors
     pub fn dispose(mut self) -> io::Result<()> {
         self.state = ReplicaState::Unmounted;
         match fs::remove_dir_all(&self.dir) {
@@ -474,6 +484,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// Re-read the manifest pointer. A checkpointer that just published
     /// adopts the floor it installed so the next cadence check is
     /// against the new sum, not the pre-publish one.
+    ///
+    /// # Errors
     pub fn pull_manifest(&mut self) -> Result<Option<OpenRefusal>, Fault> {
         self.read_manifest()
     }
@@ -991,6 +1003,8 @@ pub fn parse_ckpt_scratch(bytes: &[u8]) -> Option<[u8; 32]> {
 
 /// Records `digest` in the scratch lease before the upload-before-decision
 /// window. The successor GETs this document at open.
+///
+/// # Errors
 pub fn record_ckpt_scratch(dir: &Path, digest: &[u8; 32]) -> io::Result<()> {
     let path = ckpt_scratch_path(dir);
     if let Some(parent) = path.parent() {
@@ -1012,6 +1026,8 @@ pub fn record_ckpt_scratch(dir: &Path, digest: &[u8; 32]) -> io::Result<()> {
 
 /// Drops the scratch lease after the candidate is live, reclaimed, or
 /// never uploaded.
+///
+/// # Errors
 pub fn clear_ckpt_scratch(dir: &Path) -> io::Result<()> {
     match fs::remove_file(ckpt_scratch_path(dir)) {
         Ok(()) => Ok(()),
@@ -1022,6 +1038,8 @@ pub fn clear_ckpt_scratch(dir: &Path) -> io::Result<()> {
 
 /// Deletes `ckpt/{digest}.mdb` and `ckpt/{digest}` as one unit. A missing object
 /// is already gone.
+///
+/// # Errors
 pub fn reclaim_orphan<S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -1034,6 +1052,8 @@ pub fn reclaim_orphan<S: ObjectStore>(
 
 /// Any successor reclaims the predecessor's reserved temps, sidecar
 /// temps, sibling compact scratch, and the crash-strand scratch lease.
+///
+/// # Errors
 pub fn sweep_at_open<S: ObjectStore>(store: &S, prefix: &str, dir: &Path) -> Result<(), Fault> {
     sweep_ckpt_scratch(store, prefix, dir)?;
     sweep_local_litter(dir)?;

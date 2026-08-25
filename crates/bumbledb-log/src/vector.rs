@@ -57,6 +57,8 @@ impl Vector {
     }
 
     /// The wholeness arithmetic. The one overflow site.
+    ///
+    /// # Errors
     pub fn sum(&self) -> Result<u64, Overflow> {
         self.counts
             .values()
@@ -109,6 +111,8 @@ impl Vector {
 
     /// `u32le` count, then `(u32le braid, u64le g)` pairs in braid order,
     /// bounded by the bytes behind the count.
+    ///
+    /// # Panics
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let count = u32::try_from(self.counts.len()).expect("braid count fits u32");
@@ -123,6 +127,8 @@ impl Vector {
 
     /// Inverse of [`Self::encode`]. A count the remaining bytes cannot
     /// open is truncated; entries must ascend; overflow is [`Self::sum`].
+    ///
+    /// # Errors
     pub fn parse(bytes: &[u8]) -> Result<Self, VectorError> {
         let mut cur = Cursor::new(bytes);
         let count = cur.u32()?;

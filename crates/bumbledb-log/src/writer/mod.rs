@@ -434,6 +434,8 @@ where
     S: ObjectStore + 'static,
 {
     /// Opens a writer with the production hook.
+    ///
+    /// # Errors
     pub fn open(
         store: S,
         prefix: &str,
@@ -456,6 +458,8 @@ where
     /// three forced arms. An open whose backlog publication ends in
     /// `Contention` still comes up `Ready`: the store is whole, reads
     /// serve, and publication retries on the next commit.
+    ///
+    /// # Errors
     pub fn open_hooked(
         store: S,
         prefix: &str,
@@ -555,6 +559,8 @@ where
     /// Runs `body` against a fresh batch and commits the recorded ops
     /// under one braid; a spanning batch refuses with the braids named.
     /// The driver never re-invokes `body` — retry is host policy.
+    ///
+    /// # Errors
     pub fn commit<R>(
         &self,
         body: impl FnOnce(&mut Batch<'_, S>) -> Result<R>,
@@ -585,6 +591,8 @@ where
     /// first-appearance order, outcomes as the vector of per-braid
     /// results. Splitness is chosen at the call site — partial
     /// completion is representable, never surprising.
+    ///
+    /// # Errors
     pub fn commit_split<R>(
         &self,
         body: impl FnOnce(&mut Batch<'_, S>) -> Result<R>,
@@ -625,6 +633,8 @@ where
     /// Read access to the engine's own surface — the store the writer
     /// serves reads from, current as of the last drained commit.
     /// Unmounted refuses; access never dereferences a missing store.
+    ///
+    /// # Errors
     pub fn with_db<R>(&self, f: impl FnOnce(&Db<T>) -> R) -> Result<R> {
         let core = lock(&self.inner.core);
         Ok(f(core.db()?))

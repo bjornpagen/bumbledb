@@ -53,6 +53,8 @@ pub struct Braids {
 impl Braids {
     /// The braid of an ordinary relation; closed and unknown relations
     /// have none.
+    ///
+    /// # Panics
     #[must_use]
     pub fn braid_of(&self, relation: RelationId) -> Option<BraidId> {
         self.by_relation
@@ -78,6 +80,8 @@ impl Braids {
     }
 
     /// The components, keyed by braid id.
+    ///
+    /// # Panics
     #[must_use]
     pub fn components(&self) -> BTreeMap<BraidId, Vec<RelationId>> {
         let mut components: BTreeMap<BraidId, Vec<RelationId>> = BTreeMap::new();
@@ -111,6 +115,8 @@ fn union(parent: &mut [usize], a: usize, b: usize) {
 
 /// Derives the braid decomposition and the serial-at-statements from
 /// the descriptor.
+///
+/// # Panics
 #[must_use]
 pub fn braids(descriptor: &SchemaDescriptor) -> Braids {
     let count = descriptor.relations.len();

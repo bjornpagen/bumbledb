@@ -56,6 +56,8 @@ impl fmt::Display for InspectError {
 
 /// The object kind the key spelling names. `.mdb` is a store snapshot,
 /// not a protocol document.
+///
+/// # Errors
 pub fn kind(key: &str) -> Result<Kind, InspectError> {
     let segs: Vec<&str> = key.split('/').filter(|s| !s.is_empty()).collect();
     match segs.as_slice() {
@@ -75,6 +77,8 @@ pub fn kind(key: &str) -> Result<Kind, InspectError> {
 }
 
 /// Decode through the crate parsers and render the value as text.
+///
+/// # Errors
 pub fn render(kind: Kind, bytes: &[u8], theory: &SchemaDescriptor) -> Result<String, InspectError> {
     let mut out = String::new();
     writeln!(out, "digest {}", hex32(blake3::hash(bytes).as_bytes())).expect("inspect");

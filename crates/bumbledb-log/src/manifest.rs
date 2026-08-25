@@ -202,6 +202,7 @@ impl Manifest {
         out
     }
 
+    /// # Errors
     pub fn parse(bytes: &[u8]) -> Result<Self, ManifestError> {
         let mal = |at| ManifestError::Malformed { at };
         let mut cur = Cursor::new(bytes);
@@ -278,6 +279,7 @@ pub struct Checkpoint {
 }
 
 impl Checkpoint {
+    /// # Panics
     #[must_use]
     pub fn render(&self) -> Vec<u8> {
         let count = u32::try_from(self.braids.len()).expect("braid count fits u32");
@@ -301,6 +303,8 @@ impl Checkpoint {
     /// place to stand), and the set must match the decomposition
     /// exactly. A declared count the remaining bytes cannot back is
     /// Malformed.
+    ///
+    /// # Errors
     pub fn parse(bytes: &[u8], braids: &Braids) -> Result<Self, CheckpointError> {
         let mal = |at| CheckpointError::Malformed { at };
         let mut cur = Cursor::new(bytes);
@@ -382,6 +386,8 @@ impl Checkpoint {
 
 /// Creates the manifest with `put_create` — the store-birth arm; a
 /// second creator sees `Exists` and proceeds on the incumbent.
+///
+/// # Errors
 pub fn create_manifest<S: ObjectStore>(
     store: &S,
     prefix: &str,
@@ -423,6 +429,8 @@ pub enum PublishRefusal {
 /// points at the head of that immutable list. Termination is
 /// structural — every successful swap strictly raises the incumbent
 /// sum.
+///
+/// # Errors
 pub fn publish_checkpoint<S: ObjectStore>(
     store: &S,
     prefix: &str,

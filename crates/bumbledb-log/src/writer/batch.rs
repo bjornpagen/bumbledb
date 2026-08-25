@@ -51,6 +51,8 @@ impl<S: ObjectStore> Batch<'_, S> {
     /// `OverWidth | Exhausted | Drawn`. The body is not re-run; the
     /// resulting inserts carry the concrete values, and id
     /// reservations never appear in the log.
+    ///
+    /// # Errors
     pub fn reserve(
         &mut self,
         relation: RelationId,
@@ -71,6 +73,9 @@ impl<S: ObjectStore> Batch<'_, S> {
     /// the weight field, `expiry` into the one leftover u64 field.
     /// Nothing here is special-cased — the row rides the log like any
     /// other, and the spend is an ordinary commit.
+    ///
+    /// # Errors
+    /// # Panics
     pub fn reserve_capacity(
         &mut self,
         statement: StatementId,
