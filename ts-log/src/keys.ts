@@ -11,6 +11,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import { digest32, digest32FromHex, hex32, U64_MAX } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 
@@ -40,8 +41,9 @@ const TILDE_FAMILY = new Set([
 	"\uFF5E"
 ])
 
-const FORMAT_OR_SEPARATOR = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]/u
-const FORMAT_CHARS = /\p{Cf}/gu
+const FORMAT_OR_SEPARATOR = regex("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Zs}]", "u")
+const FORMAT_CHARS = regex("\\p{Cf}", "gu")
+const SLASH_TRIM = regex("^/+|/+$", "g")
 
 declare const storeKeyBrand: unique symbol
 type StoreKey = string & { readonly [storeKeyBrand]: typeof storeKeyBrand }
@@ -96,7 +98,7 @@ function parsePrefix(raw: string): string {
 	if (raw.length === 0) {
 		return ""
 	}
-	return storeKey(raw.replace(/^\/+|\/+$/g, ""))
+	return storeKey(raw.replace(SLASH_TRIM, ""))
 }
 
 function isReservedName(name: string): boolean {

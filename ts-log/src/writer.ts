@@ -23,6 +23,7 @@ import {
 	type Violation
 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, checkedAddU64, digest32, digest32FromHex, toHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
@@ -70,6 +71,7 @@ import { checkAgainst } from "#value.ts"
 
 /** 10 owns the width: one CAS amortizes counter traffic 4096× below slot traffic. */
 const LEASE_WIDTH = 4096n
+const ID_LEASE_COUNTER = regex("^\\d+$")
 
 /** The live-loss bound (60): consecutive losses at the live tip, history never counts. */
 const LOSS_BOUND = 16
@@ -240,7 +242,7 @@ async function acquireLease<Rels extends SchemaRelations>(
 			continue
 		}
 		const body = utf8StrictDecoder.decode(fetched.bytes)
-		if (!/^\d+$/.test(body)) {
+		if (!ID_LEASE_COUNTER.test(body)) {
 			throw errors.new(`id-lease counter ${key} is not a canonical decimal: ${body}`)
 		}
 		const next = BigInt(body)

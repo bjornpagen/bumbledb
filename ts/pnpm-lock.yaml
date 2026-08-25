@@ -11,6 +11,9 @@ importers:
       '@superbuilders/errors':
         specifier: ^4.0.2
         version: 4.0.2(typescript@7.0.2)
+      arkregex:
+        specifier: ^0.0.8
+        version: 0.0.8
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.0.0-beta.5
@@ -23,6 +26,9 @@ importers:
         version: 7.0.2
 
 packages:
+
+  '@ark/util@0.56.2':
+    resolution: {integrity: sha512-9kU2sUE38FZEGG7l3hamYMBieLYEJh2L1mrYD2eXpT+78EnQSV1bhjxJhnxGBMSTbtwpBSDNSK+K60WvaI/DTQ==}
 
   '@biomejs/biome@2.5.4':
     resolution: {integrity: sha512-xy5FNE5kQJKyK5MR1gJy6ztXYx4WBAbYGlK04lMEgmyPRWKybY9NFwiG9yo0XdzOU8Xvhj41u034J1ywfoWfMw==}
@@ -210,6 +216,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  arkregex@0.0.8:
+    resolution: {integrity: sha512-PJcx6G1kQTgLKPUbeYlYecDRaKq15AMSGVajlKFYWlPeJRQL+j3dKE6tyMs40HZ99djS1l9Vhl3ezAHy9JBIqQ==}
+
   typescript@7.0.2:
     resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
     engines: {node: '>=16.20.0'}
@@ -219,6 +228,8 @@ packages:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
 snapshots:
+
+  '@ark/util@0.56.2': {}
 
   '@biomejs/biome@2.5.4':
     optionalDependencies:
@@ -322,6 +333,10 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  arkregex@0.0.8:
+    dependencies:
+      '@ark/util': 0.56.2
 
   typescript@7.0.2:
     optionalDependencies:

@@ -1,5 +1,8 @@
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import type { LiteralSpec } from "#spec.ts"
+
+const INTEGER_INDEX_NAME = regex("^(?:0|[1-9][0-9]*)$")
 
 /**
  * A half-open interval `[start, end)` as a plain value object — the ONE
@@ -142,7 +145,7 @@ function intervalLiteral(element: "u64" | "i64", value: unknown): LiteralSpec {
 }
 
 function assertDeclarationOrderKey(where: string, name: string): void {
-	if (/^(?:0|[1-9][0-9]*)$/.test(name)) {
+	if (INTEGER_INDEX_NAME.test(name)) {
 		throw errors.new(
 			`${where}: name ${name} is an integer index — JavaScript object keys re-order integer indices, breaking the declaration-order law; use a non-numeric name`
 		)

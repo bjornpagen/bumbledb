@@ -16,6 +16,7 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import type { Schema, SchemaRelations } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import { tenantPrefix } from "#keys.ts"
 import type { Replica } from "#replica.ts"
 import { openReplica } from "#replica.ts"
@@ -23,6 +24,9 @@ import type { FsLease, ObjectStore } from "#store.ts"
 import { acquireFsLease, releaseFsLease } from "#store.ts"
 
 const PINNED_TENANT = "_shared"
+const SIGNED_DECIMAL = regex("^-?\\d+$")
+const UNSIGNED_DECIMAL = regex("^\\d+$")
+const TENANT_ID = regex("^[A-Za-z0-9._-]+$")
 
 /** Directory-lease lifetime: one owner per replica directory. The pool
  *  CAS-extends `expires` at one-third this TTL while the slot is open,
@@ -97,7 +101,7 @@ function parseLease(raw: string): { holder: bigint; token: bigint; expires: bigi
 	if (holderLine === undefined || tokenLine === undefined || expiresLine === undefined) {
 		return null
 	}
-	if (!/^-?\d+$/.test(holderLine) || !/^\d+$/.test(tokenLine) || !/^-?\d+$/.test(expiresLine)) {
+	if (!SIGNED_DECIMAL.test(holderLine) || !UNSIGNED_DECIMAL.test(tokenLine) || !SIGNED_DECIMAL.test(expiresLine)) {
 		return null
 	}
 	return { holder: BigInt(holderLine), token: BigInt(tokenLine), expires: BigInt(expiresLine) }
@@ -170,7 +174,7 @@ async function directoryBytes(dir: string): Promise<number> {
 }
 
 function checkTenantId(tenant: string): void {
-	if (!/^[A-Za-z0-9._-]+$/.test(tenant)) {
+	if (!TENANT_ID.test(tenant)) {
 		throw errors.new(`tenant id is not a single path segment: ${tenant}`)
 	}
 }

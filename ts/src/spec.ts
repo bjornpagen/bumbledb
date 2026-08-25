@@ -1,3 +1,5 @@
+import { regex } from "arkregex"
+
 type ValueTypeSpec =
 	| { readonly kind: "bool" }
 	| { readonly kind: "u64" }
@@ -102,9 +104,9 @@ interface SchemaSpec {
 	readonly statements: readonly StatementSpec[]
 }
 
-const NON_PRINTABLE = /[\p{C}\p{Z}]/u
+const NON_PRINTABLE = regex("[\\p{C}\\p{Z}]", "u")
 
-const GRAPHEME_EXTEND = /\p{Grapheme_Extend}/u
+const GRAPHEME_EXTEND = regex("\\p{Grapheme_Extend}", "u")
 
 function escapeDebugChar(ch: string): string {
 	if (ch === "\0") {

@@ -48,7 +48,8 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"dependencies": {
-		"@superbuilders/errors": "^4.0.2"
+		"@superbuilders/errors": "^4.0.2",
+		"arkregex": "^0.0.8"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.0.0-beta.5",

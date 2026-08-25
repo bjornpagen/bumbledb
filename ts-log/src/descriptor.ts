@@ -19,6 +19,7 @@ import type {
 } from "@bjornpagen/bumbledb"
 import { internalDescriptor, lower } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import { fromHex } from "#bytes.ts"
 import type { Value } from "#value.ts"
 
@@ -79,8 +80,11 @@ type StatementInfo =
 declare const braidBrand: unique symbol
 type Braid = string & { readonly [braidBrand]: typeof braidBrand }
 
+const BRAID_ID = regex("^c[0-9a-f]{8}$")
+const ID_CLASS = regex("^(.*)\\.id$")
+
 function braid(raw: string): Braid {
-	if (!/^c[0-9a-f]{8}$/.test(raw)) {
+	if (!BRAID_ID.test(raw)) {
 		throw errors.new(`not a braid id: ${raw}`)
 	}
 	return raw as Braid
@@ -92,7 +96,7 @@ function refuseShape(why: string): never {
 
 /** `{name}.id` — the closed relation's generator class. */
 function idClassOwner(newtype: string): string | undefined {
-	const match = /^(.*)\.id$/.exec(newtype)
+	const match = ID_CLASS.exec(newtype)
 	const owner = match?.[1]
 	if (owner === undefined || owner.length === 0) {
 		return undefined

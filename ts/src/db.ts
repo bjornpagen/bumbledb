@@ -31,6 +31,7 @@
 
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import { rosterOf } from "#fields.ts"
 import { lower } from "#lower.ts"
@@ -62,6 +63,8 @@ import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
 import type { AnyRelation, Fact, FreshKeys } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 import { isStatement, type KeyStatement, type Statement } from "#statements.ts"
+
+const LEASED_FOR_PUBLISH = regex("leased for publish")
 
 type MemberRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], AnyRelation>
 
@@ -1492,7 +1495,7 @@ function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theo
 				native.ownedInstanceClose(nativeHandle)
 			} catch (caught) {
 				const error = errorFromThrow(caught)
-				if (/leased for publish/.test(error.message)) {
+				if (LEASED_FOR_PUBLISH.test(error.message)) {
 					throw errors.wrap(ErrSpentHandle, "bumbledb owned instance is leased for publish")
 				}
 				throw errors.wrap(error, "close bumbledb owned instance")

@@ -20,6 +20,7 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
+import { regex } from "arkregex"
 import { bytesEqual, toHex } from "#bytes.ts"
 import { wrapStore } from "#errors.ts"
 import type { StoreKey } from "#keys.ts"
@@ -125,6 +126,9 @@ function encodeLease(lease: Lease): Uint8Array {
 	return new TextEncoder().encode(`${lease.holder}\n${lease.token}\n${lease.expires}\n`)
 }
 
+const SIGNED_DECIMAL = regex("^-?\\d+$")
+const UNSIGNED_DECIMAL = regex("^\\d+$")
+
 function parseLease(raw: string): Lease | null {
 	const lines = raw.trim().split("\n")
 	if (lines.length !== 3) {
@@ -134,7 +138,7 @@ function parseLease(raw: string): Lease | null {
 	if (holderLine === undefined || tokenLine === undefined || expiresLine === undefined) {
 		return null
 	}
-	if (!/^-?\d+$/.test(holderLine) || !/^\d+$/.test(tokenLine) || !/^-?\d+$/.test(expiresLine)) {
+	if (!SIGNED_DECIMAL.test(holderLine) || !UNSIGNED_DECIMAL.test(tokenLine) || !SIGNED_DECIMAL.test(expiresLine)) {
 		return null
 	}
 	return { holder: BigInt(holderLine), token: BigInt(tokenLine), expires: BigInt(expiresLine) }
@@ -250,8 +254,8 @@ async function publishLink(temp: string, dest: string): Promise<"linked" | "occu
 	throw linked.error
 }
 
-const LEASE_NAME_RE = /^\.(.+)\.lease\.(\d+)$/
-const TEMP_NAME_RE = /^\.(.+)\.tmp\.\d+\.\d+$/
+const LEASE_NAME_RE = regex("^\\.(.+)\\.lease\\.(\\d+)$")
+const TEMP_NAME_RE = regex("^\\.(.+)\\.tmp\\.\\d+\\.\\d+$")
 
 async function listLeaseFiles(dir: string, name: string): Promise<LeaseFile[]> {
 	const listed = await errors.try(fs.readdir(dir))
