@@ -10,7 +10,7 @@
 
 export type { Braid } from "#braids.ts"
 export { braid, braidsOf, serialAtStatementsOf } from "#braids.ts"
-export type { BatchHeader, ChainEntry, DecodedBatch, Op } from "#codec.ts"
+export type { BatchHeader, ChainEntry, DecodedBatch, EncodeHeader, Op } from "#codec.ts"
 export { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 export type { Descriptor, SerialStatement, Theory } from "#descriptor.ts"
 export { descriptorOf } from "#descriptor.ts"

@@ -134,7 +134,7 @@ describe("the command codec", function suite() {
 	test("a short prev cannot encode", function shortPrev() {
 		assert.equal(
 			refusalKindOf(function encodeIt() {
-				return encodeBatch(Ledger, { ...headerOf(), prev: new Uint8Array([0xaa, 0xbb]) as BatchHeader["prev"] }, opsOf())
+				return encodeBatch(Ledger, { ...headerOf(), prev: new Uint8Array([0xaa, 0xbb]) }, opsOf())
 			}),
 			"DigestWidth"
 		)

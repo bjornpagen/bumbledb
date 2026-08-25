@@ -11,9 +11,9 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import { digest32FromHex, toHex } from "#bytes.ts"
+import { digest32FromHex, fromHex, toHex } from "#bytes.ts"
 import { parseSidecar, renderSidecar } from "#chain.ts"
-import type { BatchHeader, DecodedBatch, Op } from "#codec.ts"
+import type { BatchHeader, DecodedBatch, EncodeHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Descriptor } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
@@ -230,13 +230,13 @@ function assertSidecarHeaderNumbers(label: string, header: NonNullable<BatchSide
 	assertLowercaseHex(`${label}.header.prev`, header.prev)
 }
 
-function headerFromSidecar(sidecar: BatchSidecar): BatchHeader {
+function headerFromSidecar(sidecar: BatchSidecar): EncodeHeader {
 	assert.ok(sidecar.header !== undefined, "sidecar carries a header")
 	return {
 		fingerprint: digest32FromHex(sidecar.fingerprint),
 		braid: braid(sidecar.header.braid),
 		braidGen: generation(BigInt(assertDecimalString("header.braidGen", sidecar.header.braidGen))),
-		prev: digest32FromHex(assertLowercaseHex("header.prev", sidecar.header.prev)),
+		prev: fromHex(assertLowercaseHex("header.prev", sidecar.header.prev)),
 		writer: BigInt(assertDecimalString("header.writer", sidecar.header.writer)),
 		timestamp: BigInt(assertDecimalString("header.timestamp", sidecar.header.timestamp))
 	}

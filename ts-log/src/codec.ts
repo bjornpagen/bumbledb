@@ -38,6 +38,21 @@ interface BatchHeader {
 	readonly timestamp: bigint
 }
 
+/**
+ * Encode input. Digest fields are raw bytes so a short `prev` reaches
+ * the named `DigestWidth` refuse at this gate instead of dying at
+ * `Digest32` construction. Decode still produces a branded
+ * `BatchHeader`.
+ */
+interface EncodeHeader {
+	readonly fingerprint: Uint8Array
+	readonly braid: Braid
+	readonly braidGen: Generation
+	readonly prev: Uint8Array
+	readonly writer: bigint
+	readonly timestamp: bigint
+}
+
 interface DecodedBatch {
 	readonly header: BatchHeader
 	readonly ops: readonly Op[]
@@ -48,11 +63,13 @@ function braidIdOf(id: Braid): number {
 }
 
 /**
- * Encodes one batch. The header's `braid_gen` must equal the slot number
- * the object is published under; every op relation must belong to the
- * header's braid — a spanning batch is unencodable.
+ * Encodes one batch. Digests are branded here: a `prev` or fingerprint
+ * that is not 32 bytes is `DigestWidth`. The header's `braid_gen` must
+ * equal the slot number the object is published under; every op
+ * relation must belong to the header's braid — a spanning batch is
+ * unencodable.
  */
-function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): Uint8Array {
+function encodeBatch(theory: Theory, header: EncodeHeader, ops: readonly Op[]): Uint8Array {
 	const descriptor = descriptorOf(theory)
 	const fingerprint = asDigest(header.fingerprint, "fingerprint")
 	const prev = asDigest(header.prev, "prev")
@@ -137,13 +154,10 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 }
 
 function asDigest(bytes: Uint8Array, at: string): Digest32 {
-	const parsed = errors.trySync(function parseDigest() {
-		return digest32(bytes)
-	})
-	if (parsed.error) {
+	if (bytes.length !== 32) {
 		refuse({ kind: "DigestWidth" }, `${at} is not 32 bytes`)
 	}
-	return parsed.data
+	return digest32(bytes)
 }
 
 function readU32(reader: ByteReader, what: string): bigint {
@@ -320,5 +334,5 @@ function verifyChain(header: BatchHeader, braid: Braid, slot: Generation, chain:
 	}
 }
 
-export type { BatchHeader, ChainEntry, DecodedBatch, Digest32, Op }
+export type { BatchHeader, ChainEntry, DecodedBatch, Digest32, EncodeHeader, Op }
 export { decodeBatch, encodeBatch, verifyChain }
