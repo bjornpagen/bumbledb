@@ -22,8 +22,8 @@ use crate::apply::{Applied, ApplyRefusal, PendingFold, apply, fold_pending};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
-    Checkpoint, CheckpointError, Manifest, ManifestError, Text, ckpt_json_key, ckpt_mdb_key, hex32,
-    log_key, manifest_key,
+    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
+    manifest_key,
 };
 use crate::sidecar::{CHAIN_FILE, Chain, ChainEntry, SidecarRead};
 use crate::store::{Etag, LEASE_NAMESPACE, ObjectStore, Poll, StoreError, TEMP_NAMESPACE};
@@ -985,6 +985,26 @@ pub fn ckpt_scratch_path(dir: &Path) -> PathBuf {
     dir.join(LEASE_NAMESPACE).join(CKPT_SCRATCH_LEASE)
 }
 
+const SCRATCH_VERSION: u8 = 3;
+
+/// The scratch-lease body: version byte 3, then the 32-byte digest.
+#[must_use]
+pub fn encode_ckpt_scratch(digest: &[u8; 32]) -> [u8; 33] {
+    let mut body = [0u8; 33];
+    body[0] = SCRATCH_VERSION;
+    body[1..].copy_from_slice(digest);
+    body
+}
+
+/// The digest a scratch-lease body names, or none.
+#[must_use]
+pub fn parse_ckpt_scratch(bytes: &[u8]) -> Option<[u8; 32]> {
+    if bytes.len() != 33 || bytes.first().copied()? != SCRATCH_VERSION {
+        return None;
+    }
+    bytes[1..].try_into().ok()
+}
+
 /// Records `digest` in the scratch lease before the upload-before-decision
 /// window. The successor GETs this document at open.
 pub fn record_ckpt_scratch(dir: &Path, digest: &[u8; 32]) -> io::Result<()> {
@@ -992,13 +1012,12 @@ pub fn record_ckpt_scratch(dir: &Path, digest: &[u8; 32]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let body = format!("CKPT-SCRATCH/1\n{}\n", hex32(digest));
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(&path)?;
-    file.write_all(body.as_bytes())?;
+    file.write_all(&encode_ckpt_scratch(digest))?;
     file.sync_all()?;
     drop(file);
     if let Some(parent) = path.parent() {
@@ -1062,15 +1081,6 @@ fn live_head<S: ObjectStore>(store: &S, prefix: &str) -> Result<Option<[u8; 32]>
     Ok(Manifest::parse(&fetched.bytes)
         .ok()
         .and_then(|manifest| manifest.checkpoint))
-}
-
-fn parse_ckpt_scratch(bytes: &[u8]) -> Option<[u8; 32]> {
-    let mut text = Text::new(bytes);
-    text.lit("CKPT-SCRATCH/1\n").ok()?;
-    let digest = text.hex32().ok()?;
-    text.lit("\n").ok()?;
-    text.end().ok()?;
-    Some(digest)
 }
 
 fn sweep_local_litter(dir: &Path) -> io::Result<()> {
