@@ -6,7 +6,7 @@ mod lane_d_support;
 use bumbledb::Value;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::tenants::{
-    SHARED_TENANT, Tenant, TenantOptions, TenantRefusal, Tenants, open_tenants,
+    Live, SHARED_TENANT, Tenant, TenantOptions, TenantRefusal, Tenants, open_tenants,
 };
 use lane_d_support::{NOTE, TestLog, insert_note, note_braid, temp_dir, theory};
 
@@ -21,12 +21,9 @@ fn seeded_store(root: &std::path::Path, tenants: &[&str]) {
 
 fn ready(
     outcome: Tenant<'_, bumbledb::SchemaDescriptor, FsStore>,
-) -> &mut bumbledb_log::replica::Replica<
-    bumbledb::SchemaDescriptor,
-    bumbledb_log::tenants::Shared<FsStore>,
-> {
+) -> Live<'_, bumbledb::SchemaDescriptor, FsStore> {
     match outcome {
-        Tenant::Ready(replica) => replica,
+        Tenant::Ready(live) => live,
         Tenant::Refused(refusal) => panic!("tenant refused: {refusal:?}"),
     }
 }
@@ -53,16 +50,15 @@ fn tenants_open_lazily_and_serve_their_own_prefixes() {
         },
     );
 
-    let acme = ready(tenants.tenant("acme").expect("acme"));
     assert!(
-        acme.db()
+        ready(tenants.tenant("acme").expect("acme"))
+            .db()
             .read(|instance| instance
                 .contains_dyn(NOTE, &[Value::U64(0), Value::String("acme".into())]))
             .expect("read")
     );
-    let bravo = ready(tenants.tenant("bravo").expect("bravo"));
     assert!(
-        bravo
+        ready(tenants.tenant("bravo").expect("bravo"))
             .db()
             .read(|instance| instance
                 .contains_dyn(NOTE, &[Value::U64(1), Value::String("bravo".into())]))
