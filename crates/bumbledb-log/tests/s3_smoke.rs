@@ -242,7 +242,7 @@ fn s3_smoke_replica_writer_round_trip() {
     let replica = open_replica(store, &root.join("r"));
     let present = replica
         .db()
-        .read(|instance| instance.contains_dyn(NOTE, &[bumbledb::Value::U64(7)]))
+        .read(|instance| instance.contains_dyn(NOTE, &note_row(7, "s3-smoke")))
         .expect("read");
     assert!(present, "reopen restores the committed note");
 }
