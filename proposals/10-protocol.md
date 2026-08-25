@@ -79,10 +79,10 @@ Canonical single-line UTF-8 JSON, strict parse, field order fixed:
 {"v":3,"fingerprint":"<64 hex>","checkpoint":"<64 hex digest>"}
 ```
 
-Three fields; the parser refuses `v:2` — there is no translator. `v` is
-the version discriminator and the one JSON number the documents carry;
-every other numeric field in a protocol document is a decimal string, so
-a `u64` cannot lose precision through `number`. `checkpoint` is `null`
+Three fields; `v` is 3 and the parser's only accepted version — there is
+no translator. `v` is the version discriminator and the one JSON number
+the documents carry; every other numeric field in a protocol document is
+a decimal string, so a `u64` stays exact. `checkpoint` is `null`
 from store birth until the first checkpoint lands (a JSON null, a real
 sum arm — never `""`). The manifest is a **pure pointer**: every
 checkpoint fact (sum, vector, chain heads, backlink) lives in the
@@ -112,9 +112,11 @@ digest-keyed, so it caches forever. Manifest creation:
 `If-None-Match: *`; update (checkpoint publication): `If-Match: <etag>`;
 412 ⇒ re-read and apply the **checkpoint order**: the candidate replaces
 the incumbent iff its vector sum is strictly greater; otherwise the
-incumbent stays and the candidate's objects are known-orphan by
-construction — a digest no manifest points at, addressable, and
-collected with the reachable complement (50). Vectors
+incumbent stays. The loser deletes its own `ckpt/{digest}.json` and
+`.mdb`. A crash between upload and the CAS leaves the digest in the
+`ckpt-scratch` lease under `~lease`; the successor GETs that document
+at open and deletes the named objects when they are not the live head
+(40). Vectors
 are pointwise-incomparable in general (two braids, two checkpointers),
 so "newer" needed a defined total order — sum is it; every checkpoint is
 a real serial state either way, and the gc exemption law is conservative
@@ -191,17 +193,18 @@ checkpoint duty never stalls a hot braid. Compaction's input is a
 `Settled` chain (50); a `Pending` checkpointer cannot compact. The
 document is written **exactly once** with `put_create`; a second writer
 computing the same digest sees `Exists` and that is proof of
-byte-identity. There is no upsert and no re-render: `prev` is inside
-the hash, so a different backlink is a different key. Both objects are
+byte-identity. `prev` is inside the hash, so a different backlink is a
+different key. Both objects are
 unreferenced until the manifest CAS lands, which is the linearization
 point; a crash before the CAS leaves a known-orphan pair, never a
 dangling pointer. Restore verification: blake3 of the document bytes
 (including `prev`) = digest, catalog claim audited at the one seed
 transition, opened generation = Σ `g`, fingerprint match — refusals,
-never warnings. Publication races are benign (the manifest CAS applies
-the checkpoint order above; a loser does not rewrite anything — its
-document is known-orphan by construction, collected as the complement
-of the reachable Merkle spine). The manifest points at the head of that
+never warnings. Publication races are benign: the manifest CAS applies
+the checkpoint order above, and a loser does not rewrite anything — it
+deletes its own digest's `.json` and `.mdb`. A crash orphan is named
+in `ckpt-scratch` and swept at the successor's open. The manifest
+points at the head of that
 immutable list; every retained checkpoint is reachable from it by the
 backlink, never by hope.
 

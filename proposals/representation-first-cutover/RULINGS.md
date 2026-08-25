@@ -27,3 +27,10 @@ is not a store verb.
 The binding contract is unchanged: losers and crashes leave
 known-orphan, collectable objects, never live objects with clobbered
 links.
+
+## Parent 10 — complement prose caught up to 40 §3
+
+`proposals/10-protocol.md` still spelled orphan collection as the
+reachable complement — the 40 §3 form this file already flexed. Parent
+10 now states the flexed form (loser self-deletes; crash orphans named
+in `ckpt-scratch`). No new flex.
