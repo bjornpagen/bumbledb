@@ -12,6 +12,8 @@
  */
 
 import * as crypto from "node:crypto"
+import * as fs from "node:fs/promises"
+import * as path from "node:path"
 import {
 	type Fact,
 	type FreshKeys,
@@ -22,7 +24,7 @@ import {
 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, checkedAddU64, digest32, digest32FromHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import { bytesEqual, checkedAddU64, digest32, digest32FromHex, toHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
@@ -30,8 +32,19 @@ import type { Braid, RelationInfo } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, refuseSlotRetired, throwContention } from "#errors.ts"
 import type { Generation } from "#keys.ts"
-import { generation, idsKey, logKey, manifestKey } from "#keys.ts"
-import { renderManifest } from "#manifest.ts"
+import {
+	CKPT_SCRATCH_LEASE,
+	checkpointJsonKey,
+	checkpointMdbKey,
+	encodeCkptScratch,
+	generation,
+	idsKey,
+	LEASE_NAMESPACE,
+	logKey,
+	manifestKey
+} from "#keys.ts"
+import type { CheckpointFacts } from "#manifest.ts"
+import { parseCheckpoint, parseManifest, renderCheckpoint, renderManifest } from "#manifest.ts"
 import type { Core, OpenReplicaOptions, Replica } from "#replica.ts"
 import {
 	applyOps,
@@ -621,6 +634,143 @@ async function settleInheritedPending<Rels extends SchemaRelations>(
 	}
 }
 
+type PublishRefusal = "manifest-missing" | "manifest" | "checkpoint-doc-missing" | "checkpoint"
+
+type Published =
+	| { readonly tag: "replaced" }
+	| { readonly tag: "kept"; readonly incumbent: string }
+	| { readonly tag: "refused"; readonly reason: PublishRefusal }
+
+async function putCreateOnce(
+	store: ObjectStore,
+	key: ReturnType<typeof checkpointJsonKey>,
+	bytes: Uint8Array
+): Promise<void> {
+	for (;;) {
+		const created = await store.putCreate(key, bytes)
+		if (created.tag === "created" || created.tag === "exists") {
+			return
+		}
+		const fetched = await store.get(key)
+		if (fetched !== null) {
+			return
+		}
+	}
+}
+
+/** The loser deletes its own `ckpt/{digest}.json` and `.mdb`. */
+async function deleteOrphan(store: ObjectStore, prefix: string, digest: string): Promise<void> {
+	await store.delete(checkpointJsonKey(prefix, digest))
+	await store.delete(checkpointMdbKey(prefix, digest))
+}
+
+function scratchPath(dir: string): string {
+	return path.join(dir, LEASE_NAMESPACE, CKPT_SCRATCH_LEASE)
+}
+
+async function claimScratch(dir: string, digest: string): Promise<void> {
+	const target = scratchPath(dir)
+	await fs.mkdir(path.dirname(target), { recursive: true })
+	const handle = await fs.open(target, "w")
+	const written = await errors.try(
+		(async function writeLease() {
+			await handle.writeFile(encodeCkptScratch(digest))
+			await handle.sync()
+		})()
+	)
+	await handle.close()
+	if (written.error) {
+		await fs.rm(target, { force: true })
+		throw written.error
+	}
+}
+
+async function releaseScratch(dir: string): Promise<void> {
+	await fs.rm(scratchPath(dir), { force: true })
+}
+
+async function casPublish(
+	store: ObjectStore,
+	prefix: string,
+	known: ReadonlySet<Braid>,
+	candidate: CheckpointFacts,
+	digest: string,
+	bytes: Uint8Array
+): Promise<Published> {
+	await putCreateOnce(store, checkpointJsonKey(prefix, digest), bytes)
+	for (;;) {
+		const fetched = await store.get(manifestKey(prefix))
+		if (fetched === null) {
+			return { tag: "refused", reason: "manifest-missing" }
+		}
+		const parsed = errors.trySync(function parse() {
+			return parseManifest(fetched.bytes)
+		})
+		if (parsed.error) {
+			return { tag: "refused", reason: "manifest" }
+		}
+		const incumbent = parsed.data.checkpoint
+		if (incumbent === digest) {
+			return { tag: "replaced" }
+		}
+		if (incumbent !== null) {
+			const doc = await store.get(checkpointJsonKey(prefix, incumbent))
+			if (doc === null) {
+				return { tag: "refused", reason: "checkpoint-doc-missing" }
+			}
+			const incumbentDoc = errors.trySync(function parseIncumbent() {
+				return parseCheckpoint(doc.bytes, known)
+			})
+			if (incumbentDoc.error) {
+				return { tag: "refused", reason: "checkpoint" }
+			}
+			if (candidate.sum <= incumbentDoc.data.sum) {
+				return { tag: "kept", incumbent }
+			}
+		}
+		const next = renderManifest({ fingerprint: parsed.data.fingerprint, checkpoint: digest })
+		const swapped = await store.putSwap(manifestKey(prefix), next, fetched.etag)
+		if (swapped.tag === "swapped") {
+			return { tag: "replaced" }
+		}
+	}
+}
+
+/**
+ * Publishes `candidate` under the checkpoint order. The digest is the
+ * blake3 of the full bytes, `prev` included. A scratch lease
+ * `{dir}/~lease/ckpt-scratch` names the candidate for the publish
+ * window; a crash leaves that lease and a successor sweep reclaims
+ * it. `Kept` and every refused publish delete the candidate's `ckpt`
+ * pair.
+ */
+async function publishCheckpoint(
+	store: ObjectStore,
+	prefix: string,
+	dir: string,
+	known: ReadonlySet<Braid>,
+	candidate: CheckpointFacts,
+	mdb: Uint8Array
+): Promise<Published> {
+	const bytes = renderCheckpoint(candidate)
+	const digest = toHex(new Uint8Array(internalBlake3(bytes)))
+	await claimScratch(dir, digest)
+	const ran = await errors.try(
+		(async function publish() {
+			await putCreateOnce(store, checkpointMdbKey(prefix, digest), mdb)
+			return await casPublish(store, prefix, known, candidate, digest, bytes)
+		})()
+	)
+	if (ran.error) {
+		throw ran.error
+	}
+	if (ran.data.tag === "kept" || ran.data.tag === "refused") {
+		await deleteOrphan(store, prefix, digest)
+	}
+	await releaseScratch(dir)
+	return ran.data
+}
+
 /** Only the writer births a store: create-only PUT of a genesis manifest. */
 async function birthStore(store: ObjectStore, prefix: string, fingerprint: string): Promise<void> {
 	const key = manifestKey(prefix)
@@ -703,5 +853,5 @@ async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOpti
 	}
 }
 
-export type { Batch, BraidOutcome, Commit, CommitSplit, Deposition, Durability, Writer }
-export { openWriter }
+export type { Batch, BraidOutcome, Commit, CommitSplit, Deposition, Durability, Published, PublishRefusal, Writer }
+export { openWriter, publishCheckpoint }
