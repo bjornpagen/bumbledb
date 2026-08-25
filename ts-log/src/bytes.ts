@@ -16,6 +16,7 @@ const I64_MAX = 0x7fffffffffffffffn
 const I64_SIGN_BIT = 0x8000000000000000n
 
 const utf8Encoder = new TextEncoder()
+/** Fatal UTF-8. ignoreBOM is true: a leading U+FEFF is a character, not a stripped BOM. */
 const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 declare const digest32Brand: unique symbol
