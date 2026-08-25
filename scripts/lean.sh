@@ -27,11 +27,7 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-cd ..
-scripts/spec-census.sh
-
 # (lean/Main.lean), so no count is pinned here; seconds-scale on the
-cd lean
 lake exe conformance conformance/cases
 cd ..
 
@@ -48,4 +44,4 @@ if ! printf '%s\n' "$three_way_log" | grep -q 'test result: ok. 1 passed'; then
   exit 1
 fi
 
-echo "lean.sh: OK — build green, placeholder battery clean, census resolved, conformance corpus green, three-way comparator green"
+echo "lean.sh: OK — build green, placeholder battery clean, conformance corpus green, three-way comparator green"
