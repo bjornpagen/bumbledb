@@ -91,8 +91,16 @@ interface ObjectStore {
 interface FsLease {
 	readonly dir: string
 	readonly name: string
+	readonly holder: bigint
 	readonly token: bigint
 	readonly path: string
+}
+
+interface LeaseFile {
+	readonly path: string
+	readonly token: bigint
+	readonly lease: Lease | null
+	readonly readable: boolean
 }
 
 /** Ceiling of the jittered wait between probes of an unexpired lease. */
@@ -100,6 +108,10 @@ const LEASE_RETRY_MS = 10
 
 /** Mutation-lease lifetime: long enough for one verb, short enough to expire after a crash. */
 const MUTATION_LEASE_MS = 30_000
+
+function ourHolder(): bigint {
+	return BigInt(process.pid)
+}
 
 function contentEtag(bytes: Uint8Array): Etag {
 	return etag(toHex(new Uint8Array(internalBlake3(bytes))))
@@ -130,6 +142,34 @@ function parseLease(raw: string): Lease | null {
 
 function leaseExpired(lease: Lease, nowMs: number): boolean {
 	return lease.expires <= BigInt(nowMs)
+}
+
+/** EPERM/unreadable/unparseable ⇒ Unknown. Expiry is a fact of the lease bytes. */
+function livenessOf(lease: Lease | null, readable: boolean, nowMs: number): Liveness {
+	if (!readable || lease === null) {
+		return { tag: "unknown" }
+	}
+	if (leaseExpired(lease, nowMs)) {
+		return { tag: "dead" }
+	}
+	return { tag: "alive" }
+}
+
+/** A lease is breakable only when liveness is Dead. Unknown never breaks. */
+function breakable(liveness: Liveness): boolean {
+	switch (liveness.tag) {
+		case "dead":
+			return true
+		case "alive":
+			return false
+		case "unknown":
+			return false
+	}
+}
+
+function isUnproved(error: Error): boolean {
+	const code = codeOf(error)
+	return code === "EIO" || code === "EINTR" || code === "ETIMEDOUT" || code === "EAGAIN" || code === "EBUSY"
 }
 
 async function fsyncDir(dir: string): Promise<void> {
@@ -208,10 +248,7 @@ async function publishLink(temp: string, dest: string): Promise<"linked" | "occu
 const LEASE_NAME_RE = /^\.(.+)\.lease\.(\d+)$/
 const TEMP_NAME_RE = /^\.(.+)\.tmp\.\d+\.\d+$/
 
-async function listLeaseFiles(
-	dir: string,
-	name: string
-): Promise<Array<{ path: string; token: bigint; lease: Lease | null }>> {
+async function listLeaseFiles(dir: string, name: string): Promise<LeaseFile[]> {
 	const listed = await errors.try(fs.readdir(dir))
 	if (listed.error) {
 		if (codeOf(listed.error) === "ENOENT") {
@@ -219,7 +256,7 @@ async function listLeaseFiles(
 		}
 		throw listed.error
 	}
-	const found: Array<{ path: string; token: bigint; lease: Lease | null }> = []
+	const found: LeaseFile[] = []
 	for (const entry of listed.data) {
 		const match = LEASE_NAME_RE.exec(entry)
 		if (match === null || match[1] !== name || match[2] === undefined) {
@@ -227,10 +264,49 @@ async function listLeaseFiles(
 		}
 		const filePath = path.join(dir, entry)
 		const read = await errors.try(fs.readFile(filePath, "utf8"))
-		const lease = read.error === undefined ? parseLease(read.data) : null
-		found.push({ path: filePath, token: BigInt(match[2]), lease })
+		if (read.error) {
+			if (codeOf(read.error) === "ENOENT") {
+				continue
+			}
+			found.push({ path: filePath, token: BigInt(match[2]), lease: null, readable: false })
+			continue
+		}
+		found.push({
+			path: filePath,
+			token: BigInt(match[2]),
+			lease: parseLease(read.data),
+			readable: true
+		})
 	}
 	return found
+}
+
+/** Drop a lease file only when its bytes still name this holder and token. */
+async function casDrop(leasePath: string, expected: Lease): Promise<void> {
+	const read = await errors.try(fs.readFile(leasePath, "utf8"))
+	if (read.error) {
+		return
+	}
+	const lease = parseLease(read.data)
+	if (lease === null) {
+		return
+	}
+	if (lease.holder !== expected.holder || lease.token !== expected.token) {
+		return
+	}
+	await fs.rm(leasePath, { force: true })
+}
+
+async function heldByUs(held: FsLease): Promise<boolean> {
+	const read = await errors.try(fs.readFile(held.path, "utf8"))
+	if (read.error) {
+		return false
+	}
+	const lease = parseLease(read.data)
+	if (lease === null) {
+		return false
+	}
+	return lease.holder === held.holder && lease.token === held.token
 }
 
 async function acquireFsLease(
@@ -244,21 +320,32 @@ async function acquireFsLease(
 		const now = Date.now()
 		const incumbents = await listLeaseFiles(dir, name)
 		let highest = 0n
-		let blocking: { path: string; token: bigint; lease: Lease } | null = null
-		const expired: string[] = []
+		let blocked = false
+		const dead: LeaseFile[] = []
 		for (const incumbent of incumbents) {
 			if (incumbent.token > highest) {
 				highest = incumbent.token
 			}
-			if (incumbent.lease === null || leaseExpired(incumbent.lease, now)) {
-				expired.push(incumbent.path)
-				continue
-			}
-			if (blocking === null || incumbent.token > blocking.token) {
-				blocking = { path: incumbent.path, token: incumbent.token, lease: incumbent.lease }
+			const liveness = livenessOf(incumbent.lease, incumbent.readable, now)
+			switch (liveness.tag) {
+				case "dead":
+					dead.push(incumbent)
+					break
+				case "alive": {
+					const holder = incumbent.lease === null ? null : incumbent.lease.holder
+					if (holder === ourHolder()) {
+						blocked = true
+					} else {
+						blocked = true
+					}
+					break
+				}
+				case "unknown":
+					blocked = true
+					break
 			}
 		}
-		if (blocking !== null) {
+		if (blocked) {
 			if (contend === "refuse") {
 				throw errors.new("replica directory has an owner")
 			}
@@ -267,10 +354,11 @@ async function acquireFsLease(
 			})
 			continue
 		}
+		const holder = ourHolder()
 		const token = highest + 1n
 		const dest = path.join(dir, reservedLease(name, token))
 		const body = encodeLease({
-			holder: BigInt(process.pid),
+			holder,
 			token,
 			expires: BigInt(now + ttlMs)
 		})
@@ -284,15 +372,29 @@ async function acquireFsLease(
 			continue
 		}
 		await fsyncDir(dir)
-		for (const stale of expired) {
-			await fs.rm(stale, { force: true })
+		const held: FsLease = { dir, name, holder, token, path: dest }
+		for (const stale of dead) {
+			if (stale.lease !== null) {
+				await casDrop(stale.path, stale.lease)
+			}
 		}
-		return { dir, name, token, path: dest }
+		return held
 	}
 }
 
 async function releaseFsLease(held: FsLease): Promise<void> {
-	await fs.rm(held.path, { force: true })
+	const read = await errors.try(fs.readFile(held.path, "utf8"))
+	if (read.error) {
+		return
+	}
+	const lease = parseLease(read.data)
+	if (lease === null) {
+		return
+	}
+	if (lease.holder !== held.holder || lease.token !== held.token) {
+		return
+	}
+	await casDrop(held.path, lease)
 	const synced = await errors.try(fsyncDir(held.dir))
 	if (synced.error) {
 		return
@@ -333,8 +435,9 @@ async function sweepReserved(root: string): Promise<void> {
 			continue
 		}
 		const lease = parseLease(read.data)
-		if (lease === null || leaseExpired(lease, now)) {
-			await fs.rm(full, { force: true })
+		const liveness = livenessOf(lease, true, now)
+		if (breakable(liveness) && lease !== null) {
+			await casDrop(full, lease)
 		}
 	}
 }
@@ -386,9 +489,9 @@ function fsStore(root: string): ObjectStore {
 		return { bytes, etag: contentEtag(bytes) }
 	}
 
-	async function withKeyLease<T>(target: string, body: () => Promise<T>): Promise<T> {
+	async function withKeyLease<T>(target: string, body: (held: FsLease) => Promise<T>): Promise<T> {
 		const held = await acquireFsLease(path.dirname(target), path.basename(target), MUTATION_LEASE_MS)
-		const ran = await errors.try(body())
+		const ran = await errors.try(body(held))
 		await releaseFsLease(held)
 		if (ran.error) {
 			throw ran.error
@@ -428,26 +531,44 @@ function fsStore(root: string): ObjectStore {
 			const target = objectPath(key)
 			const ran = await errors.try(
 				(async function createBody(): Promise<Create> {
-					return await withKeyLease(target, async function underLease(): Promise<Create> {
+					return await withKeyLease(target, async function underLease(held): Promise<Create> {
+						if (!(await heldByUs(held))) {
+							return { tag: "ambiguous" }
+						}
 						const temp = await syncedTemp(target, bytes, rootPath)
 						const published = await errors.try(publishLink(temp, target))
 						await fs.rm(temp, { force: true })
 						if (published.error) {
+							if (isUnproved(published.error)) {
+								return { tag: "ambiguous" }
+							}
 							throw published.error
 						}
 						if (published.data === "occupied") {
 							const st = await errors.try(fs.stat(target))
-							if (st.error === undefined && st.data.isDirectory()) {
+							if (st.error) {
+								if (codeOf(st.error) === "ENOENT" || isUnproved(st.error)) {
+									return { tag: "ambiguous" }
+								}
+								throw st.error
+							}
+							if (st.data.isDirectory()) {
 								throw errors.new("key path is a directory")
 							}
 							return { tag: "exists" }
 						}
-						await fsyncDir(path.dirname(target))
+						const synced = await errors.try(fsyncDir(path.dirname(target)))
+						if (synced.error) {
+							return { tag: "ambiguous" }
+						}
 						return { tag: "created", etag: contentEtag(bytes) }
 					})
 				})()
 			)
 			if (ran.error) {
+				if (isUnproved(ran.error)) {
+					return { tag: "ambiguous" }
+				}
 				throw wrapStore(ran.error, `putCreate ${key}`)
 			}
 			return ran.data
@@ -458,7 +579,10 @@ function fsStore(root: string): ObjectStore {
 			const target = objectPath(key)
 			const ran = await errors.try(
 				(async function swapBody(): Promise<Swap> {
-					return await withKeyLease(target, async function underLease(): Promise<Swap> {
+					return await withKeyLease(target, async function underLease(held): Promise<Swap> {
+						if (!(await heldByUs(held))) {
+							return { tag: "ambiguous" }
+						}
 						const current = await readFetched(target)
 						if (current === null || current.etag !== etag) {
 							return { tag: "moved" }
@@ -467,14 +591,23 @@ function fsStore(root: string): ObjectStore {
 						const renamed = await errors.try(fs.rename(temp, target))
 						if (renamed.error) {
 							await fs.rm(temp, { force: true })
+							if (isUnproved(renamed.error)) {
+								return { tag: "ambiguous" }
+							}
 							throw renamed.error
 						}
-						await fsyncDir(path.dirname(target))
+						const synced = await errors.try(fsyncDir(path.dirname(target)))
+						if (synced.error) {
+							return { tag: "ambiguous" }
+						}
 						return { tag: "swapped", etag: contentEtag(bytes) }
 					})
 				})()
 			)
 			if (ran.error) {
+				if (isUnproved(ran.error)) {
+					return { tag: "ambiguous" }
+				}
 				throw wrapStore(ran.error, `putSwap ${key}`)
 			}
 			return ran.data
@@ -485,7 +618,10 @@ function fsStore(root: string): ObjectStore {
 			const target = objectPath(key)
 			const ran = await errors.try(
 				(async function deleteBody() {
-					await withKeyLease(target, async function underLease() {
+					await withKeyLease(target, async function underLease(held) {
+						if (!(await heldByUs(held))) {
+							return
+						}
 						await fs.rm(target, { force: true })
 						await fsyncDir(path.dirname(target))
 					})
