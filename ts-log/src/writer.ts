@@ -1,14 +1,16 @@
 /**
  * The writer (60): a replica plus the right to create log objects. Role
- * is a field on the handle; this handle births the store. One commit
- * path and one loss path: a lost slot's byte-equal occupant is an
- * ambiguous PUT absorbed; anything else discards the local directory,
- * re-opens through the replica to the current tip, and re-judges the
- * recorded ops once — the verdict IS a serial execution, performed.
- * Each loop iteration races once at the then-tip, so a historical loss
- * is structurally uncountable, and bounded live-tip losses surface as
- * ErrContention carrying the terminal re-judgment's own violation or
- * the racing tip.
+ * is a field on the handle. `openWriter(options)` births the store;
+ * `openWriter(replica)` wraps a born replica and settles an inherited
+ * pending without drawing id leases. A replica never births —
+ * ManifestMissing is its refusal. One commit path and one loss path: a
+ * lost slot's byte-equal occupant is an ambiguous PUT absorbed; anything
+ * else discards the local directory, re-opens through the replica to the
+ * current tip, and re-judges the recorded ops once — the verdict IS a
+ * serial execution, performed. Each loop iteration races once at the
+ * then-tip, so a historical loss is structurally uncountable, and bounded
+ * live-tip losses surface as ErrContention carrying the terminal
+ * re-judgment's own violation or the racing tip.
  */
 
 import * as crypto from "node:crypto"
@@ -789,9 +791,14 @@ async function birthStore(store: ObjectStore, prefix: string, fingerprint: strin
 	}
 }
 
-async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Writer<Rels>> {
-	await birthStore(options.store, options.prefix, descriptorOf(options.theory).fingerprint)
-	const replica = await openReplica(options)
+function isReplica<Rels extends SchemaRelations>(
+	source: Replica<Rels> | OpenReplicaOptions<Rels>
+): source is Replica<Rels> {
+	return typeof (source as Replica<Rels>).refresh === "function"
+}
+
+/** Wrap a born replica: settle an inherited pending; do not birth; do not draw id leases. */
+async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): Promise<Writer<Rels>> {
 	const core = coreOf(replica)
 	const state: WriterState = {
 		writerId: crypto.randomBytes(8).readBigUInt64LE(),
@@ -852,6 +859,18 @@ async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOpti
 			})
 		}
 	}
+}
+
+async function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Promise<Writer<Rels>>
+async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Writer<Rels>>
+async function openWriter<Rels extends SchemaRelations>(
+	source: Replica<Rels> | OpenReplicaOptions<Rels>
+): Promise<Writer<Rels>> {
+	if (isReplica(source)) {
+		return writerOn(source)
+	}
+	await birthStore(source.store, source.prefix, descriptorOf(source.theory).fingerprint)
+	return writerOn(await openReplica(source))
 }
 
 export type { Batch, BraidOutcome, Commit, CommitSplit, Deposition, Durability, Published, PublishRefusal, Writer }
