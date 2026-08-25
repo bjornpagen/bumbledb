@@ -1,9 +1,13 @@
 //! `MemStore`: the five verbs over one in-process map. Etags are the
 //! blake3 of the object bytes — the same opaque-token contract
 //! `FsStore` speaks — and create-only and CAS are atomic under the
-//! mutex that is this process. That is the honest scope: tests and
-//! ephemeral dev inside one process, no persistence, no cross-process
-//! claim, no configuration.
+//! mutex that is this process. Every read returns a fresh buffer, so
+//! a caller cannot alias the map. `put_create` and `put_swap` speak
+//! the trait's sums (`Created | Exists | Ambiguous`,
+//! `Swapped | Moved | Ambiguous`); the mutex proves every outcome, so
+//! `Ambiguous` is unrepresentable here — there is no transport and no
+//! pid. That is the honest scope: tests and ephemeral dev inside one
+//! process, no persistence, no cross-process claim, no configuration.
 
 use std::collections::HashMap;
 use std::io;
@@ -30,6 +34,13 @@ impl MemStore {
     fn lock(&self) -> MutexGuard<'_, HashMap<StoreKey, Fetched>> {
         self.objects.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn fresh(fetched: &Fetched) -> Fetched {
+        Fetched {
+            bytes: fetched.bytes.clone(),
+            etag: fetched.etag.clone(),
+        }
+    }
 }
 
 impl Default for MemStore {
@@ -40,13 +51,13 @@ impl Default for MemStore {
 
 impl ObjectStore for MemStore {
     fn get(&self, key: &StoreKey) -> Result<Option<Fetched>> {
-        Ok(self.lock().get(key).cloned())
+        Ok(self.lock().get(key).map(Self::fresh))
     }
 
     fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll> {
         match self.lock().get(key) {
             Some(fetched) if fetched.etag == *etag => Ok(Poll::Unchanged),
-            Some(fetched) => Ok(Poll::Changed(fetched.clone())),
+            Some(fetched) => Ok(Poll::Changed(Self::fresh(fetched))),
             None => Err(StoreError {
                 op: "get_if_changed",
                 key: key.to_string(),
