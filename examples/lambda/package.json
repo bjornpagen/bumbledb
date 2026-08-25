@@ -4,7 +4,8 @@
 	"description": "Non-normative Alchemy example: one arm64 Lambda, one S3 log, one schedule",
 	"type": "module",
 	"scripts": {
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"test": "node --test 'src/**/*.test.ts'"
 	},
 	"dependencies": {
 		"@bjornpagen/bumbledb": "0.18.0",

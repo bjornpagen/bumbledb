@@ -50,17 +50,21 @@ No VPC, no alarms, no second function.
 
 ## Handler
 
-One default export, two event shapes:
+One default export. The event is a parsed grammar (`src/request.ts`):
 
 - Function URL HTTP — `GET` reads `note` rows; `POST` commits one note
-  `{ "id": "<decimal>", "body": "..." }` (`id` defaults to `Date.now()`).
+  `{ "id": "<decimal u64>", "body": "..." }`. `id` is a canonical decimal
+  string (no leading zeros, range `[0, 2^64)`). A malformed body or id is
+  a 400 domain refusal.
 - Scheduler `{ "duty": true }` — `execFile`s the bundled binary with
   `--once`.
 
-Module scope opens the replica and writer once per execution environment
-over `s3Store`, with `/tmp/store` as the disposable cache. Cold start is
-checkpoint pull plus tail replay; the handler prints `open <ms>` on first
-open and `commit <ms>` on each write so the owner sees the budget.
+The replica is a value on the execution environment (`src/handle.ts`),
+opened over `s3Store` with `/tmp/store` as the disposable cache. A
+failed open leaves the value absent and the invoke answers 503; the next
+invoke retries. Cold start is checkpoint pull plus tail replay; the
+handler prints `open <ms>` on first open and `commit <ms>` on each write
+so the owner sees the budget.
 
 Credentials are static from process env (`AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`). Lambda injects

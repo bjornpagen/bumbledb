@@ -2,6 +2,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { openReplica, openWriter, s3Store } from "@bjornpagen/bumbledb-log"
+import { holdReplica } from "./handle.ts"
 import { parseRequest } from "./request.ts"
 
 const exec = promisify(execFile)
@@ -26,8 +27,9 @@ const store = s3Store({
 	}
 })
 
-const openedAt = performance.now()
-const ready = openReplica({ store, prefix: "", dir: "/tmp/store", theory: Notes }).then(function withWriter(replica) {
+const acquire = holdReplica(async function open() {
+	const openedAt = performance.now()
+	const replica = await openReplica({ store, prefix: "", dir: "/tmp/store", theory: Notes })
 	console.log(`open ${Math.round(performance.now() - openedAt)}`)
 	return { replica, writer: openWriter(replica) }
 })
@@ -62,7 +64,11 @@ export default async function handler(event: unknown): Promise<{ statusCode: num
 		return { statusCode: 200, body: json({ stdout: ran.stdout, stderr: ran.stderr }) }
 	}
 
-	const { replica, writer } = await ready
+	const held = await acquire()
+	if (held.tag === "unavailable") {
+		return { statusCode: held.status, body: json({ error: held.reason }) }
+	}
+	const { replica, writer } = held.value
 	await replica.refresh()
 	if (request.tag === "write") {
 		const started = performance.now()
