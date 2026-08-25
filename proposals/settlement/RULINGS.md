@@ -34,3 +34,6 @@ links.
 reachable complement — the 40 §3 form this file already flexed. Parent
 10 now states the flexed form (loser self-deletes; crash orphans named
 in `ckpt-scratch`). No new flex.
+
+The parent PRD set and the cutover folder retired into
+proposals/settlement/ (00-canon.md); doc references above are historical.
