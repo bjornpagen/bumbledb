@@ -87,8 +87,8 @@ verb.
    *expired* (a fact of the lease's own bytes). Every write carries
    its fencing token, so a stale holder's write is rejected by the
    CAS it no longer wins. Liveness is `Alive | Dead | Unknown`;
-   `Unknown` never breaks a lease. There is no pid-lockfile and no
-   `kill(0)`. `Created` and `Swapped` return only after fsync of the
+   `Unknown` never breaks a lease. `Created` and `Swapped` return only
+   after fsync of the
    object file and its parent directory: 00 law 1 says an acked commit
    *exists*, and at power loss a filesystem "exists" means nothing
    less — the sidecar's write discipline (50), applied at the store.
