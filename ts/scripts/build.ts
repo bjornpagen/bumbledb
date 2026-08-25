@@ -23,7 +23,7 @@ function build(): void {
 	const shapePackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORMS[0])
 	const localPackageDir = path.join(packageRoot, "npm", LOCAL_PLATFORM)
 
-	const version = assertVersionLockstep(packageRoot, crateManifest)
+	const version = assertVersionLockstep(packageRoot)
 	console.log(
 		`bumbledb build: version ${version} (main == platform == napi crate == engine == C ABI; the platform pin injects at pack)`
 	)
@@ -65,22 +65,25 @@ function build(): void {
 	verifyPack(packageRoot, localPackageDir, version)
 }
 
-/**
- * The version-lockstep gate: the main manifest's `version` is the single
- * source. Every PUBLISH platform manifest, the napi crate, the engine crate,
- * `bumbledb-c`, and the other workspace members must equal it EXACTLY.
- * The FFI ABI is not semver-stable — a main package may only ever resolve
- * its own-version binary; `engineVersion` and `bdb_version` bake
- * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
- * repo field: the repo manifest must carry NO `optionalDependencies` (a
- * committed exact pin of the current unpublished version made every
- * release a red-CI window — the frozen lockfile can never resolve it);
- * `scripts/pin.ts` injects the pin into the PACKED manifest at prepack,
- * exact-version by construction from the one source, and `verifyPack`
- * proves the injected pin on a real tarball. A divergence fails the build
- * before anything is produced. Pure manifest reads, so the gate holds on
- * EVERY build host, not just the publishing one.
- */
+const VERSION_ROSTER = "scripts/version-roster.txt"
+
+function workspacePackageVersion(repoRoot: string): string {
+	const manifestPath = path.join(repoRoot, "Cargo.toml")
+	const crate = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
+	if (crate.error) {
+		throw errors.wrap(crate.error, `read ${manifestPath}`)
+	}
+	const block = /\[workspace\.package\]\s*([\s\S]*?)(?:\n\[|$)/.exec(crate.data)
+	if (block === null || typeof block[1] !== "string") {
+		throw errors.new(`${manifestPath} is missing [workspace.package]`)
+	}
+	const version = /^version = "([^"]+)"$/m.exec(block[1])?.[1]
+	if (typeof version !== "string" || version === "") {
+		throw errors.new(`${manifestPath} [workspace.package] is missing a version`)
+	}
+	return version
+}
+
 function cargoPackageVersion(manifestPath: string): string {
 	const crate = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
 	if (crate.error) {
@@ -93,72 +96,162 @@ function cargoPackageVersion(manifestPath: string): string {
 	return crateVersion
 }
 
-function assertCargoLockstep(manifestPath: string, version: string, label: string): void {
-	const got = cargoPackageVersion(manifestPath)
-	if (got !== version) {
-		throw errors.new(`version lockstep broken: main is ${version} but ${label} is ${got}`)
+function npmPackageVersion(manifestPath: string): string {
+	const manifest = readJson(manifestPath)
+	const version = manifest.version
+	if (typeof version !== "string" || version === "") {
+		throw errors.new(`${manifestPath} is missing a string version`)
+	}
+	return version
+}
+
+function manifestVersion(repoRoot: string, relPath: string): string {
+	const abs = path.join(repoRoot, relPath)
+	if (relPath.endsWith("Cargo.toml")) {
+		return cargoPackageVersion(abs)
+	}
+	if (relPath.endsWith("package.json")) {
+		return npmPackageVersion(abs)
+	}
+	throw errors.new(`${relPath} is not a versioned manifest`)
+}
+
+function readVersionRoster(repoRoot: string): string[] {
+	const rosterPath = path.join(repoRoot, VERSION_ROSTER)
+	const text = errors.trySync(() => fs.readFileSync(rosterPath, "utf8"))
+	if (text.error) {
+		throw errors.wrap(text.error, `read ${rosterPath}`)
+	}
+	const paths = text.data.split("\n").flatMap((line) => {
+		const trimmed = line.trim()
+		return trimmed === "" || trimmed.startsWith("#") ? [] : [trimmed]
+	})
+	if (paths.length === 0) {
+		throw errors.new(`${VERSION_ROSTER} is empty`)
+	}
+	const seen = new Set<string>()
+	for (const rel of paths) {
+		if (seen.has(rel)) {
+			throw errors.new(`${VERSION_ROSTER} lists ${rel} twice`)
+		}
+		seen.add(rel)
+	}
+	return paths
+}
+
+function isVersionBearing(repoRoot: string, relPath: string): boolean {
+	const abs = path.join(repoRoot, relPath)
+	const base = path.basename(relPath)
+	if (base === "Cargo.toml") {
+		const text = errors.trySync(() => fs.readFileSync(abs, "utf8"))
+		if (text.error) {
+			throw errors.wrap(text.error, `read ${abs}`)
+		}
+		return /\[package\]/.test(text.data) && /^version = "/m.test(text.data)
+	}
+	if (base === "package.json") {
+		const manifest = readJson(abs)
+		return typeof manifest.version === "string" && manifest.version !== ""
+	}
+	return false
+}
+
+function trackedManifests(repoRoot: string): string[] {
+	const listed = spawnSync("git", ["-C", repoRoot, "ls-files", "-z"])
+	if (listed.error) {
+		throw errors.wrap(listed.error, "spawn git ls-files")
+	}
+	if (listed.status !== 0) {
+		throw errors.new(`git ls-files exited with status ${listed.status}: ${listed.stderr.toString()}`)
+	}
+	return listed.stdout
+		.toString("utf8")
+		.split("\0")
+		.flatMap((file) => {
+			const base = path.posix.basename(file)
+			return base === "Cargo.toml" || base === "package.json" ? [file] : []
+		})
+}
+
+function versionBearingManifests(repoRoot: string): string[] {
+	return trackedManifests(repoRoot).filter((rel) => isVersionBearing(repoRoot, rel))
+}
+
+function assertRosterComplete(repoRoot: string, roster: readonly string[]): void {
+	const found = versionBearingManifests(repoRoot)
+	const rosterSet = new Set(roster)
+	const extra = found.filter((rel) => !rosterSet.has(rel))
+	if (extra.length > 0) {
+		throw errors.new(`version lockstep broken: version-bearing manifest off-roster: ${extra.join(", ")}`)
+	}
+	const missing = roster.filter((rel) => !found.includes(rel))
+	if (missing.length > 0) {
+		throw errors.new(
+			`version lockstep broken: roster names a manifest the tree sweep did not find: ${missing.join(", ")}`
+		)
 	}
 }
 
-function assertVersionLockstep(packageRoot: string, crateManifest: string): string {
-	const main = readJson(path.join(packageRoot, "package.json"))
-
-	const version = main.version
-	if (typeof version !== "string" || version === "") {
-		throw errors.new("main package.json is missing a string version")
+function assertTsLogPeer(repoRoot: string, version: string): void {
+	const manifest = readJson(path.join(repoRoot, "ts-log", "package.json"))
+	const peers =
+		typeof manifest.peerDependencies === "object" && manifest.peerDependencies !== null
+			? (manifest.peerDependencies as Record<string, unknown>)
+			: undefined
+	if (peers === undefined) {
+		throw errors.new("ts-log/package.json is missing peerDependencies")
 	}
+	const peer = peers["@bjornpagen/bumbledb"]
+	const expected = `^${version}`
+	if (peer !== expected) {
+		throw errors.new(
+			`version lockstep broken: ts-log peerDependencies["@bjornpagen/bumbledb"] is ${String(peer)}, expected ${expected}`
+		)
+	}
+}
+
+/**
+ * The version-lockstep gate: `[workspace.package] version` is the one
+ * writer. Every path on `scripts/version-roster.txt` carries that
+ * version exactly; a sweep of tracked `Cargo.toml` and `package.json`
+ * files proves the roster lists every version-bearing manifest; `ts-log`'s
+ * peer range on `@bjornpagen/bumbledb` is exactly `^<workspace version>`.
+ * The FFI ABI is not semver-stable — a main package may only ever resolve
+ * its own-version binary; `engineVersion` and `bdb_version` bake
+ * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
+ * repo field: the repo manifest carries no `optionalDependencies`;
+ * `scripts/pin.ts` injects the pin into the PACKED manifest at prepack,
+ * exact-version by construction from the one source, and `verifyPack`
+ * proves the injected pin on a real tarball. A divergence fails the build
+ * before anything is produced. Pure manifest reads, so the gate holds on
+ * every build host.
+ */
+function assertVersionLockstep(packageRoot: string): string {
+	const repoRoot = path.join(packageRoot, "..")
+	const version = workspacePackageVersion(repoRoot)
+	const main = readJson(path.join(packageRoot, "package.json"))
 	if ("optionalDependencies" in main) {
 		throw errors.new(
 			"the repo package.json carries optionalDependencies — the platform pin lives only in the PACKED manifest (scripts/pin.ts injects it at prepack; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
 		)
 	}
+	const roster = readVersionRoster(repoRoot)
+	for (const rel of roster) {
+		const got = manifestVersion(repoRoot, rel)
+		if (got !== version) {
+			throw errors.new(`version lockstep broken: workspace is ${version} but ${rel} is ${got}`)
+		}
+	}
+	assertRosterComplete(repoRoot, roster)
+	assertTsLogPeer(repoRoot, version)
 	for (const platform of PUBLISH_PLATFORMS) {
 		const platformName = `@bjornpagen/bumbledb-${platform}`
 		const manifest = readJson(path.join(packageRoot, "npm", platform, "package.json"))
-		if (manifest.version !== version) {
-			throw errors.new(
-				`version lockstep broken: main is ${version} but ${platformName} package.json is ${String(manifest.version)}`
-			)
-		}
 		if (manifest.name !== platformName) {
 			throw errors.new(`platform package.json name is ${String(manifest.name)}, expected ${platformName}`)
 		}
 	}
-
-	const repoRoot = path.join(packageRoot, "..")
-	assertCargoLockstep(crateManifest, version, "ts/crate/Cargo.toml")
-	assertCargoLockstep(path.join(repoRoot, "crates/bumbledb-c/Cargo.toml"), version, "crates/bumbledb-c/Cargo.toml")
-	for (const member of workspaceMemberManifests(repoRoot)) {
-		assertCargoLockstep(member, version, path.relative(repoRoot, member))
-	}
 	return version
-}
-
-/**
- * Every engine-workspace member must share the product identity. Parsed
- * from the root `members = [...]` list so a new crate cannot skip the
- * gate. `bumbledb-c` and `ts/crate` are workspace-excluded leaves and
- * are asserted separately — those are the C ABI and napi spellings the
- * TS three-way used to miss.
- */
-function workspaceMemberManifests(repoRoot: string): string[] {
-	const manifestPath = path.join(repoRoot, "Cargo.toml")
-	const text = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
-	if (text.error) {
-		throw errors.wrap(text.error, `read ${manifestPath}`)
-	}
-	const block = /members\s*=\s*\[([\s\S]*?)\]/.exec(text.data)
-	if (block === null || typeof block[1] !== "string") {
-		throw errors.new(`${manifestPath} is missing a workspace members list`)
-	}
-	const members = [...block[1].matchAll(/"([^"]+)"/g)].flatMap((match) => {
-		const member = match[1]
-		return member === undefined ? [] : [path.join(repoRoot, member, "Cargo.toml")]
-	})
-	if (members.length === 0) {
-		throw errors.new(`${manifestPath} workspace members list is empty`)
-	}
-	return members
 }
 
 /** Reads and parses a JSON file, wrapping either failure. */

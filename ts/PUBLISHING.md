@@ -15,13 +15,20 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.19.0` is the one-number release over `0.18.0`. Every published
-package spells the same semver: the engine SDK, both platform binaries,
-and `@bjornpagen/bumbledb-log`. The C ABI stays **generation 4**
-(`bdb_abi_version()` is unchanged), storage stays format **8**, and no
-fingerprint pin moved. The lockstep is prepared unpublished in this
-tree; the publish command sequence is the standing one below, and the
-log package's steps follow it with peer `^0.19.0`.
+**0.19.0 reads nothing 0.18.0 wrote.** The protocol documents are
+binary v:3 (`manifest`, `ckpt/{digest}`, `chain` — the `.json` keys
+are gone), the batch and document grammar is one binary language, and
+there is no migration path by design: re-checkpoint from a 0.19.0
+writer. This is the representation-first cutover shipping as one
+number.
+
+Every published package spells the same semver: the engine SDK, both
+platform binaries, and `@bjornpagen/bumbledb-log`. The C ABI stays
+**generation 4** (`bdb_abi_version()` is unchanged), engine storage
+stays format **8**, and no fingerprint pin moved. The lockstep is
+prepared unpublished in this tree; the publish command sequence is
+the standing one below, and the log package's steps follow it with
+peer `^0.19.0`.
 
 `0.18.0` is the one-number release over `0.17.1` — `0.17.2` died
 unpublished. Every published package spells the same semver: the engine
@@ -227,23 +234,15 @@ unsupported-platform error everywhere else.
 
 ## Version lockstep
 
-The version lives in ONE place conceptually: `0.16.0` is the identity of the
-layout. The build (`assertVersionLockstep` in `scripts/build.ts`) fails if
-any of these diverge:
-
-1. `ts/package.json` `version`
-2. every `ts/npm/<shipped>/package.json` `version` (`darwin-arm64`, `linux-arm64`)
-3. `ts/crate/Cargo.toml` `version` (`engineVersion()` bakes
-   `CARGO_PKG_VERSION` into the shipped binary)
-4. every engine-workspace member, parsed from the root `Cargo.toml`
-   `members` list (engine, bench, macros, query, query-macros, theory)
-5. `crates/bumbledb-c/Cargo.toml` (`bdb_version()` bakes
-   `CARGO_PKG_VERSION`; `bdb_abi_version()` is 3 — layout generation, not
-   the release spelling)
-
-Engine + C + TS cannot disagree: a new workspace crate, a drifted
-`bumbledb-c`, or a napi/npm mismatch fails the build before anything is
-produced.
+The version lives in one place: the root `[workspace.package] version`.
+Workspace crates inherit it (`version.workspace = true`). Every other
+versioned manifest is a line on `scripts/version-roster.txt`. The build
+(`assertVersionLockstep` in `scripts/build.ts`) fails unless every roster
+entry equals the workspace version, a tree sweep proves the roster
+complete, and `ts-log`'s peer range is exactly `^<workspace version>`.
+`engineVersion()` and `bdb_version()` bake `CARGO_PKG_VERSION` into the
+shipped binary; `bdb_abi_version()` is layout generation, not the
+release spelling.
 
 The platform PIN is not a repo value: `scripts/pin.ts` derives it from the
 manifest's own `version` at pack time (exact by construction), the gate
@@ -252,9 +251,9 @@ tarball proof packs the main package for real and asserts the packed
 manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
-A release bump edits every spelling, then the build enforces the match. All
-spellings are `0.19.0` in this tree; `pnpm run build` asserts the lockstep
-on every run.
+A release bump edits the workspace version and the roster manifests; the
+build enforces the match. The workspace version is `0.19.0` in this tree;
+`pnpm run build` asserts the lockstep on every run.
 
 ## Runbook (0.19.0, darwin-arm64 host, owner)
 
@@ -264,13 +263,9 @@ cd ts
 
 # 1. The lockstep is already set to 0.19.0 (the build asserts it — the
 #    platform pins are NOT repo fields, they inject at pack time):
-#    - ts/package.json                    "version": "0.19.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.19.0"
-#    - ts/npm/linux-arm64/package.json    "version": "0.19.0"
-#    - ts/crate/Cargo.toml                version = "0.19.0"
-#    - crates/bumbledb/Cargo.toml         version = "0.19.0"
-#    - crates/bumbledb-c/Cargo.toml       version = "0.19.0"
-#    - workspace members (bench, macros, query, query-macros, theory)
+#    - Cargo.toml [workspace.package] version = "0.19.0" (the one writer)
+#    - every path on scripts/version-roster.txt equals 0.19.0
+#    - ts-log peerDependencies["@bjornpagen/bumbledb"] is ^0.19.0
 #    bdb_abi_version() answers 4 (unchanged: an added JS export is not
 #    an ABI event).
 
@@ -367,9 +362,9 @@ pnpm publish --no-git-checks   # interactive OTP, same as the SDK packages
 pnpm view @bjornpagen/bumbledb-log@0.19.0 version
 ```
 
-The package's own version is `0.19.0` — the log driver is not in the
-engine lockstep; it rides its peer range instead, and `assertVersionLockstep`
-never reads it.
+The package's own version is `0.19.0` — `ts-log/package.json` is on
+`scripts/version-roster.txt`, and `assertVersionLockstep` asserts both
+that version and the peer range `^0.19.0`.
 
 ## Post-publish: the primer cutover lands
 
