@@ -46,7 +46,7 @@ describe("pending recovery (60)", function suite() {
 			})
 			await a[Symbol.asyncDispose]()
 		}
-		const sidecarFile = path.join(dir("a"), "chain.json")
+		const sidecarFile = path.join(dir("a"), "chain")
 		const sidecar = await readSidecar(sidecarFile)
 		assert.equal(sidecar.tag, "read")
 		const descriptor = descriptorOf(Ledger)
@@ -111,7 +111,7 @@ describe("pending recovery (60)", function suite() {
 			})
 			await a[Symbol.asyncDispose]()
 		}
-		const sidecarFile = path.join(dir("a"), "chain.json")
+		const sidecarFile = path.join(dir("a"), "chain")
 		const sidecar = await readSidecar(sidecarFile)
 		assert.equal(sidecar.tag, "read")
 		const published = await store.get(storeKey("prod/main/log/c00000000/0000000000000001"))

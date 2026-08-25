@@ -10,7 +10,7 @@ mod support;
 use std::collections::BTreeMap;
 
 use bumbledb::RelationId;
-use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind, MAGIC, VERSION};
+use bumbledb_log::codec::{BatchHeader, Codec, MAGIC, Op, OpKind, VERSION};
 use serde_json::Value as Json;
 
 fn inventory() -> Json {

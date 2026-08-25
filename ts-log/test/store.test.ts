@@ -12,7 +12,7 @@ import { etag, fsStore, memStore, resolveAmbiguousCreate, resolveAmbiguousSwap }
 import { joinPrefix, s3Store } from "#store-s3.ts"
 
 const SLOT = storeKey("log/c00000000/0000000000000001")
-const MANIFEST = storeKey("manifest.json")
+const MANIFEST = storeKey("manifest")
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-store-"))
 
@@ -134,10 +134,10 @@ describe("the five verbs over a directory", function suite() {
 		const store = fsStore(root)
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
 		assert.ok(created.tag === "created")
-		fs.writeFileSync(path.join(root, ".manifest.json.lease.1"), `${process.pid}\n1\n0\n`)
+		fs.writeFileSync(path.join(root, ".manifest.lease.1"), `${process.pid}\n1\n0\n`)
 		const swapped = await store.putSwap(MANIFEST, encoder.encode("v2"), created.etag)
 		assert.equal(swapped.tag, "swapped")
-		assert.equal(fs.readdirSync(root).filter((name) => name.startsWith(".manifest.json.lease.")).length, 0)
+		assert.equal(fs.readdirSync(root).filter((name) => name.startsWith(".manifest.lease.")).length, 0)
 	})
 
 	test("the etag is the blake3 of the content, computed and never stored", async function etags() {
@@ -159,17 +159,17 @@ describe("the five verbs over a directory", function suite() {
 	test("open sweeps leftover temps and expired leases", async function sweep() {
 		const root = path.join(tmpRoot, "sweep")
 		fs.mkdirSync(root, { recursive: true })
-		fs.writeFileSync(path.join(root, ".manifest.json.tmp.1.1"), "litter")
-		fs.writeFileSync(path.join(root, ".manifest.json.lease.9"), "1\n9\n0\n")
+		fs.writeFileSync(path.join(root, ".manifest.tmp.1.1"), "litter")
+		fs.writeFileSync(path.join(root, ".manifest.lease.9"), "1\n9\n0\n")
 		const store = fsStore(root)
 		assert.equal(await store.get(MANIFEST), null)
-		assert.equal(fs.existsSync(path.join(root, ".manifest.json.tmp.1.1")), false)
-		assert.equal(fs.existsSync(path.join(root, ".manifest.json.lease.9")), false)
+		assert.equal(fs.existsSync(path.join(root, ".manifest.tmp.1.1")), false)
+		assert.equal(fs.existsSync(path.join(root, ".manifest.lease.9")), false)
 	})
 
 	test("putCreate against a directory is a key-shape fault, not exists", async function directory() {
 		const root = path.join(tmpRoot, "isdir")
-		fs.mkdirSync(path.join(root, "manifest.json"), { recursive: true })
+		fs.mkdirSync(path.join(root, "manifest"), { recursive: true })
 		const store = fsStore(root)
 		await assert.rejects(
 			function againstDir() {
@@ -200,7 +200,7 @@ describe("the five verbs over a directory", function suite() {
 
 describe("s3Store construction", function suite() {
 	test("an empty prefix joins as the key alone", function emptyPrefix() {
-		assert.equal(joinPrefix("", "manifest.json"), "manifest.json")
+		assert.equal(joinPrefix("", "manifest"), "manifest")
 		assert.equal(joinPrefix("smoke/run", "log/c00000000/1"), "smoke/run/log/c00000000/1")
 	})
 

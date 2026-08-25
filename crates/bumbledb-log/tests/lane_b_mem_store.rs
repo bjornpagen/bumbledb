@@ -43,7 +43,7 @@ fn put_create_wins_once_and_reports_content_etag() {
 #[test]
 fn get_if_changed_distinguishes_304_from_change() {
     let store = MemStore::new();
-    let key = StoreKey::of("manifest.json");
+    let key = StoreKey::of("manifest");
     let body = br#"{"v":2}"#.as_slice();
     let Create::Created(etag) = store.put_create(&key, body).expect("create") else {
         panic!("fresh key must be Created");
@@ -64,7 +64,7 @@ fn get_if_changed_distinguishes_304_from_change() {
 #[test]
 fn put_swap_swaps_on_match_and_moves_on_mismatch() {
     let store = MemStore::new();
-    let key = StoreKey::of("manifest.json");
+    let key = StoreKey::of("manifest");
     let Create::Created(birth) = store.put_create(&key, b"v1").expect("create") else {
         panic!("fresh key must be Created");
     };
@@ -84,7 +84,7 @@ fn put_swap_on_missing_key_is_moved() {
     let etag = content_etag(b"anything");
     assert_eq!(
         store
-            .put_swap(&StoreKey::of("manifest.json"), b"v1", &etag)
+            .put_swap(&StoreKey::of("manifest"), b"v1", &etag)
             .expect("swap"),
         Swap::Moved
     );
@@ -105,7 +105,7 @@ fn put_swap_serializes_across_threads_without_lost_updates() {
     let store = std::sync::Arc::new(MemStore::new());
     assert!(matches!(
         store
-            .put_create(&StoreKey::of("manifest.json"), b"0")
+            .put_create(&StoreKey::of("manifest"), b"0")
             .expect("birth"),
         Create::Created(_)
     ));
@@ -116,7 +116,7 @@ fn put_swap_serializes_across_threads_without_lost_updates() {
                 let mut landed = 0u64;
                 while landed < 8 {
                     let current = store
-                        .get(&StoreKey::of("manifest.json"))
+                        .get(&StoreKey::of("manifest"))
                         .expect("get")
                         .expect("present");
                     let value: u64 = String::from_utf8(current.bytes)
@@ -126,7 +126,7 @@ fn put_swap_serializes_across_threads_without_lost_updates() {
                     let next = (value + 1).to_string();
                     if let Swap::Swapped(_) = store
                         .put_swap(
-                            &StoreKey::of("manifest.json"),
+                            &StoreKey::of("manifest"),
                             next.as_bytes(),
                             &current.etag,
                         )
@@ -143,7 +143,7 @@ fn put_swap_serializes_across_threads_without_lost_updates() {
     }
     let total: u64 = String::from_utf8(
         store
-            .get(&StoreKey::of("manifest.json"))
+            .get(&StoreKey::of("manifest"))
             .expect("get")
             .expect("present")
             .bytes,
@@ -267,7 +267,7 @@ fn ambiguous_create_resolves_by_content_comparison() {
 #[test]
 fn ambiguous_swap_resolves_by_etag_reread() {
     let store = Flaky::failing(1);
-    let key = StoreKey::of("manifest.json");
+    let key = StoreKey::of("manifest");
 
     assert_eq!(
         resolve_ambiguous_swap(&store, &key, b"v2").expect("probe"),

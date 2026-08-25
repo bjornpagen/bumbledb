@@ -1,5 +1,5 @@
 //! Checkpoint duty: cadence crossings publish `ckpt/{digest}.mdb` and
-//! `ckpt/{digest}.json` and run the manifest CAS off the commit loop;
+//! `ckpt/{digest}` and run the manifest CAS off the commit loop;
 //! races resolve by the checkpoint order (greater sum replaces,
 //! otherwise the incumbent stays and the loser is a known orphan).
 

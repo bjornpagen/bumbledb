@@ -141,7 +141,7 @@ async function plantWriterPrefix(
 
 async function recoverWriter(store: ReturnType<typeof fsStore>, prefix: string, writerDir: string) {
 	const writer = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
-	const sidecar = await readSidecar(path.join(writerDir, "chain.json"))
+	const sidecar = await readSidecar(path.join(writerDir, "chain"))
 	assert.equal(sidecar.tag, "read")
 	return { writer, sidecar }
 }
@@ -213,7 +213,7 @@ describe("the writer crash matrix (56)", function suite() {
 			await writer.replica[Symbol.asyncDispose]()
 
 			const recovered = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
-			const sidecar = await readSidecar(path.join(writerDir, "chain.json"))
+			const sidecar = await readSidecar(path.join(writerDir, "chain"))
 			assert.equal(sidecar.tag, "read")
 			assert.equal(sidecar.chain.tag, "settled", `${mode}: rejection cleared to Settled`)
 			assert.equal(recovered.replica.vector.get(HOME) ?? 0n, 0n, mode)
@@ -264,7 +264,7 @@ describe("the writer crash matrix (56)", function suite() {
 			await writer.replica[Symbol.asyncDispose]()
 
 			const recovered = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
-			const sidecar = await readSidecar(path.join(writerDir, "chain.json"))
+			const sidecar = await readSidecar(path.join(writerDir, "chain"))
 			assert.equal(sidecar.tag, "read")
 			assert.equal(sidecar.chain.tag, "settled", `${step}: born-noop settles`)
 			assert.equal(recovered.replica.vector.get(NOTES), 1n, step)
@@ -327,7 +327,7 @@ describe("the replica crash matrix (56)", function suite() {
 
 			const recovered = await openReplica({ store, prefix, dir: replicaDir, theory: Ledger })
 			assert.equal(recovered.vector.get(NOTES), 2n, `prefix ${len}`)
-			const sidecar = await readSidecar(path.join(replicaDir, "chain.json"))
+			const sidecar = await readSidecar(path.join(replicaDir, "chain"))
 			assert.equal(sidecar.tag, "read")
 			assert.equal(sidecar.chain.tag, "settled", `prefix ${len}: catch-up leaves Settled`)
 			const present = recovered.db.read(function has(instance) {

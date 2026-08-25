@@ -467,7 +467,7 @@ fn a_writer_claimed_timestamp_does_not_age_the_slot() {
 }
 
 #[test]
-fn a_missing_checkpoint_json_still_drops_its_mdb() {
+fn a_missing_checkpoint_document_still_drops_its_mdb() {
     let root = temp_dir("gc_unit");
     let local = temp_dir("gc_unit_local");
     let scratch = temp_dir("gc_unit_scratch");
@@ -486,13 +486,13 @@ fn a_missing_checkpoint_json_still_drops_its_mdb() {
 
     log.store
         .delete(&ckpt_json_key("", &old_digest))
-        .expect("drop json");
+        .expect("drop document");
     assert!(
         log.store
             .get(&ckpt_mdb_key("", &old_digest))
             .expect("get")
             .is_some(),
-        "mdb remains after the json disappears"
+        "mdb remains after the document disappears"
     );
 
     let swept = sweep_at(&log, 10_000, 1_000_000, 1_000);

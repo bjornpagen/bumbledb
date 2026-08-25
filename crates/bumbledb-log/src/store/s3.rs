@@ -554,9 +554,7 @@ mod tests {
             prefix: "/smoke/run/".into(),
         })
         .expect("build");
-        let path = store
-            .object_path(&StoreKey::of("manifest"))
-            .expect("path");
+        let path = store.object_path(&StoreKey::of("manifest")).expect("path");
         assert_eq!(path.as_ref(), "smoke/run/manifest");
     }
 

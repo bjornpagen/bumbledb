@@ -133,7 +133,7 @@ fn s3_smoke_cas_linearizes() {
     let Some((store, _sweep)) = smoke_store(&unique_prefix("cas")) else {
         return;
     };
-    let key = StoreKey::of("manifest.json");
+    let key = StoreKey::of("manifest");
     assert!(matches!(
         store.put_create(&key, b"0").expect("birth"),
         Create::Created(_)
@@ -178,7 +178,7 @@ fn s3_smoke_poll_unchanged() {
     let Some((store, _sweep)) = smoke_store(&unique_prefix("poll")) else {
         return;
     };
-    let key = StoreKey::of("manifest.json");
+    let key = StoreKey::of("manifest");
     let Create::Created(etag) = store.put_create(&key, br#"{"v":1}"#).expect("create") else {
         panic!("fresh key must be Created");
     };

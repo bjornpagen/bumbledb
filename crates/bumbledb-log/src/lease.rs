@@ -29,7 +29,6 @@ use std::ops::Range;
 
 use bumbledb::schema::{FieldId, RelationId};
 
-use crate::manifest::Text;
 use crate::store::{
     Create, Etag, Fenced, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create,
     prove_swap,
@@ -162,10 +161,25 @@ pub fn lease_block<S: ObjectStore>(
     }
 }
 
+/// Canonical decimal ASCII u64: the whole body, no leading zero unless
+/// the value is zero. The counter is not a protocol document — 20 names
+/// batch, manifest, checkpoint, sidecar — so this walk is digits, not
+/// the document `Text` grammar that dies with JSON. Overflow is a
+/// refusal (00 §6): a number the digits cannot name is unconstructible.
 fn parse_counter(bytes: &[u8]) -> Option<u64> {
-    let mut text = Text::new(bytes);
-    let value = text.u64().ok()?;
-    text.end().ok()?;
+    let mut value: u64 = 0;
+    let mut len = 0usize;
+    for &byte in bytes {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            _ => return None,
+        };
+        value = value.checked_mul(10)?.checked_add(u64::from(digit))?;
+        len += 1;
+    }
+    if len == 0 || (len > 1 && bytes[0] == b'0') {
+        return None;
+    }
     Some(value)
 }
 
@@ -434,5 +448,17 @@ mod tests {
             Swap::Swapped(crate::store::fs::content_etag(b"8192")),
         );
         assert_eq!(store.get(&key).unwrap().unwrap().bytes, b"8192");
+    }
+
+    #[test]
+    fn counter_is_canonical_decimal_digits() {
+        assert_eq!(parse_counter(b"0"), Some(0));
+        assert_eq!(parse_counter(b"4096"), Some(4096));
+        assert_eq!(parse_counter(b"18446744073709551615"), Some(u64::MAX));
+        assert_eq!(parse_counter(b""), None);
+        assert_eq!(parse_counter(b"007"), None, "leading zero is not canonical");
+        assert_eq!(parse_counter(b"4 096"), None);
+        assert_eq!(parse_counter(b"4096\n"), None);
+        assert_eq!(parse_counter(b"18446744073709551616"), None);
     }
 }

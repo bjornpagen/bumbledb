@@ -16,7 +16,7 @@ const BASE_ENV: &str = "LANE_B_BASE_DIR";
 const ID_ENV: &str = "LANE_B_CHILD_ID";
 
 const SLOT_KEY: &str = "log/c00000001/slot";
-const MANIFEST_KEY: &str = "manifest.json";
+const MANIFEST_KEY: &str = "manifest";
 const WRITERS: u64 = 8;
 const SWAPS_PER_WRITER: u64 = 16;
 

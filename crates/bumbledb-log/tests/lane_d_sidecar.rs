@@ -47,25 +47,28 @@ fn render_parse_fixpoint_with_and_without_pending() {
 }
 
 #[test]
-fn parse_refuses_version_whitespace_and_unknown_braids() {
+fn parse_refuses_version_trailing_bytes_and_unknown_braids() {
     let codec = codec();
-    let canonical = String::from_utf8(Chain::genesis(codec.braids()).render()).expect("utf8");
+    let canonical = Chain::genesis(codec.braids()).render();
 
-    let versioned = canonical.replace("{\"v\":3,", "{\"v\":2,");
+    let mut versioned = canonical.clone();
+    versioned[0] = 2;
     assert_eq!(
-        Chain::parse(versioned.as_bytes(), codec.braids()),
+        Chain::parse(&versioned, codec.braids()),
         Err(SidecarError::Version { got: 2 })
     );
 
-    let spaced = canonical.replace(',', ", ");
+    let mut trailing = canonical.clone();
+    trailing.push(0);
     assert!(matches!(
-        Chain::parse(spaced.as_bytes(), codec.braids()),
+        Chain::parse(&trailing, codec.braids()),
         Err(SidecarError::Malformed { .. })
     ));
 
-    let foreign = canonical.replace("\"c00000002\"", "\"c00000007\"");
+    let mut foreign = canonical;
+    foreign[5..9].copy_from_slice(&7u32.to_le_bytes());
     assert_eq!(
-        Chain::parse(foreign.as_bytes(), codec.braids()),
+        Chain::parse(&foreign, codec.braids()),
         Err(SidecarError::UnknownBraid { got: 7 })
     );
 }
@@ -90,44 +93,28 @@ fn parse_is_order_strict_like_the_checkpoint_parser() {
             ts: 200,
         },
     );
-    let canonical = String::from_utf8(chain.render()).expect("utf8");
-    let kitchen = format!("\"{}\"", kitchen_braid(&codec));
-    let note = format!("\"{}\"", note_braid(&codec));
-    let kitchen_entry_start = canonical.find(&kitchen).expect("kitchen entry");
-    let note_entry_start = canonical.find(&note).expect("note entry");
-    assert!(kitchen_entry_start < note_entry_start, "canonical order");
+    let canonical = chain.render();
+    assert!(kitchen_braid(&codec) < note_braid(&codec), "canonical order");
+    const ENTRY: usize = 52;
+    let kitchen = canonical[5..5 + ENTRY].to_vec();
+    let note = canonical[5 + ENTRY..5 + 2 * ENTRY].to_vec();
 
     // The same two facts in swapped order are non-canonical bytes of
     // the same value; the order-strict walk refuses them, so an
     // accepted sidecar always re-renders byte-identically.
-    let kitchen_body = &canonical[kitchen_entry_start
-        ..canonical[kitchen_entry_start..]
-            .find("},")
-            .map(|end| kitchen_entry_start + end + 1)
-            .expect("kitchen body end")];
-    let note_body = &canonical[note_entry_start
-        ..canonical[note_entry_start..]
-            .find('}')
-            .map(|end| note_entry_start + end + 1)
-            .expect("note body end")];
-    let swapped = canonical.replacen(
-        &format!("{kitchen_body},{note_body}"),
-        &format!("{note_body},{kitchen_body}"),
-        1,
-    );
+    let mut swapped = canonical.clone();
+    swapped[5..5 + ENTRY].copy_from_slice(&note);
+    swapped[5 + ENTRY..5 + 2 * ENTRY].copy_from_slice(&kitchen);
     assert_ne!(swapped, canonical, "the swap changed the bytes");
     assert!(matches!(
-        Chain::parse(swapped.as_bytes(), codec.braids()),
+        Chain::parse(&swapped, codec.braids()),
         Err(SidecarError::Malformed { .. })
     ));
 
-    let duplicated = canonical.replacen(
-        &format!("{kitchen_body},{note_body}"),
-        &format!("{kitchen_body},{kitchen_body}"),
-        1,
-    );
+    let mut duplicated = canonical;
+    duplicated[5 + ENTRY..5 + 2 * ENTRY].copy_from_slice(&kitchen);
     assert!(matches!(
-        Chain::parse(duplicated.as_bytes(), codec.braids()),
+        Chain::parse(&duplicated, codec.braids()),
         Err(SidecarError::Malformed { .. })
     ));
 }

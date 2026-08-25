@@ -4,10 +4,10 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import { descriptorOf } from "#descriptor.ts"
-import { DOC_VERSION } from "#document.ts"
+import { CHAIN_FILE, renderSidecar } from "#chain.ts"
+import { braid, descriptorOf } from "#descriptor.ts"
 import { ErrManifestMissing, ErrRefused, refusalOf } from "#errors.ts"
-import { manifestKey } from "#keys.ts"
+import { generation, manifestKey } from "#keys.ts"
 import { renderManifest } from "#manifest.ts"
 import { coreOf, openReplica } from "#replica.ts"
 import { memStore } from "#store.ts"
@@ -43,10 +43,13 @@ describe("replica open refusals", function suite() {
 		assert.equal(created.tag, "created")
 		const dir = path.join(tmpRoot, "unknown-braid")
 		fs.mkdirSync(dir, { recursive: true })
-		const zero = "0".repeat(64)
+		const unknown = braid("c0000ffff")
 		fs.writeFileSync(
-			path.join(dir, "chain.json"),
-			`{"v":${DOC_VERSION},"chain":{"c00000000":{"g":"0","prev":"${zero}","ts":"0"},"c0000ffff":{"g":"0","prev":"${zero}","ts":"0"}},"pending":null}`
+			path.join(dir, CHAIN_FILE),
+			renderSidecar({
+				tag: "settled",
+				entries: new Map([[unknown, { g: generation(0n), prev: new Uint8Array(32), ts: 0n }]])
+			})
 		)
 		const caught = await errors.try(openReplica({ store, prefix: "prod/main", dir, theory: Ledger }))
 		assert.ok(caught.error)

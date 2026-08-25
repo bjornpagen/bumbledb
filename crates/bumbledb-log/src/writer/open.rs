@@ -16,8 +16,8 @@ use crate::replica::{
 use crate::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 
 use super::{
-    Core, Error, Floor, Inner, Live, ObjectStore, PendingArm, Result, StepHook, Theory, WriterState,
-    WriterStep,
+    Core, Error, Floor, Inner, Live, ObjectStore, PendingArm, Result, StepHook, Theory,
+    WriterState, WriterStep,
 };
 
 pub(crate) enum MountEnd<T: Theory + Clone> {

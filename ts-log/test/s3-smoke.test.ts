@@ -21,7 +21,7 @@ import { openWriter } from "#writer.ts"
 const REQUIRED = ["BUMBLEDB_S3_SMOKE_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] as const
 
 const SLOT = storeKey("log/c00000000/1")
-const MANIFEST = storeKey("manifest.json")
+const MANIFEST = storeKey("manifest")
 const PROBE = storeKey("log/c00000000/probe")
 
 let prefixSeq = 0

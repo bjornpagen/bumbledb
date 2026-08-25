@@ -7,8 +7,8 @@ mod lane_d_support;
 use std::collections::BTreeMap;
 
 use bumbledb_log::manifest::{
-    Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, log_key,
-    manifest_key, publish_checkpoint,
+    Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, hex32,
+    log_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
@@ -38,42 +38,35 @@ fn manifest_null_checkpoint_is_a_real_null() {
         fingerprint: digest(0x22),
         checkpoint: None,
     };
-    let text = String::from_utf8(manifest.render()).expect("utf8");
-    assert!(text.ends_with("\"checkpoint\":null}"));
-    assert!(!text.contains("\"\""));
+    let bytes = manifest.render();
+    assert_eq!(bytes.len(), 34);
+    assert_eq!(bytes[0], 3);
+    assert_eq!(&bytes[1..33], &digest(0x22));
+    assert_eq!(bytes[33], 0);
 }
 
 #[test]
 fn manifest_refuses_other_versions_by_name() {
-    let manifest = Manifest {
+    let mut bytes = Manifest {
         fingerprint: digest(0x33),
         checkpoint: None,
-    };
-    let bytes = String::from_utf8(manifest.render()).expect("utf8");
-    let hostile = bytes.replace("{\"v\":3,", "{\"v\":2,");
+    }
+    .render();
+    bytes[0] = 2;
     assert_eq!(
-        Manifest::parse(hostile.as_bytes()),
+        Manifest::parse(&bytes),
         Err(ManifestError::Version { got: 2 })
     );
 }
 
 #[test]
-fn manifest_refuses_whitespace_reordering_and_trailing_bytes() {
-    let canonical = String::from_utf8(
-        Manifest {
-            fingerprint: digest(0x44),
-            checkpoint: None,
-        }
-        .render(),
-    )
-    .expect("utf8");
-    let spaced = canonical.replace(':', ": ");
-    assert!(matches!(
-        Manifest::parse(spaced.as_bytes()),
-        Err(ManifestError::Malformed { .. })
-    ));
-    let mut trailing = canonical.clone().into_bytes();
-    trailing.push(b'\n');
+fn manifest_refuses_trailing_bytes() {
+    let mut trailing = Manifest {
+        fingerprint: digest(0x44),
+        checkpoint: None,
+    }
+    .render();
+    trailing.push(0);
     assert!(matches!(
         Manifest::parse(&trailing),
         Err(ManifestError::Malformed { .. })
@@ -147,10 +140,14 @@ fn checkpoint_refuses_a_braid_the_schema_never_minted() {
         writer: 1,
         prev: None,
     };
-    let text = String::from_utf8(doc.render()).expect("utf8");
-    let hostile = text.replace("\"c00000002\"", "\"c00000009\"");
+    let mut bytes = doc.render();
+    let kitchen = kitchen_braid(&codec);
+    let note = note_braid(&codec);
+    assert!(kitchen < note, "BTreeMap order puts kitchen first");
+    const HEAD: usize = 52;
+    bytes[5 + HEAD..5 + HEAD + 4].copy_from_slice(&9u32.to_le_bytes());
     assert_eq!(
-        Checkpoint::parse(hostile.as_bytes(), codec.braids()),
+        Checkpoint::parse(&bytes, codec.braids()),
         Err(CheckpointError::UnknownBraid { got: 9 })
     );
 }
@@ -158,23 +155,15 @@ fn checkpoint_refuses_a_braid_the_schema_never_minted() {
 #[test]
 fn key_layout_matches_the_protocol() {
     let codec = codec();
-    assert_eq!(manifest_key("").as_str(), "manifest.json");
-    assert_eq!(manifest_key("t/acme").as_str(), "t/acme/manifest.json");
+    assert_eq!(manifest_key("").as_str(), "manifest");
+    assert_eq!(manifest_key("t/acme").as_str(), "t/acme/manifest");
     assert_eq!(
         log_key("", kitchen_braid(&codec), 0x2a).as_str(),
         "log/c00000000/000000000000002a"
     );
-    assert!(
-        ckpt_json_key("p", &digest(0x01))
-            .as_str()
-            .starts_with("p/ckpt/")
-    );
     assert_eq!(
-        ckpt_json_key("p", &digest(0x01))
-            .as_str()
-            .split('.')
-            .next_back(),
-        Some("json")
+        ckpt_json_key("p", &digest(0x01)).as_str(),
+        format!("p/ckpt/{}", hex32(&digest(0x01)))
     );
 }
 

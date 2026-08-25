@@ -133,7 +133,7 @@ describe("replica and writer over the mem store", function suite() {
 			})
 			await a[Symbol.asyncDispose]()
 		}
-		const sidecarFile = path.join(dir("a"), "chain.json")
+		const sidecarFile = path.join(dir("a"), "chain")
 		const sidecar = await readSidecar(sidecarFile)
 		assert.equal(sidecar.tag, "read")
 		const rewound = new Map(sidecar.chain.entries)
@@ -162,7 +162,7 @@ describe("replica and writer over the mem store", function suite() {
 			})
 			await a[Symbol.asyncDispose]()
 		}
-		const sidecarFile = path.join(dir("a"), "chain.json")
+		const sidecarFile = path.join(dir("a"), "chain")
 		const sidecar = await readSidecar(sidecarFile)
 		assert.equal(sidecar.tag, "read")
 		const torn = new Map(sidecar.chain.entries)

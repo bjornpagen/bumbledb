@@ -289,7 +289,7 @@ fn plant_high_incumbent(root: &Path) -> [u8; 32] {
 }
 
 fn overwrite_manifest(root: &Path, bytes: &[u8]) {
-    std::fs::write(root.join("manifest.json"), bytes).expect("overwrite manifest");
+    std::fs::write(root.join("manifest"), bytes).expect("overwrite manifest");
 }
 
 fn spawn_once(root: &Path, theory_path: &Path) -> std::process::Child {
@@ -459,10 +459,10 @@ fn the_once_binary_screams_publish_checkpoint_parse() {
     wait_exists(&scratch_dir(&root), Duration::from_secs(30));
     std::fs::create_dir_all(root.join("ckpt")).expect("ckpt dir");
     std::fs::write(
-        root.join(format!("ckpt/{}.json", hex32(&digest))),
+        root.join(format!("ckpt/{}", hex32(&digest))),
         b"not-a-checkpoint",
     )
-    .expect("plant garbage json");
+    .expect("plant garbage checkpoint");
     overwrite_manifest(
         &root,
         &Manifest {
@@ -648,7 +648,7 @@ fn the_resident_binary_screams_gc_checkpoint_doc_missing() {
     let out = resident_then(&root, &theory_path, || {
         FsStore::new(root.clone())
             .delete(&ckpt_json_key("", &digest))
-            .expect("delete ckpt json");
+            .expect("delete checkpoint");
     });
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
@@ -665,10 +665,10 @@ fn the_resident_binary_screams_gc_checkpoint_parse() {
     let digest = seed_published_store(&root);
     let out = resident_then(&root, &theory_path, || {
         std::fs::write(
-            root.join(format!("ckpt/{}.json", hex32(&digest))),
+            root.join(format!("ckpt/{}", hex32(&digest))),
             b"not-a-checkpoint",
         )
-        .expect("corrupt ckpt json");
+        .expect("corrupt checkpoint");
     });
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");

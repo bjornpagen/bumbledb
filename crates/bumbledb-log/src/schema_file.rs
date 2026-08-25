@@ -612,7 +612,7 @@ fn as_u16(json: &Json, field: &'static str) -> Result<u16, TheoryFile> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, TheoryFile};
+    use super::{TheoryFile, parse};
 
     #[test]
     fn a_multi_arm_value_is_shape() {

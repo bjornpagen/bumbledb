@@ -23,10 +23,10 @@ describe("the StoreKey grammar", function suite() {
 			storeKey("\uFF5Etmp/x")
 		})
 		assert.throws(function fullwidthLease() {
-			storeKey("\uFF5Elease/manifest.json")
+			storeKey("\uFF5Elease/manifest")
 		})
 		assert.throws(function lockZwsp() {
-			storeKey("manifest.json.lock\u200B")
+			storeKey("manifest.lock\u200B")
 		})
 		assert.throws(function lineSeparator() {
 			storeKey("log/\u2028/1")

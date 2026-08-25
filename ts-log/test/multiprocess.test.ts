@@ -188,7 +188,7 @@ describe("the TS multi-process lane", function suite() {
 			const writer = await openWriter({ store: fsStore(bucket), prefix: PREFIX, dir: victimDir, theory: Ledger })
 			await writer.replica[Symbol.asyncDispose]()
 		}
-		const sidecarFile = path.join(victimDir, "chain.json")
+		const sidecarFile = path.join(victimDir, "chain")
 		const sidecar = await readSidecar(sidecarFile)
 		assert.equal(sidecar.tag, "read")
 		assert.equal(sidecar.chain.tag, "settled", "birth is Settled before the script plants Pending")

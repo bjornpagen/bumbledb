@@ -3,22 +3,25 @@ import { describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
 import { digest32FromHex, hex32, toHex } from "#bytes.ts"
 import { parseSidecar, renderSidecar } from "#chain.ts"
+import type { Braid } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
 import { ErrRefused, refusalOf } from "#errors.ts"
+import { generation } from "#keys.ts"
 
+const HOME = braid("c00000000")
+const ZERO = new Uint8Array(32)
 const ZERO_HEX = "0".repeat(64)
 
-function utf8(text: string): Uint8Array {
-	return new TextEncoder().encode(text)
+function genesis() {
+	return {
+		tag: "settled" as const,
+		entries: new Map([[HOME, { g: generation(0n), prev: ZERO, ts: 0n }]])
+	}
 }
 
-function sidecar(prev: string): string {
-	return `{"v":3,"chain":{"c00000000":{"g":"0","prev":"${prev}","ts":"0"}},"pending":null}`
-}
-
-function refuseKind(prev: string): string {
+function refuseKind(bytes: Uint8Array, known?: ReadonlySet<Braid>): string {
 	const ran = errors.trySync(function parseIt() {
-		return parseSidecar(utf8(sidecar(prev)))
+		return parseSidecar(bytes, known)
 	})
 	assert.ok(ran.error, "expected a refusal")
 	assert.ok(errors.is(ran.error, ErrRefused), `expected ErrRefused, got: ${ran.error.message}`)
@@ -28,27 +31,38 @@ function refuseKind(prev: string): string {
 }
 
 describe("the chain sidecar", function suite() {
-	test("prev is Digest32 in memory and lowercase hex on the wire", function digestPrev() {
-		const bytes = utf8(sidecar(ZERO_HEX))
-		const chain = parseSidecar(bytes)
-		const entry = chain.entries.get(braid("c00000000"))
+	test("prev is 32 raw bytes", function digestPrev() {
+		const chain = genesis()
+		const bytes = renderSidecar(chain)
+		const parsed = parseSidecar(bytes)
+		const entry = parsed.entries.get(HOME)
 		assert.ok(entry !== undefined)
 		assert.ok(entry.prev instanceof Uint8Array)
 		assert.equal(entry.prev.length, 32)
 		assert.equal(hex32(entry.prev), ZERO_HEX)
 		assert.deepEqual(entry.prev, digest32FromHex(ZERO_HEX))
-		assert.equal(toHex(utf8(renderSidecar(chain))), toHex(bytes))
+		assert.equal(toHex(renderSidecar(parsed)), toHex(bytes))
 	})
 
-	test("a short prev refuses", function shortPrev() {
-		assert.equal(refuseKind("aabb"), "Malformed")
+	test("a leading byte other than 3 is Version", function version() {
+		const bytes = renderSidecar(genesis())
+		bytes[0] = 2
+		assert.equal(refuseKind(bytes), "Version")
 	})
 
-	test("an odd-length prev refuses", function oddPrev() {
-		assert.equal(refuseKind("0".repeat(63)), "Malformed")
+	test("an unknown braid refuses", function unknownBraid() {
+		const foreign = braid("c0000ffff")
+		const bytes = renderSidecar({
+			tag: "settled",
+			entries: new Map([[foreign, { g: generation(0n), prev: ZERO, ts: 0n }]])
+		})
+		assert.equal(refuseKind(bytes, new Set([HOME])), "UnknownBraid")
 	})
 
-	test("an uppercase prev refuses", function uppercasePrev() {
-		assert.equal(refuseKind("A".repeat(64)), "Malformed")
+	test("trailing bytes refuse", function trailing() {
+		const bytes = renderSidecar(genesis())
+		const padded = new Uint8Array(bytes.length + 1)
+		padded.set(bytes)
+		assert.equal(refuseKind(padded), "TrailingBytes")
 	})
 })

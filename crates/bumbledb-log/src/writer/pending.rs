@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bumbledb::Admission;
 
-use crate::apply::{apply, Applied};
+use crate::apply::{Applied, apply};
 use crate::braids::BraidId;
 use crate::codec::{Op, OpKind};
 use crate::manifest::log_key;
@@ -336,7 +336,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_pending, PendingFold};
+    use super::{PendingFold, fold_pending};
 
     #[test]
     fn fold_consults_floor_first() {
