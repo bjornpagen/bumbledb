@@ -7,16 +7,16 @@ use std::sync::Arc;
 
 use bumbledb::{Admission, Db};
 
-use crate::apply::{Applied, apply};
+use crate::apply::{apply, Applied};
 use crate::braids::BraidId;
-use crate::manifest::{Checkpoint, Manifest, log_key, manifest_key};
+use crate::manifest::{log_key, manifest_key, Checkpoint, Manifest};
 use crate::replica::{
-    Corruption, Fault, OpenRefusal, Scream, fetch_checkpoint_bytes, write_checkpoint_bytes,
+    fetch_checkpoint_bytes, write_checkpoint_bytes, Corruption, Fault, OpenRefusal, Scream,
 };
-use crate::sidecar::{Chain, ChainEntry, Pending};
+use crate::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 
 use super::{
-    Core, Error, Floor, Inner, ObjectStore, PendingArm, Result, StepHook, Theory, WriterStep,
+    Core, Error, Floor, Inner, Live, ObjectStore, PendingArm, Result, StepHook, Theory, WriterStep,
 };
 
 pub(crate) enum MountEnd<T: Theory + Clone> {
@@ -46,10 +46,12 @@ where
 {
     /// Establish at open: manifest gauntlet, mount, pending arms 1 and
     /// 2 inline (arm 3 marks the backlog), catch-up skipping the
-    /// backlog braid, and the wholeness identity. `Some` is a refusal;
-    /// `None` leaves the core established. The loop repairs forever
-    /// with the legible scream — a healthy remote converges, and a
-    /// remote that keeps tearing keeps saying so.
+    /// backlog braid, the wholeness identity `generation(chain)`,
+    /// `ckpt_sum` from the adopted floor, and publish of an inherited
+    /// pending. `Some` is a refusal; `None` leaves the core
+    /// established. The loop repairs forever with the legible scream —
+    /// a healthy remote converges, and a remote that keeps tearing
+    /// keeps saying so.
     pub(crate) fn open_establish(
         self: &Arc<Self>,
         core: &mut Core<T>,
@@ -78,13 +80,11 @@ where
             core.chain = chain;
             core.wedged.clear();
 
-            let mut applied = 0u64;
             let mut skip: Option<BraidId> = None;
-            if core.chain.pending.is_some() {
+            if matches!(core.chain, Chain::Pending { .. }) {
                 match self.pending_arm(core)? {
                     PendingArm::Clear => {}
                     PendingArm::Backlog(braid) => {
-                        applied = 1;
                         skip = Some(braid);
                     }
                     PendingArm::Discard => {
@@ -95,7 +95,7 @@ where
                     }
                 }
             }
-            match self.catch_up(core, skip, applied, pre_existing)? {
+            match self.catch_up(core, skip, pre_existing)? {
                 CatchUp::Tips => {}
                 CatchUp::Gap => {
                     core.db = None;
@@ -110,8 +110,14 @@ where
                     continue;
                 }
             }
-            if core.generation()? == core.chain.sum() + applied {
+            if core.generation()? == core.chain.generation() {
                 core.ckpt_sum = core.floor.as_ref().map_or(0, |(_, doc)| doc.sum());
+                if matches!(core.chain, Chain::Pending { .. }) {
+                    match self.resolve_backlog(core, None, &mut Live::default()) {
+                        Ok(()) | Err(Error::Contention { .. }) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
                 return Ok(None);
             }
             core.db = None;
@@ -151,7 +157,7 @@ where
             core.db = Some(db);
             core.chain = chain;
             core.wedged.clear();
-            match self.catch_up(core, None, 0, pre_existing)? {
+            match self.catch_up(core, None, pre_existing)? {
                 CatchUp::Tips => {}
                 CatchUp::Gap => {
                     core.db = None;
@@ -166,15 +172,19 @@ where
                     continue;
                 }
             }
-            if core.generation()? == core.chain.sum() {
+            if core.generation()? == core.chain.generation() {
+                core.ckpt_sum = core.floor.as_ref().map_or(0, |(_, doc)| doc.sum());
                 break;
             }
             core.db = None;
             self.discard_dir()?;
             scream.attempt("the wholeness identity failed after catch-up");
         }
-        if let Some(pending) = carry {
-            core.chain.pending = Some(pending);
+        if let Some(batch) = carry {
+            core.chain = Chain::Pending {
+                entries: std::mem::take(core.chain.entries_mut()),
+                batch,
+            };
             core.chain
                 .write_atomic(&self.dir)
                 .map_err(|err| Error::Fault(Fault::Io(err)))?;
@@ -220,11 +230,16 @@ where
         if self.dir.exists() {
             return match Db::open(&self.dir, self.theory.clone()) {
                 Ok(db) => {
-                    let Some(Ok(chain)) = Chain::read(&self.dir, self.codec.braids())
-                        .map_err(|err| Error::Fault(Fault::Io(err)))?
-                    else {
-                        drop(db);
-                        return Ok(MountEnd::Discard("the sidecar refused to read"));
+                    let chain = match Chain::read(&self.dir, self.codec.braids()) {
+                        SidecarRead::Read(chain) => chain,
+                        SidecarRead::Fault(err) => {
+                            drop(db);
+                            return Err(Error::Fault(Fault::Io(err)));
+                        }
+                        SidecarRead::Absent | SidecarRead::Corrupt(_) => {
+                            drop(db);
+                            return Ok(MountEnd::Discard("the sidecar refused to read"));
+                        }
                     };
                     Ok(MountEnd::Mounted {
                         db: Arc::new(db),
@@ -303,7 +318,7 @@ where
                 computed,
             }));
         }
-        let chain = Chain {
+        let chain = Chain::Settled {
             entries: doc
                 .braids
                 .iter()
@@ -318,7 +333,6 @@ where
                     )
                 })
                 .collect(),
-            pending: None,
         };
         chain
             .write_atomic(&self.dir)
@@ -338,7 +352,6 @@ where
         &self,
         core: &mut Core<T>,
         skip: Option<BraidId>,
-        applied: u64,
         open_phase: bool,
     ) -> Result<CatchUp> {
         let braids: Vec<BraidId> = self
@@ -375,6 +388,7 @@ where
                     at_tip.insert(*braid);
                     continue;
                 };
+                let pending_term = core.chain.generation().saturating_sub(core.chain.sum());
                 let outcome = apply(
                     core.db.as_deref().expect("mounted"),
                     &mut core.chain,
@@ -382,7 +396,7 @@ where
                     *braid,
                     slot,
                     &fetched.bytes,
-                    applied,
+                    pending_term,
                 )
                 .map_err(|err| Error::Fault(Fault::Engine(err)))?;
                 match outcome {
