@@ -296,11 +296,20 @@ mod tests {
     use super::*;
     use crate::store::{Create, ObjectStore, StoreKey};
 
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let path =
+            std::env::temp_dir().join(format!("bdb-log-fs-{tag}-{}-{nanos}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("root");
+        path
+    }
+
     #[test]
     fn put_create_against_a_directory_is_a_key_shape_fault() {
-        let root = std::env::temp_dir().join(format!("fs_store_dir_shape_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("root");
+        let root = scratch("dir_shape");
         let key = StoreKey::of("manifest");
         fs::create_dir_all(root.join(key.as_str())).expect("directory at the key");
         let store = FsStore::new(&root);
@@ -317,6 +326,65 @@ mod tests {
             Ok(Create::Exists) => panic!("a directory at the key is not Exists"),
             Ok(other) => panic!("expected a key-shape fault, got {other:?}"),
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sweep_leaves_an_in_flight_temp() {
+        let root = scratch("sweep_live");
+        let temp = crate::store::fence::synced_temp(&root, b"live").expect("temp");
+        crate::store::fence::sweep_reserved(&root).expect("sweep");
+        assert!(
+            temp.exists(),
+            "a constructor must not wipe a live publish temp"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn concurrent_constructors_create_or_exist_without_enoent() {
+        const WRITERS: u64 = 8;
+        let root = scratch("concurrent_new");
+        let outcomes: Vec<Create> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..WRITERS)
+                .map(|i| {
+                    let root = root.clone();
+                    scope.spawn(move || {
+                        let store = FsStore::new(&root);
+                        let key = StoreKey::of("manifest");
+                        let body = format!("body {i}");
+                        match store.put_create(&key, body.as_bytes()).expect("put_create") {
+                            Create::Ambiguous => match store.get(&key).expect("verify") {
+                                Some(fetched) if fetched.bytes == body.as_bytes() => {
+                                    Create::Created(content_etag(body.as_bytes()))
+                                }
+                                Some(_) => Create::Exists,
+                                None => panic!("Ambiguous create left no occupant"),
+                            },
+                            other => other,
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("thread"))
+                .collect()
+        });
+        let created = outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, Create::Created(_)))
+            .count();
+        let exists = outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, Create::Exists))
+            .count();
+        assert_eq!(created, 1, "exactly one creator wins: {outcomes:?}");
+        assert_eq!(
+            exists,
+            usize::try_from(WRITERS).expect("fits") - 1,
+            "every other constructor sees Exists: {outcomes:?}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

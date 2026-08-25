@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb-log",
-	"version": "0.18.0",
+	"version": "0.19.0",
 	"description": "Braided object-store replication for bumbledb: the command codec, theory-derived braids, and replica/writer over five store verbs",
 	"type": "module",
 	"exports": {
@@ -42,7 +42,7 @@
 		"arkregex": "^0.0.8"
 	},
 	"peerDependencies": {
-		"@bjornpagen/bumbledb": "^0.18.0"
+		"@bjornpagen/bumbledb": "^0.19.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",

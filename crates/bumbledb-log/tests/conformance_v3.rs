@@ -190,7 +190,11 @@ fn assert_decode_offset(name: &str, refusal: &DecodeError, len: usize) {
 }
 
 fn temp_root(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("conformance_v3_{tag}_{}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path =
+        std::env::temp_dir().join(format!("bdb-log-v3-{tag}-{}-{nanos}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).expect("create test root");
     path

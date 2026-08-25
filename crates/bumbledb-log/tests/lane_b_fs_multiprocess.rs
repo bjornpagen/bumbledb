@@ -21,7 +21,13 @@ const WRITERS: u64 = 8;
 const SWAPS_PER_WRITER: u64 = 16;
 
 fn base_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("lane_b_mp_{}_{name}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let dir = std::env::temp_dir().join(format!(
+        "bdb-log-b-mp-{}-{name}-{nanos}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create base dir");
     dir

@@ -4,8 +4,8 @@ This directory is **non-normative**. It is not on the conformance path, not
 wired into the engine battery, and not a second source of protocol law. It
 exists so a real deploy is an afternoon of reading, not archaeology.
 
-It installs from the **registry**, not this tree: `@bjornpagen/bumbledb@0.18.0`,
-`@bjornpagen/bumbledb-linux-arm64@0.18.0`, `@bjornpagen/bumbledb-log@0.18.0`.
+It installs from the **registry**, not this tree: `@bjornpagen/bumbledb@0.19.0`,
+`@bjornpagen/bumbledb-linux-arm64@0.19.0`, `@bjornpagen/bumbledb-log@0.19.0`.
 The owner's publish ceremony lands those versions before a stranger can
 `pnpm install` this example the way this file describes.
 

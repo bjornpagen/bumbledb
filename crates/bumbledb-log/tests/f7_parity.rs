@@ -82,7 +82,11 @@ fn cause_name(cause: &ChainCause) -> &'static str {
 }
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("f7_parity_{tag}_{}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path =
+        std::env::temp_dir().join(format!("bdb-log-f7-{tag}-{}-{nanos}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).expect("create test root");
     path

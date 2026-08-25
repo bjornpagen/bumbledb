@@ -485,7 +485,7 @@ mod tests {
     fn read_is_absent_corrupt_or_read() {
         let braids = kitchen_braids();
         let dir = std::env::temp_dir().join(format!(
-            "bumbledb-sidecar-read-{}-{}",
+            "bdb-log-sidecar-read-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

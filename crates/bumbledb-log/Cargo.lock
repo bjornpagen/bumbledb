@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "blake3",
  "bumbledb-macros",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-log"
-version = "0.17.0"
+version = "0.19.0"
 dependencies = [
  "blake3",
  "bumbledb",
@@ -123,14 +123,14 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-macros"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bumbledb-theory",
 ]
 
 [[package]]
 name = "bumbledb-theory"
-version = "0.18.0"
+version = "0.19.0"
 
 [[package]]
 name = "bumpalo"

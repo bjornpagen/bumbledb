@@ -13,6 +13,11 @@ use super::{LEASE_NAMESPACE, Lease, TEMP_NAMESPACE, WriterId, jittered, unix_ms}
 /// How long a mutation lease stays current, in milliseconds.
 pub const MUTATION_TTL_MS: u64 = 5_000;
 
+/// A live `synced_temp` exists only for write-then-link. Anything
+/// older than this is crash litter. Sweep deletes those files and
+/// never the whole `~tmp` tree: constructors share the root.
+pub const TEMP_STALE_MS: u64 = 30_000;
+
 /// How long a directory exclusivity lease stays current, in milliseconds.
 pub const DIR_TTL_MS: u64 = 300_000;
 
@@ -82,15 +87,32 @@ pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Sweep crash litter: every temp, and every expired lease token file.
+/// Sweep crash litter: stale temps, and every expired lease token file.
 pub fn sweep_reserved(root: &Path) -> io::Result<()> {
-    let tmp = root.join(TEMP_NAMESPACE);
-    match fs::remove_dir_all(&tmp) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err),
-    }
+    sweep_stale_temps(&root.join(TEMP_NAMESPACE))?;
     sweep_expired_leases(&root.join(LEASE_NAMESPACE), unix_ms())?;
+    Ok(())
+}
+
+fn sweep_stale_temps(dir: &Path) -> io::Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    let stale = Duration::from_millis(TEMP_STALE_MS);
+    for entry in entries {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(modified) = fs::metadata(&path).and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        if modified.elapsed().is_ok_and(|age| age > stale) {
+            let _ = fs::remove_file(&path);
+        }
+    }
     Ok(())
 }
 

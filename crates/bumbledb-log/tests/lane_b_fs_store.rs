@@ -8,7 +8,13 @@ use bumbledb_log::store::fs::{FsStore, content_etag};
 use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
 
 fn fresh_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("lane_b_store_{}_{name}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let root = std::env::temp_dir().join(format!(
+        "bdb-log-b-store-{}-{name}-{nanos}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("create test root");
     root

@@ -1,7 +1,7 @@
 # @bjornpagen/bumbledb-log
 
 Braided object-store replication for [bumbledb](https://github.com/bjornpagen/bumbledb):
-a thin peer of `@bjornpagen/bumbledb` (peer `^0.18.0`). The package is
+a thin peer of `@bjornpagen/bumbledb` (peer `^0.19.0`). The package is
 three things:
 
 1. **The mirrored pure pair**, byte-exact against the Rust driver and

@@ -39,7 +39,13 @@ static DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir(tag: &str) -> PathBuf {
     let seq = DIR_SEQ.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("f8_{tag}_{}_{seq}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path = std::env::temp_dir().join(format!(
+        "bdb-log-f8-{tag}-{}-{nanos}-{seq}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).expect("create test root");
     path

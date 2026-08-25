@@ -1128,7 +1128,7 @@ mod sweep_tests {
 
     fn temp_dir(tag: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "ckpt_scratch_{tag}_{}_{}",
+            "bdb-log-ckpt-{tag}-{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
