@@ -4,6 +4,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
+import { digest32 } from "#bytes.ts"
+import type { Chain } from "#chain.ts"
 import { CHAIN_FILE, renderSidecar } from "#chain.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
 import { ErrManifestMissing, ErrRefused, refusalOf } from "#errors.ts"
@@ -44,13 +46,13 @@ describe("replica open refusals", function suite() {
 		const dir = path.join(tmpRoot, "unknown-braid")
 		fs.mkdirSync(dir, { recursive: true })
 		const unknown = braid("c0000ffff")
-		fs.writeFileSync(
-			path.join(dir, CHAIN_FILE),
-			renderSidecar({
-				tag: "settled",
-				entries: new Map([[unknown, { g: generation(0n), prev: new Uint8Array(32), ts: 0n }]])
-			})
-		)
+		const planted: Chain = {
+			tag: "settled",
+			entries: new Map([
+				[unknown, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n }]
+			])
+		}
+		fs.writeFileSync(path.join(dir, CHAIN_FILE), renderSidecar(planted))
 		const caught = await errors.try(openReplica({ store, prefix: "prod/main", dir, theory: Ledger }))
 		assert.ok(caught.error)
 		assert.ok(errors.is(caught.error, ErrRefused))

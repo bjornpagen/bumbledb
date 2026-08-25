@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
-import { digest32FromHex, hex32, toHex } from "#bytes.ts"
+import { digest32, digest32FromHex, hex32, toHex } from "#bytes.ts"
+import type { Chain } from "#chain.ts"
 import { parseSidecar, renderSidecar } from "#chain.ts"
 import type { Braid } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
@@ -9,12 +10,12 @@ import { ErrRefused, refusalOf } from "#errors.ts"
 import { generation } from "#keys.ts"
 
 const HOME = braid("c00000000")
-const ZERO = new Uint8Array(32)
+const ZERO = digest32(new Uint8Array(32))
 const ZERO_HEX = "0".repeat(64)
 
-function genesis() {
+function genesis(): Chain {
 	return {
-		tag: "settled" as const,
+		tag: "settled",
 		entries: new Map([[HOME, { g: generation(0n), prev: ZERO, ts: 0n }]])
 	}
 }
@@ -55,7 +56,7 @@ describe("the chain sidecar", function suite() {
 		const bytes = renderSidecar({
 			tag: "settled",
 			entries: new Map([[foreign, { g: generation(0n), prev: ZERO, ts: 0n }]])
-		})
+		} satisfies Chain)
 		assert.equal(refuseKind(bytes, new Set([HOME])), "UnknownBraid")
 	})
 
