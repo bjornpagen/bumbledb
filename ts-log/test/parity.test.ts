@@ -5,7 +5,7 @@ import { describe, test } from "node:test"
 import type { LiteralSpec, SchemaSpec, StatementSpec, ValueSpec, ValueTypeSpec } from "@bjornpagen/bumbledb"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { fromHex, toHex } from "#bytes.ts"
+import { digest32, digest32FromHex, fromHex, toHex } from "#bytes.ts"
 import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Descriptor } from "#descriptor.ts"
@@ -249,7 +249,7 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 }
 
 interface BatchFixture {
-	readonly expect: "ok" | "refusal"
+	readonly expect: "ok" | "refusal" | "encode-refusal"
 	readonly schema: string
 	readonly fingerprint: string
 	readonly refusal?: string
@@ -265,6 +265,14 @@ interface BatchFixture {
 		readonly relation: number
 		readonly rows: readonly (readonly CorpusValue[])[]
 	}>
+}
+
+function digestField(hex: string): BatchHeader["prev"] {
+	const bytes = fromHex(hex)
+	if (bytes.length === 32) {
+		return digest32(bytes)
+	}
+	return bytes as BatchHeader["prev"]
 }
 
 interface ChainFixture {
@@ -342,20 +350,19 @@ if (!present) {
 			}
 			const stem = file.slice(0, -5)
 			test(`batch/${stem}`, function golden() {
-				const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as BatchFixture & {
-					expect: "ok" | "refusal" | "encode-refusal"
-				}
+				const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as BatchFixture
 				const descriptor = pinned(fixture)
 				if (fixture.expect === "encode-refusal") {
 					assert.ok(fixture.header !== undefined)
+					const header = fixture.header
 					const caught = errors.trySync(function encodeIt() {
 						return encodeBatch(descriptor, {
-							fingerprint: fixture.fingerprint,
-							braid: braid(fixture.header.braid),
-							braidGen: generation(BigInt(fixture.header.braidGen)),
-							prev: fixture.header.prev,
-							writer: BigInt(fixture.header.writer),
-							timestamp: BigInt(fixture.header.timestamp)
+							fingerprint: digest32FromHex(fixture.fingerprint),
+							braid: braid(header.braid),
+							braidGen: generation(BigInt(header.braidGen)),
+							prev: digestField(header.prev),
+							writer: BigInt(header.writer),
+							timestamp: BigInt(header.timestamp)
 						}, [])
 					})
 					assert.ok(caught.error, `${stem}: expected an encode refusal`)
@@ -376,10 +383,10 @@ if (!present) {
 				const decoded = decodeBatch(descriptor, bytes)
 				assert.ok(fixture.header !== undefined && fixture.ops !== undefined)
 				const header: BatchHeader = {
-					fingerprint: fixture.fingerprint,
+					fingerprint: digest32FromHex(fixture.fingerprint),
 					braid: braid(fixture.header.braid),
 					braidGen: generation(BigInt(fixture.header.braidGen)),
-					prev: fixture.header.prev,
+					prev: digest32FromHex(fixture.header.prev),
 					writer: BigInt(fixture.header.writer),
 					timestamp: BigInt(fixture.header.timestamp)
 				}
@@ -416,7 +423,7 @@ if (!present) {
 				const decoded = decodeBatch(withFingerprint(descriptor, fixture.fingerprint), bytes)
 				const position = {
 					g: generation(BigInt(fixture.chain.g)),
-					prev: fixture.chain.prev,
+					prev: digest32FromHex(fixture.chain.prev),
 					ts: BigInt(fixture.chain.ts)
 				}
 				const run = errors.trySync(function checkIt() {

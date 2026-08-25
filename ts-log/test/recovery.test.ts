@@ -3,6 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
+import { digest32 } from "#bytes.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { encodeBatch } from "#codec.ts"
@@ -47,15 +48,15 @@ describe("pending recovery (60)", function suite() {
 		}
 		const sidecarFile = path.join(dir("a"), "chain.json")
 		const sidecar = await readSidecar(sidecarFile)
-		assert.ok(sidecar !== null)
+		assert.equal(sidecar.tag, "read")
 		const descriptor = descriptorOf(Ledger)
-		const entry = sidecar.chain.get(HOME)
+		const entry = sidecar.chain.entries.get(HOME)
 		assert.ok(entry !== undefined)
 		const ops: Op[] = [{ op: "insert", relation: "Holder", rows: [[2n, "bob"]] }]
 		const bytes = encodeBatch(
-			descriptor,
+			Ledger,
 			{
-				fingerprint: descriptor.fingerprint,
+				fingerprint: digest32(descriptor.fingerprintBytes),
 				braid: HOME,
 				braidGen: generation(entry.g + 1n),
 				prev: entry.prev,
@@ -65,8 +66,9 @@ describe("pending recovery (60)", function suite() {
 			ops
 		)
 		await writeSidecar(sidecarFile, {
-			chain: sidecar.chain,
-			pending: { braid: HOME, gen: generation(entry.g + 1n), bytes }
+			tag: "pending",
+			entries: sidecar.chain.entries,
+			batch: { braid: HOME, gen: generation(entry.g + 1n), bytes }
 		})
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -111,14 +113,15 @@ describe("pending recovery (60)", function suite() {
 		}
 		const sidecarFile = path.join(dir("a"), "chain.json")
 		const sidecar = await readSidecar(sidecarFile)
-		assert.ok(sidecar !== null)
+		assert.equal(sidecar.tag, "read")
 		const published = await store.get(storeKey("prod/main/log/c00000000/0000000000000001"))
 		assert.ok(published !== null)
-		const rewound = new Map(sidecar.chain)
-		rewound.set(HOME, { g: generation(0n), prev: "0".repeat(64), ts: 0n })
+		const rewound = new Map(sidecar.chain.entries)
+		rewound.set(HOME, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n })
 		await writeSidecar(sidecarFile, {
-			chain: rewound,
-			pending: { braid: HOME, gen: generation(1n), bytes: published.bytes }
+			tag: "pending",
+			entries: rewound,
+			batch: { braid: HOME, gen: generation(1n), bytes: published.bytes }
 		})
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })

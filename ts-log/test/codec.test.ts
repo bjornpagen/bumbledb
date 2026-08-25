@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import { bool, bytes as bytesField, i64, interval, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { toHex } from "#bytes.ts"
+import { digest32, toHex } from "#bytes.ts"
 import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
@@ -10,7 +10,8 @@ import { chainMismatchOf, ErrChainMismatch, ErrRefused, refusalOf } from "#error
 import { generation } from "#keys.ts"
 import { Ledger } from "#test/fixtures.ts"
 
-const ZERO = "0".repeat(64)
+const ZERO_DIGEST = digest32(new Uint8Array(32))
+const ONES_DIGEST = digest32(new Uint8Array(32).fill(1))
 
 /** Header layout offsets (20): magic 0, version 4, flags 6, fingerprint 8, braid 40, gen 44, prev 52, writer 84, ts 92, ops 100. */
 const OFFSET = {
@@ -26,10 +27,10 @@ const OFFSET = {
 
 function headerOf(): BatchHeader {
 	return {
-		fingerprint: descriptorOf(Ledger).fingerprint,
+		fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes),
 		braid: braid("c00000000"),
 		braidGen: generation(1n),
-		prev: ZERO,
+		prev: ZERO_DIGEST,
 		writer: 12345n,
 		timestamp: 1755801600000n
 	}
@@ -84,10 +85,10 @@ describe("the command codec", function suite() {
 		const encoded = encodeBatch(
 			WideTheory,
 			{
-				fingerprint: descriptorOf(WideTheory).fingerprint,
+				fingerprint: digest32(descriptorOf(WideTheory).fingerprintBytes),
 				braid: braid("c00000000"),
 				braidGen: generation(1n),
-				prev: ZERO,
+				prev: ZERO_DIGEST,
 				writer: 1n,
 				timestamp: 0n
 			},
@@ -133,7 +134,7 @@ describe("the command codec", function suite() {
 	test("a short prev cannot encode", function shortPrev() {
 		assert.equal(
 			refusalKindOf(function encodeIt() {
-				return encodeBatch(Ledger, { ...headerOf(), prev: "aabb" }, opsOf())
+				return encodeBatch(Ledger, { ...headerOf(), prev: new Uint8Array([0xaa, 0xbb]) as BatchHeader["prev"] }, opsOf())
 			}),
 			"DigestWidth"
 		)
@@ -152,10 +153,10 @@ describe("the command codec", function suite() {
 			return encodeBatch(
 				WideTheory,
 				{
-					fingerprint: descriptorOf(WideTheory).fingerprint,
+					fingerprint: digest32(descriptorOf(WideTheory).fingerprintBytes),
 					braid: braid("c00000000"),
 					braidGen: generation(1n),
-					prev: ZERO,
+					prev: ZERO_DIGEST,
 					writer: 1n,
 					timestamp: 0n
 				},
@@ -256,12 +257,12 @@ describe("the command codec", function suite() {
 
 	test("the chain discipline: slot, prev, and timestamp causes", function chain() {
 		const header = headerOf()
-		const good = { g: generation(1n), prev: ZERO, ts: 0n }
+		const good = { g: generation(1n), prev: ZERO_DIGEST, ts: 0n }
 		verifyChain(header, header.braid, generation(1n), good)
 		for (const [probe, cause] of [
 			[{ braid: header.braid, slot: generation(2n), chain: good }, "slot"],
 			[{ braid: braid(`${header.braid.slice(0, -1)}9`), slot: generation(1n), chain: good }, "slot"],
-			[{ braid: header.braid, slot: generation(1n), chain: { ...good, prev: "1".repeat(64) } }, "prev"],
+			[{ braid: header.braid, slot: generation(1n), chain: { ...good, prev: ONES_DIGEST } }, "prev"],
 			[{ braid: header.braid, slot: generation(1n), chain: { ...good, ts: header.timestamp + 1n } }, "timestamp"]
 		] as const) {
 			const caught = errors.trySync(function checkIt() {

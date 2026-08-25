@@ -5,7 +5,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { bytesEqual, type Digest32, digest32, digest32FromHex } from "#bytes.ts"
+import { bytesEqual, digest32, digest32FromHex } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
@@ -28,7 +28,6 @@ import { Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
 
 const HOME = braid("c00000000")
-const ZERO_HEX = "0".repeat(64)
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-writer-"))
 
 after(function cleanup() {
@@ -71,12 +70,12 @@ describe("writer encode site", function suite() {
 		await reader[Symbol.asyncDispose]()
 	})
 
-	test("a hex-string chain prev is branded Digest32 before encode", async function hexPrev() {
+	test("a Digest32 chain prev encodes as 32 predecessor bytes", async function digestPrev() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const replica = writer.replica
 		const core = coreOf(replica)
-		entriesOf(core).set(HOME, { g: generation(0n), prev: ZERO_HEX as unknown as Digest32, ts: 0n })
+		entriesOf(core).set(HOME, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n })
 
 		const out = await writer.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])

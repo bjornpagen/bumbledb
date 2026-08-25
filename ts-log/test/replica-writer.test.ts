@@ -4,10 +4,11 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
+import { digest32 } from "#bytes.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
 import { braid } from "#descriptor.ts"
-import { ErrContention } from "#errors.ts"
-import { generation, storeKey } from "#keys.ts"
+import { ErrContention, ErrSpanningCommit } from "#errors.ts"
+import { generation, logKey, storeKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
 import { memStore } from "#store.ts"
 
@@ -90,6 +91,8 @@ describe("replica and writer over the mem store", function suite() {
 		assert.ok(out.tag === "rejected")
 		assert.equal(out.violations[0]?.kind, "functionality")
 		assert.equal(a.vector.get(HOME), 1n)
+		const leaked = await store.get(logKey(prefix, HOME, generation(2n)))
+		assert.equal(leaked, null, "Rejected never reaches the network: slot 2 is absent")
 		await a[Symbol.asyncDispose]()
 	})
 
@@ -132,10 +135,10 @@ describe("replica and writer over the mem store", function suite() {
 		}
 		const sidecarFile = path.join(dir("a"), "chain.json")
 		const sidecar = await readSidecar(sidecarFile)
-		assert.ok(sidecar !== null)
-		const rewound = new Map(sidecar.chain)
-		rewound.set(HOME, { g: generation(0n), prev: "0".repeat(64), ts: 0n })
-		await writeSidecar(sidecarFile, { chain: rewound, pending: null })
+		assert.equal(sidecar.tag, "read")
+		const rewound = new Map(sidecar.chain.entries)
+		rewound.set(HOME, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n })
+		await writeSidecar(sidecarFile, { tag: "settled", entries: rewound })
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(again.vector.get(HOME), 2n)
@@ -161,10 +164,10 @@ describe("replica and writer over the mem store", function suite() {
 		}
 		const sidecarFile = path.join(dir("a"), "chain.json")
 		const sidecar = await readSidecar(sidecarFile)
-		assert.ok(sidecar !== null)
-		const torn = new Map(sidecar.chain)
-		torn.set(NOTES, { g: generation(5n), prev: "1".repeat(64), ts: 0n })
-		await writeSidecar(sidecarFile, { chain: torn, pending: null })
+		assert.equal(sidecar.tag, "read")
+		const torn = new Map(sidecar.chain.entries)
+		torn.set(NOTES, { g: generation(5n), prev: digest32(new Uint8Array(32).fill(1)), ts: 0n })
+		await writeSidecar(sidecarFile, { tag: "settled", entries: torn })
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(again.vector.get(HOME), 1n)
@@ -394,6 +397,7 @@ describe("replica and writer over the mem store", function suite() {
 			})
 		)
 		assert.ok(caught.error)
+		assert.ok(errors.is(caught.error, ErrSpanningCommit), `named ErrSpanningCommit, not ${caught.error.message}`)
 		assert.ok(!errors.is(caught.error, ErrContention))
 		await a[Symbol.asyncDispose]()
 	})
