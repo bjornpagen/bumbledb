@@ -1,17 +1,16 @@
 /**
- * The chain sidecar (50): the per-braid split and chain position in
- * `dir/chain.json`, written atomically (temp + rename, fsync). A floor
- * cache, never a truth the store reconciles against — recovery is the
- * catch-up loop, and the one wholeness check lives at the replica.
- * `pending` is the writer's one extra field: the encoded batch bytes a
- * local commit owes the log, present until its slot exists.
+ * The chain sidecar in `dir/chain.json`: a floor cache of chain
+ * position, written atomically (temp + rename, fsync). The chain is
+ * Settled or Pending — generation is the vector sum, plus one exactly
+ * when the value is Pending. Pending batch bytes are lowercase hex.
+ * Every numeric field is a bigint u64. The document version is 3.
  */
 
 import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
-import { hex32, saturatingAddU64 } from "#bytes.ts"
+import { checkedAddU64, hex32, saturatingAddU64 } from "#bytes.ts"
 import type { ChainEntry } from "#codec.ts"
 import type { Braid } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
@@ -26,17 +25,38 @@ interface Pending {
 	readonly bytes: Uint8Array
 }
 
-interface Sidecar {
-	readonly chain: ReadonlyMap<Braid, ChainEntry>
-	readonly pending: Pending | null
-	readonly sum?: bigint
+type Chain =
+	| { readonly tag: "settled"; readonly entries: ReadonlyMap<Braid, ChainEntry> }
+	| { readonly tag: "pending"; readonly entries: ReadonlyMap<Braid, ChainEntry>; readonly batch: Pending }
+
+type SidecarRead =
+	| { readonly tag: "absent" }
+	| { readonly tag: "fault"; readonly io: Error }
+	| { readonly tag: "corrupt"; readonly parse: Error }
+	| { readonly tag: "read"; readonly chain: Chain }
+
+function codeOf(error: Error): string | undefined {
+	return (error as NodeJS.ErrnoException).code
 }
 
-function renderSidecar(sidecar: Sidecar): string {
-	const braids = [...sidecar.chain.keys()].sort()
-	const chain = braids
+function chainSum(chain: Chain): bigint {
+	let sum = 0n
+	for (const entry of chain.entries.values()) {
+		sum = saturatingAddU64(sum, entry.g)
+	}
+	return sum
+}
+
+function chainGeneration(chain: Chain): bigint {
+	const sum = chainSum(chain)
+	return chain.tag === "settled" ? sum : saturatingAddU64(sum, 1n)
+}
+
+function renderSidecar(chain: Chain): string {
+	const braids = [...chain.entries.keys()].sort()
+	const body = braids
 		.map(function renderEntry(id) {
-			const entry = sidecar.chain.get(id)
+			const entry = chain.entries.get(id)
 			if (entry === undefined) {
 				throw errors.new(`sidecar chain lost braid ${id}`)
 			}
@@ -44,13 +64,13 @@ function renderSidecar(sidecar: Sidecar): string {
 		})
 		.join(",")
 	const pending =
-		sidecar.pending === null
+		chain.tag === "settled"
 			? "null"
-			: `{"braid":"${sidecar.pending.braid}","gen":"${sidecar.pending.gen}","bytes":"${pendingHex(sidecar.pending.bytes)}"}`
-	return `{"v":${DOC_VERSION},"chain":{${chain}},"pending":${pending}}`
+			: `{"braid":"${chain.batch.braid}","gen":"${chain.batch.gen}","bytes":"${pendingHex(chain.batch.bytes)}"}`
+	return `{"v":${DOC_VERSION},"chain":{${body}},"pending":${pending}}`
 }
 
-function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Sidecar {
+function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
 	const text = new Text(bytes)
 	if (!text.lit('{"v":')) {
 		refuse({ kind: "SidecarShape" }, "sidecar is not the canonical template")
@@ -60,12 +80,15 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Sidecar {
 		refuse({ kind: "SidecarShape" }, "sidecar version is not a canonical u64")
 	}
 	if (version !== DOC_VERSION) {
-		refuse({ kind: "Version", version: Number(version) }, `sidecar version ${version}, consumers refuse ≠ ${DOC_VERSION}`)
+		refuse(
+			{ kind: "SidecarVersion", version: Number(version) },
+			`sidecar version ${version}, consumers refuse ≠ ${DOC_VERSION}`
+		)
 	}
 	if (!text.lit(',"chain":{')) {
 		refuse({ kind: "SidecarShape" }, "sidecar chain field is absent")
 	}
-	const chain = new Map<Braid, ChainEntry>()
+	const entries = new Map<Braid, ChainEntry>()
 	let first = true
 	let sum = 0n
 	while (!text.peek("}")) {
@@ -99,69 +122,86 @@ function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Sidecar {
 		if (ts === undefined || !text.lit("}")) {
 			refuse({ kind: "SidecarShape" }, `sidecar braid ${name} timestamp is not a quoted decimal u64`)
 		}
-		const last = [...chain.keys()].at(-1)
+		const last = [...entries.keys()].at(-1)
 		if (last !== undefined && last >= name) {
 			refuse({ kind: "SidecarShape" }, "sidecar chain is not strictly ascending")
 		}
-		chain.set(name, { g: generation(g), prev: hex32(prev), ts })
-		sum = saturatingAddU64(sum, g)
+		const next = checkedAddU64(sum, g)
+		if (next === undefined) {
+			refuse({ kind: "SidecarShape" }, "sidecar chain sum overflows u64")
+		}
+		entries.set(name, { g: generation(g), prev: hex32(prev), ts })
+		sum = next
 	}
 	if (!text.lit('},"pending":')) {
 		refuse({ kind: "SidecarShape" }, "sidecar pending field is absent")
 	}
-	let pending: Pending | null
 	if (text.peek("null")) {
 		if (!text.lit("null")) {
 			refuse({ kind: "SidecarShape" }, "sidecar pending null arm failed")
 		}
-		pending = null
-	} else {
-		if (!text.lit('{"braid":"c')) {
-			refuse({ kind: "SidecarShape" }, "sidecar pending is not the canonical object")
+		if (!text.lit("}") || !text.finished()) {
+			refuse({ kind: "SidecarShape" }, "sidecar is not the canonical single-line rendering")
 		}
-		const raw = text.hexU32()
-		if (raw === undefined) {
-			refuse({ kind: "SidecarShape" }, "sidecar pending braid is not 8 hex")
-		}
-		const name = braid(`c${raw.toString(16).padStart(8, "0")}`)
-		if (known !== undefined && !known.has(name)) {
-			refuse({ kind: "SidecarShape" }, `sidecar pending cites unknown braid ${name}`)
-		}
-		if (!text.lit('","gen":')) {
-			refuse({ kind: "SidecarShape" }, "sidecar pending gen field is absent")
-		}
-		const slot = text.quotedU64()
-		if (slot === undefined || !text.lit(',"bytes":"')) {
-			refuse({ kind: "SidecarShape" }, "sidecar pending generation is not a quoted decimal u64")
-		}
-		const body = text.hexBytes()
-		if (body === undefined || !text.lit('"}')) {
-			refuse({ kind: "SidecarShape" }, "sidecar pending bytes are not lowercase hex")
-		}
-		pending = { braid: name, gen: generation(slot), bytes: body }
+		return { tag: "settled", entries }
+	}
+	if (!text.lit('{"braid":"c')) {
+		refuse({ kind: "SidecarShape" }, "sidecar pending is not the canonical object")
+	}
+	const raw = text.hexU32()
+	if (raw === undefined) {
+		refuse({ kind: "SidecarShape" }, "sidecar pending braid is not 8 hex")
+	}
+	const name = braid(`c${raw.toString(16).padStart(8, "0")}`)
+	if (known !== undefined && !known.has(name)) {
+		refuse({ kind: "SidecarShape" }, `sidecar pending cites unknown braid ${name}`)
+	}
+	if (!text.lit('","gen":')) {
+		refuse({ kind: "SidecarShape" }, "sidecar pending gen field is absent")
+	}
+	const slot = text.quotedU64()
+	if (slot === undefined || !text.lit(',"bytes":"')) {
+		refuse({ kind: "SidecarShape" }, "sidecar pending generation is not a quoted decimal u64")
+	}
+	const body = text.hexBytes()
+	if (body === undefined || !text.lit('"}')) {
+		refuse({ kind: "SidecarShape" }, "sidecar pending bytes are not lowercase hex")
 	}
 	if (!text.lit("}") || !text.finished()) {
 		refuse({ kind: "SidecarShape" }, "sidecar is not the canonical single-line rendering")
 	}
-	return { chain, pending, sum }
+	return {
+		tag: "pending",
+		entries,
+		batch: { braid: name, gen: generation(slot), bytes: body }
+	}
 }
 
-async function readSidecar(file: string, known?: ReadonlySet<Braid>): Promise<Sidecar | null> {
+async function readSidecar(file: string, known?: ReadonlySet<Braid>): Promise<SidecarRead> {
 	const read = await errors.try(fs.readFile(file))
 	if (read.error) {
-		return null
+		if (codeOf(read.error) === "ENOENT") {
+			return { tag: "absent" }
+		}
+		return { tag: "fault", io: read.error }
 	}
-	return parseSidecar(read.data, known)
+	const parsed = errors.trySync(function parse() {
+		return parseSidecar(read.data, known)
+	})
+	if (parsed.error) {
+		return { tag: "corrupt", parse: parsed.error }
+	}
+	return { tag: "read", chain: parsed.data }
 }
 
-async function writeSidecar(file: string, sidecar: Sidecar): Promise<void> {
+async function writeSidecar(file: string, chain: Chain): Promise<void> {
 	const dir = path.dirname(file)
 	await fs.mkdir(dir, { recursive: true })
 	const temp = path.join(dir, `.chain-${process.pid}-${crypto.randomBytes(4).toString("hex")}`)
 	const handle = await fs.open(temp, "wx")
 	const written = await errors.try(
 		(async function writeAll() {
-			await handle.writeFile(renderSidecar(sidecar))
+			await handle.writeFile(renderSidecar(chain))
 			await handle.sync()
 		})()
 	)
@@ -179,5 +219,5 @@ async function writeSidecar(file: string, sidecar: Sidecar): Promise<void> {
 	}
 }
 
-export type { ChainEntry, Pending, Sidecar }
-export { parseSidecar, readSidecar, renderSidecar, writeSidecar }
+export type { Chain, ChainEntry, Pending, SidecarRead }
+export { chainGeneration, chainSum, parseSidecar, readSidecar, renderSidecar, writeSidecar }
