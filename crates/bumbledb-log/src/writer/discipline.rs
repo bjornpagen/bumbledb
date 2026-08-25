@@ -106,7 +106,7 @@ where
 
             let before = core.generation()?;
             let admission = core
-                .db()
+                .db()?
                 .write(|tx| {
                     for op in ops {
                         match op.kind {

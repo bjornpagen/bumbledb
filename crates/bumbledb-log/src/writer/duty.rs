@@ -16,7 +16,7 @@ use crate::manifest::{PublishRefusal, Published};
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
 
-use super::{Core, Inner, StepHook, Theory, lock};
+use super::{Core, Inner, StepHook, Theory, WriterState, lock};
 
 /// One detached checkpoint duty. `Kept` and `Refused` are not
 /// success: they do not move `ckpt_sum` and do not subtract the meter.
@@ -48,8 +48,10 @@ fn settled_view<T: Theory + Clone>(
     core: &Core<T>,
 ) -> Option<(Arc<Db<T>>, BTreeMap<BraidId, ChainEntry>)> {
     match (&core.db, &core.chain) {
-        (Some(db), Chain::Settled { entries }) => Some((Arc::clone(db), entries.clone())),
-        (Some(_), Chain::Pending { .. }) | (None, _) => None,
+        (WriterState::Mounted { db }, Chain::Settled { entries }) => {
+            Some((Arc::clone(db), entries.clone()))
+        }
+        (WriterState::Mounted { .. }, Chain::Pending { .. }) | (WriterState::Unmounted, _) => None,
     }
 }
 

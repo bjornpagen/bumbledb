@@ -10,12 +10,12 @@ use crate::apply::{apply, Applied};
 use crate::braids::BraidId;
 use crate::codec::{Op, OpKind};
 use crate::manifest::log_key;
-use crate::replica::Fault;
+use crate::replica::{Fault, OpenRefusal};
 use crate::sidecar::{Chain, Pending};
 
 use super::{
     Core, Error, Inner, Live, ObjectStore, PublishEnd, Result, Settled, StepHook, Theory,
-    WriterStep,
+    WriterState, WriterStep,
 };
 
 pub(crate) enum PendingArm {
@@ -180,9 +180,12 @@ where
         bytes: &[u8],
     ) -> Result<()> {
         let applied = apply(
-            core.db
-                .as_deref()
-                .expect("an established writer holds a store"),
+            match &core.db {
+                WriterState::Mounted { db } => db.as_ref(),
+                WriterState::Unmounted => {
+                    return Err(Error::Refused(OpenRefusal::Unmounted));
+                }
+            },
             &mut core.chain,
             &self.codec,
             braid,
@@ -231,7 +234,7 @@ where
 
     fn apply_local(&self, core: &mut Core<T>, ops: &[Op]) -> Result<Option<u64>> {
         let admission = core
-            .db()
+            .db()?
             .write(|tx| {
                 for op in ops {
                     match op.kind {

@@ -16,7 +16,8 @@ use crate::replica::{
 use crate::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 
 use super::{
-    Core, Error, Floor, Inner, Live, ObjectStore, PendingArm, Result, StepHook, Theory, WriterStep,
+    Core, Error, Floor, Inner, Live, ObjectStore, PendingArm, Result, StepHook, Theory, WriterState,
+    WriterStep,
 };
 
 pub(crate) enum MountEnd<T: Theory + Clone> {
@@ -76,7 +77,7 @@ where
                 }
                 MountEnd::Refused(refusal) => return Ok(Some(refusal)),
             };
-            core.db = Some(db);
+            core.db = WriterState::Mounted { db };
             core.chain = chain;
             core.wedged.clear();
 
@@ -88,7 +89,7 @@ where
                         skip = Some(braid);
                     }
                     PendingArm::Discard => {
-                        core.db = None;
+                        core.db = WriterState::Unmounted;
                         self.discard_dir()?;
                         self.scream("the pending arm convicted a torn store");
                         continue;
@@ -98,13 +99,13 @@ where
             match self.catch_up(core, skip, pre_existing)? {
                 CatchUp::Tips => {}
                 CatchUp::Gap => {
-                    core.db = None;
+                    core.db = WriterState::Unmounted;
                     self.discard_dir()?;
                     self.scream("catch-up hit a hole below the floor");
                     continue;
                 }
                 CatchUp::RejectedInOpen => {
-                    core.db = None;
+                    core.db = WriterState::Unmounted;
                     self.discard_dir()?;
                     self.scream("replay rejected in the open phase");
                     continue;
@@ -120,7 +121,7 @@ where
                 }
                 return Ok(None);
             }
-            core.db = None;
+            core.db = WriterState::Unmounted;
             self.discard_dir()?;
             self.scream("the wholeness identity failed after catch-up");
         }
@@ -132,7 +133,7 @@ where
     /// caller re-judges — so recovery stays crash-idempotent at every
     /// prefix. The loop repairs forever with the legible scream.
     pub(crate) fn re_establish(&self, core: &mut Core<T>, carry: Option<Pending>) -> Result<()> {
-        core.db = None;
+        core.db = WriterState::Unmounted;
         self.discard_dir()?;
         loop {
             match self.read_floor()? {
@@ -153,19 +154,19 @@ where
                 }
                 MountEnd::Refused(refusal) => return Err(Error::Refused(refusal)),
             };
-            core.db = Some(db);
+            core.db = WriterState::Mounted { db };
             core.chain = chain;
             core.wedged.clear();
             match self.catch_up(core, None, pre_existing)? {
                 CatchUp::Tips => {}
                 CatchUp::Gap => {
-                    core.db = None;
+                    core.db = WriterState::Unmounted;
                     self.discard_dir()?;
                     self.scream("catch-up hit a hole below the floor");
                     continue;
                 }
                 CatchUp::RejectedInOpen => {
-                    core.db = None;
+                    core.db = WriterState::Unmounted;
                     self.discard_dir()?;
                     self.scream("replay rejected in the open phase");
                     continue;
@@ -175,7 +176,7 @@ where
                 core.ckpt_sum = core.floor.as_ref().map_or(0, |(_, doc)| doc.sum());
                 break;
             }
-            core.db = None;
+            core.db = WriterState::Unmounted;
             self.discard_dir()?;
             self.scream("the wholeness identity failed after catch-up");
         }
@@ -388,7 +389,12 @@ where
                     continue;
                 };
                 let outcome = apply(
-                    core.db.as_deref().expect("mounted"),
+                    match &core.db {
+                        WriterState::Mounted { db } => db.as_ref(),
+                        WriterState::Unmounted => {
+                            return Err(Error::Refused(OpenRefusal::Unmounted));
+                        }
+                    },
                     &mut core.chain,
                     &self.codec,
                     *braid,
