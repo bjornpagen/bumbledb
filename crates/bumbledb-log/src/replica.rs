@@ -22,11 +22,11 @@ use crate::apply::{Applied, ApplyRefusal, PendingFold, apply, fold_pending};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
-    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
-    manifest_key,
+    Checkpoint, CheckpointError, Manifest, ManifestError, Text, ckpt_json_key, ckpt_mdb_key, hex32,
+    log_key, manifest_key,
 };
-use crate::sidecar::{Chain, ChainEntry, SidecarRead};
-use crate::store::{Etag, ObjectStore, Poll, StoreError};
+use crate::sidecar::{CHAIN_FILE, Chain, ChainEntry, SidecarRead};
+use crate::store::{Etag, LEASE_NAMESPACE, ObjectStore, Poll, StoreError, TEMP_NAMESPACE};
 
 /// The gc-safety heartbeat cadence: every N-th `refresh` pass begins
 /// with a conditional manifest poll, bounding hole-detection staleness
@@ -142,6 +142,9 @@ pub enum OpenRefusal {
     /// Bootstrap refused: the theory's own admission rejected the empty
     /// store.
     TheoryRejected(Violations),
+    /// The local store is unmounted. The stepper refuses this arm —
+    /// there is no missing-db pointer to dereference.
+    Unmounted,
 }
 
 /// The corruption-class verdict wedging one braid: an apply refusal, or
@@ -168,12 +171,20 @@ pub enum Provenance {
     LocalDir,
 }
 
-/// Open-phase provenance as a value the machine matches.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReplicaState {
-    Bootstrapped,
-    CheckpointSeeded { catalog: [u8; 32] },
-    SidecarResumed { floor: Vector },
+/// Presence of the local store. The stepper matches this sum;
+/// `Unmounted` refuses — a missing store is not a pointer.
+pub enum ReplicaState<T: Theory + Clone> {
+    Mounted { db: Db<T> },
+    Unmounted,
+}
+
+impl<T: Theory + Clone> ReplicaState<T> {
+    fn db(&self) -> Result<&Db<T>, OpenRefusal> {
+        match self {
+            Self::Mounted { db } => Ok(db),
+            Self::Unmounted => Err(OpenRefusal::Unmounted),
+        }
+    }
 }
 
 /// Role of the handle: a replica refuses a missing manifest; only a
@@ -262,6 +273,7 @@ enum CatchUpEnd {
     Tips,
     Gap,
     RejectedInOpen,
+    Unmounted,
 }
 
 enum Step {
@@ -270,6 +282,7 @@ enum Step {
     Gap,
     Wedged,
     Rejected { slot: u64, violations: Violations },
+    Unmounted,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -285,7 +298,9 @@ pub struct Replica<T: Theory + Clone, S: ObjectStore> {
     theory: T,
     codec: Codec,
     fingerprint: [u8; 32],
-    db: Option<Db<T>>,
+    /// Mounted holds the engine store; Unmounted is the arm the
+    /// stepper refuses.
+    state: ReplicaState<T>,
     chain: Chain,
     provenance: Provenance,
     manifest_etag: Etag,
@@ -316,7 +331,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             theory,
             codec,
             fingerprint,
-            db: None,
+            state: ReplicaState::Unmounted,
             chain: Chain::Settled {
                 entries: BTreeMap::new(),
             },
@@ -329,6 +344,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             heartbeat_every: HEARTBEAT_EVERY,
             wedged: BTreeMap::new(),
         };
+        sweep_at_open(&replica.store, &replica.prefix, &replica.dir)?;
         match replica.establish()? {
             None => Ok(Opened::Ready(Box::new(replica))),
             Some(refusal) => Ok(Opened::Refused(refusal)),
@@ -336,11 +352,9 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     }
 
     /// The engine's own surface — no wrapper query API exists.
-    #[must_use]
-    pub fn db(&self) -> &Db<T> {
-        self.db
-            .as_ref()
-            .expect("an established replica holds a store")
+    /// Unmounted refuses; the stepper never dereferences a missing store.
+    pub fn db(&self) -> Result<&Db<T>, OpenRefusal> {
+        self.state.db()
     }
 
     /// The replica's vector: per-braid applied counts.
@@ -355,21 +369,10 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         self.provenance
     }
 
-    /// Open-phase provenance as a value.
+    /// Presence of the local store: `Mounted` or `Unmounted`.
     #[must_use]
-    pub fn state(&self) -> ReplicaState {
-        match self.provenance {
-            Provenance::Bootstrap => ReplicaState::Bootstrapped,
-            Provenance::Checkpoint => ReplicaState::CheckpointSeeded {
-                catalog: self
-                    .floor
-                    .as_ref()
-                    .map_or([0u8; 32], |(_, doc)| doc.catalog),
-            },
-            Provenance::LocalDir => ReplicaState::SidecarResumed {
-                floor: self.chain.vector(),
-            },
-        }
+    pub const fn state(&self) -> &ReplicaState<T> {
+        &self.state
     }
 
     /// A replica handle: it refuses `ManifestMissing` and never births.
@@ -426,7 +429,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// Closes the replica and deletes its directory — the disposable
     /// law's verb, used by tenant eviction.
     pub fn dispose(mut self) -> io::Result<()> {
-        self.db = None;
+        self.state = ReplicaState::Unmounted;
         match fs::remove_dir_all(&self.dir) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -559,8 +562,13 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     }
 
     /// The one stepper: heartbeat, pending fold, one slot per braid,
-    /// wholeness, then serve or reseed.
+    /// wholeness, then serve or reseed. Unmounted refuses — the
+    /// stepper never applies without a store.
     fn step_pass(&mut self, phase: Phase) -> Result<Refreshed, Fault> {
+        match &self.state {
+            ReplicaState::Unmounted => return Ok(Refreshed::Refused(OpenRefusal::Unmounted)),
+            ReplicaState::Mounted { .. } => {}
+        }
         self.passes += 1;
         if self.passes.is_multiple_of(self.heartbeat_every)
             && let Some(refusal) = self.heartbeat()?
@@ -571,18 +579,21 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             return self.reseed();
         }
         match self.catch_up(phase)? {
-            CatchUpEnd::Tips => {
-                if self.whole()? {
+            CatchUpEnd::Tips => match self.whole()? {
+                Ok(true) => {
                     if let Some(refusal) = self.audit_reached_floor()? {
                         return Ok(Refreshed::Refused(refusal));
                     }
                     return Ok(Refreshed::Vector(self.chain.vector()));
                 }
-            }
+                Ok(false) => {}
+                Err(refusal) => return Ok(Refreshed::Refused(refusal)),
+            },
             CatchUpEnd::Gap => {}
             CatchUpEnd::RejectedInOpen => {
                 unreachable!("steady-state catch-up never reports the open-phase arm")
             }
+            CatchUpEnd::Unmounted => return Ok(Refreshed::Refused(OpenRefusal::Unmounted)),
         }
         self.reseed()
     }
@@ -595,9 +606,14 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         }
     }
 
-    fn whole(&self) -> Result<bool, Fault> {
-        let generation = self.db().generation()?.value();
-        Ok(generation == self.chain.sum() || generation == self.chain.generation())
+    fn whole(&self) -> Result<Result<bool, OpenRefusal>, Fault> {
+        let generation = match self.state.db() {
+            Ok(db) => db.generation()?.value(),
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        Ok(Ok(
+            generation == self.chain.sum() || generation == self.chain.generation()
+        ))
     }
 
     fn attempt(&mut self) -> Result<AttemptEnd, Fault> {
@@ -621,11 +637,18 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             CatchUpEnd::RejectedInOpen => {
                 return Ok(AttemptEnd::Discard("replay rejected in the open phase"));
             }
+            CatchUpEnd::Unmounted => {
+                return Ok(AttemptEnd::Refused(OpenRefusal::Unmounted));
+            }
         }
-        if !self.whole()? {
-            return Ok(AttemptEnd::Discard(
-                "the wholeness identity failed after catch-up",
-            ));
+        match self.whole()? {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(AttemptEnd::Discard(
+                    "the wholeness identity failed after catch-up",
+                ));
+            }
+            Err(refusal) => return Ok(AttemptEnd::Refused(refusal)),
         }
         if let Some(refusal) = self.audit_reached_floor()? {
             return Ok(AttemptEnd::Refused(refusal));
@@ -652,7 +675,10 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         {
             return Ok(None);
         }
-        let computed = self.db().catalog_digest()?;
+        let computed = match self.state.db() {
+            Ok(db) => db.catalog_digest()?,
+            Err(refusal) => return Ok(Some(refusal)),
+        };
         if computed == doc.catalog {
             self.audited_floor = Some(*digest);
             return Ok(None);
@@ -673,7 +699,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             match Db::open(&self.dir, self.theory.clone()) {
                 Ok(db) => match Chain::read(&self.dir, self.codec.braids()) {
                     SidecarRead::Read(chain) => {
-                        self.db = Some(db);
+                        self.state = ReplicaState::Mounted { db };
                         self.chain = chain;
                         self.provenance = Provenance::LocalDir;
                         Ok(None)
@@ -697,7 +723,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         } else {
             match Db::create(&self.dir, self.theory.clone())? {
                 Admission::Accepted(db) => {
-                    self.db = Some(db);
+                    self.state = ReplicaState::Mounted { db };
                     self.chain = Chain::genesis(self.codec.braids());
                     self.chain.write_atomic(&self.dir)?;
                     self.provenance = Provenance::Bootstrap;
@@ -746,7 +772,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             })));
         }
         self.audited_floor = Some(digest);
-        self.db = Some(db);
+        self.state = ReplicaState::Mounted { db };
         self.chain = Chain::Settled {
             entries: doc
                 .braids
@@ -782,9 +808,13 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             .as_ref()
             .and_then(|(_, doc)| doc.braids.get(&pending.braid))
             .is_some_and(|head| pending.slot <= head.g);
+        let generation = match self.state.db() {
+            Ok(db) => db.generation()?.value(),
+            Err(refusal) => return Ok(Some(AttemptEnd::Refused(refusal))),
+        };
         match fold_pending(
             self.chain.sum(),
-            self.db().generation()?.value(),
+            generation,
             occupant.as_deref(),
             &pending.bytes,
             below_floor,
@@ -823,6 +853,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                     }
                     Step::Wedged => {}
                     Step::Gap => return Ok(CatchUpEnd::Gap),
+                    Step::Unmounted => return Ok(CatchUpEnd::Unmounted),
                     Step::Rejected { slot, violations } => match phase {
                         Phase::Open => return Ok(CatchUpEnd::RejectedInOpen),
                         Phase::Steady => {
@@ -856,12 +887,11 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                 .is_some_and(|head| slot <= head.g);
             return Ok(if hole { Step::Gap } else { Step::Tip });
         };
-        let db = self
-            .db
-            .as_ref()
-            .expect("an established replica holds a store");
         match apply(
-            db,
+            match &self.state {
+                ReplicaState::Mounted { db } => db,
+                ReplicaState::Unmounted => return Ok(Step::Unmounted),
+            },
             &mut self.chain,
             &self.codec,
             braid,
@@ -881,7 +911,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     }
 
     fn discard(&mut self) -> Result<(), Fault> {
-        self.db = None;
+        self.state = ReplicaState::Unmounted;
         match fs::remove_dir_all(&self.dir) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -943,4 +973,155 @@ pub(crate) fn write_checkpoint_bytes(dir: &Path, bytes: &[u8]) -> io::Result<()>
     file.sync_all()?;
     drop(file);
     File::open(dir)?.sync_all()
+}
+
+/// The reserved-namespace scratch lease that names an in-flight
+/// checkpoint candidate. The successor GETs this document at open.
+pub const CKPT_SCRATCH_LEASE: &str = "ckpt-scratch";
+
+/// `{dir}/~lease/ckpt-scratch` — known path, no LIST.
+#[must_use]
+pub fn ckpt_scratch_path(dir: &Path) -> PathBuf {
+    dir.join(LEASE_NAMESPACE).join(CKPT_SCRATCH_LEASE)
+}
+
+/// Records `digest` in the scratch lease before the upload-before-decision
+/// window. The successor GETs this document at open.
+pub fn record_ckpt_scratch(dir: &Path, digest: &[u8; 32]) -> io::Result<()> {
+    let path = ckpt_scratch_path(dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let body = format!("CKPT-SCRATCH/1\n{}\n", hex32(digest));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)?;
+    file.write_all(body.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+/// Drops the scratch lease after the candidate is live, reclaimed, or
+/// never uploaded.
+pub fn clear_ckpt_scratch(dir: &Path) -> io::Result<()> {
+    match fs::remove_file(ckpt_scratch_path(dir)) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Deletes `ckpt/{digest}.mdb` and `.json` as one unit. A missing object
+/// is already gone.
+pub fn reclaim_orphan<S: ObjectStore>(
+    store: &S,
+    prefix: &str,
+    digest: &[u8; 32],
+) -> Result<(), StoreError> {
+    store.delete(&ckpt_mdb_key(prefix, digest))?;
+    store.delete(&ckpt_json_key(prefix, digest))?;
+    Ok(())
+}
+
+/// Any successor reclaims the predecessor's reserved temps, sidecar
+/// temps, sibling compact scratch, and the crash-strand scratch lease.
+pub fn sweep_at_open<S: ObjectStore>(store: &S, prefix: &str, dir: &Path) -> Result<(), Fault> {
+    sweep_ckpt_scratch(store, prefix, dir)?;
+    sweep_local_litter(dir)?;
+    Ok(())
+}
+
+fn sweep_ckpt_scratch<S: ObjectStore>(store: &S, prefix: &str, dir: &Path) -> Result<(), Fault> {
+    let path = ckpt_scratch_path(dir);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(Fault::Io(err)),
+    };
+    let Some(digest) = parse_ckpt_scratch(&bytes) else {
+        let _ = fs::remove_file(&path);
+        return Ok(());
+    };
+    if live_head(store, prefix)? != Some(digest) {
+        reclaim_orphan(store, prefix, &digest)?;
+    }
+    let _ = fs::remove_file(&path);
+    Ok(())
+}
+
+fn live_head<S: ObjectStore>(store: &S, prefix: &str) -> Result<Option<[u8; 32]>, Fault> {
+    let Some(fetched) = store.get(&manifest_key(prefix))? else {
+        return Ok(None);
+    };
+    Ok(Manifest::parse(&fetched.bytes)
+        .ok()
+        .and_then(|manifest| manifest.checkpoint))
+}
+
+fn parse_ckpt_scratch(bytes: &[u8]) -> Option<[u8; 32]> {
+    let mut text = Text::new(bytes);
+    text.lit("CKPT-SCRATCH/1\n").ok()?;
+    let digest = text.hex32().ok()?;
+    text.lit("\n").ok()?;
+    text.end().ok()?;
+    Some(digest)
+}
+
+fn sweep_local_litter(dir: &Path) -> io::Result<()> {
+    let tmp = dir.join(TEMP_NAMESPACE);
+    match fs::remove_dir_all(&tmp) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    sweep_sidecar_temps(dir)?;
+    sweep_sibling_scratch(dir)
+}
+
+fn sweep_sidecar_temps(dir: &Path) -> io::Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    let prefix = format!(".{CHAIN_FILE}.tmp.");
+    for entry in entries {
+        let name = entry?.file_name();
+        if name.to_string_lossy().starts_with(&prefix) {
+            let _ = fs::remove_file(dir.join(name));
+        }
+    }
+    Ok(())
+}
+
+fn sweep_sibling_scratch(dir: &Path) -> io::Result<()> {
+    let Some(parent) = dir.parent() else {
+        return Ok(());
+    };
+    let Some(stem) = dir.file_name() else {
+        return Ok(());
+    };
+    let stem = stem.to_string_lossy();
+    let ckpt_prefix = format!("{stem}.ckpt");
+    let duty = format!("{stem}.duty-ckpt");
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == duty || name.starts_with(&ckpt_prefix) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+    Ok(())
 }
