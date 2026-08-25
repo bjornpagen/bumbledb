@@ -4,16 +4,19 @@
 //! is `Ambiguous`, never a proved `Exists` or `Moved`. Conditional
 //! writes are not retried by the transport. Credentials are consulted
 //! per request, off the worker threads. Body-stream failures ride
-//! `ErrStore`.
+//! `ErrStore`. The fencing token on a [`Fenced`] write is object
+//! metadata: create records it as the generation a later swap can
+//! lose to, and `body.token <` that stored generation is `Moved`.
 
+use std::borrow::Cow;
 use std::io;
 use std::sync::Arc;
 
 use object_store::aws::{AmazonS3, AmazonS3Builder, AwsCredential};
 use object_store::path::Path;
 use object_store::{
-    CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, ObjectStoreExt as _,
-    PutMode, RetryConfig, UpdateVersion,
+    Attribute, Attributes, CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _,
+    ObjectStoreExt as _, PutMode, PutOptions, RetryConfig, UpdateVersion,
 };
 use tokio::runtime::{Builder, Handle, Runtime};
 
@@ -273,6 +276,47 @@ fn etag_of(op: &'static str, key: &StoreKey, raw: Option<String>) -> Result<Etag
     })
 }
 
+/// User-metadata key the fencing generation rides. Create writes it;
+/// swap If-Match-heads it and refuses `body.token <` the stored value.
+const GENERATION_META: &str = "generation";
+
+fn generation_key() -> Attribute {
+    Attribute::Metadata(Cow::Borrowed(GENERATION_META))
+}
+
+fn generation_attributes(token: u64) -> Attributes {
+    let mut attributes = Attributes::new();
+    attributes.insert(generation_key(), token.to_string().into());
+    attributes
+}
+
+/// The fencing generation stored on the object. Absent metadata is
+/// generation 0 — an unfenced occupant a later higher token can take.
+fn stored_generation(attributes: &Attributes) -> u64 {
+    attributes
+        .get(&generation_key())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// 20: a stale holder's write is the token the CAS no longer wins.
+/// A matching etag is not a waiver.
+fn swap_fence(token: u64, stored: u64) -> Option<Swap> {
+    if token < stored {
+        Some(Swap::Moved)
+    } else {
+        None
+    }
+}
+
+fn fenced_put(mode: PutMode, token: u64) -> PutOptions {
+    PutOptions {
+        mode,
+        attributes: generation_attributes(token),
+        ..PutOptions::default()
+    }
+}
+
 /// 409 Conflict, a timed-out PUT, and any other unproved transport
 /// result. object_store maps 409 onto `AlreadyExists`, so the walk
 /// has to read the status out of the source chain — the variant
@@ -414,20 +458,17 @@ impl ObjectStore for S3Store {
     }
 
     fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
-        let bytes = body.into().bytes;
+        let body = body.into();
         let path = self.object_path(key)?;
-        let payload = bytes.to_vec();
+        let payload = body.bytes.to_vec();
+        let opts = fenced_put(PutMode::Create, body.token);
         let raw = self.block(async {
-            match self
-                .inner
-                .put_opts(&path, payload.into(), PutMode::Create.into())
-                .await
-            {
+            match self.inner.put_opts(&path, payload.into(), opts).await {
                 Ok(result) => Ok(Create::Created(etag_of("put_create", key, result.e_tag)?)),
                 Err(source) => create_from_put(key, source),
             }
         })??;
-        prove_create(self, key, bytes, raw)
+        prove_create(self, key, body.bytes, raw)
     }
 
     fn put_swap<'a>(
@@ -436,24 +477,39 @@ impl ObjectStore for S3Store {
         body: impl Into<Fenced<'a>>,
         etag: &Etag,
     ) -> Result<Swap> {
-        let bytes = body.into().bytes;
+        let body = body.into();
         let path = self.object_path(key)?;
-        let payload = bytes.to_vec();
-        let mode = PutMode::Update(UpdateVersion {
-            e_tag: Some(etag.0.clone()),
-            version: None,
-        });
+        let payload = body.bytes.to_vec();
+        let expected = etag.0.clone();
+        let token = body.token;
+        let head = GetOptions::new()
+            .with_head(true)
+            .with_if_match(Some(expected.clone()));
+        let opts = fenced_put(
+            PutMode::Update(UpdateVersion {
+                e_tag: Some(expected),
+                version: None,
+            }),
+            token,
+        );
         let raw = self.block(async {
-            match self
-                .inner
-                .put_opts(&path, payload.into(), mode.into())
-                .await
-            {
+            match self.inner.get_opts(&path, head).await {
+                Ok(result) => {
+                    if let Some(moved) = swap_fence(token, stored_generation(&result.attributes)) {
+                        return Ok(moved);
+                    }
+                }
+                Err(ObjError::NotFound { .. }) | Err(ObjError::Precondition { .. }) => {
+                    return Ok(Swap::Moved);
+                }
+                Err(source) => return Err(infra("put_swap", key, source)),
+            }
+            match self.inner.put_opts(&path, payload.into(), opts).await {
                 Ok(result) => Ok(Swap::Swapped(etag_of("put_swap", key, result.e_tag)?)),
                 Err(source) => swap_from_put(key, source),
             }
         })??;
-        prove_swap(self, key, bytes, raw)
+        prove_swap(self, key, body.bytes, raw)
     }
 
     fn delete(&self, key: &StoreKey) -> Result<()> {
@@ -690,6 +746,26 @@ mod tests {
                 "each sign receives a fresh credential value"
             );
         });
+    }
+
+    #[test]
+    fn a_lower_token_loses_swap_when_the_etag_matches() {
+        let stored = generation_attributes(7);
+        assert_eq!(stored_generation(&stored), 7);
+        assert_eq!(stored_generation(&Attributes::new()), 0);
+        assert!(
+            matches!(swap_fence(3, stored_generation(&stored)), Some(Swap::Moved)),
+            "a matching etag does not waive body.token < stored generation"
+        );
+        assert!(
+            swap_fence(7, 7).is_none(),
+            "the current token is the generation the CAS still wins"
+        );
+        assert!(swap_fence(8, 7).is_none());
+        assert!(
+            matches!(swap_fence(0, 1), Some(Swap::Moved)),
+            "an unfenced write loses to a stored generation"
+        );
     }
 
     #[test]
