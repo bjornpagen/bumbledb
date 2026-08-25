@@ -38,7 +38,12 @@ impl std::error::Error for TheoryFile {}
 /// descriptor.
 pub fn load(path: &Path) -> Result<SchemaDescriptor, TheoryFile> {
     let raw = fs::read_to_string(path).map_err(TheoryFile::Io)?;
-    let json: Json = serde_json::from_str(&raw).map_err(TheoryFile::Json)?;
+    parse(&raw)
+}
+
+/// Parse the theory-file grammar from bytes already in memory.
+pub fn parse(raw: &str) -> Result<SchemaDescriptor, TheoryFile> {
+    let json: Json = serde_json::from_str(raw).map_err(TheoryFile::Json)?;
     parse_schema(&json)
 }
 
@@ -180,7 +185,7 @@ fn parse_side(json: &Json) -> Result<Side, TheoryFile> {
             .ok_or(TheoryFile::Shape("selection"))?
             .iter()
             .map(|binding| {
-                let pair = binding.as_array().ok_or(TheoryFile::Shape("binding"))?;
+                let pair = pair2(binding)?;
                 let field = FieldId(as_u16(&pair[0], "field")?);
                 let literals: Vec<Value> = pair[1]
                     .as_array()
@@ -239,6 +244,9 @@ fn parse_bound(json: &Json) -> Result<Option<Bound>, TheoryFile> {
 
 fn parse_value(json: &Json) -> Result<Value, TheoryFile> {
     let object = json.as_object().ok_or(TheoryFile::Shape("value"))?;
+    if object.len() != 1 {
+        return Err(TheoryFile::Shape("value arm"));
+    }
     let (kind, body) = object.iter().next().ok_or(TheoryFile::Shape("value arm"))?;
     match kind.as_str() {
         "bool" => Ok(Value::Bool(
@@ -253,17 +261,13 @@ fn parse_value(json: &Json) -> Result<Value, TheoryFile> {
             unhex(body.as_str().ok_or(TheoryFile::Shape("hex"))?)?.into_boxed_slice(),
         )),
         "intervalU64" => {
-            let pair = body
-                .as_array()
-                .ok_or(TheoryFile::Shape("interval bounds"))?;
+            let pair = pair2(body)?;
             Interval::new(parse_u64(&pair[0])?, parse_u64(&pair[1])?)
                 .map(Value::IntervalU64)
                 .ok_or(TheoryFile::Shape("interval"))
         }
         "intervalI64" => {
-            let pair = body
-                .as_array()
-                .ok_or(TheoryFile::Shape("interval bounds"))?;
+            let pair = pair2(body)?;
             Interval::new(parse_i64(&pair[0])?, parse_i64(&pair[1])?)
                 .map(Value::IntervalI64)
                 .ok_or(TheoryFile::Shape("interval"))
@@ -287,15 +291,38 @@ fn parse_i64(json: &Json) -> Result<i64, TheoryFile> {
 }
 
 fn unhex(text: &str) -> Result<Vec<u8>, TheoryFile> {
-    if !text.len().is_multiple_of(2) {
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         return Err(TheoryFile::Shape("even hex length"));
     }
-    (0..text.len() / 2)
-        .map(|index| {
-            u8::from_str_radix(&text[2 * index..2 * index + 2], 16)
-                .map_err(|_| TheoryFile::Shape("hex byte"))
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let hi = hex_nibble(pair[0])?;
+            let lo = hex_nibble(pair[1])?;
+            Ok((hi << 4) | lo)
         })
         .collect()
+}
+
+fn hex_nibble(byte: u8) -> Result<u8, TheoryFile> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(TheoryFile::Shape("hex byte")),
+    }
+}
+
+fn pair2(json: &Json) -> Result<&[Json], TheoryFile> {
+    let pair = json.as_array().ok_or(TheoryFile::Shape("pair"))?;
+    if pair.len() == 2 {
+        Ok(pair)
+    } else {
+        Err(TheoryFile::Shape("pair"))
+    }
 }
 
 fn arr<'a>(json: &'a Json, field: &'static str) -> Result<&'a Vec<Json>, TheoryFile> {
@@ -320,4 +347,27 @@ fn as_u32(json: &Json, field: &'static str) -> Result<u32, TheoryFile> {
 
 fn as_u16(json: &Json, field: &'static str) -> Result<u16, TheoryFile> {
     u16::try_from(as_u64(json, field)?).map_err(|_| TheoryFile::Shape(field))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TheoryFile, parse};
+
+    #[test]
+    fn a_multi_arm_value_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[],"extension":[{"handle":"h","values":[{"bool":true,"u64":"1"}]}]}],"statements":[]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape("value arm"))));
+    }
+
+    #[test]
+    fn unhex_refuses_a_mid_char_slice_without_panic() {
+        let raw = r#"{"relations":[{"name":"n","fields":[],"extension":[{"handle":"h","values":[{"fixedBytes":"€a"}]}]}],"statements":[]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_short_binding_pair_is_shape() {
+        let raw = r#"{"relations":[{"name":"a","fields":[{"name":"id","type":"u64"}]},{"name":"b","fields":[{"name":"id","type":"u64"}]}],"statements":[{"containment":{"source":{"relation":0,"projection":[0],"selection":[[0]]},"target":{"relation":1,"projection":[0]}}}]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
 }

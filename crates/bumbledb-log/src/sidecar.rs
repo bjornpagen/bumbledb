@@ -60,6 +60,20 @@ pub enum SidecarError {
     UnknownBraid {
         got: u32,
     },
+    /// The vector sum of the `g` column overflows `u64`.
+    Overflow,
+}
+
+impl SidecarError {
+    #[must_use]
+    pub const fn identity(&self) -> &'static str {
+        match self {
+            Self::Malformed { .. } => "Malformed",
+            Self::Version { .. } => "Version",
+            Self::UnknownBraid { .. } => "UnknownBraid",
+            Self::Overflow => "Overflow",
+        }
+    }
 }
 
 /// The parsed sidecar: per-braid chain positions and the pending slot.
@@ -99,7 +113,9 @@ impl Chain {
     /// identity.
     #[must_use]
     pub fn sum(&self) -> u64 {
-        self.entries.values().map(|entry| entry.g).sum()
+        self.entries
+            .values()
+            .fold(0u64, |acc, entry| acc.saturating_add(entry.g))
     }
 
     /// The vector: applied counts keyed by braid.
@@ -122,7 +138,7 @@ impl Chain {
             }
             write!(
                 chain,
-                "\"{braid}\":{{\"g\":{},\"prev\":\"{}\",\"ts\":{}}}",
+                "\"{braid}\":{{\"g\":\"{}\",\"prev\":\"{}\",\"ts\":\"{}\"}}",
                 entry.g,
                 hex32(&entry.prev),
                 entry.ts
@@ -132,7 +148,7 @@ impl Chain {
         let pending = match &self.pending {
             Some(pending) => {
                 let mut body = format!(
-                    "{{\"braid\":\"{}\",\"gen\":{},\"bytes\":\"",
+                    "{{\"braid\":\"{}\",\"gen\":\"{}\",\"bytes\":\"",
                     pending.braid, pending.slot
                 );
                 for byte in &pending.bytes {
@@ -174,11 +190,11 @@ impl Chain {
                 return Err(SidecarError::UnknownBraid { got: raw });
             };
             text.lit("\":{\"g\":").map_err(mal)?;
-            let g = text.u64().map_err(mal)?;
+            let g = text.quoted_u64().map_err(mal)?;
             text.lit(",\"prev\":\"").map_err(mal)?;
             let prev = text.hex32().map_err(mal)?;
             text.lit("\",\"ts\":").map_err(mal)?;
-            let ts = text.u64().map_err(mal)?;
+            let ts = text.quoted_u64().map_err(mal)?;
             text.lit("}").map_err(mal)?;
             if entries
                 .last_key_value()
@@ -187,6 +203,13 @@ impl Chain {
                 return Err(mal(text.at()));
             }
             entries.insert(braid, ChainEntry { g, prev, ts });
+        }
+        if entries
+            .values()
+            .try_fold(0u64, |acc, entry| acc.checked_add(entry.g))
+            .is_none()
+        {
+            return Err(SidecarError::Overflow);
         }
         text.lit("},\"pending\":").map_err(mal)?;
         let pending = if text.peek("null") {
@@ -199,7 +222,7 @@ impl Chain {
                 return Err(SidecarError::UnknownBraid { got: raw });
             };
             text.lit("\",\"gen\":").map_err(mal)?;
-            let slot = text.u64().map_err(mal)?;
+            let slot = text.quoted_u64().map_err(mal)?;
             text.lit(",\"bytes\":\"").map_err(mal)?;
             let body = text.hex_bytes().map_err(mal)?;
             text.lit("\"}").map_err(mal)?;
@@ -248,5 +271,78 @@ impl Chain {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Chain, SidecarError};
+    use crate::braids::braids;
+    use bumbledb::schema::{
+        FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+        StatementDescriptor, ValueType,
+    };
+
+    fn kitchen_braids() -> crate::braids::Braids {
+        let field = |name: &str, value_type: ValueType| FieldDescriptor {
+            name: name.into(),
+            value_type,
+            generation: Generation::None,
+        };
+        let descriptor = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "sample".into(),
+                fields: vec![field("id", ValueType::U64)],
+                extension: None,
+            }],
+            statements: vec![StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::from([FieldId(0)]),
+            }],
+        };
+        braids(&descriptor)
+    }
+
+    #[test]
+    fn genesis_renders_quoted_u64s_and_v3() {
+        let chain = Chain::genesis(&kitchen_braids());
+        let text = String::from_utf8(chain.render()).expect("utf8");
+        assert!(text.starts_with("{\"v\":3,"));
+        assert!(text.contains("\"g\":\"0\""));
+        assert!(text.contains("\"ts\":\"0\""));
+        assert!(text.contains("\"pending\":null"));
+    }
+
+    #[test]
+    fn parse_refuses_v2_and_a_json_number_g() {
+        let braids = kitchen_braids();
+        let v2 = br#"{"v":2,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":null}"#;
+        assert_eq!(
+            Chain::parse(v2, &braids),
+            Err(SidecarError::Version { got: 2 })
+        );
+        let numbered = br#"{"v":3,"chain":{"c00000000":{"g":40,"prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":null}"#;
+        assert_eq!(
+            Chain::parse(numbered, &braids)
+                .expect_err("number g")
+                .identity(),
+            "Malformed"
+        );
+    }
+
+    #[test]
+    fn pending_bytes_are_lowercase_hex() {
+        let braids = kitchen_braids();
+        let hex = br#"{"v":3,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":{"braid":"c00000000","gen":"1","bytes":"4244424c"}}"#;
+        let parsed = Chain::parse(hex, &braids).expect("hex pending");
+        assert_eq!(
+            parsed.pending.expect("pending").bytes,
+            [0x42, 0x44, 0x42, 0x4c]
+        );
+        let b64 = br#"{"v":3,"chain":{"c00000000":{"g":"0","prev":"0000000000000000000000000000000000000000000000000000000000000000","ts":"0"}},"pending":{"braid":"c00000000","gen":"1","bytes":"QkRCTAM="}}"#;
+        assert_eq!(
+            Chain::parse(b64, &braids).expect_err("base64").identity(),
+            "Malformed"
+        );
     }
 }

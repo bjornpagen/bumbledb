@@ -45,10 +45,10 @@ fn parse_refuses_version_whitespace_and_unknown_braids() {
     let codec = codec();
     let canonical = String::from_utf8(Chain::genesis(codec.braids()).render()).expect("utf8");
 
-    let versioned = canonical.replace("{\"v\":2,", "{\"v\":1,");
+    let versioned = canonical.replace("{\"v\":3,", "{\"v\":2,");
     assert_eq!(
         Chain::parse(versioned.as_bytes(), codec.braids()),
-        Err(SidecarError::Version { got: 1 })
+        Err(SidecarError::Version { got: 2 })
     );
 
     let spaced = canonical.replace(',', ", ");

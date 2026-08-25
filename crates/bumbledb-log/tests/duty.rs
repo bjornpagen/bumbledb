@@ -228,3 +228,14 @@ fn argv_refuses_an_unknown_flag() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unknown flag"), "{err}");
 }
+
+#[test]
+fn argv_refuses_a_flag_as_a_value() {
+    let out = Command::new(env!("CARGO_BIN_EXE_duty"))
+        .args(["--once", "--dir", "--theory", "/tmp/x"])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("needs a value"), "{err}");
+}

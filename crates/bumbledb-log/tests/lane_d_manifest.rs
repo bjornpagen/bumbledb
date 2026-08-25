@@ -50,10 +50,10 @@ fn manifest_refuses_other_versions_by_name() {
         checkpoint: None,
     };
     let bytes = String::from_utf8(manifest.render()).expect("utf8");
-    let hostile = bytes.replace("{\"v\":2,", "{\"v\":3,");
+    let hostile = bytes.replace("{\"v\":3,", "{\"v\":2,");
     assert_eq!(
         Manifest::parse(hostile.as_bytes()),
-        Err(ManifestError::Version { got: 3 })
+        Err(ManifestError::Version { got: 2 })
     );
 }
 
