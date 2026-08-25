@@ -19,11 +19,11 @@ fn seeded_store(root: &std::path::Path, tenants: &[&str]) {
     }
 }
 
-fn ready(
+fn live(
     outcome: Tenant<'_, bumbledb::SchemaDescriptor, FsStore>,
 ) -> Live<'_, bumbledb::SchemaDescriptor, FsStore> {
     match outcome {
-        Tenant::Ready(live) => live,
+        Tenant::Live(handle) => handle,
         Tenant::Refused(refusal) => panic!("tenant refused: {refusal:?}"),
     }
 }
@@ -51,14 +51,14 @@ fn tenants_open_lazily_and_serve_their_own_prefixes() {
     );
 
     assert!(
-        ready(tenants.tenant("acme").expect("acme"))
+        live(tenants.tenant("acme").expect("acme"))
             .db()
             .read(|instance| instance
                 .contains_dyn(NOTE, &[Value::U64(0), Value::String("acme".into())]))
             .expect("read")
     );
     assert!(
-        ready(tenants.tenant("bravo").expect("bravo"))
+        live(tenants.tenant("bravo").expect("bravo"))
             .db()
             .read(|instance| instance
                 .contains_dyn(NOTE, &[Value::U64(1), Value::String("bravo".into())]))
@@ -81,11 +81,11 @@ fn eviction_closes_and_deletes_the_least_recent_dir() {
         },
     );
 
-    let _ = ready(tenants.tenant("acme").expect("acme"));
-    let _ = ready(tenants.tenant("bravo").expect("bravo"));
+    let _ = live(tenants.tenant("acme").expect("acme"));
+    let _ = live(tenants.tenant("bravo").expect("bravo"));
     assert!(local.join("acme").exists());
 
-    let _ = ready(tenants.tenant("carol").expect("carol"));
+    let _ = live(tenants.tenant("carol").expect("carol"));
     assert_eq!(tenants.open_count(), 2);
     assert_eq!(tenants.open_ids(), vec!["bravo", "carol"]);
     assert!(
@@ -94,7 +94,7 @@ fn eviction_closes_and_deletes_the_least_recent_dir() {
     );
 
     // A re-open after eviction is an ordinary fresh pull.
-    let _ = ready(tenants.tenant("acme").expect("acme again"));
+    let _ = live(tenants.tenant("acme").expect("acme again"));
     assert_eq!(tenants.open_ids(), vec!["carol", "acme"]);
 }
 
@@ -112,11 +112,11 @@ fn recency_updates_on_every_touch() {
         },
     );
 
-    let _ = ready(tenants.tenant("acme").expect("acme"));
-    let _ = ready(tenants.tenant("bravo").expect("bravo"));
+    let _ = live(tenants.tenant("acme").expect("acme"));
+    let _ = live(tenants.tenant("bravo").expect("bravo"));
     // Touching acme makes bravo the eviction candidate.
-    let _ = ready(tenants.tenant("acme").expect("acme touch"));
-    let _ = ready(tenants.tenant("carol").expect("carol"));
+    let _ = live(tenants.tenant("acme").expect("acme touch"));
+    let _ = live(tenants.tenant("carol").expect("carol"));
     assert_eq!(tenants.open_ids(), vec!["acme", "carol"]);
 }
 
@@ -134,9 +134,9 @@ fn the_shared_tenant_is_pinned() {
         },
     );
 
-    let _ = ready(tenants.tenant(SHARED_TENANT).expect("shared"));
-    let _ = ready(tenants.tenant("acme").expect("acme"));
-    let _ = ready(tenants.tenant("bravo").expect("bravo"));
+    let _ = live(tenants.tenant(SHARED_TENANT).expect("shared"));
+    let _ = live(tenants.tenant("acme").expect("acme"));
+    let _ = live(tenants.tenant("bravo").expect("bravo"));
     assert!(
         tenants.open_ids().contains(&SHARED_TENANT),
         "the control plane never evicts"
@@ -164,8 +164,8 @@ fn the_byte_budget_evicts_like_the_count_budget() {
         },
     );
 
-    let _ = ready(tenants.tenant("acme").expect("acme"));
-    let _ = ready(tenants.tenant("bravo").expect("bravo"));
+    let _ = live(tenants.tenant("acme").expect("acme"));
+    let _ = live(tenants.tenant("bravo").expect("bravo"));
     assert_eq!(tenants.open_ids(), vec!["bravo"]);
 }
 
@@ -187,7 +187,7 @@ fn tenant_ids_parse_at_the_boundary() {
             Tenant::Refused(other) => {
                 panic!("hostile id {hostile:?} hit the wrong refusal: {other:?}")
             }
-            Tenant::Ready(_) => panic!("hostile id {hostile:?} opened"),
+            Tenant::Live(_) => panic!("hostile id {hostile:?} opened"),
         }
     }
 }

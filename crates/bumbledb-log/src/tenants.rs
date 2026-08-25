@@ -113,10 +113,10 @@ pub enum TenantRefusal {
     Exclusive,
 }
 
-/// Outcome of a tenant lookup. `Ready` is a [`Live`] handle; a
-/// [`Disposed`] handle is a different type and cannot appear here.
+/// Outcome of a tenant lookup. `Live` is the handle; a [`Disposed`]
+/// handle is a different type and cannot appear here.
 pub enum Tenant<'lru, T: Theory + Clone, S: ObjectStore> {
-    Ready(Live<'lru, T, S>),
+    Live(Live<'lru, T, S>),
     Refused(TenantRefusal),
 }
 
@@ -200,7 +200,7 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
             self.unpin_last();
             return Err(err);
         }
-        Ok(Tenant::Ready(self.take_live()))
+        Ok(Tenant::Live(self.take_live()))
     }
 
     /// The tenant's replica, opening it on a miss and evicting the
