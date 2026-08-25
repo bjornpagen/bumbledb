@@ -68,7 +68,7 @@ fn parse_relation(json: &Json) -> Result<RelationDescriptor, TheoryFile> {
         .map(|field| {
             Ok(FieldDescriptor {
                 name: text(field, "name")?.into(),
-                value_type: parse_type(&field["type"])?,
+                value_type: parse_type(req(field, "type")?)?,
                 generation: match field.get("generation").and_then(Json::as_str) {
                     Some("fresh") => Generation::Fresh,
                     Some(_) => return Err(TheoryFile::Shape("unknown generation")),
@@ -115,24 +115,22 @@ fn parse_type(json: &Json) -> Result<ValueType, TheoryFile> {
             _ => Err(TheoryFile::Shape("unknown scalar type")),
         };
     }
-    let object = json.as_object().ok_or(TheoryFile::Shape("type object"))?;
-    if let Some(len) = object.get("fixedBytes") {
-        let len = u16::try_from(as_u64(len, "fixedBytes len")?)
-            .map_err(|_| TheoryFile::Shape("fixedBytes len"))?;
-        return Ok(ValueType::FixedBytes { len });
+    let (kind, body) = arm(json, "type object")?;
+    match kind {
+        "fixedBytes" => {
+            let len = u16::try_from(as_u64(body, "fixedBytes len")?)
+                .map_err(|_| TheoryFile::Shape("fixedBytes len"))?;
+            Ok(ValueType::FixedBytes { len })
+        }
+        "interval" => Ok(ValueType::Interval {
+            element: parse_element(body)?,
+        }),
+        "fixedInterval" => Ok(ValueType::FixedInterval {
+            element: parse_element(req(body, "element")?)?,
+            width: parse_u64(req(body, "width")?)?,
+        }),
+        _ => Err(TheoryFile::Shape("unknown type")),
     }
-    if let Some(element) = object.get("interval") {
-        return Ok(ValueType::Interval {
-            element: parse_element(element)?,
-        });
-    }
-    if let Some(fixed) = object.get("fixedInterval") {
-        return Ok(ValueType::FixedInterval {
-            element: parse_element(&fixed["element"])?,
-            width: parse_u64(&fixed["width"])?,
-        });
-    }
-    Err(TheoryFile::Shape("unknown type"))
 }
 
 fn parse_element(json: &Json) -> Result<IntervalElement, TheoryFile> {
@@ -144,29 +142,25 @@ fn parse_element(json: &Json) -> Result<IntervalElement, TheoryFile> {
 }
 
 fn parse_statement(json: &Json) -> Result<StatementDescriptor, TheoryFile> {
-    let object = json.as_object().ok_or(TheoryFile::Shape("statement"))?;
-    if let Some(body) = object.get("functionality") {
-        return Ok(StatementDescriptor::Functionality {
-            relation: RelationId(as_u32(&body["relation"], "relation")?),
-            projection: parse_projection(&body["projection"])?,
-        });
+    let (kind, body) = arm(json, "statement")?;
+    match kind {
+        "functionality" => Ok(StatementDescriptor::Functionality {
+            relation: RelationId(as_u32(req(body, "relation")?, "relation")?),
+            projection: parse_projection(req(body, "projection")?)?,
+        }),
+        "containment" => Ok(StatementDescriptor::Containment {
+            source: parse_side(req(body, "source")?)?,
+            target: parse_side(req(body, "target")?)?,
+        }),
+        "capacity" => Ok(StatementDescriptor::Capacity {
+            target: parse_side(req(body, "target")?)?,
+            weight: parse_weight(req(body, "weight")?)?,
+            lo: parse_u64(req(body, "lo")?)?,
+            hi: parse_bound(req(body, "hi")?)?,
+            source: parse_side(req(body, "source")?)?,
+        }),
+        _ => Err(TheoryFile::Shape("unknown statement")),
     }
-    if let Some(body) = object.get("containment") {
-        return Ok(StatementDescriptor::Containment {
-            source: parse_side(&body["source"])?,
-            target: parse_side(&body["target"])?,
-        });
-    }
-    if let Some(body) = object.get("capacity") {
-        return Ok(StatementDescriptor::Capacity {
-            target: parse_side(&body["target"])?,
-            weight: parse_weight(&body["weight"])?,
-            lo: parse_u64(&body["lo"])?,
-            hi: parse_bound(&body["hi"])?,
-            source: parse_side(&body["source"])?,
-        });
-    }
-    Err(TheoryFile::Shape("unknown statement"))
 }
 
 fn parse_projection(json: &Json) -> Result<Box<[FieldId]>, TheoryFile> {
@@ -203,8 +197,8 @@ fn parse_side(json: &Json) -> Result<Side, TheoryFile> {
             .collect::<Result<_, _>>()?,
     };
     Ok(Side {
-        relation: RelationId(as_u32(&json["relation"], "relation")?),
-        projection: parse_projection(&json["projection"])?,
+        relation: RelationId(as_u32(req(json, "relation")?, "relation")?),
+        projection: parse_projection(req(json, "projection")?)?,
         selection,
     })
 }
@@ -213,33 +207,25 @@ fn parse_weight(json: &Json) -> Result<Weight, TheoryFile> {
     if json.as_str() == Some("unit") {
         return Ok(Weight::Unit);
     }
-    let object = json.as_object().ok_or(TheoryFile::Shape("weight"))?;
-    if let Some(field) = object.get("field") {
-        return Ok(Weight::Field(FieldId(as_u16(field, "field")?)));
+    let (kind, body) = arm(json, "weight")?;
+    match kind {
+        "field" => Ok(Weight::Field(FieldId(as_u16(body, "field")?))),
+        "durationOf" => Ok(Weight::DurationOf(FieldId(as_u16(body, "field")?))),
+        _ => Err(TheoryFile::Shape("unknown weight")),
     }
-    if let Some(field) = object.get("durationOf") {
-        return Ok(Weight::DurationOf(FieldId(as_u16(field, "field")?)));
-    }
-    Err(TheoryFile::Shape("unknown weight"))
 }
 
 fn parse_bound(json: &Json) -> Result<Option<Bound>, TheoryFile> {
     if json.is_null() {
         return Ok(None);
     }
-    let object = json.as_object().ok_or(TheoryFile::Shape("bound"))?;
-    if let Some(lit) = object.get("lit") {
-        return Ok(Some(Bound::Lit(parse_u64(lit)?)));
+    let (kind, body) = arm(json, "bound")?;
+    match kind {
+        "lit" => Ok(Some(Bound::Lit(parse_u64(body)?))),
+        "targetField" => Ok(Some(Bound::TargetField(FieldId(as_u16(body, "field")?)))),
+        "targetDuration" => Ok(Some(Bound::TargetDuration(FieldId(as_u16(body, "field")?)))),
+        _ => Err(TheoryFile::Shape("unknown bound")),
     }
-    if let Some(field) = object.get("targetField") {
-        return Ok(Some(Bound::TargetField(FieldId(as_u16(field, "field")?))));
-    }
-    if let Some(field) = object.get("targetDuration") {
-        return Ok(Some(Bound::TargetDuration(FieldId(as_u16(
-            field, "field",
-        )?))));
-    }
-    Err(TheoryFile::Shape("unknown bound"))
 }
 
 fn parse_value(json: &Json) -> Result<Value, TheoryFile> {
@@ -325,6 +311,19 @@ fn pair2(json: &Json) -> Result<&[Json], TheoryFile> {
     }
 }
 
+fn arm<'a>(json: &'a Json, what: &'static str) -> Result<(&'a str, &'a Json), TheoryFile> {
+    let object = json.as_object().ok_or(TheoryFile::Shape(what))?;
+    if object.len() != 1 {
+        return Err(TheoryFile::Shape(what));
+    }
+    let (kind, body) = object.iter().next().ok_or(TheoryFile::Shape(what))?;
+    Ok((kind.as_str(), body))
+}
+
+fn req<'a>(json: &'a Json, field: &'static str) -> Result<&'a Json, TheoryFile> {
+    json.get(field).ok_or(TheoryFile::Shape(field))
+}
+
 fn arr<'a>(json: &'a Json, field: &'static str) -> Result<&'a Vec<Json>, TheoryFile> {
     json.get(field)
         .and_then(Json::as_array)
@@ -351,7 +350,7 @@ fn as_u16(json: &Json, field: &'static str) -> Result<u16, TheoryFile> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TheoryFile, parse};
+    use super::{parse, TheoryFile};
 
     #[test]
     fn a_multi_arm_value_is_shape() {
@@ -369,5 +368,55 @@ mod tests {
     fn a_short_binding_pair_is_shape() {
         let raw = r#"{"relations":[{"name":"a","fields":[{"name":"id","type":"u64"}]},{"name":"b","fields":[{"name":"id","type":"u64"}]}],"statements":[{"containment":{"source":{"relation":0,"projection":[0],"selection":[[0]]},"target":{"relation":1,"projection":[0]}}}]}"#;
         assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_missing_field_type_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"id"}]}],"statements":[]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_missing_functionality_relation_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[]}],"statements":[{"functionality":{"projection":[]}}]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_missing_side_relation_is_shape() {
+        let raw = r#"{"relations":[{"name":"a","fields":[]},{"name":"b","fields":[]}],"statements":[{"containment":{"source":{"projection":[]},"target":{"relation":1,"projection":[]}}}]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_missing_fixed_interval_element_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"w","type":{"fixedInterval":{"width":"1"}}}]}],"statements":[]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_multi_arm_statement_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[]}],"statements":[{"functionality":{"relation":0,"projection":[]},"containment":{"source":{"relation":0,"projection":[]},"target":{"relation":0,"projection":[]}}}]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_multi_arm_type_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"x","type":{"fixedBytes":4,"interval":"u64"}}]}],"statements":[]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn a_short_interval_pair_is_shape() {
+        let raw = r#"{"relations":[{"name":"n","fields":[],"extension":[{"handle":"h","values":[{"intervalU64":["1"]"}]}]}],"statements":[]}"#;
+        assert!(matches!(parse(raw), Err(TheoryFile::Shape("pair"))));
+    }
+
+    #[test]
+    fn a_corpus_schema_object_parses() {
+        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"u64"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
+        let schema = parse(raw).expect("valid theory");
+        assert_eq!(schema.relations.len(), 1);
+        assert_eq!(schema.statements.len(), 1);
     }
 }
