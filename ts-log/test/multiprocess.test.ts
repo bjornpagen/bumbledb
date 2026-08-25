@@ -4,9 +4,12 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import { braid as asBraid } from "#descriptor.ts"
+import { digest32 } from "#bytes.ts"
+import { readSidecar, writeSidecar } from "#chain.ts"
+import { encodeBatch } from "#codec.ts"
+import { braid as asBraid, descriptorOf } from "#descriptor.ts"
 import { generation, idsKey, logKey } from "#keys.ts"
-import { openReplica } from "#replica.ts"
+import { ZERO_HASH, openReplica } from "#replica.ts"
 import { fsStore } from "#store.ts"
 import { Holder, Ledger, Note } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
@@ -177,61 +180,64 @@ describe("the TS multi-process lane", function suite() {
 		}
 	})
 
-	test("a child killed mid-commit: the fleet converges and the restart resolves its pending", async function killed() {
+	test("a scripted Pending at a known slot recovers in a second process", async function scriptedPending() {
 		const { bucket, dir } = lane()
 		const victimDir = dir("victim")
-		const victim = spawnChild(["victim", bucket, victimDir, "7"])
-		const seen: bigint[] = []
-		let buffered = ""
-		await new Promise<void>(function watch(resolve) {
-			victim.stdout.on("data", function onOut(chunk: Buffer) {
-				buffered += chunk.toString("utf8")
-				let newline = buffered.indexOf("\n")
-				while (newline !== -1) {
-					const line = buffered.slice(0, newline)
-					buffered = buffered.slice(newline + 1)
-					if (line.startsWith("MP ")) {
-						const parsed = JSON.parse(line.slice(3)) as Record<string, unknown>
-						seen.push(BigInt(parsed.generation as string))
-					}
-					newline = buffered.indexOf("\n")
-				}
-				if (seen.length >= 3) {
-					victim.kill("SIGKILL")
-					resolve()
-				}
-			})
+		const notes = asBraid("c00000002")
+		{
+			const writer = await openWriter({ store: fsStore(bucket), prefix: PREFIX, dir: victimDir, theory: Ledger })
+			await writer.replica[Symbol.asyncDispose]()
+		}
+		const sidecarFile = path.join(victimDir, "chain.json")
+		const sidecar = await readSidecar(sidecarFile)
+		assert.equal(sidecar.tag, "read")
+		assert.equal(sidecar.chain.tag, "settled", "birth is Settled before the script plants Pending")
+		const bytes = encodeBatch(
+			Ledger,
+			{
+				fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes),
+				braid: notes,
+				braidGen: generation(1n),
+				prev: ZERO_HASH,
+				writer: 7n,
+				timestamp: 1n
+			},
+			[{ op: "insert", relation: "Note", rows: [[7n, "scripted"]] }]
+		)
+		await writeSidecar(sidecarFile, {
+			tag: "pending",
+			entries: sidecar.chain.entries,
+			batch: { braid: notes, gen: generation(1n), bytes }
 		})
-		await new Promise(function gone(resolve) {
-			victim.on("close", resolve)
-		})
-		assert.ok(seen.length >= 3, "the victim acked before dying")
+		const planted = await readSidecar(sidecarFile)
+		assert.equal(planted.tag, "read")
+		assert.equal(planted.chain.tag, "pending", "the test script wrote Pending at slot 1")
 
-		const revived = spawnChild(["revive", bucket, victimDir, "7"])
-		const result = await collect(revived)
-		assert.equal(result.code, 0, `the restarted process resolves its pending: ${result.stderr}`)
+		const recovered = spawnChild(["recover", bucket, victimDir, "7"])
+		const result = await collect(recovered)
+		assert.equal(result.code, 0, `the second process recovers the scripted pending: ${result.stderr}`)
 		assert.equal(result.lines.length, 1)
 		const line = result.lines[0] as Record<string, unknown>
-		assert.equal(line.tag, "revived")
-		const braid = line.braid as string
-		const tip = BigInt(line.generation as string)
-		const notes = BigInt(line.notes as string)
-		assert.ok(tip >= BigInt(seen.length) + 1n, "every ack the parent observed is in the chain, plus the revival commit")
-		assert.equal(notes, tip, "one Note per slot: the chain replays whole")
-		for (const generation of seen) {
-			assert.ok(generation < tip, `acked slot ${generation} precedes the revival tip`)
-		}
-		await assertGapFreeChain(bucket, braid, tip)
+		assert.equal(line.tag, "recovered")
+		assert.equal(line.arm, "Settled")
+		assert.equal(line.generation, "1")
+		assert.equal(line.notes, "1")
+		assert.equal(line.slot, "present")
+		await assertGapFreeChain(bucket, notes, 1n)
+
+		const after = await readSidecar(sidecarFile)
+		assert.equal(after.tag, "read")
+		assert.equal(after.chain.tag, "settled", "open published the Pending arm to Settled")
 
 		const verifier = await openReplica({ store: fsStore(bucket), prefix: PREFIX, dir: dir("verify"), theory: Ledger })
 		assert.equal(
 			verifier.db.read(function count(instance) {
 				return instance.count(Note)
 			}),
-			notes,
-			"a fresh replica converges to the same state"
+			1n,
+			"a fresh replica converges to the recovered slot"
 		)
-		assert.equal(verifier.vector.get(asBraid(braid)), tip)
+		assert.equal(verifier.vector.get(notes), 1n)
 		const store = fsStore(bucket)
 		const leaseTouched = await store.get(idsKey(PREFIX, 0, 0))
 		assert.equal(leaseTouched, null, "explicit ids drew no lease: the lane exercised only the commit path")

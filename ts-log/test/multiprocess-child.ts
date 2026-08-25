@@ -9,14 +9,15 @@
  *              disjoint per child, reporting every ack
  *   fd       — after the go barrier, commit one Booking on the shared
  *              slot determinant, reporting the serial verdict
- *   victim   — commit Notes forever, reporting every ack, until killed
- *   revive   — re-open the victim's directory (the one recovery path
- *              resolves its pending), commit once more, report the tip
+ *   recover  — re-open a directory the parent planted as Pending at a
+ *              known slot; report Settled, generation, and the slot arm
  */
 
 import * as fs from "node:fs"
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
+import { braid as asBraid } from "#descriptor.ts"
+import { generation, logKey } from "#keys.ts"
 import { fsStore } from "#store.ts"
 import { Booking, Ledger, Note } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
@@ -93,38 +94,20 @@ async function main(): Promise<void> {
 		return
 	}
 
-	if (role === "victim") {
-		for (let i = 0; ; i++) {
-			const noteId = BigInt(id * 1000 + i)
-			const outcome = await writer.commit(function record(batch) {
-				batch.insert(Note, [{ id: noteId, body: `victim note ${i}` }])
-				return 0
-			})
-			if (outcome.tag !== "accepted") {
-				throw errors.new(`a victim commit was rejected at ${i}`)
-			}
-			report({ tag: "ack", id, noteId: String(noteId), braid: outcome.braid, generation: String(outcome.generation) })
-		}
-	}
-
-	if (role === "revive") {
-		const noteId = BigInt(id * 1000 + 999)
-		const outcome = await writer.commit(function record(batch) {
-			batch.insert(Note, [{ id: noteId, body: "revived" }])
-			return 0
-		})
-		if (outcome.tag !== "accepted") {
-			throw errors.new("the revived writer's commit was rejected")
-		}
+	if (role === "recover") {
 		const count = replica.db.read(function countNotes(instance) {
 			return instance.count(Note)
 		})
+		const tip = replica.vector.get(asBraid("c00000002")) ?? 0n
+		const slot = await store.get(logKey(PREFIX, asBraid("c00000002"), generation(1n)))
 		report({
-			tag: "revived",
+			tag: "recovered",
 			id,
-			braid: outcome.braid,
-			generation: String(outcome.generation),
-			notes: String(count)
+			arm: "Settled",
+			braid: "c00000002",
+			generation: String(tip),
+			notes: String(count),
+			slot: slot === null ? "absent" : "present"
 		})
 		await replica[Symbol.asyncDispose]()
 		return

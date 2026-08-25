@@ -5,9 +5,13 @@
 
 mod lane_e_support;
 
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
 use bumbledb::SchemaDescriptor;
-use bumbledb_log::codec::OpKind;
+use bumbledb_log::codec::{BatchHeader, OpKind};
 use bumbledb_log::manifest::log_key;
+use bumbledb_log::sidecar::{Chain, Pending, SidecarRead};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{Commit, Error, NoFaults, Options, Writer, WriterOpened, WriterStep};
@@ -266,4 +270,133 @@ fn stale_writer_catches_up_through_history_then_attempts_at_tip() {
         })
         .expect("read");
     });
+}
+
+const RECOVERY_ROLE: &str = "LANE_E_SCRIPTED_PENDING";
+const RECOVERY_ROOT: &str = "LANE_E_SCRIPTED_ROOT";
+const RECOVERY_DIR: &str = "LANE_E_SCRIPTED_DIR";
+
+fn plant_scripted_pending(root: &Path, dir: &Path) {
+    drop(reopen(root.to_path_buf(), dir));
+    let codec = codec();
+    let braid = note_braid(&codec);
+    let bytes = codec
+        .encode(
+            &BatchHeader {
+                fingerprint: *codec.fingerprint(),
+                braid,
+                braid_gen: 1,
+                prev: [0u8; 32],
+                writer: 31,
+                timestamp: 1,
+            },
+            &[insert(NOTE, note_row(7, "scripted"))],
+        )
+        .expect("encode scripted pending");
+    let settled = match Chain::read(dir, codec.braids()) {
+        SidecarRead::Read(chain) => chain,
+        other => panic!("expected Read after birth, got {}", other.identity()),
+    };
+    let Chain::Settled { entries } = settled else {
+        panic!("birth is Settled");
+    };
+    Chain::Pending {
+        entries,
+        batch: Pending {
+            braid,
+            slot: 1,
+            bytes,
+        },
+    }
+    .write_atomic(dir)
+    .expect("plant Pending at slot 1");
+}
+
+fn run_scripted_recovery_child() {
+    let root = PathBuf::from(std::env::var_os(RECOVERY_ROOT).expect("root env"));
+    let dir = PathBuf::from(std::env::var_os(RECOVERY_DIR).expect("dir env"));
+    let recovered = reopen(root.clone(), &dir);
+    assert_eq!(
+        recovered.backlog(),
+        None,
+        "open published the Pending arm to Settled"
+    );
+    let codec = codec();
+    let braid = note_braid(&codec);
+    assert_eq!(recovered.vector()[&braid], 1);
+    recovered.with_db(|db| {
+        db.read(|instance| {
+            assert!(instance.contains_dyn(NOTE, &note_row(7, "scripted"))?);
+            Ok(())
+        })
+        .expect("read");
+    });
+    let store = FsStore::new(root);
+    assert!(
+        store
+            .get(&log_key("", braid, 1))
+            .expect("get slot 1")
+            .is_some(),
+        "the scripted slot is present"
+    );
+    assert!(
+        store
+            .get(&log_key("", braid, 2))
+            .expect("get slot 2")
+            .is_none(),
+        "recovery never double-publishes"
+    );
+    println!("LANE_E_RECOVERY recovered arm=Settled generation=1 slot=present");
+}
+
+/// Finding 122: the pending batch is written by the test script to a
+/// known slot, then a second process recovers it. No sleep-and-hope.
+#[test]
+fn scripted_pending_recovers_in_a_second_process() {
+    if std::env::var(RECOVERY_ROLE).is_ok() {
+        run_scripted_recovery_child();
+        return;
+    }
+
+    let root = temp_dir("scripted_mp");
+    let dir = root.join("w");
+    plant_scripted_pending(&root, &dir);
+    match Chain::read(&dir, codec().braids()) {
+        SidecarRead::Read(Chain::Pending { batch, .. }) => {
+            assert_eq!(batch.slot, 1, "the test script wrote Pending at slot 1")
+        }
+        other => panic!("expected planted Pending, got {other:?}"),
+    }
+
+    let exe = std::env::current_exe().expect("current test binary");
+    let child = Command::new(&exe)
+        .args([
+            "scripted_pending_recovers_in_a_second_process",
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(RECOVERY_ROLE, "recover")
+        .env(RECOVERY_ROOT, root.as_os_str())
+        .env(RECOVERY_DIR, dir.as_os_str())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn recovery child");
+    let out = child.wait_with_output().expect("child exit");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "recovery child failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("LANE_E_RECOVERY recovered arm=Settled generation=1 slot=present"),
+        "child names Settled and the present slot: {stdout}"
+    );
+
+    match Chain::read(&dir, codec().braids()) {
+        SidecarRead::Read(Chain::Settled { .. }) => {}
+        other => panic!("parent re-read is Settled, got {other:?}"),
+    }
 }
