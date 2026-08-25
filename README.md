@@ -486,9 +486,7 @@ The benchmark results are backed by checks that run before timing:
   absence of calls and fallback byte comparisons.
 - A counting allocator verifies that warm prepared-query execution performs no
   allocations.
-- CI runs formatting, linting, tests, documentation examples, feature
-  combinations, the portable scalar implementation on Linux x86-64, and the
-  native Apple Silicon implementation on macOS.
+- CI runs `scripts/battery.sh` on Linux x86-64 and macOS ARM64.
 - The Lean build accepts no unfinished proofs, and its executable results are
   compared with the Rust engine and the independent implementation.
 
@@ -511,18 +509,7 @@ docs/                          architecture, cookbook, and references
 scripts/                       tests, benchmark runner, and chart generation
 ```
 
-The main Rust checks are:
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo test --workspace --doc
-```
-
-`scripts/check.sh` runs the larger combination of feature, allocation, and
-platform checks. `scripts/lean.sh` builds the specification and compares its
-results with the engine.
+Green is the exit code of `scripts/battery.sh`.
 
 ## Current release
 
