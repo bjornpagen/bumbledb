@@ -1,11 +1,11 @@
 /**
- * The replica (50): a local store that is a materialized view of the
+ * The replica: a local store that is a materialized view of the
  * braids' prefixes, plus the loop that keeps it current. Disposable by
- * construction — the only local protocol state is the chain sidecar,
- * a floor cache with one wholeness check; recovery IS the catch-up
- * loop (L10), never a procedure. The store's engine generation is the
- * vector sum; `generation == Σ chain + |applied pending|` is the one
- * instrument, and anything else discards the directory and re-pulls.
+ * construction — the sidecar is a floor cache with one wholeness
+ * check; recovery IS the catch-up loop (L10). Generation is a total
+ * function of the chain: Settled sums the vector, Pending is that sum
+ * plus one. A replica that finds no manifest refuses; only a writer
+ * births a store.
  */
 
 import * as fs from "node:fs/promises"
@@ -13,29 +13,51 @@ import * as path from "node:path"
 import type { Db, Fact, MemberRelation, Schema, SchemaRelations, WriteOutcome } from "@bjornpagen/bumbledb"
 import { internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { bytesEqual, toHex } from "#bytes.ts"
-import type { ChainEntry, Pending } from "#chain.ts"
-import { readSidecar, writeSidecar } from "#chain.ts"
+import { parse } from "#braids.ts"
+import type { Digest32 } from "#bytes.ts"
+import { bytesEqual, digest32, digest32FromHex, toHex } from "#bytes.ts"
+import type { Chain, ChainEntry, Pending } from "#chain.ts"
+import { chainGeneration, readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Braid, Descriptor, RelationInfo } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
-import { ErrGapDetected, ErrReplayDiverged, refuse } from "#errors.ts"
+import { ErrRefused, ErrReplayDiverged, refuse, refuseManifestMissing, wrapStore } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { checkpointJsonKey, checkpointMdbKey, generation, logKey, manifestKey } from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
-import { auditCatalog, parseCheckpoint, parseManifest, renderManifest } from "#manifest.ts"
+import { auditCatalog, parseCheckpoint, parseManifest } from "#manifest.ts"
 import type { Etag, ObjectStore } from "#store.ts"
 import type { Value } from "#value.ts"
 
-const ZERO_HASH = "0".repeat(64)
+const ZERO_HASH = digest32(new Uint8Array(32))
 
-/** The gc-safety heartbeat cadence (50): every N-th refresh pass re-reads the manifest. */
+/** The gc-safety heartbeat cadence: every N-th pass re-reads the manifest. */
 const HEARTBEAT_PASSES = 16
 
-/** The re-poll cadence between waitFor's catch-up passes; the
- *  read-your-writes waiter in `waitFor` is this number's one consumer. */
+/** The re-poll cadence of waitFor, its one consumer. */
 const WAIT_FOR_POLL_MS = 20
+
+type ReplicaState =
+	| { readonly tag: "bootstrapped" }
+	| { readonly tag: "checkpoint-seeded"; readonly catalog: string }
+	| { readonly tag: "sidecar-resumed"; readonly floor: ReadonlyMap<Braid, Generation> }
+
+type RefreshOutcome =
+	| { readonly tag: "advanced"; readonly vector: ReadonlyMap<Braid, Generation> }
+	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
+	| { readonly tag: "reseed"; readonly cause: string }
+	| { readonly tag: "refused"; readonly detail: string }
+
+type Step =
+	| { readonly tag: "applied" }
+	| { readonly tag: "tip" }
+	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
+	| { readonly tag: "reseed"; readonly cause: string }
+
+type ApplyPhase = "open" | "steady"
+
+type SlotApply = { readonly tag: "applied"; readonly generation: bigint } | { readonly tag: "discard" }
 
 interface OpenReplicaOptions<Rels extends SchemaRelations> {
 	readonly store: ObjectStore
@@ -61,7 +83,6 @@ interface Core<Rels extends SchemaRelations> {
 	chain: Map<Braid, ChainEntry>
 	pending: Pending | null
 	pendingOps: readonly Op[] | null
-	pendingApplied: boolean
 	manifestEtag: Etag | null
 	checkpoint: CheckpointFacts | null
 	checkpointDigest: string | null
@@ -69,6 +90,8 @@ interface Core<Rels extends SchemaRelations> {
 	closed: boolean
 	storeName: string
 	gate: Promise<unknown>
+	wedged: Map<Braid, string>
+	provenance: ReplicaState
 }
 
 const cores = new WeakMap<object, Core<SchemaRelations>>()
@@ -99,6 +122,10 @@ function blake3Hex(bytes: Uint8Array): string {
 	return toHex(new Uint8Array(internalBlake3(bytes)))
 }
 
+function blake3Digest(bytes: Uint8Array): Digest32 {
+	return digest32(new Uint8Array(internalBlake3(bytes)))
+}
+
 function sidecarPath<Rels extends SchemaRelations>(core: Core<Rels>): string {
 	return path.join(core.dir, "chain.json")
 }
@@ -118,6 +145,16 @@ function storePath<Rels extends SchemaRelations>(core: Core<Rels>): string {
 	return path.join(core.dir, core.storeName)
 }
 
+/** A wire braid id is a braid of this theory or a typed refuse. */
+function braidOf(theory: Schema<SchemaRelations> | Schema<never>, raw: Braid): Braid {
+	const id = Number.parseInt(raw.slice(1), 16)
+	const parsed = parse(theory, id)
+	if (parsed === undefined) {
+		refuse({ kind: "UnknownBraid", braid: Number.isFinite(id) ? id : 0 }, `unknown braid ${raw}`)
+	}
+	return parsed
+}
+
 function zeroChain(descriptor: Descriptor): Map<Braid, ChainEntry> {
 	const chain = new Map<Braid, ChainEntry>()
 	for (const id of descriptor.braidMembers.keys()) {
@@ -127,9 +164,10 @@ function zeroChain(descriptor: Descriptor): Map<Braid, ChainEntry> {
 }
 
 function chainEntry<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid): ChainEntry {
-	const entry = core.chain.get(braid)
+	const id = braidOf(core.theory, braid)
+	const entry = core.chain.get(id)
 	if (entry === undefined) {
-		throw errors.new(`braid ${braid} is not derived from this theory`)
+		throw errors.new(`braid ${id} is not derived from this theory`)
 	}
 	return entry
 }
@@ -169,19 +207,11 @@ function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): string
 	})
 }
 
-/** The local vector equals the published checkpoint vector and no
- *  pending term is outstanding — the seed/open floor the catalog claim
- *  is audited against. */
-function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
-	if (core.checkpoint === null || core.pending !== null) {
-		return false
+function chainOf<Rels extends SchemaRelations>(core: Core<Rels>): Chain {
+	if (core.pending === null) {
+		return { tag: "settled", entries: core.chain }
 	}
-	for (const [braid, head] of core.checkpoint.braids) {
-		if (chainEntry(core, braid).g !== head.g) {
-			return false
-		}
-	}
-	return true
+	return { tag: "pending", entries: core.chain, batch: core.pending }
 }
 
 function chainSum<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
@@ -193,18 +223,60 @@ function chainSum<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
 }
 
 function pendingTerm<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
-	return core.pendingApplied ? 1n : 0n
+	return chainOf(core).tag === "pending" ? 1n : 0n
+}
+
+/** The local vector equals the published checkpoint vector and the
+ *  chain is Settled — the seed/open floor the catalog claim is audited
+ *  against. */
+function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
+	if (core.checkpoint === null || chainOf(core).tag === "pending") {
+		return false
+	}
+	for (const [braid, head] of core.checkpoint.braids) {
+		if (chainEntry(core, braid).g !== head.g) {
+			return false
+		}
+	}
+	return true
 }
 
 async function persistSidecar<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	await writeSidecar(sidecarPath(core), { chain: core.chain, pending: core.pending })
+	await writeSidecar(sidecarPath(core), chainOf(core))
+}
+
+async function settle<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
+	core.pending = null
+	core.pendingOps = null
+	await persistSidecar(core)
 }
 
 async function clearPending<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	core.pending = null
-	core.pendingOps = null
-	core.pendingApplied = false
-	await persistSidecar(core)
+	await settle(core)
+}
+
+function disposed<Rels extends SchemaRelations>(core: Core<Rels>): void {
+	if (core.closed) {
+		throw errors.new("replica is disposed")
+	}
+}
+
+function adoptChain<Rels extends SchemaRelations>(core: Core<Rels>, chain: Chain): void {
+	const entries = new Map<Braid, ChainEntry>()
+	for (const [raw, entry] of chain.entries) {
+		entries.set(braidOf(core.theory, raw), entry)
+	}
+	for (const id of core.descriptor.braidMembers.keys()) {
+		if (!entries.has(id)) {
+			entries.set(id, { g: generation(0n), prev: ZERO_HASH, ts: 0n })
+		}
+	}
+	core.chain = entries
+	if (chain.tag === "pending") {
+		core.pending = { ...chain.batch, braid: braidOf(core.theory, chain.batch.braid) }
+	} else {
+		core.pending = null
+	}
 }
 
 /** Positional decoded row → the SDK's named fact, handles lifted for closed refs. */
@@ -258,15 +330,11 @@ function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly 
 	})
 }
 
-type ApplyPhase = "open" | "steady"
-
-type SlotApply = { readonly tag: "applied"; readonly generation: bigint } | { readonly tag: "discard" }
-
 /**
  * The two-step apply discipline: `db.write` the batch, then advance the
  * sidecar. Chain and publish-law refusals live here; a rejected replay
- * is phase-scoped (50): discard before the store has proven itself
- * whole, `ErrReplayDiverged` after.
+ * is phase-scoped: discard before the store has proven itself whole,
+ * `ErrReplayDiverged` after.
  */
 async function applySlot<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -285,9 +353,9 @@ async function applySlot<Rels extends SchemaRelations>(
 		}
 		throw errors.wrap(ErrReplayDiverged, `braid ${braid} slot ${slot} writer ${decoded.header.writer}`)
 	}
-	core.chain.set(braid, { g: slot, prev: blake3Hex(bytes), ts: decoded.header.timestamp })
+	core.chain.set(braid, { g: slot, prev: blake3Digest(bytes), ts: decoded.header.timestamp })
 	await persistSidecar(core)
-	const expected = chainSum(core) + pendingTerm(core)
+	const expected = chainGeneration(chainOf(core))
 	if (outcome.value.generation < expected) {
 		refuse(
 			{ kind: "NoOpSlot", braid, slot, writer: decoded.header.writer },
@@ -298,18 +366,114 @@ async function applySlot<Rels extends SchemaRelations>(
 }
 
 /**
- * The gc floor rule (10): below the current checkpoint's vector a 404 is
- * a collected hole, at or above it the honest tip.
+ * The gc floor rule: below the current checkpoint's vector a 404 is a
+ * collected hole, at or above it the honest tip.
  */
 function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, next: Generation): boolean {
+	const id = braidOf(core.theory, braid)
 	if (core.checkpoint === null) {
 		return false
 	}
-	const floor = core.checkpoint.braids.get(braid)
+	const floor = core.checkpoint.braids.get(id)
 	if (floor === undefined) {
 		return false
 	}
 	return next <= floor.g
+}
+
+function isCorruption(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false
+	}
+	return errors.is(error, ErrReplayDiverged) || errors.is(error, ErrRefused)
+}
+
+/**
+ * One braid, one slot. Catch-up, refresh, waitFor, and open all call
+ * this; a hot braid cannot drain past one step per round.
+ */
+async function stepBraid<Rels extends SchemaRelations>(
+	core: Core<Rels>,
+	braid: Braid,
+	phase: ApplyPhase
+): Promise<Step> {
+	disposed(core)
+	const id = braidOf(core.theory, braid)
+	const wedged = core.wedged.get(id)
+	if (wedged !== undefined) {
+		return { tag: "wedged", braid: id, cause: wedged }
+	}
+	const next = generation(chainEntry(core, id).g + 1n)
+	const fetched = await core.store.get(logKey(core.prefix, id, next))
+	if (fetched === null) {
+		if (holeAt(core, id, next)) {
+			return { tag: "reseed", cause: "gap-below-floor" }
+		}
+		return { tag: "tip" }
+	}
+	const chain = chainOf(core)
+	if (chain.tag === "pending" && id === chain.batch.braid && next === chain.batch.gen) {
+		if (!bytesEqual(fetched.bytes, chain.batch.bytes)) {
+			return { tag: "reseed", cause: "lost-pending-fork" }
+		}
+		await settle(core)
+	}
+	const applied = await errors.try(applySlot(core, id, next, fetched.bytes, phase))
+	if (applied.error) {
+		if (phase === "steady" && isCorruption(applied.error)) {
+			core.wedged.set(id, applied.error.message)
+			return { tag: "wedged", braid: id, cause: applied.error.message }
+		}
+		throw applied.error
+	}
+	if (applied.data.tag === "discard") {
+		return { tag: "reseed", cause: "rejected-in-open" }
+	}
+	return { tag: "applied" }
+}
+
+/**
+ * One pass: heartbeat, one slot per braid, wholeness, disposed. The
+ * same function refresh, waitFor, catch-up, and open execute.
+ */
+async function runPass<Rels extends SchemaRelations>(
+	core: Core<Rels>,
+	braids: readonly Braid[],
+	phase: ApplyPhase
+): Promise<RefreshOutcome> {
+	disposed(core)
+	core.passes += 1
+	if (core.passes % HEARTBEAT_PASSES === 0) {
+		await refreshManifest(core)
+	}
+	const remaining = new Set(braids)
+	while (remaining.size > 0) {
+		disposed(core)
+		let progressed = false
+		for (const braid of braids) {
+			if (!remaining.has(braid)) {
+				continue
+			}
+			const step = await stepBraid(core, braid, phase)
+			if (step.tag === "applied") {
+				progressed = true
+			} else if (step.tag === "tip" || step.tag === "wedged") {
+				remaining.delete(braid)
+			} else {
+				return { tag: "reseed", cause: step.cause }
+			}
+		}
+		if (!progressed) {
+			break
+		}
+	}
+	if (!wholenessHolds(core)) {
+		return { tag: "reseed", cause: "wholeness" }
+	}
+	for (const [braid, cause] of core.wedged) {
+		return { tag: "wedged", braid, cause }
+	}
+	return { tag: "advanced", vector: vectorOf(core) }
 }
 
 async function catchUpBraid<Rels extends SchemaRelations>(
@@ -317,51 +481,22 @@ async function catchUpBraid<Rels extends SchemaRelations>(
 	braid: Braid,
 	phase: ApplyPhase
 ): Promise<"tip" | "discard"> {
-	for (;;) {
-		const next = generation(chainEntry(core, braid).g + 1n)
-		const fetched = await core.store.get(logKey(core.prefix, braid, next))
-		if (fetched === null) {
-			if (holeAt(core, braid, next)) {
-				throw errors.wrap(ErrGapDetected, `braid ${braid} slot ${next} is below the checkpoint vector`)
-			}
-			return "tip"
-		}
-		if (core.pendingApplied && core.pending !== null && braid === core.pending.braid && next === core.pending.gen) {
-			// An applied pending contests exactly its own slot: byte-equal
-			// means our slot was already published and the pending ends
-			// here; any other occupant is a lost race, and the store —
-			// carrying the pending's effects on a stale base — is
-			// discarded so the one loss path re-judges at the tip (L10).
-			if (!bytesEqual(fetched.bytes, core.pending.bytes)) {
-				return "discard"
-			}
-			core.pending = null
-			core.pendingOps = null
-			core.pendingApplied = false
-			await persistSidecar(core)
-		}
-		const applied = await applySlot(core, braid, next, fetched.bytes, phase)
-		if (applied.tag === "discard") {
-			return "discard"
-		}
+	const step = await stepBraid(core, braid, phase)
+	if (step.tag === "tip" || step.tag === "wedged") {
+		return "tip"
 	}
-}
-
-async function catchUpAll<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	phase: ApplyPhase
-): Promise<"tip" | "discard"> {
-	for (const braid of core.descriptor.braidMembers.keys()) {
-		const outcome = await catchUpBraid(core, braid, phase)
-		if (outcome === "discard") {
-			return "discard"
-		}
+	if (step.tag === "reseed") {
+		return "discard"
 	}
 	return "tip"
 }
 
+function allBraids<Rels extends SchemaRelations>(core: Core<Rels>): Braid[] {
+	return [...core.descriptor.braidMembers.keys()]
+}
+
 function wholenessHolds<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
-	return generationOf(core) === chainSum(core) + pendingTerm(core)
+	return generationOf(core) === chainGeneration(chainOf(core))
 }
 
 async function adoptManifest<Rels extends SchemaRelations>(
@@ -390,6 +525,9 @@ async function adoptManifest<Rels extends SchemaRelations>(
 		throw errors.new(`manifest points at absent checkpoint ${manifest.checkpoint}`)
 	}
 	const checkpoint = parseCheckpoint(facts.bytes)
+	for (const id of checkpoint.braids.keys()) {
+		braidOf(core.theory, id)
+	}
 	const carried = [...checkpoint.braids.keys()].sort()
 	const derived = [...core.descriptor.braidMembers.keys()].sort()
 	if (carried.join(",") !== derived.join(",")) {
@@ -399,8 +537,9 @@ async function adoptManifest<Rels extends SchemaRelations>(
 	core.checkpointDigest = manifest.checkpoint
 }
 
-async function refreshManifest<Rels extends SchemaRelations>(core: Core<Rels>, force: boolean): Promise<void> {
-	if (!force && core.manifestEtag !== null) {
+/** A replica never births a manifest. Absence is ManifestMissing. */
+async function refreshManifest<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
+	if (core.manifestEtag !== null) {
 		const poll = await core.store.getIfChanged(manifestKey(core.prefix), core.manifestEtag)
 		if (poll.tag === "unchanged") {
 			return
@@ -409,23 +548,10 @@ async function refreshManifest<Rels extends SchemaRelations>(core: Core<Rels>, f
 		return
 	}
 	const fetched = await core.store.get(manifestKey(core.prefix))
-	if (fetched !== null) {
-		await adoptManifest(core, fetched.bytes, fetched.etag)
-		return
+	if (fetched === null) {
+		refuseManifestMissing("the store has no manifest")
 	}
-	const birth = renderManifest({ fingerprint: core.descriptor.fingerprint, checkpoint: null })
-	const created = await core.store.putCreate(manifestKey(core.prefix), birth)
-	if (created.tag === "created") {
-		core.manifestEtag = created.etag
-		core.checkpoint = null
-		core.checkpointDigest = null
-		return
-	}
-	const reread = await core.store.get(manifestKey(core.prefix))
-	if (reread === null) {
-		throw errors.new("manifest vanished between create refusal and re-read")
-	}
-	await adoptManifest(core, reread.bytes, reread.etag)
+	await adoptManifest(core, fetched.bytes, fetched.etag)
 }
 
 /** Bootstraps a fresh local store: from the current checkpoint when one
@@ -455,19 +581,21 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 			await fs.writeFile(path.join(target, "data.mdb"), mdb.bytes)
 			core.db = await SdkDb.open(target, core.theory)
 			core.chain = new Map(
-				[...core.checkpoint.braids.entries()].map(function seed([braid, head]) {
-					return [braid, { g: head.g, prev: head.hash, ts: head.ts }] as const
+				[...core.checkpoint.braids.entries()].map(function seed([raw, head]) {
+					const braid = braidOf(core.theory, raw)
+					return [braid, { g: head.g, prev: digest32FromHex(head.hash), ts: head.ts }] as const
 				})
 			)
 			let sum = 0n
 			for (const head of core.checkpoint.braids.values()) {
 				sum += head.g
 			}
-			const generation = generationOf(core)
-			if (generation !== sum) {
-				throw errors.new(`checkpoint store opened at generation ${generation}, its vector sums to ${sum}`)
+			const opened = generationOf(core)
+			if (opened !== sum) {
+				throw errors.new(`checkpoint store opened at generation ${opened}, its vector sums to ${sum}`)
 			}
 			auditCatalog(core.checkpoint, catalogDigestOf(core))
+			core.provenance = { tag: "checkpoint-seeded", catalog: core.checkpointDigest }
 			await persistSidecar(core)
 			return
 		}
@@ -478,26 +606,52 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 	}
 	core.db = created.value
 	core.chain = zeroChain(core.descriptor)
+	core.provenance = { tag: "bootstrapped" }
 	await persistSidecar(core)
+}
+
+/** The scream tracks the set of repair signatures; a recurrence alarms. */
+function screamOf(context: string): { attempt(signature: string): void } {
+	const seen = new Set<string>()
+	let attempts = 0
+	return {
+		attempt(signature: string): void {
+			attempts += 1
+			if (seen.has(signature)) {
+				console.error(`bumbledb-log alarm: ${context} repair signature recurs: ${signature}`)
+			} else {
+				seen.add(signature)
+			}
+			if (attempts % 8 === 0) {
+				console.error(`bumbledb-log warning: ${context} repair attempt ${attempts}: ${signature}`)
+			}
+		}
+	}
 }
 
 /** The disposable law: the directory is cache, never truth. The local
  *  LMDB path rotates because the engine has no close verb — the old
  *  environment is left for GC while the fresh pull takes a new path. */
 async function discardAndReopen<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	for (let attempt = 0; attempt < 3; attempt++) {
+	const scream = screamOf("replica discard-and-re-pull")
+	for (;;) {
 		const old = storePath(core)
 		await fs.rm(old, { recursive: true, force: true })
+		core.wedged.clear()
 		await initializeStore(core)
-		const outcome = await catchUpAll(core, "open")
-		if (outcome === "discard") {
+		const outcome = await runPass(core, allBraids(core), "open")
+		if (outcome.tag === "reseed") {
+			scream.attempt(outcome.cause)
 			continue
+		}
+		if (outcome.tag === "refused") {
+			throw errors.wrap(ErrRefused, outcome.detail)
 		}
 		if (generationOf(core) === chainSum(core)) {
 			return
 		}
+		scream.attempt("wholeness")
 	}
-	throw errors.new("the store failed to reach wholeness after repeated re-pulls")
 }
 
 async function newestStoreDir(dir: string): Promise<string | null> {
@@ -537,35 +691,33 @@ async function sweepRotations<Rels extends SchemaRelations>(core: Core<Rels>): P
 }
 
 /**
- * Pending recovery, first half (60): apply the resurrected batch; the
- * verdict plus the wholeness instrument force all three arms. A batch
- * rejected here was never acked (fsync preceded its first judgment); a
- * born-no-op publishes nothing; anything else is a real unpublished
- * commit that catch-up and the tip attempt will place.
+ * Pending recovery: apply the resurrected batch. A batch rejected here
+ * was never acked; a born-no-op settles; anything else stays Pending
+ * so generation(chain) accounts for the unpublished apply.
  */
 async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	if (core.pending === null) {
+	const chain = chainOf(core)
+	if (chain.tag === "settled") {
 		return
 	}
 	const decoded = errors.trySync(function decodePending() {
-		return decodeBatch(core.descriptor, (core.pending as Pending).bytes)
+		return decodeBatch(core.descriptor, chain.batch.bytes)
 	})
 	if (decoded.error) {
-		await clearPending(core)
+		await settle(core)
 		return
 	}
 	const before = generationOf(core)
 	const outcome = applyOps(core, decoded.data.ops)
 	if (outcome.tag === "rejected") {
-		await clearPending(core)
+		await settle(core)
 		return
 	}
 	if (outcome.value.generation === before && before === chainSum(core)) {
-		await clearPending(core)
+		await settle(core)
 		return
 	}
 	core.pendingOps = decoded.data.ops
-	core.pendingApplied = true
 }
 
 /**
@@ -573,16 +725,20 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
  * unopenable (or discarded), so the sidecar's pending is resolved
  * against a freshly caught-up store — a byte-equal published slot
  * absorbs it (L10's idempotent replay), and everything else takes the
- * one loss path's re-judgment at the tip.
+ * one loss path's re-judgment at the tip. A slot at or below the floor
+ * is already published.
  */
 async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>, pending: Pending): Promise<void> {
+	const braid = braidOf(core.theory, pending.braid)
+	if (holeAt(core, braid, pending.gen)) {
+		return
+	}
 	const decoded = errors.trySync(function decodePending() {
 		return decodeBatch(core.descriptor, pending.bytes)
 	})
 	if (decoded.error) {
 		return
 	}
-	const braid = decoded.data.header.braid
 	const slot = decoded.data.header.braidGen
 	if (core.chain.has(braid) && chainEntry(core, braid).g >= slot) {
 		const published = await core.store.get(logKey(core.prefix, braid, slot))
@@ -593,8 +749,8 @@ async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>
 	const before = generationOf(core)
 	const outcome = applyOps(core, decoded.data.ops)
 	if (outcome.tag === "accepted" && outcome.value.generation > before) {
+		core.pending = { ...pending, braid }
 		core.pendingOps = decoded.data.ops
-		core.pendingApplied = true
 		await readdressPending(core, decoded.data.ops, decoded.data.header.writer)
 	}
 }
@@ -611,39 +767,55 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		chain: zeroChain(descriptor),
 		pending: null,
 		pendingOps: null,
-		pendingApplied: false,
 		manifestEtag: null,
 		checkpoint: null,
 		checkpointDigest: null,
 		passes: 0,
 		closed: false,
 		storeName: freshStoreName(),
-		gate: Promise.resolve()
+		gate: Promise.resolve(),
+		wedged: new Map(),
+		provenance: { tag: "bootstrapped" }
 	}
 	await fs.mkdir(core.dir, { recursive: true })
-	await refreshManifest(core, true)
+	const fetched = await core.store.get(manifestKey(core.prefix))
+	if (fetched === null) {
+		refuseManifestMissing("the store has no manifest")
+	}
+	await adoptManifest(core, fetched.bytes, fetched.etag)
 
 	const existing = await newestStoreDir(core.dir)
 	const sidecar = await readSidecar(sidecarPath(core))
 	let opened = false
 	let coldPending: Pending | null = null
-	if (existing !== null) {
+	if (sidecar.tag === "fault") {
+		throw wrapStore(sidecar.io, `read sidecar ${sidecarPath(core)}`)
+	}
+	if (sidecar.tag === "read") {
+		for (const id of sidecar.chain.entries.keys()) {
+			braidOf(core.theory, id)
+		}
+		if (sidecar.chain.tag === "pending") {
+			braidOf(core.theory, sidecar.chain.batch.braid)
+		}
+	}
+	if (sidecar.tag === "corrupt") {
+		coldPending = null
+	} else if (existing !== null && sidecar.tag === "read") {
 		core.storeName = existing
 		const openedDb = await errors.try(SdkDb.open(storePath(core), options.theory))
-		if (openedDb.error === undefined && sidecar !== null) {
+		if (openedDb.error === undefined) {
 			core.db = openedDb.data
-			core.chain = new Map(sidecar.chain)
-			for (const braid of descriptor.braidMembers.keys()) {
-				if (!core.chain.has(braid)) {
-					core.chain.set(braid, { g: generation(0n), prev: ZERO_HASH, ts: 0n })
-				}
-			}
-			core.pending = sidecar.pending
+			adoptChain(core, sidecar.chain)
+			core.provenance = { tag: "sidecar-resumed", floor: vectorOf(core) }
 			opened = true
 		}
 	}
 	if (!opened) {
-		coldPending = sidecar?.pending ?? null
+		if (sidecar.tag === "read" && sidecar.chain.tag === "pending") {
+			coldPending = sidecar.chain.batch
+			braidOf(core.theory, coldPending.braid)
+		}
 		await initializeStore(core)
 	}
 
@@ -651,10 +823,9 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		await resolvePendingAtOpen(core)
 	}
 
-	const outcome = await catchUpAll(core, "open")
-	if (outcome === "discard" || !wholenessHolds(core)) {
+	const outcome = await runPass(core, allBraids(core), "open")
+	if (outcome.tag === "reseed" || outcome.tag === "refused" || !wholenessHolds(core)) {
 		coldPending = core.pending ?? coldPending
-		await clearPending(core)
 		await discardAndReopen(core)
 	}
 
@@ -669,14 +840,13 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 }
 
 /**
- * The steady-state discard route: a catch-up that met a contested
- * pending slot (or a rejected replay at open phase) surrenders the
- * directory; the sidecar's pending rides through as a cold pending and
- * takes the one loss path's re-judgment at the fresh tip.
+ * The steady-state discard route: a contested pending slot surrenders
+ * the directory. The pending batch rides in memory — the sidecar is
+ * not settled ahead of the re-judgment — and takes the one loss path
+ * at the fresh tip.
  */
 async function repairDiscard<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	const coldPending = core.pending
-	await clearPending(core)
 	await discardAndReopen(core)
 	if (coldPending !== null) {
 		await resolveColdPending(core, coldPending)
@@ -696,21 +866,22 @@ async function readdressPending<Rels extends SchemaRelations>(
 ): Promise<void> {
 	const first = ops[0]
 	if (first === undefined) {
-		await clearPending(core)
+		await settle(core)
 		return
 	}
 	const relation = core.descriptor.relationByName.get(first.relation)
-	const braid = relation === undefined ? undefined : core.descriptor.braidOfRelation.get(relation.id)
-	if (braid === undefined) {
-		await clearPending(core)
+	const raw = relation === undefined ? undefined : core.descriptor.braidOfRelation.get(relation.id)
+	if (raw === undefined) {
+		await settle(core)
 		return
 	}
+	const braid = braidOf(core.theory, raw)
 	const entry = chainEntry(core, braid)
 	const timestamp = maxBigint(BigInt(Date.now()), entry.ts)
 	const bytes = encodeBatch(
 		core.descriptor,
 		{
-			fingerprint: core.descriptor.fingerprint,
+			fingerprint: digest32FromHex(core.descriptor.fingerprint),
 			braid,
 			braidGen: generation(entry.g + 1n),
 			prev: entry.prev,
@@ -721,7 +892,6 @@ async function readdressPending<Rels extends SchemaRelations>(
 	)
 	core.pending = { braid, gen: generation(entry.g + 1n), bytes }
 	core.pendingOps = ops
-	core.pendingApplied = true
 	await persistSidecar(core)
 }
 
@@ -738,28 +908,41 @@ function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<B
 }
 
 function dominates(have: ReadonlyMap<Braid, Generation>, want: ReadonlyMap<Braid, Generation>): boolean {
-	for (const [braid, generation] of want) {
-		if ((have.get(braid) ?? -1n) < generation) {
+	for (const [braid, wantGen] of want) {
+		if ((have.get(braid) ?? -1n) < wantGen) {
 			return false
 		}
 	}
 	return true
 }
 
-async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid?: Braid): Promise<void> {
-	core.passes += 1
-	if (core.passes % HEARTBEAT_PASSES === 0) {
-		await refreshManifest(core, false)
-	}
-	if (braid !== undefined) {
-		chainEntry(core, braid)
-		if ((await catchUpBraid(core, braid, "steady")) === "discard") {
-			await repairDiscard(core)
-		}
-		return
-	}
-	if ((await catchUpAll(core, "steady")) === "discard") {
+async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid?: Braid): Promise<RefreshOutcome> {
+	const braids = braid === undefined ? allBraids(core) : [braidOf(core.theory, braid)]
+	const outcome = await runPass(core, braids, "steady")
+	if (outcome.tag === "reseed") {
 		await repairDiscard(core)
+		return { tag: "reseed", cause: outcome.cause }
+	}
+	return outcome
+}
+
+/** waitFor is refresh with a predicate: the same pass, then the check. */
+async function refreshUntil<Rels extends SchemaRelations>(core: Core<Rels>, predicate: () => boolean): Promise<void> {
+	for (;;) {
+		disposed(core)
+		if (predicate()) {
+			return
+		}
+		await withGate(core, async function waitPass() {
+			disposed(core)
+			await refreshPass(core)
+		})
+		if (predicate()) {
+			return
+		}
+		await new Promise(function later(resolve) {
+			setTimeout(resolve, WAIT_FOR_POLL_MS)
+		})
 	}
 }
 
@@ -767,9 +950,7 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 	const core = await openCore(options)
 	const replica: Replica<Rels> = {
 		get db() {
-			if (core.closed) {
-				throw errors.new("replica is disposed")
-			}
+			disposed(core)
 			return core.db
 		},
 		get vector() {
@@ -777,9 +958,7 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 		},
 		async refresh(braid?: Braid) {
 			return withGate(core, async function refreshBody() {
-				if (core.closed) {
-					throw errors.new("replica is disposed")
-				}
+				disposed(core)
 				await refreshPass(core, braid)
 				return vectorOf(core)
 			})
@@ -788,24 +967,9 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 			for (const braid of vector.keys()) {
 				chainEntry(core, braid)
 			}
-			for (;;) {
-				if (dominates(vectorOf(core), vector)) {
-					return
-				}
-				await withGate(core, async function waitPass() {
-					for (const braid of vector.keys()) {
-						if ((await catchUpBraid(core, braid, "steady")) === "discard") {
-							await repairDiscard(core)
-						}
-					}
-				})
-				if (dominates(vectorOf(core), vector)) {
-					return
-				}
-				await new Promise(function later(resolve) {
-					setTimeout(resolve, WAIT_FOR_POLL_MS)
-				})
-			}
+			await refreshUntil(core, function reached() {
+				return dominates(vectorOf(core), vector)
+			})
 		},
 		async [Symbol.asyncDispose]() {
 			await withGate(core, async function disposeBody() {
@@ -818,13 +982,14 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 	return replica
 }
 
-export type { ApplyPhase, Core, OpenReplicaOptions, Replica, SlotApply }
+export type { ApplyPhase, Core, OpenReplicaOptions, RefreshOutcome, Replica, ReplicaState, SlotApply }
 export {
 	applyOps,
 	applySlot,
 	blake3Hex,
 	catchUpBraid,
 	chainEntry,
+	chainOf,
 	chainSum,
 	clearPending,
 	coreOf,
