@@ -295,7 +295,13 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
     fn total_bytes(&self) -> Result<u64, Fault> {
         let mut total: u64 = 0;
         for entry in &self.open {
-            total = total.saturating_add(entry.replica.db().disk_size()?);
+            // Mounted: the engine store. Unmounted: no store, so no bytes.
+            let bytes = match entry.replica.db() {
+                Ok(db) => db.disk_size()?,
+                Err(OpenRefusal::Unmounted) => 0,
+                Err(_) => 0,
+            };
+            total = total.saturating_add(bytes);
         }
         Ok(total)
     }
