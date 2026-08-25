@@ -1,12 +1,15 @@
 /**
  * The protocol's one mutable object (10): canonical single-line UTF-8
- * JSON, a template walk, field order fixed. Numbers are exact bigint
- * u64; every digest is 32 bytes. A non-canonical document is a typed
- * refusal. The checkpoint json beside it is immutable and digest-keyed.
+ * JSON, a template walk, field order fixed. Document version is 3;
+ * a well-formed v:2 document is Version. Every numeric field other
+ * than the discriminator is a quoted decimal-string bigint u64; every
+ * digest is 32 bytes. A non-canonical document is a typed refusal.
+ * The checkpoint json beside it is immutable and digest-keyed. Seed
+ * audits the catalog claim when a checkpoint is present (40).
  */
 
 import * as errors from "@superbuilders/errors"
-import { hex32, saturatingAddU64, utf8Encoder } from "#bytes.ts"
+import { checkedAddU64, hex32, utf8Encoder } from "#bytes.ts"
 import type { Digest32 } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
@@ -52,7 +55,10 @@ function parseManifest(bytes: Uint8Array): Manifest {
 		refuse({ kind: "ManifestShape" }, "manifest version is not a canonical u64")
 	}
 	if (version !== DOC_VERSION) {
-		refuse({ kind: "Version", version: Number(version) }, `manifest version ${version}, consumers refuse ≠ ${DOC_VERSION}`)
+		refuse(
+			{ kind: "Version", version: Number(version) },
+			`manifest version ${version}, consumers refuse v:2 and every version other than ${DOC_VERSION}`
+		)
 	}
 	if (!text.lit(',"fingerprint":"')) {
 		refuse({ kind: "ManifestShape" }, "manifest fingerprint field is absent")
@@ -110,7 +116,10 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 		refuse({ kind: "CheckpointShape" }, "checkpoint version is not a canonical u64")
 	}
 	if (version !== DOC_VERSION) {
-		refuse({ kind: "Version", version: Number(version) }, `checkpoint version ${version}, consumers refuse ≠ ${DOC_VERSION}`)
+		refuse(
+			{ kind: "Version", version: Number(version) },
+			`checkpoint version ${version}, consumers refuse v:2 and every version other than ${DOC_VERSION}`
+		)
 	}
 	if (!text.lit(',"braids":{')) {
 		refuse({ kind: "CheckpointShape" }, "checkpoint braids field is absent")
@@ -154,7 +163,11 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 			refuse({ kind: "CheckpointShape" }, "checkpoint braid map is not strictly ascending")
 		}
 		braids.set(name, { g: generation(g), hash: hex32(hash), ts })
-		sum = saturatingAddU64(sum, g)
+		const next = checkedAddU64(sum, g)
+		if (next === undefined) {
+			refuse({ kind: "CheckpointShape" }, "checkpoint vector sum overflows u64")
+		}
+		sum = next
 	}
 	if (!text.lit('},"catalog":"')) {
 		refuse({ kind: "CheckpointShape" }, "checkpoint catalog field is absent")
@@ -195,5 +208,21 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 	}
 }
 
+/** The seed transition's catalog claim (40): a present checkpoint
+ *  compares the opened store's `catalog_digest` against the document.
+ *  Genesis (no checkpoint) has no claim. A mismatch names the publisher. */
+function auditCatalog(facts: CheckpointFacts | null, computed: string): void {
+	if (facts === null) {
+		return
+	}
+	if (facts.catalog === computed) {
+		return
+	}
+	refuse(
+		{ kind: "CheckpointDigest", expected: facts.catalog, computed },
+		`checkpoint catalog ${facts.catalog} disagrees with the opened store ${computed}; publisher ${facts.writer}`
+	)
+}
+
 export type { CheckpointFacts, CheckpointHead, Manifest }
-export { parseCheckpoint, parseManifest, renderCheckpoint, renderManifest }
+export { auditCatalog, parseCheckpoint, parseManifest, renderCheckpoint, renderManifest }
