@@ -1,0 +1,309 @@
+//! Fenced CAS leases on the local filesystem. The lease identity is a
+//! monotonic token created with exclusive `link`; a contender mints the
+//! next token iff the current lease's own bytes are expired.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use super::{LEASE_NAMESPACE, Lease, TEMP_NAMESPACE, WriterId, jittered, unix_ms};
+
+/// How long a mutation lease stays current, in milliseconds.
+pub const MUTATION_TTL_MS: u64 = 5_000;
+
+/// How long a directory exclusivity lease stays current, in milliseconds.
+pub const DIR_TTL_MS: u64 = 300_000;
+
+/// Ceiling of the jittered wait for a live mutation lease.
+const LOCK_RETRY_MS: u64 = 10;
+
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A held mutation or directory lease. Drop releases by writing an
+/// already-expired successor so the next acquirer does not wait us out.
+pub struct HeldLease {
+    root: PathBuf,
+    dir: PathBuf,
+    token: u64,
+    holder: WriterId,
+}
+
+/// Why acquire refused without waiting.
+#[derive(Debug)]
+pub enum LeaseBusy {
+    Live,
+    Io(io::Error),
+}
+
+impl From<io::Error> for LeaseBusy {
+    fn from(err: io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+/// Exclusive temp under `{root}/~tmp`, fsynced.
+pub fn synced_temp(root: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+    let dir = root.join(TEMP_NAMESPACE);
+    fs::create_dir_all(&dir)?;
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let temp = dir.join(format!("{}.{}", std::process::id(), seq));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    if let Err(err) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
+    Ok(temp)
+}
+
+/// Fsync `path`'s parent directory.
+pub fn sync_parent(path: &Path) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent"))?;
+    File::open(dir)?.sync_all()
+}
+
+/// Fsync every ancestor of `path` up to and including `root`.
+pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        File::open(dir)?.sync_all()?;
+        if dir == root {
+            break;
+        }
+        current = dir.parent();
+    }
+    Ok(())
+}
+
+/// Sweep crash litter: every temp, and every expired lease token file.
+pub fn sweep_reserved(root: &Path) -> io::Result<()> {
+    let tmp = root.join(TEMP_NAMESPACE);
+    match fs::remove_dir_all(&tmp) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    sweep_expired_leases(&root.join(LEASE_NAMESPACE), unix_ms())?;
+    Ok(())
+}
+
+fn sweep_expired_leases(dir: &Path, now: u64) -> io::Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            sweep_expired_leases(&path, now)?;
+            match fs::remove_dir(&path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
+            }
+            continue;
+        }
+        let Some(lease) = fs::read(&path).ok().and_then(|bytes| Lease::parse(&bytes)) else {
+            let _ = fs::remove_file(&path);
+            continue;
+        };
+        if lease.expired(now) {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    Ok(())
+}
+
+fn token_path(dir: &Path, token: u64) -> PathBuf {
+    dir.join(token.to_string())
+}
+
+fn current_lease(dir: &Path) -> io::Result<Option<(u64, Lease)>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let mut best: Option<(u64, Lease)> = None;
+    for entry in entries {
+        let entry = entry?;
+        let Ok(token) = entry.file_name().to_string_lossy().parse::<u64>() else {
+            continue;
+        };
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
+        let Some(lease) = Lease::parse(&bytes) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(t, _)| token >= *t) {
+            best = Some((token, lease));
+        }
+    }
+    Ok(best)
+}
+
+fn try_mint(
+    root: &Path,
+    dir: &Path,
+    token: u64,
+    holder: WriterId,
+    ttl_ms: u64,
+) -> io::Result<bool> {
+    fs::create_dir_all(dir)?;
+    let body = Lease {
+        holder,
+        token,
+        expires: unix_ms().saturating_add(ttl_ms),
+    }
+    .encode();
+    let dest = token_path(dir, token);
+    let temp = synced_temp(root, &body)?;
+    match fs::hard_link(&temp, &dest) {
+        Ok(()) => {
+            let _ = fs::remove_file(&temp);
+            sync_parent(&dest)?;
+            Ok(true)
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&temp);
+            Ok(false)
+        }
+        Err(err) => {
+            let _ = fs::remove_file(&temp);
+            Err(err)
+        }
+    }
+}
+
+fn acquire_once(
+    root: &Path,
+    dir: &Path,
+    holder: WriterId,
+    ttl_ms: u64,
+) -> Result<Option<HeldLease>, LeaseBusy> {
+    match current_lease(dir)? {
+        None => {
+            if try_mint(root, dir, 1, holder, ttl_ms)? {
+                Ok(Some(HeldLease {
+                    root: root.to_path_buf(),
+                    dir: dir.to_path_buf(),
+                    token: 1,
+                    holder,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        Some((_token, lease)) if !lease.breakable(unix_ms()) => Err(LeaseBusy::Live),
+        Some((token, _)) => {
+            let next = token.saturating_add(1);
+            if try_mint(root, dir, next, holder, ttl_ms)? {
+                Ok(Some(HeldLease {
+                    root: root.to_path_buf(),
+                    dir: dir.to_path_buf(),
+                    token: next,
+                    holder,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Wait out a live mutation lease; take it when expired or absent.
+pub fn acquire_mutation(root: &Path, key: &str, holder: WriterId) -> io::Result<HeldLease> {
+    let dir = root.join(LEASE_NAMESPACE).join(key);
+    loop {
+        match acquire_once(root, &dir, holder, MUTATION_TTL_MS) {
+            Ok(Some(held)) => return Ok(held),
+            Ok(None) => {}
+            Err(LeaseBusy::Live) => {
+                std::thread::sleep(jittered(Duration::from_millis(LOCK_RETRY_MS)));
+            }
+            Err(LeaseBusy::Io(err)) => return Err(err),
+        }
+    }
+}
+
+/// One-shot directory exclusivity: a live holder is `Live`, not waited.
+pub fn acquire_dir(root: &Path, holder: WriterId) -> Result<HeldLease, LeaseBusy> {
+    let dir = root.join(LEASE_NAMESPACE);
+    loop {
+        match acquire_once(root, &dir, holder, DIR_TTL_MS) {
+            Ok(Some(held)) => return Ok(held),
+            Ok(None) => {}
+            Err(busy) => return Err(busy),
+        }
+    }
+}
+
+impl HeldLease {
+    /// The fencing token this holder's writes carry.
+    #[must_use]
+    pub const fn token(&self) -> u64 {
+        self.token
+    }
+
+    /// True iff this token is still the max — a stale holder lost the
+    /// CAS and must not publish.
+    pub fn still_current(&self) -> io::Result<bool> {
+        match current_lease(&self.dir)? {
+            Some((token, _)) => Ok(token == self.token),
+            None => Ok(false),
+        }
+    }
+
+    /// Push `expires` forward under the same token (directory heartbeat).
+    pub fn refresh(&self, ttl_ms: u64) -> io::Result<()> {
+        if !self.still_current()? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "lease token is no longer current",
+            ));
+        }
+        let body = Lease {
+            holder: self.holder,
+            token: self.token,
+            expires: unix_ms().saturating_add(ttl_ms),
+        }
+        .encode();
+        let dest = token_path(&self.dir, self.token);
+        let temp = synced_temp(&self.root, &body)?;
+        if let Err(err) = fs::rename(&temp, &dest).and_then(|()| sync_parent(&dest)) {
+            let _ = fs::remove_file(&temp);
+            return Err(err);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for HeldLease {
+    fn drop(&mut self) {
+        let body = Lease {
+            holder: self.holder,
+            token: self.token,
+            expires: 0,
+        }
+        .encode();
+        if let Ok(temp) = synced_temp(&self.root, &body) {
+            let dest = token_path(&self.dir, self.token);
+            if fs::rename(&temp, &dest).is_err() {
+                let _ = fs::remove_file(&temp);
+            } else {
+                let _ = sync_parent(&dest);
+            }
+        }
+    }
+}

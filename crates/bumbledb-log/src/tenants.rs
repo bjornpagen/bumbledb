@@ -1,22 +1,30 @@
 //! Per-tenant replicas: an LRU of replicas keyed by tenant id. A tenant
 //! is a prefix (`<root>/t/<tenant>`); eviction closes the replica and
 //! deletes its directory — the disposable law — and the `_shared`
-//! control-plane tenant is pinned, never evicted. Braids shard within a
-//! tenant; tenants shard the world. Cross-tenant queries belong to the
-//! heap arm, and this layer refuses to pretend otherwise.
+//! control-plane tenant is pinned, never evicted. A replica directory
+//! has one owner: a fenced CAS lease. `tenant` returns a live handle
+//! whose pin holds eviction off; a disposed handle is a distinct type.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bumbledb::Theory;
 
 use crate::replica::{Fault, OpenRefusal, Opened, Replica};
+use crate::store::fence::{DIR_TTL_MS, HeldLease, LeaseBusy, acquire_dir};
 use crate::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap, WriterId,
+    segment_ok,
 };
 
 /// The pinned control-plane tenant.
 pub const SHARED_TENANT: &str = "_shared";
+
+/// A handle whose replica is gone. Every verb on this type is a
+/// compile-time refusal — there is no replica field to call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Disposed;
 
 /// One store handle fanned out to every tenant replica. Delegation is
 /// total: the tenant layer adds no verb.
@@ -61,16 +69,25 @@ pub struct TenantOptions {
 /// Why a tenant handle refused.
 #[derive(Debug)]
 pub enum TenantRefusal {
-    /// Tenant ids are single path segments: nonempty, no separators, no
-    /// dot segments.
+    /// Tenant ids are one [`segment_ok`] path segment.
     Id,
     Open(OpenRefusal),
+    /// Another process holds the directory lease.
+    Exclusive,
 }
 
-/// Outcome of a tenant lookup.
+/// Outcome of a tenant lookup. `Ready` is a live replica; a [`Disposed`]
+/// handle is a different type and cannot appear here.
 pub enum Tenant<'lru, T: Theory + Clone, S: ObjectStore> {
     Ready(&'lru mut Replica<T, Shared<S>>),
     Refused(TenantRefusal),
+}
+
+struct Entry<T: Theory + Clone, S: ObjectStore> {
+    id: String,
+    replica: Replica<T, Shared<S>>,
+    lease: HeldLease,
+    pins: usize,
 }
 
 /// The LRU itself. Recency order lives in `open`: the back is the most
@@ -81,7 +98,7 @@ pub struct Tenants<T: Theory + Clone, S: ObjectStore> {
     dir: PathBuf,
     theory: T,
     options: TenantOptions,
-    open: Vec<(String, Replica<T, Shared<S>>)>,
+    open: Vec<Entry<T, S>>,
 }
 
 /// Opens the tenant layer over `store`, with object prefixes under
@@ -103,10 +120,6 @@ pub fn open_tenants<T: Theory + Clone, S: ObjectStore>(
     }
 }
 
-fn well_formed(id: &str) -> bool {
-    !id.is_empty() && !id.contains('/') && id != "." && id != ".."
-}
-
 impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
     fn prefix(&self, id: &str) -> String {
         if self.root.is_empty() {
@@ -116,46 +129,78 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
         }
     }
 
+    fn holder() -> WriterId {
+        WriterId(u64::from(std::process::id()))
+    }
+
     /// The tenant's replica, opening it on a miss and evicting the
     /// least-recent unpinned replicas past the budget. The returned
-    /// handle is the most recent by definition.
+    /// handle is live: its pin holds eviction off for the borrow.
     pub fn tenant(&mut self, id: &str) -> Result<Tenant<'_, T, S>, Fault> {
-        if !well_formed(id) {
+        if !segment_ok(id) {
             return Ok(Tenant::Refused(TenantRefusal::Id));
         }
-        if let Some(index) = self.open.iter().position(|(name, _)| name == id) {
+        if let Some(index) = self.open.iter().position(|entry| entry.id == id) {
             let entry = self.open.remove(index);
             self.open.push(entry);
+            let last = self.open.last_mut().expect("pushed above");
+            last.pins = last.pins.saturating_add(1);
+            let _ = last.lease.refresh(DIR_TTL_MS);
+            last.pins = last.pins.saturating_sub(1);
         } else {
+            let local = self.dir.join(id);
+            if let Err(err) = fs::create_dir_all(&local) {
+                return Err(Fault::Io(err));
+            }
+            let lease = match acquire_dir(&local, Self::holder()) {
+                Ok(lease) => lease,
+                Err(LeaseBusy::Live) => return Ok(Tenant::Refused(TenantRefusal::Exclusive)),
+                Err(LeaseBusy::Io(err)) => return Err(Fault::Io(err)),
+            };
             let replica = match Replica::open(
                 self.store.clone(),
                 &self.prefix(id),
-                &self.dir.join(id),
+                &local,
                 self.theory.clone(),
             )? {
                 Opened::Ready(replica) => *replica,
                 Opened::Refused(refusal) => {
+                    drop(lease);
                     return Ok(Tenant::Refused(TenantRefusal::Open(refusal)));
                 }
             };
-            self.open.push((id.to_string(), replica));
+            self.open.push(Entry {
+                id: id.to_string(),
+                replica,
+                lease,
+                pins: 1,
+            });
             self.enforce_budget()?;
+            if let Some(last) = self.open.last_mut() {
+                last.pins = last.pins.saturating_sub(1);
+            }
         }
-        let (_, replica) = self.open.last_mut().expect("pushed above");
+        let replica = &mut self.open.last_mut().expect("pushed above").replica;
         Ok(Tenant::Ready(replica))
     }
 
     /// Evicts one tenant by id: closes the replica and deletes its
-    /// directory. Pinned `_shared` refuses by doing nothing.
-    pub fn evict(&mut self, id: &str) -> Result<(), Fault> {
+    /// directory. Pinned `_shared` refuses by doing nothing. The
+    /// returned [`Disposed`] is the handle type after eviction.
+    pub fn evict(&mut self, id: &str) -> Result<Option<Disposed>, Fault> {
         if id == SHARED_TENANT {
-            return Ok(());
+            return Ok(None);
         }
-        if let Some(index) = self.open.iter().position(|(name, _)| name == id) {
-            let (_, replica) = self.open.remove(index);
-            replica.dispose().map_err(Fault::Io)?;
+        if let Some(index) = self.open.iter().position(|entry| entry.id == id) {
+            if self.open[index].pins > 0 {
+                return Ok(None);
+            }
+            let entry = self.open.remove(index);
+            drop(entry.lease);
+            entry.replica.dispose().map_err(Fault::Io)?;
+            return Ok(Some(Disposed));
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Open replica count.
@@ -167,20 +212,20 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
     /// Currently open tenant ids, least recent first.
     #[must_use]
     pub fn open_ids(&self) -> Vec<&str> {
-        self.open.iter().map(|(name, _)| name.as_str()).collect()
+        self.open.iter().map(|entry| entry.id.as_str()).collect()
     }
 
     fn total_bytes(&self) -> Result<u64, Fault> {
         let mut total: u64 = 0;
-        for (_, replica) in &self.open {
-            total = total.saturating_add(replica.db().disk_size()?);
+        for entry in &self.open {
+            total = total.saturating_add(entry.replica.db().disk_size()?);
         }
         Ok(total)
     }
 
-    /// Least-recent-first eviction, skipping the pinned tenant and the
-    /// most recent entry (the one the caller is about to use), until
-    /// both budgets hold or nothing evictable remains.
+    /// Least-recent-first eviction, skipping the pinned tenant, any
+    /// pinned borrow, and the most recent entry, until both budgets
+    /// hold or nothing evictable remains.
     fn enforce_budget(&mut self) -> Result<(), Fault> {
         loop {
             let over_count = self.open.len() > self.options.max_open;
@@ -189,16 +234,14 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
                 return Ok(());
             }
             let last = self.open.len().saturating_sub(1);
-            let Some(index) = self
-                .open
-                .iter()
-                .enumerate()
-                .position(|(index, (name, _))| name != SHARED_TENANT && index != last)
-            else {
+            let Some(index) = self.open.iter().enumerate().position(|(index, entry)| {
+                entry.id != SHARED_TENANT && index != last && entry.pins == 0
+            }) else {
                 return Ok(());
             };
-            let (_, replica) = self.open.remove(index);
-            replica.dispose().map_err(Fault::Io)?;
+            let entry = self.open.remove(index);
+            drop(entry.lease);
+            entry.replica.dispose().map_err(Fault::Io)?;
         }
     }
 }

@@ -14,7 +14,9 @@ use std::ops::Range;
 use bumbledb::schema::{FieldId, RelationId};
 
 use crate::manifest::Text;
-use crate::store::{Create, ObjectStore, Result as StoreResult, StoreKey, Swap};
+use crate::store::{
+    Create, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
+};
 
 /// The lease width: one CAS increment claims this many ids.
 pub const LEASE_WIDTH: u64 = 4096;
@@ -71,9 +73,11 @@ pub fn lease_block<S: ObjectStore>(
     let key = ids_key(prefix, relation, field);
     loop {
         let Some(fetched) = store.get(&key)? else {
-            match store.put_create(&key, format!("{LEASE_WIDTH}").as_bytes())? {
+            let birth = format!("{LEASE_WIDTH}");
+            let outcome = store.put_create(&key, birth.as_bytes())?;
+            match prove_create(store, &key, birth.as_bytes(), outcome)? {
                 Create::Created(_) => return Ok(Leased::Range(0..LEASE_WIDTH)),
-                Create::Exists => continue,
+                Create::Exists | Create::Ambiguous => continue,
             }
         };
         let Some(next) = parse_counter(&fetched.bytes) else {
@@ -82,9 +86,15 @@ pub fn lease_block<S: ObjectStore>(
         let Some(end) = next.checked_add(LEASE_WIDTH) else {
             return Ok(Leased::Refused(LeaseRefusal::Exhausted { relation, field }));
         };
-        match store.put_swap(&key, format!("{end}").as_bytes(), &fetched.etag)? {
+        let body = format!("{end}");
+        match prove_swap(
+            store,
+            &key,
+            body.as_bytes(),
+            store.put_swap(&key, body.as_bytes(), &fetched.etag)?,
+        )? {
             Swap::Swapped(_) => return Ok(Leased::Range(next..end)),
-            Swap::Moved => {}
+            Swap::Moved | Swap::Ambiguous => {}
         }
     }
 }

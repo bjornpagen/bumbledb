@@ -1,9 +1,9 @@
 //! `S3Store`: the five verbs over one S3-compatible target. `SigV4` and
 //! the conditional headers ride the `object_store` crate; this module
-//! maps their outcomes onto the trait's sums and nothing else. One
-//! storage class for every key — `log/*`, `ckpt/*`, and the manifest
-//! share the constructor's single bucket. A caller-supplied refresh
-//! replaces static keys without forking the signer.
+//! maps their outcomes onto the trait's sums and nothing else. A 409
+//! is `Ambiguous`, never a proved `Exists` or `Moved`. Conditional
+//! writes are not retried by the transport. Credentials are consulted
+//! per request, off the worker threads.
 
 use std::io;
 use std::sync::Arc;
@@ -12,11 +12,13 @@ use object_store::aws::{AmazonS3, AmazonS3Builder, AwsCredential};
 use object_store::path::Path;
 use object_store::{
     CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, ObjectStoreExt as _,
-    PutMode, UpdateVersion,
+    PutMode, RetryConfig, UpdateVersion,
 };
 use tokio::runtime::{Builder, Handle, Runtime};
 
-use super::{Create, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap};
+use super::{
+    Create, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap, parse_prefix,
+};
 
 /// Static keys, or a caller-owned refresh the store invokes before
 /// each signed request. The refresh is `dyn` because the caller owns
@@ -42,8 +44,8 @@ pub struct StaticKeys {
 }
 
 /// One constructor: endpoint, region, bucket, credentials, key prefix.
-/// `endpoint` is `None` for AWS's regional virtual-host; a set endpoint
-/// is path-style (R2's `auto` region rides that arm).
+/// `endpoint` is `None` for AWS's regional virtual-host. `region: "auto"`
+/// without an endpoint is refused — R2's `auto` rides the endpoint arm.
 pub struct S3Config {
     pub endpoint: Option<String>,
     pub region: String,
@@ -54,10 +56,9 @@ pub struct S3Config {
 
 /// The five verbs against one bucket. Clone shares the client and the
 /// runtime; two clones are two HTTP clients over one prefix. Construct
-/// outside an async context — every verb `block_on`s a multi-thread
-/// runtime, because the writer's publisher and duty threads call store
-/// verbs on other OS threads and a current-thread runtime cannot drive
-/// two `block_on` callers.
+/// and call outside an async context — every verb drives a dedicated
+/// multi-thread runtime and returns `Err` rather than `block_on` from
+/// an async context.
 #[derive(Clone)]
 pub struct S3Store {
     inner: AmazonS3,
@@ -75,6 +76,16 @@ impl S3Store {
                 source: io::Error::other("S3Store is constructed outside an async context"),
             });
         }
+        if config.region == "auto" && config.endpoint.is_none() {
+            return Err(StoreError {
+                op: "open",
+                key: config.region.clone(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "region auto requires an endpoint",
+                ),
+            });
+        }
         let runtime = Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -84,10 +95,10 @@ impl S3Store {
                 source,
             })?;
         let handle = runtime.handle().clone();
-        let prefix = normalize_prefix(&config.prefix).map_err(|source| StoreError {
+        let prefix = parse_prefix(&config.prefix).map_err(|err| StoreError {
             op: "open",
             key: config.prefix.clone(),
-            source,
+            source: io::Error::new(io::ErrorKind::InvalidInput, err),
         })?;
         let inner = build_client(config)?;
         Ok(Self {
@@ -107,16 +118,78 @@ impl S3Store {
         })
     }
 
-    fn block<T>(&self, fut: impl std::future::Future<Output = T>) -> T {
-        self.handle.block_on(fut)
+    fn block<T>(&self, fut: impl std::future::Future<Output = T>) -> Result<T> {
+        if Handle::try_current().is_ok() {
+            return Err(StoreError {
+                op: "block",
+                key: self.prefix.clone(),
+                source: io::Error::other("store verbs are synchronous"),
+            });
+        }
+        Ok(self.handle.block_on(fut))
     }
+
+    /// Delete every object under this store's prefix. The smoke lane's
+    /// bucket cleanup.
+    pub fn sweep_prefix(&self) -> Result<u64> {
+        let raw = if self.prefix.is_empty() {
+            return Err(StoreError {
+                op: "sweep",
+                key: String::new(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "refuse to sweep an empty prefix",
+                ),
+            });
+        } else {
+            self.prefix.clone()
+        };
+        let path = Path::parse(&raw).map_err(|source| StoreError {
+            op: "sweep",
+            key: raw,
+            source: io::Error::other(source),
+        })?;
+        self.block(async { sweep_listed(&self.inner, &path).await })?
+    }
+}
+
+async fn sweep_listed(inner: &AmazonS3, prefix: &Path) -> Result<u64> {
+    let listed = inner
+        .list_with_delimiter(Some(prefix))
+        .await
+        .map_err(|source| StoreError {
+            op: "sweep",
+            key: prefix.as_ref().to_string(),
+            source: io::Error::other(source),
+        })?;
+    let mut n = 0u64;
+    for object in listed.objects {
+        match inner.delete(&object.location).await {
+            Ok(()) | Err(ObjError::NotFound { .. }) => n += 1,
+            Err(source) => {
+                return Err(StoreError {
+                    op: "sweep",
+                    key: object.location.to_string(),
+                    source: io::Error::other(source),
+                });
+            }
+        }
+    }
+    for common in listed.common_prefixes {
+        n = n.saturating_add(Box::pin(sweep_listed(inner, &common)).await?);
+    }
+    Ok(n)
 }
 
 fn build_client(config: &S3Config) -> Result<AmazonS3> {
     let mut builder = AmazonS3Builder::new()
         .with_region(&config.region)
         .with_bucket_name(&config.bucket)
-        .with_conditional_put(object_store::aws::S3ConditionalPut::ETagMatch);
+        .with_conditional_put(object_store::aws::S3ConditionalPut::ETagMatch)
+        .with_retry(RetryConfig {
+            max_retries: 0,
+            ..RetryConfig::default()
+        });
     match &config.endpoint {
         Some(endpoint) => {
             builder = builder
@@ -153,20 +226,6 @@ fn build_client(config: &S3Config) -> Result<AmazonS3> {
     })
 }
 
-fn normalize_prefix(raw: &str) -> io::Result<String> {
-    if raw.is_empty() {
-        return Ok(String::new());
-    }
-    let trimmed = raw.trim_matches('/');
-    if trimmed.is_empty() || trimmed.split('/').any(str::is_empty) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("store prefix is not a slash path: {raw}"),
-        ));
-    }
-    Ok(trimmed.to_string())
-}
-
 fn join_prefix(prefix: &str, key: &str) -> String {
     if prefix.is_empty() {
         key.to_string()
@@ -191,6 +250,12 @@ fn etag_of(op: &'static str, key: &StoreKey, raw: Option<String>) -> Result<Etag
     })
 }
 
+/// 409 Conflict is `Ambiguous`. object_store maps it onto `AlreadyExists`.
+fn is_conflict(err: &ObjError) -> bool {
+    let text = err.to_string();
+    text.contains("409") || text.contains("Conflict")
+}
+
 struct RefreshProvider {
     refresh: Arc<dyn Fn() -> io::Result<StaticKeys> + Send + Sync>,
 }
@@ -213,11 +278,18 @@ impl CredentialProvider for RefreshProvider {
         'a: 'async_trait,
         Self: 'async_trait,
     {
+        let refresh = Arc::clone(&self.refresh);
         Box::pin(async move {
-            let keys = (self.refresh)().map_err(|source| ObjError::Generic {
-                store: "S3",
-                source: Box::new(source),
-            })?;
+            let keys = tokio::task::spawn_blocking(move || refresh())
+                .await
+                .map_err(|source| ObjError::Generic {
+                    store: "S3",
+                    source: Box::new(source),
+                })?
+                .map_err(|source| ObjError::Generic {
+                    store: "S3",
+                    source: Box::new(source),
+                })?;
             Ok(Arc::new(AwsCredential {
                 key_id: keys.access_key_id,
                 secret_key: keys.secret_access_key,
@@ -246,7 +318,7 @@ impl ObjectStore for S3Store {
                 Err(ObjError::NotFound { .. }) => Ok(None),
                 Err(source) => Err(infra("get", key, source)),
             }
-        })
+        })?
     }
 
     fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll> {
@@ -268,7 +340,7 @@ impl ObjectStore for S3Store {
                 Err(ObjError::NotModified { .. }) => Ok(Poll::Unchanged),
                 Err(source) => Err(infra("get_if_changed", key, source)),
             }
-        })
+        })?
     }
 
     fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
@@ -281,12 +353,13 @@ impl ObjectStore for S3Store {
                 .await
             {
                 Ok(result) => Ok(Create::Created(etag_of("put_create", key, result.e_tag)?)),
+                Err(source) if is_conflict(&source) => Ok(Create::Ambiguous),
                 Err(ObjError::AlreadyExists { .. } | ObjError::Precondition { .. }) => {
                     Ok(Create::Exists)
                 }
                 Err(source) => Err(infra("put_create", key, source)),
             }
-        })
+        })?
     }
 
     fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
@@ -303,10 +376,11 @@ impl ObjectStore for S3Store {
                 .await
             {
                 Ok(result) => Ok(Swap::Swapped(etag_of("put_swap", key, result.e_tag)?)),
+                Err(source) if is_conflict(&source) => Ok(Swap::Ambiguous),
                 Err(ObjError::Precondition { .. } | ObjError::NotFound { .. }) => Ok(Swap::Moved),
                 Err(source) => Err(infra("put_swap", key, source)),
             }
-        })
+        })?
     }
 
     fn delete(&self, key: &StoreKey) -> Result<()> {
@@ -316,7 +390,7 @@ impl ObjectStore for S3Store {
                 Ok(()) | Err(ObjError::NotFound { .. }) => Ok(()),
                 Err(source) => Err(infra("delete", key, source)),
             }
-        })
+        })?
     }
 }
 
@@ -394,5 +468,35 @@ mod tests {
             .object_path(&StoreKey::of("ckpt/digest.mdb"))
             .expect("path");
         assert_eq!(path.as_ref(), "ckpt/digest.mdb");
+    }
+
+    #[test]
+    fn constructor_refuses_region_auto_without_an_endpoint() {
+        let opened = S3Store::new(&S3Config {
+            endpoint: None,
+            region: "auto".into(),
+            bucket: "example".into(),
+            credentials: static_keys(),
+            prefix: String::new(),
+        });
+        match opened {
+            Err(err) => assert_eq!(err.op, "open"),
+            Ok(_) => panic!("region auto without an endpoint is refused"),
+        }
+    }
+
+    #[test]
+    fn constructor_refuses_a_reserved_prefix() {
+        let opened = S3Store::new(&S3Config {
+            endpoint: None,
+            region: "us-east-1".into(),
+            bucket: "example".into(),
+            credentials: static_keys(),
+            prefix: "~tmp/smoke".into(),
+        });
+        match opened {
+            Err(err) => assert_eq!(err.op, "open"),
+            Ok(_) => panic!("reserved prefix is refused"),
+        }
     }
 }

@@ -1,24 +1,19 @@
 //! `FsStore`: the five verbs over a local directory. Production tier —
 //! the whole backend of the local-fleet deployment and the macOS sync
-//! target — not a test double. One on-disk protocol shared with the TS
-//! driver: create-only publishes an exclusive synced temp with link(2),
-//! the etag is the blake3 of the content and is computed on every read
-//! rather than stored anywhere, and the mutation lock is a pid-lockfile
-//! beside the key. One machine is load-bearing: link exclusivity and
-//! pid liveness are the arbitration primitives, and network filesystems
-//! weaken the first while machine boundaries void the second, so a
-//! prefix on a network mount is a misdeployment no syscall can detect
-//! for us.
+//! target — not a test double. Create-only publishes an exclusive
+//! synced temp (under the reserved `~tmp` namespace) with link(2). The
+//! etag is the blake3 of the content. The mutation lock is a fenced
+//! CAS lease under `~lease`, broken only on expiry of its own bytes.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
+use super::fence::{
+    HeldLease, acquire_mutation, sweep_reserved, sync_ancestors, sync_parent, synced_temp,
+};
 use super::{
-    Create, Etag, Fetched, LOCK_SUFFIX, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
+    Create, ErrStore, Etag, Fetched, ObjectStore, Poll, Result, StoreKey, Swap, WriterId,
 };
 
 /// The one etag scheme: the blake3 of the object bytes, rendered
@@ -30,66 +25,38 @@ pub fn content_etag(bytes: &[u8]) -> Etag {
 }
 
 /// A store rooted at a local directory. Keys are slash-separated paths
-/// under the root; parent directories appear as needed.
+/// under the root; parent directories appear as needed. Open sweeps
+/// reserved temp and expired-lease namespaces.
 pub struct FsStore {
     root: PathBuf,
 }
 
-/// Ceiling of the jittered wait between probes of a live-held lock.
-const LOCK_RETRY_MS: u64 = 10;
-
-static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
 impl FsStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+        let _ = sweep_reserved(&root);
+        Self { root }
     }
 
     fn object_path(&self, key: &StoreKey) -> PathBuf {
         self.root.join(key.as_str())
     }
+
+    fn holder() -> WriterId {
+        WriterId(u64::from(std::process::id()))
+    }
+
+    fn fence(&self, key: &StoreKey) -> io::Result<HeldLease> {
+        acquire_mutation(&self.root, key.as_str(), Self::holder())
+    }
 }
 
-fn infra<'k>(op: &'static str, key: &'k str) -> impl FnOnce(io::Error) -> StoreError + 'k {
-    move |source| StoreError {
+fn infra<'k>(op: &'static str, key: &'k str) -> impl FnOnce(io::Error) -> ErrStore + 'k {
+    move |source| ErrStore {
         op,
         key: key.to_string(),
         source,
     }
-}
-
-/// Write `bytes` to a fresh `O_CREAT|O_EXCL` temp file beside `dest` and
-/// fsync it. The caller publishes the synced temp atomically.
-fn synced_temp(dest: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
-    let dir = dest
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent"))?;
-    fs::create_dir_all(dir)?;
-    let name = dest
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no name"))?;
-    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let temp = dir.join(format!(".{name}.tmp.{pid}.{seq}", pid = std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
-    if let Err(err) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-        drop(file);
-        let _ = fs::remove_file(&temp);
-        return Err(err);
-    }
-    Ok(temp)
-}
-
-/// Fsync the directory holding `path`, so the rename or link that
-/// published into it survives power loss before the ack does.
-fn sync_parent(path: &Path) -> io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent"))?;
-    File::open(dir)?.sync_all()
 }
 
 /// Outcome of a link(2) publication. Link is the exclusivity primitive:
@@ -109,75 +76,6 @@ fn publish_link(temp: &Path, dest: &Path) -> io::Result<Publish> {
     }
 }
 
-/// kill(pid, 0) by way of the system `kill` utility, the one process
-/// probe reachable with this crate's `unsafe_code = deny`: exit 0 means
-/// the pid can be signalled, so its owner is alive.
-fn pid_alive(pid: u32) -> io::Result<bool> {
-    let status = Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
-    Ok(status.success())
-}
-
-/// The mutation lock beside a key: a lockfile published with the same
-/// exclusive temp-plus-link discipline as the objects themselves, so it
-/// can never exist without its body — the owner pid. A contender probes
-/// the owner's liveness and breaks the lock iff the owner is dead; a
-/// live owner is waited out with jittered probes, unbounded. Pid
-/// liveness is meaningful on one machine only, which is `FsStore`'s
-/// load-bearing deployment law.
-struct KeyLock {
-    path: PathBuf,
-}
-
-impl KeyLock {
-    fn acquire(object: &Path) -> io::Result<Self> {
-        let name = object.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "object path has no name")
-        })?;
-        let dir = object.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent")
-        })?;
-        let path = dir.join(format!("{name}{LOCK_SUFFIX}"));
-        let body = std::process::id().to_string();
-        loop {
-            let temp = synced_temp(&path, body.as_bytes())?;
-            let published = publish_link(&temp, &path);
-            let _ = fs::remove_file(&temp);
-            match published? {
-                Publish::Linked => return Ok(Self { path }),
-                Publish::Occupied => match fs::read_to_string(&path) {
-                    Ok(owner) => {
-                        let pid: u32 = owner.trim().parse().map_err(|_| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!("lockfile body is not a pid: {owner:?}"),
-                            )
-                        })?;
-                        if pid_alive(pid)? {
-                            std::thread::sleep(super::jittered(Duration::from_millis(
-                                LOCK_RETRY_MS,
-                            )));
-                        } else {
-                            let _ = fs::remove_file(&path);
-                        }
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                    Err(err) => return Err(err),
-                },
-            }
-        }
-    }
-}
-
-impl Drop for KeyLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
 fn read_fetched(path: &Path) -> io::Result<Option<Fetched>> {
     match fs::read(path) {
         Ok(bytes) => {
@@ -186,6 +84,24 @@ fn read_fetched(path: &Path) -> io::Result<Option<Fetched>> {
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err),
+    }
+}
+
+fn ensure_parent(root: &Path, dest: &Path) -> io::Result<()> {
+    let dir = dest
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "object path has no parent"))?;
+    fs::create_dir_all(dir)?;
+    sync_ancestors(dest, root)
+}
+
+fn key_shape_fault(path: &Path) -> io::Result<()> {
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "key names a directory",
+        )),
+        Ok(_) | Err(_) => Ok(()),
     }
 }
 
@@ -200,7 +116,7 @@ impl ObjectStore for FsStore {
         match read_fetched(&path).map_err(infra("get_if_changed", key.as_str()))? {
             Some(fetched) if fetched.etag == *etag => Ok(Poll::Unchanged),
             Some(fetched) => Ok(Poll::Changed(fetched)),
-            None => Err(StoreError {
+            None => Err(ErrStore {
                 op: "get_if_changed",
                 key: key.to_string(),
                 source: io::Error::from(io::ErrorKind::NotFound),
@@ -210,32 +126,58 @@ impl ObjectStore for FsStore {
 
     fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
         let path = self.object_path(key);
-        let temp = synced_temp(&path, bytes).map_err(infra("put_create", key.as_str()))?;
-        let published = publish_link(&temp, &path);
-        let _ = fs::remove_file(&temp);
-        let outcome = match published {
-            Ok(Publish::Linked) => {
-                sync_parent(&path).map(|()| Create::Created(content_etag(bytes)))
+        let run = || -> io::Result<Create> {
+            key_shape_fault(&path)?;
+            let lease = self.fence(key)?;
+            if !lease.still_current()? {
+                return Ok(Create::Ambiguous);
             }
-            Ok(Publish::Occupied) => Ok(Create::Exists),
-            Err(err) => Err(err),
+            key_shape_fault(&path)?;
+            ensure_parent(&self.root, &path)?;
+            let temp = synced_temp(&self.root, bytes)?;
+            if !lease.still_current()? {
+                let _ = fs::remove_file(&temp);
+                return Ok(Create::Ambiguous);
+            }
+            let published = publish_link(&temp, &path);
+            let _ = fs::remove_file(&temp);
+            match published? {
+                Publish::Linked => {
+                    sync_parent(&path)?;
+                    Ok(Create::Created(content_etag(bytes)))
+                }
+                Publish::Occupied => {
+                    if path.is_dir() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "key names a directory",
+                        ));
+                    }
+                    Ok(Create::Exists)
+                }
+            }
         };
-        outcome.map_err(infra("put_create", key.as_str()))
+        run().map_err(infra("put_create", key.as_str()))
     }
 
     fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
         let path = self.object_path(key);
         let run = || -> io::Result<Swap> {
-            let _lock = KeyLock::acquire(&path)?;
-            // Under the lock, the incumbent's etag is re-derived from the
-            // object bytes: content is the only record there is.
+            let lease = self.fence(key)?;
+            if !lease.still_current()? {
+                return Ok(Swap::Ambiguous);
+            }
             let Some(current) = read_fetched(&path)? else {
                 return Ok(Swap::Moved);
             };
             if current.etag != *etag {
                 return Ok(Swap::Moved);
             }
-            let temp = synced_temp(&path, bytes)?;
+            let temp = synced_temp(&self.root, bytes)?;
+            if !lease.still_current()? {
+                let _ = fs::remove_file(&temp);
+                return Ok(Swap::Ambiguous);
+            }
             if let Err(err) = fs::rename(&temp, &path).and_then(|()| sync_parent(&path)) {
                 let _ = fs::remove_file(&temp);
                 return Err(err);
@@ -247,15 +189,53 @@ impl ObjectStore for FsStore {
 
     fn delete(&self, key: &StoreKey) -> Result<()> {
         let path = self.object_path(key);
-        let mut lockfile = path.clone().into_os_string();
-        lockfile.push(LOCK_SUFFIX);
-        for victim in [path, PathBuf::from(lockfile)] {
-            match fs::remove_file(&victim) {
+        let run = || -> io::Result<()> {
+            let lease = self.fence(key)?;
+            if !lease.still_current()? {
+                return Err(io::Error::other("delete lost the fencing token"));
+            }
+            match fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                Err(err) => return Err(infra("delete", key.as_str())(err)),
+                Err(err) => return Err(err),
             }
-        }
-        Ok(())
+            sync_parent(&path)
+        };
+        run().map_err(infra("delete", key.as_str()))
     }
+}
+
+/// Write `bytes` through an exclusive temp and fsync the object plus its
+/// parent — the checkpoint-seed durability law, available to any
+/// caller that materializes an mdb beside a sidecar. Newly created
+/// ancestors are dir-fsynced before the ack.
+pub fn durable_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path.parent().unwrap_or(path);
+    fs::create_dir_all(parent)?;
+    if parent.parent().is_some() {
+        sync_parent(parent)?;
+    }
+    let temp = {
+        let seq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let name = format!(".{}.{}", std::process::id(), seq);
+        let temp = parent.join(name);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        if let Err(err) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+            drop(file);
+            let _ = fs::remove_file(&temp);
+            return Err(err);
+        }
+        temp
+    };
+    if let Err(err) = fs::rename(&temp, path).and_then(|()| sync_parent(path)) {
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
+    Ok(())
 }
