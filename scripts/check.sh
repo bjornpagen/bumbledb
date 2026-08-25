@@ -1,5 +1,5 @@
 #!/bin/sh
-# 60-validation's sanctioned gates). Run before every commit; CI's check
+# Remainder scripts/battery.sh calls after workspace nextest.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -18,15 +18,6 @@ filtered_test() {
         exit 1
     fi
 }
-
-echo "==> cargo fmt --all --check"
-cargo fmt --all --check
-
-echo "==> cargo clippy --workspace --all-targets -- -D warnings"
-cargo clippy --workspace --all-targets -- -D warnings
-
-echo "==> cargo test --workspace"
-cargo test --workspace
 
 echo "==> cargo test --workspace --doc"
 cargo test --workspace --doc
