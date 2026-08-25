@@ -45,14 +45,18 @@ function renderCheckpoint(facts: CheckpointFacts): Uint8Array {
 	)
 }
 
+function malformed(text: Text, detail: string): never {
+	refuse({ kind: "Malformed", at: text.offset() }, detail)
+}
+
 function parseManifest(bytes: Uint8Array): Manifest {
 	const text = new Text(bytes)
 	if (!text.lit('{"v":')) {
-		refuse({ kind: "ManifestShape" }, "manifest is not the canonical template")
+		malformed(text, "manifest is not the canonical template")
 	}
 	const version = text.u64()
 	if (version === undefined) {
-		refuse({ kind: "ManifestShape" }, "manifest version is not a canonical u64")
+		malformed(text, "manifest version is not a canonical u64")
 	}
 	if (version !== DOC_VERSION) {
 		refuse(
@@ -61,30 +65,30 @@ function parseManifest(bytes: Uint8Array): Manifest {
 		)
 	}
 	if (!text.lit(',"fingerprint":"')) {
-		refuse({ kind: "ManifestShape" }, "manifest fingerprint field is absent")
+		malformed(text, "manifest fingerprint field is absent")
 	}
 	const fingerprint = text.hex32()
 	if (fingerprint === undefined || !text.lit('","checkpoint":')) {
-		refuse({ kind: "ManifestShape" }, "manifest fingerprint is not 32 bytes")
+		malformed(text, "manifest fingerprint is not 32 bytes")
 	}
 	let checkpoint: Digest32 | null
 	if (text.peek("null")) {
 		if (!text.lit("null")) {
-			refuse({ kind: "ManifestShape" }, "manifest checkpoint null arm failed")
+			malformed(text, "manifest checkpoint null arm failed")
 		}
 		checkpoint = null
 	} else {
 		if (!text.lit('"')) {
-			refuse({ kind: "ManifestShape" }, "manifest checkpoint is neither null nor a digest")
+			malformed(text, "manifest checkpoint is neither null nor a digest")
 		}
 		const digest = text.hex32()
 		if (digest === undefined || !text.lit('"')) {
-			refuse({ kind: "ManifestShape" }, "manifest checkpoint is not 32 bytes")
+			malformed(text, "manifest checkpoint is not 32 bytes")
 		}
 		checkpoint = digest
 	}
 	if (!text.lit("}") || !text.finished()) {
-		refuse({ kind: "ManifestShape" }, "manifest is not the canonical single-line rendering")
+		malformed(text, "manifest is not the canonical single-line rendering")
 	}
 	return {
 		fingerprint: hex32(fingerprint),
@@ -109,11 +113,11 @@ interface CheckpointFacts {
 function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): CheckpointFacts {
 	const text = new Text(bytes)
 	if (!text.lit('{"v":')) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint json is not the canonical template")
+		malformed(text, "checkpoint json is not the canonical template")
 	}
 	const version = text.u64()
 	if (version === undefined) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint version is not a canonical u64")
+		malformed(text, "checkpoint version is not a canonical u64")
 	}
 	if (version !== DOC_VERSION) {
 		refuse(
@@ -122,82 +126,82 @@ function parseCheckpoint(bytes: Uint8Array, known?: ReadonlySet<Braid>): Checkpo
 		)
 	}
 	if (!text.lit(',"braids":{')) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint braids field is absent")
+		malformed(text, "checkpoint braids field is absent")
 	}
 	const braids = new Map<Braid, CheckpointHead>()
 	let first = true
 	let sum = 0n
 	while (!text.peek("}")) {
 		if (!first && !text.lit(",")) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint braid map is not comma-separated")
+			malformed(text, "checkpoint braid map is not comma-separated")
 		}
 		first = false
 		if (!text.lit('"c')) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint braid id is not a c-prefixed hex")
+			malformed(text, "checkpoint braid id is not a c-prefixed hex")
 		}
 		const raw = text.hexU32()
 		if (raw === undefined) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint braid id is not 8 hex")
+			malformed(text, "checkpoint braid id is not 8 hex")
 		}
 		const name = braid(`c${raw.toString(16).padStart(8, "0")}`)
 		if (known !== undefined && !known.has(name)) {
 			refuse({ kind: "UnknownBraid", braid: raw }, `checkpoint cites unknown braid ${name}`)
 		}
 		if (!text.lit('":{"g":')) {
-			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${name} head is malformed`)
+			malformed(text, `checkpoint braid ${name} head is malformed`)
 		}
 		const g = text.quotedU64()
 		if (g === undefined || !text.lit(',"hash":"')) {
-			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${name} generation is not a quoted decimal u64`)
+			malformed(text, `checkpoint braid ${name} generation is not a quoted decimal u64`)
 		}
 		const hash = text.hex32()
 		if (hash === undefined || !text.lit('","ts":')) {
-			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${name} hash is not 32 bytes`)
+			malformed(text, `checkpoint braid ${name} hash is not 32 bytes`)
 		}
 		const ts = text.quotedU64()
 		if (ts === undefined || !text.lit("}")) {
-			refuse({ kind: "CheckpointShape" }, `checkpoint braid ${name} timestamp is not a quoted decimal u64`)
+			malformed(text, `checkpoint braid ${name} timestamp is not a quoted decimal u64`)
 		}
 		const last = [...braids.keys()].at(-1)
 		if (last !== undefined && last >= name) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint braid map is not strictly ascending")
+			malformed(text, "checkpoint braid map is not strictly ascending")
 		}
 		braids.set(name, { g: generation(g), hash: hex32(hash), ts })
 		const next = checkedAddU64(sum, g)
 		if (next === undefined) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint vector sum overflows u64")
+			refuse({ kind: "Overflow" }, "checkpoint vector sum overflows u64")
 		}
 		sum = next
 	}
 	if (!text.lit('},"catalog":"')) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint catalog field is absent")
+		malformed(text, "checkpoint catalog field is absent")
 	}
 	const catalog = text.hex32()
 	if (catalog === undefined || !text.lit('","writer":')) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint catalog is not 32 bytes")
+		malformed(text, "checkpoint catalog is not 32 bytes")
 	}
 	const writer = text.quotedU64()
 	if (writer === undefined || !text.lit(',"prev":')) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint writer is not a quoted decimal u64")
+		malformed(text, "checkpoint writer is not a quoted decimal u64")
 	}
 	let prev: Digest32 | null
 	if (text.peek("null")) {
 		if (!text.lit("null")) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint prev null arm failed")
+			malformed(text, "checkpoint prev null arm failed")
 		}
 		prev = null
 	} else {
 		if (!text.lit('"')) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint prev is neither null nor a digest")
+			malformed(text, "checkpoint prev is neither null nor a digest")
 		}
 		const digest = text.hex32()
 		if (digest === undefined || !text.lit('"')) {
-			refuse({ kind: "CheckpointShape" }, "checkpoint prev is not 32 bytes")
+			malformed(text, "checkpoint prev is not 32 bytes")
 		}
 		prev = digest
 	}
 	if (!text.lit("}") || !text.finished()) {
-		refuse({ kind: "CheckpointShape" }, "checkpoint json is not the canonical single-line rendering")
+		malformed(text, "checkpoint json is not the canonical single-line rendering")
 	}
 	return {
 		braids,
