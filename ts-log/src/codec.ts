@@ -8,7 +8,8 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import { ByteReader, ByteWriter, bytesEqual, digest32FromHex, toHex, utf8Encoder } from "#bytes.ts"
+import type { Digest32 } from "#bytes.ts"
+import { ByteReader, ByteWriter, bytesEqual, digest32, hex32, utf8Encoder } from "#bytes.ts"
 import type { Braid, Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
 import { refuse, refuseChain } from "#errors.ts"
@@ -20,6 +21,7 @@ import { checkAgainst, readTagged, writeTagged } from "#value.ts"
 const MAGIC = utf8Encoder.encode("BDBL")
 const VERSION = 3
 const OP_KIND = { insert: 1, delete: 2 } as const
+const U32_MAX = 0xffffffffn
 
 interface Op {
 	readonly op: "insert" | "delete"
@@ -28,10 +30,10 @@ interface Op {
 }
 
 interface BatchHeader {
-	readonly fingerprint: string
+	readonly fingerprint: Digest32
 	readonly braid: Braid
 	readonly braidGen: Generation
-	readonly prev: string
+	readonly prev: Digest32
 	readonly writer: bigint
 	readonly timestamp: bigint
 }
@@ -52,8 +54,10 @@ function braidIdOf(id: Braid): number {
  */
 function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): Uint8Array {
 	const descriptor = descriptorOf(theory)
-	if (header.fingerprint !== descriptor.fingerprint) {
-		throw errors.new(`encode fingerprint ${header.fingerprint} is not the descriptor's ${descriptor.fingerprint}`)
+	const fingerprint = asDigest(header.fingerprint, "fingerprint")
+	const prev = asDigest(header.prev, "prev")
+	if (!bytesEqual(fingerprint, descriptor.fingerprintBytes)) {
+		throw errors.new(`encode fingerprint ${hex32(fingerprint)} is not the descriptor's ${descriptor.fingerprint}`)
 	}
 	const braidId = braidIdOf(header.braid)
 	const members = descriptor.braidMembers.get(header.braid)
@@ -91,10 +95,9 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 		}
 	}
 
-	const fingerprint = digest32FromHex(header.fingerprint)
-	const prev = encodeDigest(header.prev)
-	if (ops.length > 0xffffffff) {
-		throw errors.new(`encode op count ${ops.length} exceeds u32`)
+	const opCount = BigInt(ops.length)
+	if (opCount > U32_MAX) {
+		throw errors.new(`encode op count ${opCount} exceeds u32`)
 	}
 
 	const out = new ByteWriter(4096)
@@ -107,18 +110,19 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 	out.bytes(prev)
 	out.u64le(header.writer)
 	out.u64le(header.timestamp)
-	out.u32le(ops.length)
+	out.u32le(Number(opCount))
 	for (const op of ops) {
 		const relation = descriptor.relationByName.get(op.relation)
 		if (relation === undefined) {
 			throw errors.new(`op cites unknown relation ${op.relation}`)
 		}
-		if (op.rows.length > 0xffffffff) {
-			throw errors.new(`encode row count ${op.rows.length} exceeds u32`)
+		const rowCount = BigInt(op.rows.length)
+		if (rowCount > U32_MAX) {
+			throw errors.new(`encode row count ${rowCount} exceeds u32`)
 		}
 		out.u8(OP_KIND[op.op])
 		out.u32le(relation.id)
-		out.u32le(op.rows.length)
+		out.u32le(Number(rowCount))
 		for (const row of op.rows) {
 			relation.fields.forEach(function writeCell(field, ordinal) {
 				const value = row[ordinal]
@@ -132,14 +136,18 @@ function encodeBatch(theory: Theory, header: BatchHeader, ops: readonly Op[]): U
 	return out.finish()
 }
 
-function encodeDigest(hex: string): Uint8Array {
-	const parsed = errors.trySync(function parsePrev() {
-		return digest32FromHex(hex)
+function asDigest(bytes: Uint8Array, at: string): Digest32 {
+	const parsed = errors.trySync(function parseDigest() {
+		return digest32(bytes)
 	})
 	if (parsed.error) {
-		refuse({ kind: "DigestWidth" }, `digest is not 32 bytes: ${hex}`)
+		refuse({ kind: "DigestWidth" }, `${at} is not 32 bytes`)
 	}
 	return parsed.data
+}
+
+function readU32(reader: ByteReader, what: string): bigint {
+	return BigInt(reader.u32le(what))
 }
 
 /** Kind + relation id + row count: the shortest op the grammar admits. */
@@ -150,12 +158,11 @@ const MIN_OP_BYTES = 9n
  *  cannot wrap a JavaScript number. A zero-field relation has no row
  *  bytes. A nonempty layout uses one tag byte so a first-cell typed
  *  refusal is not swallowed. */
-function refuseUnbacked(count: number, remaining: number, minItem: bigint, at: string): void {
-	const declared = BigInt(count)
-	if (declared === 0n) {
+function refuseUnbacked(count: bigint, remaining: number, minItem: bigint, at: string): void {
+	if (count === 0n) {
 		return
 	}
-	if (minItem === 0n || BigInt(remaining) / minItem < declared) {
+	if (minItem === 0n || BigInt(remaining) / minItem < count) {
 		refuse({ kind: "Truncated", at }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
 	}
 }
@@ -181,10 +188,10 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	if (flags !== 0) {
 		refuse({ kind: "Flags", flags }, `batch flags ${flags} must be 0`)
 	}
-	const fingerprint = toHex(reader.bytes(32, "fingerprint"))
-	if (fingerprint !== descriptor.fingerprint) {
+	const fingerprint = digest32(reader.bytes(32, "fingerprint"))
+	if (!bytesEqual(fingerprint, descriptor.fingerprintBytes)) {
 		refuse(
-			{ kind: "FingerprintMismatch", carried: fingerprint, expected: descriptor.fingerprint },
+			{ kind: "FingerprintMismatch", carried: hex32(fingerprint), expected: descriptor.fingerprint },
 			"batch fingerprint does not match the descriptor"
 		)
 	}
@@ -195,50 +202,52 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 		refuse({ kind: "UnknownBraid", braid: braidId }, `batch braid ${braid} is not derived from this descriptor`)
 	}
 	const braidGen = generation(reader.u64le("braid generation"))
-	const prev = toHex(reader.bytes(32, "prev"))
+	const prev = digest32(reader.bytes(32, "prev"))
 	const writer = reader.u64le("writer")
 	const timestamp = reader.u64le("timestamp")
 
-	const opCount = reader.u32le("op count")
+	const opCount = readU32(reader, "op count")
 	refuseUnbacked(opCount, reader.remaining(), MIN_OP_BYTES, "op count")
 	const ops: Op[] = []
-	for (let opIndex = 0; opIndex < opCount; opIndex++) {
+	for (let opIndex = 0n; opIndex < opCount; opIndex++) {
+		const op = Number(opIndex)
 		const kind = reader.u8("op kind")
 		if (kind !== OP_KIND.insert && kind !== OP_KIND.delete) {
 			refuse(
-				{ kind: "UnknownOpKind", op: opIndex, opKind: kind },
-				`op ${opIndex} kind ${kind} is unknown (3 was deleted with floor bumps)`
+				{ kind: "UnknownOpKind", op, opKind: kind },
+				`op ${op} kind ${kind} is unknown (3 was deleted with floor bumps)`
 			)
 		}
 		const relationId = reader.u32le("op relation")
 		const relation = descriptor.relations[relationId]
 		if (relation === undefined) {
 			refuse(
-				{ kind: "UnknownRelation", op: opIndex, relation: relationId },
-				`op ${opIndex} cites unknown relation ${relationId}`
+				{ kind: "UnknownRelation", op, relation: relationId },
+				`op ${op} cites unknown relation ${relationId}`
 			)
 		}
 		if (relation.closed) {
 			refuse(
-				{ kind: "ClosedRelation", op: opIndex, relation: relationId },
-				`op ${opIndex} writes closed relation ${relation.name}`
+				{ kind: "ClosedRelation", op, relation: relationId },
+				`op ${op} writes closed relation ${relation.name}`
 			)
 		}
 		if (!members.includes(relationId)) {
 			refuse(
-				{ kind: "OpRelationOutsideBraid", op: opIndex, relation: relationId, braid },
-				`op ${opIndex} relation ${relation.name} is outside braid ${braid}`
+				{ kind: "OpRelationOutsideBraid", op, relation: relationId, braid },
+				`op ${op} relation ${relation.name} is outside braid ${braid}`
 			)
 		}
-		const rowCount = reader.u32le("row count")
+		const rowCount = readU32(reader, "row count")
 		const minRow = relation.fields.length === 0 ? 0n : 1n
 		refuseUnbacked(rowCount, reader.remaining(), minRow, "row count")
 		const rows: Value[][] = []
-		for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+		for (let rowIndex = 0n; rowIndex < rowCount; rowIndex++) {
+			const rowAt = Number(rowIndex)
 			const row: Value[] = []
 			relation.fields.forEach(function readCell(field) {
-				const at = { relation: relation.name, row: rowIndex, field: field.name }
-				const where = `relation ${relation.name} row ${rowIndex} field ${field.name}`
+				const at = { relation: relation.name, row: rowAt, field: field.name }
+				const where = `relation ${relation.name} row ${rowAt} field ${field.name}`
 				const refusal: TaggedRefusal = {
 					badTag(): never {
 						refuse({ kind: "TagMismatch", ...at }, `${where}: tag does not match the layout`)
@@ -278,7 +287,7 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 
 interface ChainEntry {
 	readonly g: Generation
-	readonly prev: string
+	readonly prev: Digest32
 	readonly ts: bigint
 }
 
@@ -297,7 +306,7 @@ function verifyChain(header: BatchHeader, braid: Braid, slot: Generation, chain:
 			`braid ${braid}: header slot identity ${header.braid}/${header.braidGen} ≠ the fetched key's ${braid}/${slot}`
 		)
 	}
-	if (header.prev !== chain.prev) {
+	if (!bytesEqual(header.prev, chain.prev)) {
 		refuseChain(
 			{ cause: "prev", braid, slot, writer: header.writer },
 			`braid ${braid} slot ${slot}: prev does not cite the predecessor`
@@ -311,5 +320,5 @@ function verifyChain(header: BatchHeader, braid: Braid, slot: Generation, chain:
 	}
 }
 
-export type { BatchHeader, ChainEntry, DecodedBatch, Op }
+export type { BatchHeader, ChainEntry, DecodedBatch, Digest32, Op }
 export { decodeBatch, encodeBatch, verifyChain }
