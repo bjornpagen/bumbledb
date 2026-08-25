@@ -532,10 +532,10 @@ mod tests {
     fn reserved_and_control_segments_are_not_keys() {
         for key in [
             "~tmp/x",
-            "~lease/manifest.json",
+            "~lease/manifest",
             "a/~tmp",
             "log/\u{0001}/1",
-            "manifest.json.lock",
+            "manifest.lock",
         ] {
             assert!(StoreKey::parse(key).is_err(), "{key}");
         }
@@ -548,7 +548,7 @@ mod tests {
             "fullwidth tilde is a reserved-prefix lookalike"
         );
         assert!(
-            StoreKey::parse("manifest.json.lock\u{200B}").is_err(),
+            StoreKey::parse("manifest.lock\u{200B}").is_err(),
             "ZWSP after .lock is still the lock suffix"
         );
         assert!(

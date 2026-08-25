@@ -138,7 +138,7 @@ function blake3Digest(bytes: Uint8Array): Digest32 {
 }
 
 function sidecarPath<Rels extends SchemaRelations>(core: Core<Rels>): string {
-	return path.join(core.dir, "chain.json")
+	return path.join(core.dir, "chain")
 }
 
 let storeSequence = 0

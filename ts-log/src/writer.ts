@@ -658,7 +658,7 @@ async function putCreateOnce(
 	}
 }
 
-/** The loser deletes its own `ckpt/{digest}.json` and `.mdb`. */
+/** The loser deletes its own `ckpt/{digest}` and `.mdb`. */
 async function deleteOrphan(store: ObjectStore, prefix: string, digest: string): Promise<void> {
 	await store.delete(checkpointJsonKey(prefix, digest))
 	await store.delete(checkpointMdbKey(prefix, digest))

@@ -1017,7 +1017,7 @@ pub fn clear_ckpt_scratch(dir: &Path) -> io::Result<()> {
     }
 }
 
-/// Deletes `ckpt/{digest}.mdb` and `.json` as one unit. A missing object
+/// Deletes `ckpt/{digest}.mdb` and `ckpt/{digest}` as one unit. A missing object
 /// is already gone.
 pub fn reclaim_orphan<S: ObjectStore>(
     store: &S,
