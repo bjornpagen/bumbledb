@@ -1,6 +1,15 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { storeKey } from "#keys.ts"
+import {
+	CKPT_SCRATCH_LEASE,
+	encodeCkptScratch,
+	LEASE_NAMESPACE,
+	parseCkptScratch,
+	reservedName,
+	scratchCkptName,
+	storeKey,
+	TEMP_NAMESPACE
+} from "#keys.ts"
 
 describe("the StoreKey grammar", function suite() {
 	test("empty is refused", function empty() {
@@ -21,6 +30,22 @@ describe("the StoreKey grammar", function suite() {
 		})
 		assert.throws(function lineSeparator() {
 			storeKey("log/\u2028/1")
+		})
+		assert.throws(function tmpIsNotAKey() {
+			storeKey(`${TEMP_NAMESPACE}/ckpt/${"ab".repeat(32)}`)
+		})
+		assert.throws(function leaseIsNotAKey() {
+			storeKey(`${LEASE_NAMESPACE}/${CKPT_SCRATCH_LEASE}`)
+		})
+	})
+
+	test("the scratch lease is ~lease/ckpt-scratch", function scratch() {
+		const digest = "ab".repeat(32)
+		assert.equal(scratchCkptName(), `${LEASE_NAMESPACE}/${CKPT_SCRATCH_LEASE}`)
+		assert.equal(parseCkptScratch(encodeCkptScratch(digest)), digest)
+		assert.equal(parseCkptScratch(new TextEncoder().encode("nope")), null)
+		assert.throws(function honest() {
+			reservedName("ckpt/head")
 		})
 	})
 })

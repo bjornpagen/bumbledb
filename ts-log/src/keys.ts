@@ -11,7 +11,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import { U64_MAX } from "#bytes.ts"
+import { U64_MAX, utf8Encoder } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 
 /** A segment wearing this suffix — after format characters are stripped — is not a key. */
@@ -111,6 +111,42 @@ function reservedLease(key: string, token: bigint): string {
 	return `${LEASE_NAMESPACE}/${key}/${String(token)}`
 }
 
+/** A slash path whose first segment is `~tmp` or `~lease`. Not a StoreKey. */
+function reservedName(raw: string): string {
+	const segs = raw.split("/")
+	if (segs.length === 0 || segs.some((seg) => seg.length === 0 || seg === "." || seg === "..")) {
+		throw errors.new(`reserved name is not a slash path: ${raw}`)
+	}
+	const first = segs[0]
+	if (first !== TEMP_NAMESPACE && first !== LEASE_NAMESPACE) {
+		throw errors.new(`reserved name is not under ${TEMP_NAMESPACE} or ${LEASE_NAMESPACE}: ${raw}`)
+	}
+	return raw
+}
+
+/** Known scratch-lease document under `~lease`. One path, no LIST. */
+const CKPT_SCRATCH_LEASE = "ckpt-scratch"
+
+/** The reserved scratch name: `~lease/ckpt-scratch`. */
+function scratchCkptName(): string {
+	return reservedName(`${LEASE_NAMESPACE}/${CKPT_SCRATCH_LEASE}`)
+}
+
+/** The scratch-lease body: one version line, then the digest. */
+function encodeCkptScratch(digest: string): Uint8Array {
+	if (!/^[0-9a-f]{64}$/.test(digest)) {
+		throw errors.new(`checkpoint digest is not 64 lowercase hex: ${digest}`)
+	}
+	return utf8Encoder.encode(`CKPT-SCRATCH/1\n${digest}\n`)
+}
+
+/** The digest a scratch-lease body names, or null. */
+function parseCkptScratch(bytes: Uint8Array): string | null {
+	const text = new TextDecoder().decode(bytes)
+	const match = /^CKPT-SCRATCH\/1\n([0-9a-f]{64})\n$/.exec(text)
+	return match === null ? null : match[1]
+}
+
 function generation(raw: bigint): Generation {
 	if (raw < 0n || raw > U64_MAX) {
 		throw errors.new(`generation is a u64: ${raw}`)
@@ -155,8 +191,10 @@ function tenantPrefix(root: string, tenant: string): string {
 
 export type { Generation, StoreKey }
 export {
+	CKPT_SCRATCH_LEASE,
 	checkpointJsonKey,
 	checkpointMdbKey,
+	encodeCkptScratch,
 	generation,
 	hex16,
 	idsKey,
@@ -165,9 +203,12 @@ export {
 	LOCK_SUFFIX,
 	logKey,
 	manifestKey,
+	parseCkptScratch,
 	parsePrefix,
 	reservedLease,
+	reservedName,
 	reservedTemp,
+	scratchCkptName,
 	segmentOk,
 	storeKey,
 	TEMP_NAMESPACE,
