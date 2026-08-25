@@ -16,7 +16,7 @@ use crate::braids::{BraidId, Braids, braids};
 pub const MAGIC: [u8; 4] = *b"BDBL";
 
 /// The one accepted format version; consumers refuse anything else.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 
 const TAG_BOOL: u8 = 0;
 const TAG_U64: u8 = 1;
@@ -39,6 +39,30 @@ pub(crate) trait ByteSink {
 impl ByteSink for Vec<u8> {
     fn put(&mut self, bytes: &[u8]) {
         self.extend_from_slice(bytes);
+    }
+}
+
+/// A string cell: well-formed UTF-8 by construction. The encoder writes
+/// these bytes only; a lone surrogate cannot enter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WellFormedUtf8(Box<str>);
+
+impl WellFormedUtf8 {
+    /// A Rust `str` is well-formed UTF-8; this is the encode-side proof.
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        Self(Box::from(text))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn parse(bytes: &[u8]) -> Result<Self, ()> {
+        std::str::from_utf8(bytes)
+            .map(|text| Self(Box::from(text)))
+            .map_err(|_| ())
     }
 }
 
@@ -77,10 +101,11 @@ pub(crate) fn append_value<S: ByteSink>(
             Ok(())
         }
         (Value::String(s), ValueType::String) => {
-            let len = u32::try_from(s.len()).map_err(|_| ValueShape::Oversize)?;
+            let text = WellFormedUtf8::of(s);
+            let len = u32::try_from(text.as_str().len()).map_err(|_| ValueShape::Oversize)?;
             sink.put(&[TAG_STRING]);
             sink.put(&len.to_le_bytes());
-            sink.put(s.as_bytes());
+            sink.put(text.as_str().as_bytes());
             Ok(())
         }
         (Value::FixedBytes(raw), ValueType::FixedBytes { len }) => {
@@ -605,7 +630,11 @@ impl Codec {
         let timestamp = cur.u64()?;
 
         let op_count = cur.u32()?;
-        let mut ops: Vec<Op> = Vec::with_capacity(capped(op_count, cur.remaining(), 9));
+        if !bytes_back(op_count, cur.remaining(), MIN_OP_BYTES) {
+            return Err(DecodeError::Truncated { offset: cur.at });
+        }
+        let mut ops: Vec<Op> =
+            Vec::with_capacity(usize::try_from(op_count).expect("u32 fits usize"));
         for op_index in 0..op_count {
             let op_index = usize::try_from(op_index).expect("op index fits usize");
             ops.push(self.decode_op(&mut cur, op_index, braid)?);
@@ -664,9 +693,19 @@ impl Codec {
         }
         let layout = info.layout();
         let row_count = cur.u32()?;
-        let min_row = layout.len().max(1);
+        // A declared count the remaining bytes cannot even open is
+        // Truncated before the loop (zero-width rows, or more rows than
+        // leftover bytes). A complete field whose bytes are present is
+        // parsed first so a named cell fault is not eaten as Truncated.
+        if layout.is_empty() {
+            if row_count != 0 {
+                return Err(DecodeError::Truncated { offset: cur.at });
+            }
+        } else if !bytes_back(row_count, cur.remaining(), 1) {
+            return Err(DecodeError::Truncated { offset: cur.at });
+        }
         let mut rows: Vec<Box<[Value]>> =
-            Vec::with_capacity(capped(row_count, cur.remaining(), min_row));
+            Vec::with_capacity(usize::try_from(row_count).expect("u32 fits usize"));
         for row_index in 0..row_count {
             let row_index = usize::try_from(row_index).expect("row index fits usize");
             let mut row: Vec<Value> = Vec::with_capacity(layout.len());
@@ -689,11 +728,20 @@ fn field_index_u16(index: usize) -> u16 {
     u16::try_from(index).expect("field count fits u16")
 }
 
-/// Caps a wire-declared count by what the remaining bytes could hold,
-/// so a hostile count cannot force an allocation the input cannot back.
-fn capped(count: u32, remaining: usize, min_item: usize) -> usize {
+/// Kind + relation id + row count: the shortest op the grammar admits.
+const MIN_OP_BYTES: usize = 9;
+
+/// Whether `remaining` can back `count` items of `min_item` bytes.
+/// A zero-width item cannot back a nonzero count.
+fn bytes_back(count: u32, remaining: usize, min_item: usize) -> bool {
     let declared = usize::try_from(count).expect("u32 fits usize");
-    declared.min(remaining / min_item.max(1) + 1)
+    if declared == 0 {
+        return true;
+    }
+    if min_item == 0 {
+        return false;
+    }
+    remaining / min_item >= declared
 }
 
 fn decode_value(
@@ -729,12 +777,12 @@ fn decode_value(
         ValueType::String => {
             let len = cur.u32()?;
             let bytes = cur.take(usize::try_from(len).expect("u32 fits usize"))?;
-            let text = std::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8 {
+            let text = WellFormedUtf8::parse(bytes).map_err(|()| DecodeError::InvalidUtf8 {
                 relation,
                 row,
                 field,
             })?;
-            Ok(Value::String(Box::from(text)))
+            Ok(Value::String(text.0))
         }
         ValueType::FixedBytes { len } => {
             let bytes = cur.take(usize::from(len))?;
@@ -786,5 +834,106 @@ fn decode_value(
                 Ok(Value::IntervalI64(interval))
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Codec, DecodeError, VERSION, bytes_back};
+    use std::path::Path;
+
+    fn corpus_fingerprint(schema: &str) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"bumbledb-log corpus fingerprint: ");
+        hasher.update(schema.as_bytes());
+        *hasher.finalize().as_bytes()
+    }
+
+    fn codec_named(name: &str) -> Codec {
+        let raw = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("conformance/v3/schemas.json"),
+        )
+        .expect("schemas.json");
+        let json: serde_json::Value = serde_json::from_str(&raw).expect("schemas parse");
+        let descriptor =
+            crate::schema_file::parse(&json["schemas"][name].to_string()).expect("schema");
+        Codec::new(&descriptor, corpus_fingerprint(name))
+    }
+
+    fn batch_bin(stem: &str) -> Vec<u8> {
+        std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("conformance/v3/batch")
+                .join(format!("{stem}.bin")),
+        )
+        .expect("golden bin")
+    }
+
+    #[test]
+    fn the_wire_version_is_three() {
+        assert_eq!(VERSION, 3);
+    }
+
+    #[test]
+    fn a_zero_width_nonzero_count_cannot_be_backed() {
+        assert!(!bytes_back(1, 0, 0));
+        assert!(!bytes_back(1, 100, 0));
+        assert!(bytes_back(0, 0, 0));
+    }
+
+    #[test]
+    fn a_declared_count_cannot_outrun_the_remaining_bytes() {
+        assert!(!bytes_back(u32::MAX, 8, 9));
+        assert!(bytes_back(1, 9, 9));
+        assert!(bytes_back(2, 18, 9));
+        assert!(!bytes_back(2, 17, 9));
+        assert!(bytes_back(1, 1, 1));
+        assert!(!bytes_back(2, 1, 1));
+    }
+
+    #[test]
+    fn truncated_identity_is_stable() {
+        assert_eq!(DecodeError::Truncated { offset: 0 }.identity(), "Truncated");
+        assert_eq!(DecodeError::Version { got: 2 }.identity(), "Version");
+    }
+
+    #[test]
+    fn a_present_field_fault_keeps_its_name() {
+        let kitchen = codec_named("kitchen");
+        for (stem, want) in [
+            ("r_bool_byte_2", "BoolByte"),
+            ("r_tag_mismatch", "TagMismatch"),
+            ("r_string_bad_utf8", "InvalidUtf8"),
+            ("r_interval_empty", "EmptyInterval"),
+            ("r_interval_inverted", "EmptyInterval"),
+            ("r_fixed_interval_overflow", "IntervalOverflow"),
+            ("r_fixed_interval_ray", "IntervalOverflow"),
+        ] {
+            let got = kitchen.decode(&batch_bin(stem)).expect_err(stem).identity();
+            assert_eq!(got, want, "{stem}");
+        }
+    }
+
+    #[test]
+    fn an_unbacked_count_is_truncated() {
+        let kitchen = codec_named("kitchen");
+        for stem in [
+            "r_row_count_unbacked",
+            "r_op_count_unbacked",
+            "r_truncated_row",
+        ] {
+            assert_eq!(
+                kitchen.decode(&batch_bin(stem)).expect_err(stem).identity(),
+                "Truncated",
+                "{stem}"
+            );
+        }
+        assert_eq!(
+            codec_named("blank")
+                .decode(&batch_bin("r_zero_width_rows"))
+                .expect_err("r_zero_width_rows")
+                .identity(),
+            "Truncated"
+        );
     }
 }
