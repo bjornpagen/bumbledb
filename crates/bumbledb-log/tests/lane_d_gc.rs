@@ -308,7 +308,7 @@ fn braid_nine() -> bumbledb_log::braids::BraidId {
         .map(|index| RelationDescriptor {
             name: format!("r{index}").into(),
             fields: vec![field.clone()],
-            extension: (index < 9).then_some(Vec::new()),
+            extension: (index < 9).then_some(Box::from([])),
         })
         .collect();
     let descriptor = SchemaDescriptor {
