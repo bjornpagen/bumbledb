@@ -8,7 +8,7 @@
 //! never assigned and no pending accounts for — discards the directory
 //! and re-pulls.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -18,14 +18,14 @@ use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint as schema_fingerprint;
 use bumbledb::{Admission, Db, SchemaDescriptor, SchemaError, Theory, Violations};
 
-use crate::apply::{Applied, ApplyRefusal, apply};
+use crate::apply::{Applied, ApplyRefusal, PendingFold, apply, fold_pending};
 use crate::braids::BraidId;
 use crate::codec::Codec;
 use crate::manifest::{
     Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_json_key, ckpt_mdb_key, log_key,
     manifest_key,
 };
-use crate::sidecar::Chain;
+use crate::sidecar::{Chain, ChainEntry, SidecarRead};
 use crate::store::{Etag, ObjectStore, Poll, StoreError};
 
 /// The gc-safety heartbeat cadence: every N-th `refresh` pass begins
@@ -168,6 +168,22 @@ pub enum Provenance {
     LocalDir,
 }
 
+/// Open-phase provenance as a value the machine matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicaState {
+    Bootstrapped,
+    CheckpointSeeded { catalog: [u8; 32] },
+    SidecarResumed { floor: Vector },
+}
+
+/// Role of the handle: a replica refuses a missing manifest; only a
+/// writer births one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Replica,
+    Writer,
+}
+
 /// Outcome of `Replica::open`.
 pub enum Opened<T: Theory + Clone, S: ObjectStore> {
     Ready(Box<Replica<T, S>>),
@@ -197,40 +213,35 @@ pub enum Waited {
 
 /// The legible scream of an unbounded repair loop: a warning every
 /// eighth attempt naming the current signature, and an alarm the moment
-/// one signature recurs. The loop it serves never caps and never
-/// fabricates a convergence error — it repairs forever and says so.
+/// a signature is already in the recent set. The loop it serves never
+/// caps and never fabricates a convergence error — it repairs forever
+/// and says so.
 pub(crate) struct Scream {
     context: &'static str,
-    signature: Option<&'static str>,
-    alarmed: bool,
+    seen: BTreeSet<&'static str>,
+    alarmed: BTreeSet<&'static str>,
     attempts: u64,
 }
 
 impl Scream {
     const WARN_EVERY: u64 = 8;
 
-    pub(crate) const fn new(context: &'static str) -> Self {
+    pub(crate) fn new(context: &'static str) -> Self {
         Self {
             context,
-            signature: None,
-            alarmed: false,
+            seen: BTreeSet::new(),
+            alarmed: BTreeSet::new(),
             attempts: 0,
         }
     }
 
     pub(crate) fn attempt(&mut self, signature: &'static str) {
         self.attempts += 1;
-        if self.signature == Some(signature) {
-            if !self.alarmed {
-                self.alarmed = true;
-                eprintln!(
-                    "bumbledb-log alarm: {} repair signature recurs: {signature}",
-                    self.context
-                );
-            }
-        } else {
-            self.signature = Some(signature);
-            self.alarmed = false;
+        if !self.seen.insert(signature) && self.alarmed.insert(signature) {
+            eprintln!(
+                "bumbledb-log alarm: {} repair signature recurs: {signature}",
+                self.context
+            );
         }
         if self.attempts.is_multiple_of(Self::WARN_EVERY) {
             eprintln!(
@@ -284,7 +295,6 @@ pub struct Replica<T: Theory + Clone, S: ObjectStore> {
     passes: u64,
     heartbeat_every: u64,
     wedged: BTreeMap<BraidId, Corruption>,
-    applied_pending: u64,
 }
 
 impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
@@ -293,7 +303,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// or bootstrap; pending resolution; catch-up with tip-vs-hole
     /// decided from the current checkpoint vector before probing; and
     /// the wholeness identity before anything serves from a
-    /// pre-existing directory.
+    /// pre-existing directory. A missing manifest is `ManifestMissing`.
     pub fn open(store: S, prefix: &str, dir: &Path, theory: T) -> Result<Opened<T, S>, Fault> {
         let (codec, fingerprint, _) = match derive_codec(&theory) {
             Ok(derived) => derived,
@@ -307,9 +317,8 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             codec,
             fingerprint,
             db: None,
-            chain: Chain {
+            chain: Chain::Settled {
                 entries: BTreeMap::new(),
-                pending: None,
             },
             provenance: Provenance::Bootstrap,
             manifest_etag: Etag(String::new()),
@@ -319,7 +328,6 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             passes: 0,
             heartbeat_every: HEARTBEAT_EVERY,
             wedged: BTreeMap::new(),
-            applied_pending: 0,
         };
         match replica.establish()? {
             None => Ok(Opened::Ready(Box::new(replica))),
@@ -347,6 +355,29 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         self.provenance
     }
 
+    /// Open-phase provenance as a value.
+    #[must_use]
+    pub fn state(&self) -> ReplicaState {
+        match self.provenance {
+            Provenance::Bootstrap => ReplicaState::Bootstrapped,
+            Provenance::Checkpoint => ReplicaState::CheckpointSeeded {
+                catalog: self
+                    .floor
+                    .as_ref()
+                    .map_or([0u8; 32], |(_, doc)| doc.catalog),
+            },
+            Provenance::LocalDir => ReplicaState::SidecarResumed {
+                floor: self.chain.vector(),
+            },
+        }
+    }
+
+    /// A replica handle: it refuses `ManifestMissing` and never births.
+    #[must_use]
+    pub const fn role(&self) -> Role {
+        Role::Replica
+    }
+
     /// Braids wedged read-only by corruption-class verdicts, with the
     /// verdicts. The other braids keep serving.
     #[must_use]
@@ -363,84 +394,16 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// N-th pass begins with the conditional manifest poll that keeps
     /// tip-vs-hole honest for long-lived replicas.
     pub fn refresh(&mut self) -> Result<Refreshed, Fault> {
-        self.passes += 1;
-        if self.passes.is_multiple_of(self.heartbeat_every)
-            && let Some(refusal) = self.heartbeat()?
-        {
-            return Ok(Refreshed::Refused(refusal));
-        }
-        // A pending slot may have landed since the last pass; resolving
-        // it first keeps the identity's last term from double-counting
-        // the commit once catch-up replays the published slot.
-        if self.chain.pending.is_some() && self.resolve_pending()?.is_some() {
-            self.discard()?;
-            return match self.establish()? {
-                None => Ok(Refreshed::Vector(self.chain.vector())),
-                Some(refusal) => Ok(Refreshed::Refused(refusal)),
-            };
-        }
-        match self.catch_up(Phase::Steady)? {
-            CatchUpEnd::Tips => {
-                let generation = self.db().generation()?.value();
-                if generation == self.chain.sum() + self.applied_pending {
-                    if let Some(refusal) = self.audit_reached_floor()? {
-                        return Ok(Refreshed::Refused(refusal));
-                    }
-                    return Ok(Refreshed::Vector(self.chain.vector()));
-                }
-            }
-            CatchUpEnd::Gap => {}
-            CatchUpEnd::RejectedInOpen => {
-                unreachable!("steady-state catch-up never reports the open-phase arm")
-            }
-        }
-        self.discard()?;
-        match self.establish()? {
-            None => Ok(Refreshed::Vector(self.chain.vector())),
-            Some(refusal) => Ok(Refreshed::Refused(refusal)),
-        }
+        self.step_pass(Phase::Steady, None)
     }
 
-    /// One braid's catch-up — cheap point freshness for a known-hot
-    /// flow. No heartbeat, no wholeness ceremony: the braid either
-    /// reaches its tip, wedges, or exposes a gap that heals through the
-    /// full loop.
+    /// One braid through the shared stepper — a thin entry, not a
+    /// second copy of the pass.
     pub fn refresh_braid(&mut self, braid: BraidId) -> Result<Refreshed, Fault> {
-        loop {
-            if self.wedged.contains_key(&braid) {
-                return Ok(Refreshed::Vector(self.chain.vector()));
-            }
-            match self.step(braid)? {
-                Step::Applied => {}
-                Step::Tip | Step::Wedged => {
-                    return Ok(Refreshed::Vector(self.chain.vector()));
-                }
-                Step::Gap => {
-                    self.discard()?;
-                    return match self.establish()? {
-                        None => Ok(Refreshed::Vector(self.chain.vector())),
-                        Some(refusal) => Ok(Refreshed::Refused(refusal)),
-                    };
-                }
-                Step::Rejected { slot, violations } => {
-                    self.wedged.insert(
-                        braid,
-                        Corruption::ReplayDiverged {
-                            braid,
-                            slot,
-                            violations,
-                        },
-                    );
-                    return Ok(Refreshed::Vector(self.chain.vector()));
-                }
-            }
-        }
+        self.step_pass(Phase::Steady, Some(braid))
     }
 
-    /// Refreshes until the replica's vector dominates `target`
-    /// pointwise. Commits return `(braid, generation)` pairs; the
-    /// pointwise max of every pair a flow has seen is its session
-    /// token, and this is the one verb that waits on it.
+    /// `refresh` until `target` is dominated pointwise.
     pub fn wait_for(&mut self, target: &Vector) -> Result<Waited, Fault> {
         loop {
             if let Some(braid) = target
@@ -601,6 +564,52 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         }
     }
 
+    /// The one stepper: heartbeat, pending fold, one slot per braid
+    /// (or the one named braid), wholeness, then serve or reseed.
+    fn step_pass(&mut self, phase: Phase, only: Option<BraidId>) -> Result<Refreshed, Fault> {
+        self.passes += 1;
+        if only.is_none()
+            && self.passes.is_multiple_of(self.heartbeat_every)
+            && let Some(refusal) = self.heartbeat()?
+        {
+            return Ok(Refreshed::Refused(refusal));
+        }
+        if matches!(self.chain, Chain::Pending { .. }) && self.resolve_pending()?.is_some() {
+            return self.reseed();
+        }
+        match self.catch_up(phase, only)? {
+            CatchUpEnd::Tips => {
+                if only.is_some() {
+                    return Ok(Refreshed::Vector(self.chain.vector()));
+                }
+                if self.whole()? {
+                    if let Some(refusal) = self.audit_reached_floor()? {
+                        return Ok(Refreshed::Refused(refusal));
+                    }
+                    return Ok(Refreshed::Vector(self.chain.vector()));
+                }
+            }
+            CatchUpEnd::Gap => {}
+            CatchUpEnd::RejectedInOpen => {
+                unreachable!("steady-state catch-up never reports the open-phase arm")
+            }
+        }
+        self.reseed()
+    }
+
+    fn reseed(&mut self) -> Result<Refreshed, Fault> {
+        self.discard()?;
+        match self.establish()? {
+            None => Ok(Refreshed::Vector(self.chain.vector())),
+            Some(refusal) => Ok(Refreshed::Refused(refusal)),
+        }
+    }
+
+    fn whole(&self) -> Result<bool, Fault> {
+        let generation = self.db().generation()?.value();
+        Ok(generation == self.chain.sum() || generation == self.chain.generation())
+    }
+
     fn attempt(&mut self) -> Result<AttemptEnd, Fault> {
         match self.mount()? {
             None => {}
@@ -610,16 +619,11 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             None => {}
             Some(end) => return Ok(end),
         }
-        // Only a pre-existing directory is in the unproven open phase:
-        // a checkpoint-seeded or bootstrapped store is whole by
-        // construction, so its rejected replay is the corruption-class
-        // verdict (the wedge), never a discard that could loop forever
-        // on a poisoned slot.
         let phase = match self.provenance {
             Provenance::LocalDir => Phase::Open,
             Provenance::Bootstrap | Provenance::Checkpoint => Phase::Steady,
         };
-        match self.catch_up(phase)? {
+        match self.catch_up(phase, None)? {
             CatchUpEnd::Tips => {}
             CatchUpEnd::Gap => {
                 return Ok(AttemptEnd::Discard("catch-up hit a hole below the floor"));
@@ -628,8 +632,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                 return Ok(AttemptEnd::Discard("replay rejected in the open phase"));
             }
         }
-        let generation = self.db().generation()?.value();
-        if generation != self.chain.sum() + self.applied_pending {
+        if !self.whole()? {
             return Ok(AttemptEnd::Discard(
                 "the wholeness identity failed after catch-up",
             ));
@@ -654,7 +657,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             return Ok(None);
         };
         if self.audited_floor == Some(*digest)
-            || self.applied_pending != 0
+            || matches!(self.chain, Chain::Pending { .. })
             || doc.vector() != self.chain.vector()
         {
             return Ok(None);
@@ -676,43 +679,44 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     /// or bootstrap. `None` means mounted; `Some` short-circuits.
     fn mount(&mut self) -> Result<Option<AttemptEnd>, Fault> {
         self.wedged.clear();
-        self.applied_pending = 0;
         if self.dir.exists() {
             match Db::open(&self.dir, self.theory.clone()) {
-                Ok(db) => {
-                    let Some(Ok(chain)) = Chain::read(&self.dir, self.codec.braids())? else {
+                Ok(db) => match Chain::read(&self.dir, self.codec.braids()) {
+                    SidecarRead::Read(chain) => {
+                        self.db = Some(db);
+                        self.chain = chain;
+                        self.provenance = Provenance::LocalDir;
+                        Ok(None)
+                    }
+                    SidecarRead::Fault(err) => {
                         drop(db);
-                        return Ok(Some(AttemptEnd::Discard("the sidecar refused to read")));
-                    };
+                        Err(Fault::Io(err))
+                    }
+                    SidecarRead::Absent | SidecarRead::Corrupt(_) => {
+                        drop(db);
+                        Ok(Some(AttemptEnd::Discard("the sidecar refused to read")))
+                    }
+                },
+                Err(error @ bumbledb::Error::EnvironmentLocked) => Err(Fault::Engine(error)),
+                Err(_) => Ok(Some(AttemptEnd::Discard(
+                    "the local directory refused to open",
+                ))),
+            }
+        } else if let Some((digest, doc)) = self.floor.clone() {
+            self.seed(digest, &doc)
+        } else {
+            match Db::create(&self.dir, self.theory.clone())? {
+                Admission::Accepted(db) => {
                     self.db = Some(db);
-                    self.chain = chain;
-                    self.provenance = Provenance::LocalDir;
-                    return Ok(None);
+                    self.chain = Chain::genesis(self.codec.braids());
+                    self.chain.write_atomic(&self.dir)?;
+                    self.provenance = Provenance::Bootstrap;
+                    Ok(None)
                 }
-                Err(error @ bumbledb::Error::EnvironmentLocked) => {
-                    return Err(Fault::Engine(error));
-                }
-                Err(_) => {
-                    return Ok(Some(AttemptEnd::Discard(
-                        "the local directory refused to open",
-                    )));
-                }
+                Admission::Rejected(violations) => Ok(Some(AttemptEnd::Refused(
+                    OpenRefusal::TheoryRejected(violations),
+                ))),
             }
-        }
-        if let Some((digest, doc)) = self.floor.clone() {
-            return self.seed(digest, &doc);
-        }
-        match Db::create(&self.dir, self.theory.clone())? {
-            Admission::Accepted(db) => {
-                self.db = Some(db);
-                self.chain = Chain::genesis(self.codec.braids());
-                self.chain.write_atomic(&self.dir)?;
-                self.provenance = Provenance::Bootstrap;
-                Ok(None)
-            }
-            Admission::Rejected(violations) => Ok(Some(AttemptEnd::Refused(
-                OpenRefusal::TheoryRejected(violations),
-            ))),
         }
     }
 
@@ -753,14 +757,14 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
         }
         self.audited_floor = Some(digest);
         self.db = Some(db);
-        self.chain = Chain {
+        self.chain = Chain::Settled {
             entries: doc
                 .braids
                 .iter()
                 .map(|(braid, head)| {
                     (
                         *braid,
-                        crate::sidecar::ChainEntry {
+                        ChainEntry {
                             g: head.g,
                             prev: head.hash,
                             ts: head.ts,
@@ -768,63 +772,60 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
                     )
                 })
                 .collect(),
-            pending: None,
         };
         self.chain.write_atomic(&self.dir)?;
         self.provenance = Provenance::Checkpoint;
         Ok(None)
     }
 
-    /// Resolves the pending slot before replay: published pending
-    /// clears; a lost slot over an applied pending is a fork (discard);
-    /// an unpublished pending fixes the identity's last term.
+    /// Inherited pending: one fold against occupant, generation, and
+    /// floor. Settled is written after the fold, never ahead of it.
     fn resolve_pending(&mut self) -> Result<Option<AttemptEnd>, Fault> {
-        let Some(pending) = self.chain.pending.clone() else {
-            self.applied_pending = 0;
+        let Chain::Pending { batch, .. } = &self.chain else {
             return Ok(None);
         };
+        let pending = batch.clone();
         let key = log_key(&self.prefix, pending.braid, pending.slot);
-        let generation = self.db().generation()?.value();
-        let sum = self.chain.sum();
-        match self.store.get(&key)? {
-            Some(fetched) if fetched.bytes == pending.bytes => {
-                self.chain.pending = None;
+        let occupant = self.store.get(&key)?.map(|fetched| fetched.bytes);
+        let below_floor = self
+            .floor
+            .as_ref()
+            .and_then(|(_, doc)| doc.braids.get(&pending.braid))
+            .is_some_and(|head| pending.slot <= head.g);
+        match fold_pending(
+            self.chain.sum(),
+            self.db().generation()?.value(),
+            occupant.as_deref(),
+            &pending.bytes,
+            below_floor,
+        ) {
+            PendingFold::Ours | PendingFold::TheirsUnapplied | PendingFold::BelowFloor => {
+                let entries = self.chain.entries().clone();
+                self.chain = Chain::Settled { entries };
                 self.chain.write_atomic(&self.dir)?;
-                self.applied_pending = 0;
                 Ok(None)
             }
-            Some(_) => {
-                if generation == sum {
-                    self.chain.pending = None;
-                    self.chain.write_atomic(&self.dir)?;
-                    self.applied_pending = 0;
-                    Ok(None)
-                } else {
-                    Ok(Some(AttemptEnd::Discard(
-                        "a lost slot over an applied pending is a fork",
-                    )))
-                }
-            }
-            None => {
-                if generation == sum {
-                    self.applied_pending = 0;
-                    Ok(None)
-                } else if generation == sum + 1 {
-                    self.applied_pending = 1;
-                    Ok(None)
-                } else {
-                    Ok(Some(AttemptEnd::Discard(
-                        "a generation no pending term accounts for",
-                    )))
-                }
-            }
+            PendingFold::AbsentUnapplied | PendingFold::AbsentApplied => Ok(None),
+            PendingFold::TheirsApplied => Ok(Some(AttemptEnd::Discard(
+                "a lost slot over an applied pending is a fork",
+            ))),
+            PendingFold::Phantom => Ok(Some(AttemptEnd::Discard(
+                "a generation no pending term accounts for",
+            ))),
         }
     }
 
     /// Round-robin catch-up: one slot per braid per round, so a hot
     /// braid cannot starve the others' freshness.
-    fn catch_up(&mut self, phase: Phase) -> Result<CatchUpEnd, Fault> {
-        let braids: Vec<BraidId> = self.codec.braids().components().keys().copied().collect();
+    fn catch_up(&mut self, phase: Phase, only: Option<BraidId>) -> Result<CatchUpEnd, Fault> {
+        let braids: Vec<BraidId> = self
+            .codec
+            .braids()
+            .components()
+            .keys()
+            .copied()
+            .filter(|braid| only.is_none_or(|want| want == *braid))
+            .collect();
         let mut at_tip: std::collections::BTreeSet<BraidId> = std::collections::BTreeSet::new();
         loop {
             let mut progressed = false;
@@ -883,7 +884,7 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             braid,
             slot,
             &fetched.bytes,
-            self.applied_pending,
+            0,
         )? {
             Applied::Advanced { .. } | Applied::Absorbed { .. } => {
                 self.chain.write_atomic(&self.dir)?;
