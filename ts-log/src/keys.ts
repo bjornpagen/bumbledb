@@ -141,10 +141,15 @@ function encodeCkptScratch(digest: string): Uint8Array {
 }
 
 /** The digest a scratch-lease body names, or null. */
-function parseCkptScratch(bytes: Uint8Array): string | null {
+function scratchCkptDigest(bytes: Uint8Array): string | null {
 	const text = new TextDecoder().decode(bytes)
 	const match = /^CKPT-SCRATCH\/1\n([0-9a-f]{64})\n$/.exec(text)
-	return match === null ? null : match[1]
+	const digest = match?.[1]
+	return digest === undefined ? null : digest
+}
+
+function parseCkptScratch(bytes: Uint8Array): string | null {
+	return scratchCkptDigest(bytes)
 }
 
 function generation(raw: bigint): Generation {
@@ -208,6 +213,7 @@ export {
 	reservedLease,
 	reservedName,
 	reservedTemp,
+	scratchCkptDigest,
 	scratchCkptName,
 	segmentOk,
 	storeKey,
