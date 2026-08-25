@@ -207,7 +207,9 @@ where
     S: ObjectStore + 'static,
     H: StepHook + 'static,
 {
-    let generation = writer.with_db(|db| db.generation().expect("generation").value());
+    let generation = writer
+        .with_db(|db| db.generation().expect("generation").value())
+        .expect("a fixture writer is Mounted");
     assert_eq!(
         generation,
         writer.chain().generation(),
