@@ -13,7 +13,8 @@ use super::fence::{
     HeldLease, acquire_mutation, sweep_reserved, sync_ancestors, sync_parent, synced_temp,
 };
 use super::{
-    Create, ErrStore, Etag, Fetched, ObjectStore, Poll, Result, StoreKey, Swap, WriterId,
+    Create, ErrStore, Etag, Fenced, Fetched, LEASE_NAMESPACE, Lease, ObjectStore, Poll, Result,
+    StoreKey, Swap, WriterId,
 };
 
 /// The one etag scheme: the blake3 of the object bytes, rendered
@@ -49,6 +50,43 @@ impl FsStore {
     fn fence(&self, key: &StoreKey) -> io::Result<HeldLease> {
         acquire_mutation(&self.root, key.as_str(), Self::holder())
     }
+
+    fn generation_path(&self, key: &StoreKey) -> PathBuf {
+        self.root
+            .join(LEASE_NAMESPACE)
+            .join(key.as_str())
+            .join("gen")
+    }
+}
+
+/// Generation sidecar under `~lease/{key}/gen`: 20's lease document,
+/// token field is the fencing generation a later swap can lose to.
+/// The filename is not a u64, so `current_lease` ignores it; `expires`
+/// is `u64::MAX` so sweep does not treat it as litter.
+fn read_generation(path: &Path) -> u64 {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| Lease::parse(&bytes))
+        .map(|lease| lease.token)
+        .unwrap_or(0)
+}
+
+fn write_generation(root: &Path, dest: &Path, token: u64) -> io::Result<()> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let body = Lease {
+        holder: WriterId(0),
+        token,
+        expires: u64::MAX,
+    }
+    .encode();
+    let temp = synced_temp(root, &body)?;
+    if let Err(err) = fs::rename(&temp, dest).and_then(|()| sync_parent(dest)) {
+        let _ = fs::remove_file(&temp);
+        return Err(err);
+    }
+    Ok(())
 }
 
 fn infra<'k>(op: &'static str, key: &'k str) -> impl FnOnce(io::Error) -> ErrStore + 'k {
@@ -124,8 +162,10 @@ impl ObjectStore for FsStore {
         }
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
+        let body = body.into();
         let path = self.object_path(key);
+        let generation = self.generation_path(key);
         let run = || -> io::Result<Create> {
             key_shape_fault(&path)?;
             let lease = self.fence(key)?;
@@ -134,7 +174,7 @@ impl ObjectStore for FsStore {
             }
             key_shape_fault(&path)?;
             ensure_parent(&self.root, &path)?;
-            let temp = synced_temp(&self.root, bytes)?;
+            let temp = synced_temp(&self.root, body.bytes)?;
             if !lease.still_current()? {
                 let _ = fs::remove_file(&temp);
                 return Ok(Create::Ambiguous);
@@ -144,7 +184,8 @@ impl ObjectStore for FsStore {
             match published? {
                 Publish::Linked => {
                     sync_parent(&path)?;
-                    Ok(Create::Created(content_etag(bytes)))
+                    write_generation(&self.root, &generation, body.token)?;
+                    Ok(Create::Created(content_etag(body.bytes)))
                 }
                 Publish::Occupied => {
                     if path.is_dir() {
@@ -160,8 +201,15 @@ impl ObjectStore for FsStore {
         run().map_err(infra("put_create", key.as_str()))
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> Result<Swap> {
+        let body = body.into();
         let path = self.object_path(key);
+        let generation = self.generation_path(key);
         let run = || -> io::Result<Swap> {
             let lease = self.fence(key)?;
             if !lease.still_current()? {
@@ -173,7 +221,11 @@ impl ObjectStore for FsStore {
             if current.etag != *etag {
                 return Ok(Swap::Moved);
             }
-            let temp = synced_temp(&self.root, bytes)?;
+            // 20: a stale holder's write is the token the CAS no longer wins.
+            if body.token < read_generation(&generation) {
+                return Ok(Swap::Moved);
+            }
+            let temp = synced_temp(&self.root, body.bytes)?;
             if !lease.still_current()? {
                 let _ = fs::remove_file(&temp);
                 return Ok(Swap::Ambiguous);
@@ -182,7 +234,8 @@ impl ObjectStore for FsStore {
                 let _ = fs::remove_file(&temp);
                 return Err(err);
             }
-            Ok(Swap::Swapped(content_etag(bytes)))
+            write_generation(&self.root, &generation, body.token)?;
+            Ok(Swap::Swapped(content_etag(body.bytes)))
         };
         run().map_err(infra("put_swap", key.as_str()))
     }

@@ -7,8 +7,8 @@ use std::sync::Mutex;
 use bumbledb_log::store::fs::content_etag;
 use bumbledb_log::store::mem::MemStore;
 use bumbledb_log::store::{
-    Create, CreateProbe, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
-    SwapProbe, resolve_ambiguous_create, resolve_ambiguous_swap, retry_read,
+    Create, CreateProbe, Etag, Fenced, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey,
+    Swap, SwapProbe, resolve_ambiguous_create, resolve_ambiguous_swap, retry_read,
 };
 
 #[test]
@@ -222,12 +222,17 @@ impl ObjectStore for Flaky {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
-        self.inner.put_create(key, bytes)
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
+        self.inner.put_create(key, body)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
-        self.inner.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> Result<Swap> {
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> Result<()> {

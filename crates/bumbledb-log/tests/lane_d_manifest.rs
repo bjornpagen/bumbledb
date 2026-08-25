@@ -7,12 +7,12 @@ mod lane_d_support;
 use std::collections::BTreeMap;
 
 use bumbledb_log::manifest::{
-    ckpt_json_key, log_key, manifest_key, publish_checkpoint, Checkpoint, CheckpointError, Head,
-    Manifest, ManifestError, Published,
+    Checkpoint, CheckpointError, Head, Manifest, ManifestError, Published, ckpt_json_key, log_key,
+    manifest_key, publish_checkpoint,
 };
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
 };
 use lane_d_support::{codec, kitchen_braid, note_braid, temp_dir};
 
@@ -164,9 +164,11 @@ fn key_layout_matches_the_protocol() {
         log_key("", kitchen_braid(&codec), 0x2a).as_str(),
         "log/c00000000/000000000000002a"
     );
-    assert!(ckpt_json_key("p", &digest(0x01))
-        .as_str()
-        .starts_with("p/ckpt/"));
+    assert!(
+        ckpt_json_key("p", &digest(0x01))
+            .as_str()
+            .starts_with("p/ckpt/")
+    );
     assert_eq!(
         ckpt_json_key("p", &digest(0x01))
             .as_str()
@@ -273,11 +275,16 @@ impl ObjectStore for SwapInterloper {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
-        self.inner.put_create(key, bytes)
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
+        self.inner.put_create(key, body)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
         if key == &manifest_key("") && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             let plain = FsStore::new(self.root.clone());
             let codec = codec();
@@ -299,7 +306,7 @@ impl ObjectStore for SwapInterloper {
             .expect("interloper publishes");
             assert!(matches!(published, Published::Replaced));
         }
-        self.inner.put_swap(key, bytes, etag)
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {

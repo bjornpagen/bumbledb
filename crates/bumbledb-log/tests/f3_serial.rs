@@ -22,7 +22,7 @@ use bumbledb_log::codec::{BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
 };
 use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
 
@@ -719,8 +719,8 @@ impl ObjectStore for AmbiguousOnce {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
-        let created = self.inner.put_create(key, bytes)?;
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
+        let created = self.inner.put_create(key, body)?;
         if key.as_str().starts_with("log/")
             && let Create::Created(_) = created
             && self.tripped.swap(1, Ordering::SeqCst) == 0
@@ -730,8 +730,13 @@ impl ObjectStore for AmbiguousOnce {
         Ok(created)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        self.inner.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {

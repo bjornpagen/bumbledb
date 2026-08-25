@@ -32,7 +32,8 @@ use bumbledb_log::manifest::{Head, log_key};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreError, StoreKey, Swap,
+    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreError, StoreKey,
+    Swap,
 };
 use bumbledb_log::writer::{
     Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
@@ -443,8 +444,8 @@ impl ObjectStore for DropResponses {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
-        let created = self.inner.put_create(key, bytes)?;
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
+        let created = self.inner.put_create(key, body)?;
         if key.as_str().starts_with("log/")
             && self
                 .remaining
@@ -463,8 +464,13 @@ impl ObjectStore for DropResponses {
         Ok(created)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        self.inner.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {
@@ -620,13 +626,18 @@ impl ObjectStore for RacingStore {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
         self.maybe_plant(key);
-        self.inner.put_create(key, bytes)
+        self.inner.put_create(key, body)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        self.inner.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {
@@ -1521,17 +1532,22 @@ impl ObjectStore for HoldNotePut {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
         if key.as_str().contains("log/c00000002/") && !self.tripped.swap(true, Ordering::SeqCst) {
             while !self.gate.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
-        self.inner.put_create(key, bytes)
+        self.inner.put_create(key, body)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        self.inner.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {

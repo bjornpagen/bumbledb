@@ -16,7 +16,7 @@ use bumbledb::SchemaDescriptor;
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
-    Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
 };
 use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
 use lane_e_support::{
@@ -54,17 +54,22 @@ impl ObjectStore for HoldFirstPut {
         self.inner.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
         if key.as_str().starts_with("log/") && !self.tripped.swap(true, Ordering::SeqCst) {
             while !self.gate.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
-        self.inner.put_create(key, bytes)
+        self.inner.put_create(key, body)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        self.inner.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
+        self.inner.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {

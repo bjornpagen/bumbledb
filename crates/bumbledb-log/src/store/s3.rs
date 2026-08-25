@@ -18,7 +18,7 @@ use object_store::{
 use tokio::runtime::{Builder, Handle, Runtime};
 
 use super::{
-    Create, ErrStore, Etag, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
+    Create, ErrStore, Etag, Fenced, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
     parse_prefix, prove_create, prove_swap,
 };
 
@@ -398,7 +398,8 @@ impl ObjectStore for S3Store {
         })?
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create> {
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
+        let bytes = body.into().bytes;
         let path = self.object_path(key)?;
         let payload = bytes.to_vec();
         let raw = self.block(async {
@@ -414,7 +415,13 @@ impl ObjectStore for S3Store {
         prove_create(self, key, bytes, raw)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap> {
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> Result<Swap> {
+        let bytes = body.into().bytes;
         let path = self.object_path(key)?;
         let payload = bytes.to_vec();
         let mode = PutMode::Update(UpdateVersion {

@@ -23,9 +23,10 @@ pub const TEMP_NAMESPACE: &str = "~tmp";
 pub const LEASE_NAMESPACE: &str = "~lease";
 
 /// A slash-path object key, parsed once. Empty segments, dot segments,
-/// a leading or trailing slash, a reserved `~` segment, a control
-/// character, and a segment wearing the lockfile suffix are
-/// unrepresentable — the verbs take the proof and never re-check.
+/// a leading or trailing slash, a reserved tilde (ASCII or lookalike)
+/// segment, a control or line/para separator, and a lock-suffix after
+/// format characters are stripped are unrepresentable — the verbs take
+/// the proof and never re-check.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StoreKey(String);
 
@@ -75,13 +76,68 @@ impl StoreKey {
 /// One path segment of a key or a tenant id: the same grammar.
 #[must_use]
 pub fn segment_ok(seg: &str) -> bool {
-    !seg.is_empty()
-        && !seg.contains('/')
-        && seg != "."
-        && seg != ".."
-        && !seg.starts_with('~')
-        && !seg.ends_with(LOCK_SUFFIX)
-        && !seg.chars().any(char::is_control)
+    if seg.is_empty() || seg.contains('/') || seg == "." || seg == ".." {
+        return false;
+    }
+    if seg
+        .chars()
+        .any(|c| c.is_control() || is_line_or_para_sep(c))
+    {
+        return false;
+    }
+    let stripped: String = seg.chars().filter(|c| !is_cf(*c)).collect();
+    let Some(first) = stripped.chars().next() else {
+        return false;
+    };
+    !is_tilde_lookalike(first) && !stripped.ends_with(LOCK_SUFFIX)
+}
+
+fn is_tilde_lookalike(c: char) -> bool {
+    matches!(
+        c,
+        '~' | '\u{02DC}'
+            | '\u{02F7}'
+            | '\u{1FC0}'
+            | '\u{2053}'
+            | '\u{223C}'
+            | '\u{223D}'
+            | '\u{301C}'
+            | '\u{3030}'
+            | '\u{FF5E}'
+    )
+}
+
+fn is_line_or_para_sep(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+/// Unicode category Cf. Stripped before the lock-suffix and tilde
+/// checks so a ZWSP cannot hide `.lock` or a reserved prefix.
+fn is_cf(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x13440
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 
 /// A store prefix: empty, or a [`StoreKey`] spelling (the same segment
@@ -258,6 +314,45 @@ impl std::error::Error for StoreError {}
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// A write body that carries the fencing token the CAS can lose to (20).
+/// The token is an argument of the write: a stored higher token is
+/// `Moved`, not a field discarded before the call. Unfenced callers
+/// (`From<&[u8]>`) ride token 0 — they lose to any later higher token
+/// on that key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fenced<'a> {
+    pub bytes: &'a [u8],
+    pub token: u64,
+}
+
+impl<'a> Fenced<'a> {
+    #[must_use]
+    pub const fn new(bytes: &'a [u8], token: u64) -> Self {
+        Self { bytes, token }
+    }
+}
+
+impl<'a> From<&'a [u8]> for Fenced<'a> {
+    fn from(bytes: &'a [u8]) -> Self {
+        Self { bytes, token: 0 }
+    }
+}
+
+impl<'a, const N: usize> From<&'a [u8; N]> for Fenced<'a> {
+    fn from(bytes: &'a [u8; N]) -> Self {
+        Self { bytes, token: 0 }
+    }
+}
+
+impl<'a> From<&'a Vec<u8>> for Fenced<'a> {
+    fn from(bytes: &'a Vec<u8>) -> Self {
+        Self {
+            bytes: bytes.as_slice(),
+            token: 0,
+        }
+    }
+}
+
 /// The five operations the protocol needs; nothing a vendor offers beyond
 /// them appears. Consumers monomorphize over `S: ObjectStore`. Every
 /// method is synchronous. An impl must not `block_on` from an async
@@ -272,13 +367,21 @@ pub trait ObjectStore: Send + Sync {
 
     /// PUT with `If-None-Match: "*"`. `Ok(Created(etag))` or `Ok(Exists)`
     /// on a proved occupation; `Ok(Ambiguous)` when the transport cannot
-    /// prove the result. The log-slot arbitration primitive.
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> Result<Create>;
+    /// prove the result. The write is [`Fenced`]: create records the
+    /// token as the generation a later swap can lose to.
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create>;
 
     /// PUT with `If-Match: <etag>`. `Ok(Swapped(etag))` or `Ok(Moved)` on
-    /// a proved mismatch; `Ok(Ambiguous)` when the transport cannot
-    /// prove the result. The manifest CAS primitive.
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> Result<Swap>;
+    /// a proved etag mismatch or a stale fencing token; `Ok(Ambiguous)`
+    /// when the transport cannot prove the result. The write is
+    /// [`Fenced`]: `body.token <` the stored generation is `Moved` — a
+    /// stale holder is the token the CAS no longer wins (20).
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> Result<Swap>;
 
     /// DELETE (unconditional). The gc verb's tool. Success means the
     /// parent directory is durable.
@@ -440,6 +543,20 @@ mod tests {
         assert!(segment_ok("_shared"));
         assert!(!segment_ok("~tmp"));
         assert!(!segment_ok("a/b"));
+        assert!(
+            StoreKey::parse("\u{FF5E}tmp/x").is_err(),
+            "fullwidth tilde is a reserved-prefix lookalike"
+        );
+        assert!(
+            StoreKey::parse("manifest.json.lock\u{200B}").is_err(),
+            "ZWSP after .lock is still the lock suffix"
+        );
+        assert!(
+            StoreKey::parse("log/\u{2028}/1").is_err(),
+            "line separator is not a segment"
+        );
+        assert!(StoreKey::parse("log/\u{2029}/1").is_err());
+        assert!(StoreKey::parse("\u{200B}~tmp/x").is_err());
     }
 
     #[test]

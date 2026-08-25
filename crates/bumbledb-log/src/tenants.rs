@@ -10,16 +10,16 @@
 use std::fs;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bumbledb::Theory;
 
 use crate::replica::{Fault, OpenRefusal, Opened, Replica};
-use crate::store::fence::{acquire_dir, HeldLease, LeaseBusy, DIR_TTL_MS};
+use crate::store::fence::{DIR_TTL_MS, HeldLease, LeaseBusy, acquire_dir};
 use crate::store::{
-    segment_ok, Create, Etag, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
-    WriterId,
+    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
+    WriterId, segment_ok,
 };
 
 /// The pinned control-plane tenant.
@@ -77,12 +77,17 @@ impl<S: ObjectStore> ObjectStore for Shared<S> {
         self.0.get_if_changed(key, etag)
     }
 
-    fn put_create(&self, key: &StoreKey, bytes: &[u8]) -> StoreResult<Create> {
-        self.0.put_create(key, bytes)
+    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> StoreResult<Create> {
+        self.0.put_create(key, body)
     }
 
-    fn put_swap(&self, key: &StoreKey, bytes: &[u8], etag: &Etag) -> StoreResult<Swap> {
-        self.0.put_swap(key, bytes, etag)
+    fn put_swap<'a>(
+        &self,
+        key: &StoreKey,
+        body: impl Into<Fenced<'a>>,
+        etag: &Etag,
+    ) -> StoreResult<Swap> {
+        self.0.put_swap(key, body, etag)
     }
 
     fn delete(&self, key: &StoreKey) -> StoreResult<()> {

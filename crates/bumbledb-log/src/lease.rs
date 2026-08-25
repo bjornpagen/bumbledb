@@ -31,7 +31,8 @@ use bumbledb::schema::{FieldId, RelationId};
 
 use crate::manifest::Text;
 use crate::store::{
-    Create, Etag, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
+    Create, Etag, Fenced, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create,
+    prove_swap,
 };
 
 /// The lease width: one CAS increment claims this many ids.
@@ -79,15 +80,10 @@ pub enum Leased {
     Refused(LeaseRefusal),
 }
 
-/// A counter mutation: the bytes and the fencing token they ride (20).
-struct Fenced<'a> {
-    bytes: &'a [u8],
-    token: u64,
-}
-
-/// Counter birth. The write carries `token` — a stale holder is the
-/// token the store CAS no longer wins. `Drawn` takes this token, not
-/// a token that skipped the write.
+/// Counter birth. The write is [`Fenced`]: `token` is an argument of
+/// `put_create`, not a field discarded before the call. A stale holder
+/// is the token the store CAS no longer wins (20). `Drawn` takes this
+/// token, not a token that skipped the write.
 fn put_create<S: ObjectStore>(
     store: &S,
     key: &StoreKey,
@@ -95,12 +91,13 @@ fn put_create<S: ObjectStore>(
     token: u64,
 ) -> StoreResult<(Create, u64)> {
     let write = Fenced { bytes, token };
-    Ok((store.put_create(key, write.bytes)?, write.token))
+    Ok((store.put_create(key, write)?, write.token))
 }
 
-/// Counter CAS. The write carries `token` — a stale holder is the
-/// token the store CAS no longer wins. `Drawn` takes this token, not
-/// a token that skipped the write.
+/// Counter CAS. The write is [`Fenced`]: `token` is an argument of
+/// `put_swap`, not a field discarded before the call. A stale holder
+/// is the token the store CAS no longer wins (20). `Drawn` takes this
+/// token, not a token that skipped the write.
 fn put_swap<S: ObjectStore>(
     store: &S,
     key: &StoreKey,
@@ -109,7 +106,7 @@ fn put_swap<S: ObjectStore>(
     token: u64,
 ) -> StoreResult<(Swap, u64)> {
     let write = Fenced { bytes, token };
-    Ok((store.put_swap(key, write.bytes, etag)?, write.token))
+    Ok((store.put_swap(key, write, etag)?, write.token))
 }
 
 /// Leases one block for `(relation, field)` that can serve `count`:
@@ -303,7 +300,10 @@ mod tests {
         store
             .put_swap(
                 &key,
-                b"18446744073709551615",
+                Fenced {
+                    bytes: b"18446744073709551615",
+                    token: TOKEN,
+                },
                 &store.get(&key).unwrap().unwrap().etag,
             )
             .expect("poison the counter at u64::MAX");
@@ -330,7 +330,10 @@ mod tests {
         store
             .put_swap(
                 &key,
-                next.to_string().as_bytes(),
+                Fenced {
+                    bytes: next.to_string().as_bytes(),
+                    token: TOKEN,
+                },
                 &store.get(&key).unwrap().unwrap().etag,
             )
             .expect("counter just below u64::MAX");
@@ -353,7 +356,10 @@ mod tests {
         store
             .put_swap(
                 &key,
-                next.to_string().as_bytes(),
+                Fenced {
+                    bytes: next.to_string().as_bytes(),
+                    token: TOKEN,
+                },
                 &store.get(&key).unwrap().unwrap().etag,
             )
             .expect("restore next");
@@ -383,5 +389,50 @@ mod tests {
         assert_eq!(range, 0..0);
         assert_eq!(token, TOKEN);
         assert!(store.get(&ids_key("", REL, FIELD)).expect("get").is_none());
+    }
+
+    #[test]
+    fn a_lower_token_loses_the_counter_cas() {
+        let store = MemStore::new();
+        let mut leases = Leases::new(TOKEN);
+        assert!(matches!(
+            leases.draw(&store, "", REL, FIELD, 1).expect("birth"),
+            Leased::Drawn { .. }
+        ));
+        let key = ids_key("", REL, FIELD);
+        let etag = store.get(&key).unwrap().unwrap().etag;
+        assert_eq!(
+            store
+                .put_swap(
+                    &key,
+                    Fenced {
+                        bytes: b"8192",
+                        token: TOKEN - 1,
+                    },
+                    &etag,
+                )
+                .expect("stale fence"),
+            Swap::Moved,
+            "a stale holder's write is the token the CAS no longer wins"
+        );
+        assert_eq!(
+            store.get(&key).unwrap().unwrap().bytes,
+            b"4096",
+            "the lower token did not mutate the counter"
+        );
+        assert_eq!(
+            store
+                .put_swap(
+                    &key,
+                    Fenced {
+                        bytes: b"8192",
+                        token: TOKEN,
+                    },
+                    &etag,
+                )
+                .expect("current fence"),
+            Swap::Swapped(crate::store::fs::content_etag(b"8192")),
+        );
+        assert_eq!(store.get(&key).unwrap().unwrap().bytes, b"8192");
     }
 }
