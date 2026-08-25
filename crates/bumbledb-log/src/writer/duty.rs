@@ -4,7 +4,6 @@
 //! is Replaced.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -12,15 +11,12 @@ use std::sync::{Arc, Mutex};
 use bumbledb::Db;
 
 use crate::braids::BraidId;
-use crate::manifest::{
-    Checkpoint, Head, Manifest, PublishRefusal, Published, ckpt_mdb_key, manifest_key,
-    publish_checkpoint,
-};
-use crate::replica::{clear_ckpt_scratch, reclaim_orphan, record_ckpt_scratch};
+use crate::checkpointer::compact_and_publish;
+use crate::manifest::{PublishRefusal, Published};
 use crate::sidecar::{Chain, ChainEntry};
 use crate::store::ObjectStore;
 
-use super::{Core, DATA_FILE, Inner, StepHook, Theory, lock};
+use super::{Core, Inner, StepHook, Theory, lock};
 
 /// One detached checkpoint duty. `Kept` and `Refused` are not
 /// success: they do not move `ckpt_sum` and do not subtract the meter.
@@ -84,12 +80,10 @@ where
         lock(&self.threads).push(handle);
     }
 
-    /// The checkpoint duty, entirely off the commit lock. The
-    /// consistent view is proven rather than scheduled: snapshot a
-    /// Settled chain and the store handle under a short lock, compact
-    /// off the lock, then re-take the lock and require that the chain
-    /// is still that Settled value — the same handle, the same heads,
-    /// the generation still the snapshot sum — which proves the
+    /// The resident cadence entry. Snapshot a Settled chain under a
+    /// short lock, then the compact→publish transition; `hold` proves
+    /// the chain is still that Settled value — the same handle, the
+    /// same heads, the generation still the snapshot sum — so the
     /// compacted copy holds exactly the snapshot's content. A torn
     /// view retries with the legible scream; commits never wait on
     /// the duty.
@@ -97,7 +91,7 @@ where
         let _busy = DutyBusy { core: &self.core };
         let seq = self.scratch_seq.fetch_add(1, Ordering::Relaxed);
         let scratch = PathBuf::from(format!("{}.ckpt{seq}", self.dir.display()));
-        let view = loop {
+        loop {
             let snapshot = {
                 let core = lock(&self.core);
                 settled_view(&core)
@@ -110,100 +104,50 @@ where
             let sum = entries
                 .values()
                 .fold(0u64, |acc, entry| acc.saturating_add(entry.g));
-            let _ = fs::remove_dir_all(&scratch);
-            let compacted: std::result::Result<Vec<u8>, ()> = (|| {
-                db.compact(&scratch).map_err(|_| ())?;
-                fs::read(scratch.join(DATA_FILE)).map_err(|_| ())
-            })();
-            let _ = fs::remove_dir_all(&scratch);
-            let Ok(bytes) = compacted else {
-                return Ran::Deferred;
-            };
-            let Ok(catalog) = db.catalog_digest() else {
-                return Ran::Deferred;
-            };
-            let consistent = {
-                let core = lock(&self.core);
-                match settled_view(&core) {
-                    Some((current, now))
-                        if Arc::ptr_eq(&current, &db)
-                            && now == entries
-                            && db.generation().map(bumbledb::GenerationId::value) == Ok(sum) =>
-                    {
-                        Some(core.log_bytes)
+            let mut snap_bytes = 0u64;
+            let published = match compact_and_publish(
+                self.store.as_ref(),
+                &self.prefix,
+                &self.dir,
+                self.codec.braids(),
+                self.writer_id,
+                db.as_ref(),
+                &entries,
+                &scratch,
+                || {
+                    let core = lock(&self.core);
+                    match settled_view(&core) {
+                        Some((current, now))
+                            if Arc::ptr_eq(&current, &db)
+                                && now == entries
+                                && db.generation().map(bumbledb::GenerationId::value)
+                                    == Ok(sum) =>
+                        {
+                            snap_bytes = core.log_bytes;
+                            true
+                        }
+                        _ => false,
                     }
-                    _ => None,
+                },
+            ) {
+                Ok(Some(published)) => published,
+                Ok(None) => {
+                    self.scream("a commit landed inside the snapshot window");
+                    continue;
                 }
-            };
-            if let Some(snap_bytes) = consistent {
-                break (bytes, catalog, entries, sum, snap_bytes);
-            }
-            self.scream("a commit landed inside the snapshot window");
-        };
-        let (bytes, catalog, entries, sum, snap_bytes) = view;
-        let heads: BTreeMap<BraidId, Head> = entries
-            .iter()
-            .map(|(braid, entry)| {
-                (
-                    *braid,
-                    Head {
-                        g: entry.g,
-                        hash: entry.prev,
-                        ts: entry.ts,
-                    },
-                )
-            })
-            .collect();
-        let prev = match self.store.get(&manifest_key(&self.prefix)) {
-            Ok(Some(fetched)) => match Manifest::parse(&fetched.bytes) {
-                Ok(manifest) => manifest.checkpoint,
                 Err(_) => return Ran::Deferred,
-            },
-            Ok(None) => None,
-            Err(_) => return Ran::Deferred,
-        };
-        let doc = Checkpoint {
-            braids: heads,
-            catalog,
-            writer: self.writer_id,
-            prev,
-        };
-        let digest = doc.digest();
-        // The scratch lease names this candidate before the
-        // upload-before-decision window. The successor GETs it at open.
-        if record_ckpt_scratch(&self.dir, &digest).is_err() {
-            return Ran::Deferred;
+            };
+            let ran = match published {
+                Published::Replaced => Ran::Replaced { sum },
+                Published::Kept { incumbent } => Ran::Kept { incumbent },
+                Published::Refused(refusal) => Ran::Refused(refusal),
+            };
+            if let Ran::Replaced { sum } = ran {
+                let mut core = lock(&self.core);
+                core.ckpt_sum = core.ckpt_sum.max(sum);
+                core.log_bytes = core.log_bytes.saturating_sub(snap_bytes);
+            }
+            return ran;
         }
-        let ran = match (|| -> std::result::Result<Published, ()> {
-            self.store
-                .put_create(&ckpt_mdb_key(&self.prefix, &digest), &bytes)
-                .map_err(|_| ())?;
-            publish_checkpoint(self.store.as_ref(), &self.prefix, self.codec.braids(), &doc)
-                .map_err(|_| ())
-        })() {
-            Ok(Published::Replaced) => {
-                let _ = clear_ckpt_scratch(&self.dir);
-                Ran::Replaced { sum }
-            }
-            Ok(Published::Kept { incumbent }) => {
-                // The loser deletes its own digest on Kept.
-                let _ = reclaim_orphan(self.store.as_ref(), &self.prefix, &digest);
-                let _ = clear_ckpt_scratch(&self.dir);
-                Ran::Kept { incumbent }
-            }
-            Ok(Published::Refused(refusal)) => {
-                // The loser deletes its own digest on every refused publish.
-                let _ = reclaim_orphan(self.store.as_ref(), &self.prefix, &digest);
-                let _ = clear_ckpt_scratch(&self.dir);
-                Ran::Refused(refusal)
-            }
-            Err(()) => Ran::Deferred,
-        };
-        if let Ran::Replaced { sum } = ran {
-            let mut core = lock(&self.core);
-            core.ckpt_sum = core.ckpt_sum.max(sum);
-            core.log_bytes = core.log_bytes.saturating_sub(snap_bytes);
-        }
-        ran
     }
 }

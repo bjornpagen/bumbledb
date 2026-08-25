@@ -10,18 +10,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bumbledb::Theory;
+use bumbledb::{Db, Theory};
 
+use crate::braids::{BraidId, Braids};
 use crate::gc::{CHECKPOINT_RETAIN_MS, Gc, PublishClock, gc_at};
 use crate::manifest::{
-    Checkpoint, Head, Manifest, Published, ckpt_mdb_key, log_key, manifest_key, publish_checkpoint,
+    Checkpoint, Head, Manifest, PublishRefusal, Published, ckpt_mdb_key, log_key, manifest_key,
+    publish_checkpoint,
 };
 use crate::replica::{
     Fault, OpenRefusal, Opened, Refreshed, Replica, clear_ckpt_scratch, reclaim_orphan,
     record_ckpt_scratch,
 };
 use crate::sidecar::{Chain, ChainEntry};
-use crate::store::{Create, ObjectStore};
+use crate::store::{Create, ObjectStore, prove_create};
 use crate::writer::{CHECKPOINT_EVERY_BYTES, CHECKPOINT_EVERY_SUM, DATA_FILE};
 
 /// Outcome of `Checkpointer::open`.
@@ -133,7 +135,33 @@ where
         };
         let compact = match settled {
             Some(entries) if self.cadence_crossed()? => {
-                let published = self.compact_and_publish(&entries)?;
+                let db = self.replica.db().map_err(|_| {
+                    Fault::Io(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "replica is unmounted",
+                    ))
+                })?;
+                let scratch = PathBuf::from(format!("{}.duty-ckpt", self.replica.dir().display()));
+                // The detached binary is exclusive: compact cannot tear.
+                let Some(published) = compact_and_publish(
+                    self.replica.store(),
+                    self.replica.prefix(),
+                    self.replica.dir(),
+                    self.replica.codec().braids(),
+                    self.writer_id,
+                    db,
+                    &entries,
+                    &scratch,
+                    || true,
+                )?
+                else {
+                    unreachable!("the detached hold is exclusive");
+                };
+                if matches!(published, Published::Replaced) {
+                    // The instant the candidate entered reachable history —
+                    // the CAS is the linearization point (50 §3).
+                    self.publish_ms = Some(now_ms());
+                }
                 if !matches!(published, Published::Refused(_))
                     && let Some(refusal) = self.replica.pull_manifest()?
                 {
@@ -182,128 +210,92 @@ where
         }
         Ok(bytes)
     }
-
-    /// Compaction's input is `Settled`. A pending chain cannot reach
-    /// this function — the match in [`Self::run`] is the type gate.
-    fn compact_and_publish(
-        &mut self,
-        entries: &BTreeMap<crate::braids::BraidId, ChainEntry>,
-    ) -> Result<Published, Fault> {
-        let scratch = Scratch::new(PathBuf::from(format!(
-            "{}.duty-ckpt",
-            self.replica.dir().display()
-        )));
-        let compacted = (|| -> Result<Vec<u8>, Fault> {
-            self.replica
-                .db()
-                .map_err(|_| {
-                    Fault::Io(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "replica is unmounted",
-                    ))
-                })?
-                .compact(&scratch.path)
-                .map_err(Fault::Engine)?;
-            fs::read(scratch.path.join(DATA_FILE)).map_err(Fault::Io)
-        })();
-        drop(scratch);
-        let bytes = compacted?;
-        let catalog = self
-            .replica
-            .db()
-            .map_err(|_| {
-                Fault::Io(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "replica is unmounted",
-                ))
-            })?
-            .catalog_digest()
-            .map_err(Fault::Engine)?;
-        let heads: BTreeMap<_, _> = entries
-            .iter()
-            .map(|(braid, entry)| {
-                (
-                    *braid,
-                    Head {
-                        g: entry.g,
-                        hash: entry.prev,
-                        ts: entry.ts,
-                    },
-                )
-            })
-            .collect();
-        let doc = Checkpoint {
-            braids: heads,
-            catalog,
-            writer: self.writer_id,
-            prev: self.incumbent_digest()?,
-        };
-        let digest = doc.digest();
-        // The scratch lease names this candidate before the
-        // upload-before-decision window. The successor GETs it at open.
-        record_ckpt_scratch(self.replica.dir(), &digest).map_err(Fault::Io)?;
-        put_create_once(
-            self.replica.store(),
-            &ckpt_mdb_key(self.replica.prefix(), &digest),
-            &bytes,
-        )?;
-        let published = publish_checkpoint(
-            self.replica.store(),
-            self.replica.prefix(),
-            self.replica.codec().braids(),
-            &doc,
-        )?;
-        match &published {
-            Published::Replaced => {
-                let _ = clear_ckpt_scratch(self.replica.dir());
-                // The instant the candidate entered reachable history —
-                // the CAS is the linearization point (50 §3).
-                self.publish_ms = Some(now_ms());
-            }
-            Published::Kept { .. } | Published::Refused(_) => {
-                // The loser deletes its own digest on Kept and every
-                // refused publish.
-                let _ = reclaim_orphan(self.replica.store(), self.replica.prefix(), &digest);
-                let _ = clear_ckpt_scratch(self.replica.dir());
-            }
-        }
-        Ok(published)
-    }
-
-    fn incumbent_digest(&self) -> Result<Option<[u8; 32]>, Fault> {
-        let Some(fetched) = self
-            .replica
-            .store()
-            .get(&manifest_key(self.replica.prefix()))?
-        else {
-            return Ok(None);
-        };
-        Ok(Manifest::parse(&fetched.bytes)
-            .ok()
-            .and_then(|manifest| manifest.checkpoint))
-    }
 }
 
-fn put_create_once<S: ObjectStore>(
+/// The compact→publish transition. Compaction's input is `Settled`.
+/// The loser deletes its own digest on Kept and every refused publish.
+/// The scratch lease names the candidate before the
+/// upload-before-decision window; the successor GETs it at open.
+///
+/// `hold` is the snapshot still that Settled value after compact. The
+/// resident entry proves it; the detached entry is exclusive. `None`
+/// is a torn view — the entry retries.
+pub(crate) fn compact_and_publish<T, S>(
     store: &S,
-    key: &crate::store::StoreKey,
-    bytes: &[u8],
-) -> Result<(), Fault> {
+    prefix: &str,
+    dir: &Path,
+    braids: &Braids,
+    writer_id: u64,
+    db: &Db<T>,
+    entries: &BTreeMap<BraidId, ChainEntry>,
+    scratch: &Path,
+    hold: impl FnOnce() -> bool,
+) -> Result<Option<Published>, Fault>
+where
+    T: Theory + Clone,
+    S: ObjectStore,
+{
+    let bytes = {
+        let scratch = Scratch::new(scratch.to_path_buf());
+        db.compact(&scratch.path).map_err(Fault::Engine)?;
+        fs::read(scratch.path.join(DATA_FILE)).map_err(Fault::Io)?
+    };
+    let catalog = db.catalog_digest().map_err(Fault::Engine)?;
+    if !hold() {
+        return Ok(None);
+    }
+    let heads: BTreeMap<_, _> = entries
+        .iter()
+        .map(|(braid, entry)| {
+            (
+                *braid,
+                Head {
+                    g: entry.g,
+                    hash: entry.prev,
+                    ts: entry.ts,
+                },
+            )
+        })
+        .collect();
+    let prev = match store.get(&manifest_key(prefix))? {
+        Some(fetched) => match Manifest::parse(&fetched.bytes) {
+            Ok(manifest) => manifest.checkpoint,
+            Err(error) => {
+                return Ok(Some(Published::Refused(PublishRefusal::Manifest(error))));
+            }
+        },
+        None => None,
+    };
+    let doc = Checkpoint {
+        braids: heads,
+        catalog,
+        writer: writer_id,
+        prev,
+    };
+    let digest = doc.digest();
+    // The scratch lease names this candidate before the
+    // upload-before-decision window. The successor GETs it at open.
+    record_ckpt_scratch(dir, &digest).map_err(Fault::Io)?;
+    let key = ckpt_mdb_key(prefix, &digest);
     loop {
-        match store.put_create(key, bytes)? {
-            Create::Created(_) => return Ok(()),
-            Create::Ambiguous => match store.get(key)? {
-                Some(existing) if existing.bytes == bytes => return Ok(()),
-                Some(_) => return Ok(()),
-                None => {}
-            },
-            Create::Exists => match store.get(key)? {
-                Some(existing) if existing.bytes == bytes => return Ok(()),
-                Some(_) => return Ok(()),
-                None => {}
-            },
+        match prove_create(store, &key, &bytes, store.put_create(&key, &bytes)?)? {
+            Create::Created(_) | Create::Exists => break,
+            Create::Ambiguous => {}
         }
     }
+    let published = publish_checkpoint(store, prefix, braids, &doc)?;
+    match &published {
+        Published::Replaced => {
+            let _ = clear_ckpt_scratch(dir);
+        }
+        Published::Kept { .. } | Published::Refused(_) => {
+            // The loser deletes its own digest on Kept and every
+            // refused publish.
+            let _ = reclaim_orphan(store, prefix, &digest);
+            let _ = clear_ckpt_scratch(dir);
+        }
+    }
+    Ok(Some(published))
 }
 
 /// Clears `duty_busy` on unwind so a panic cannot freeze the cadence.
