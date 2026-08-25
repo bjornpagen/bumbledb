@@ -19,6 +19,41 @@ interface Interval {
 
 type Value = boolean | bigint | string | Uint8Array | Interval
 
+/** A string cell: well-formed UTF-8 by construction. A lone surrogate cannot enter. */
+declare const wellFormedUtf8Brand: unique symbol
+type WellFormedUtf8 = string & { readonly [wellFormedUtf8Brand]: typeof wellFormedUtf8Brand }
+
+/** Fatal encoder: refuses lone surrogates rather than emitting U+FFFD. */
+function wellFormedUtf8(text: string): WellFormedUtf8 {
+	if (!text.isWellFormed()) {
+		throw errors.new("string cell is not well-formed UTF-8")
+	}
+	return text as WellFormedUtf8
+}
+
+function parseWellFormedUtf8(raw: Uint8Array): WellFormedUtf8 | undefined {
+	const decoded = errors.trySync(function decodeUtf8() {
+		return utf8StrictDecoder.decode(raw)
+	})
+	if (decoded.error) {
+		return undefined
+	}
+	return decoded.data as WellFormedUtf8
+}
+
+function domainCeiling(element: "u64" | "i64"): bigint {
+	return element === "u64" ? U64_MAX : I64_MAX
+}
+
+/** Fixed-width `[start, start + width)`; the domain ceiling is not a value. */
+function fixedInterval(start: bigint, width: bigint, element: "u64" | "i64"): Interval | undefined {
+	const end = start + width
+	if (end <= start || end >= domainCeiling(element)) {
+		return undefined
+	}
+	return { start, end }
+}
+
 /** 20's tag table: the codec's own numbering, normative to the byte. */
 const TAG = {
 	bool: 0,
@@ -72,9 +107,10 @@ function checkAgainst(context: string, type: ValueTypeSpec, value: Value): void 
 			return
 		}
 		case "string": {
-			if (typeof value !== "string" || !value.isWellFormed()) {
+			if (typeof value !== "string") {
 				throw errors.new(`${context}: expected well-formed string`)
 			}
+			wellFormedUtf8(value)
 			return
 		}
 		case "fixedBytes": {
@@ -93,10 +129,11 @@ function checkAgainst(context: string, type: ValueTypeSpec, value: Value): void 
 				throw errors.new(`${context}: interval bounds out of range or empty`)
 			}
 			if (type.width !== undefined) {
-				if (value.end === hi) {
+				const parsed = fixedInterval(value.start, type.width, type.element)
+				if (parsed === undefined) {
 					throw errors.new(`${context}: fixed interval end is the domain ceiling`)
 				}
-				if (value.end - value.start !== type.width) {
+				if (parsed.end !== value.end) {
 					throw errors.new(`${context}: interval width must be ${type.width}`)
 				}
 			}
@@ -124,10 +161,7 @@ function writeTagged(out: ByteWriter, type: ValueTypeSpec, value: Value): void {
 			return
 		}
 		case "string": {
-			const text = value as string
-			if (!text.isWellFormed()) {
-				throw errors.new("string cell is not well-formed UTF-8")
-			}
+			const text = wellFormedUtf8(value as string)
 			const raw = utf8Encoder.encode(text)
 			out.u8(TAG.string)
 			out.u32le(raw.length)
@@ -195,13 +229,11 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 		case "string": {
 			const len = reader.u32le("string length")
 			const raw = reader.bytes(len, "string payload")
-			const decoded = errors.trySync(function decodeUtf8() {
-				return utf8StrictDecoder.decode(raw)
-			})
-			if (decoded.error) {
+			const text = parseWellFormedUtf8(raw)
+			if (text === undefined) {
 				refusal.invalidUtf8()
 			}
-			return decoded.data
+			return text
 		}
 		case "fixedBytes":
 			return reader.bytes(type.len, "fixedBytes payload")
@@ -215,11 +247,11 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 				return { start, end }
 			}
 			const start = type.element === "u64" ? reader.u64le("interval start") : reader.i64le("interval start")
-			const end = start + type.width
-			if (type.element === "u64" ? end >= U64_MAX : end >= I64_MAX) {
+			const parsed = fixedInterval(start, type.width, type.element)
+			if (parsed === undefined) {
 				refusal.intervalOverflow()
 			}
-			return { start, end }
+			return parsed
 		}
 	}
 }
@@ -290,5 +322,15 @@ function writeCanonicalLiteral(out: ByteWriter, type: ValueTypeSpec, value: Valu
 	}
 }
 
-export type { Interval, TaggedRefusal, Value }
-export { checkAgainst, isInterval, readTagged, TAG, valuesEqual, wireTagOf, writeCanonicalLiteral, writeTagged }
+export type { Interval, TaggedRefusal, Value, WellFormedUtf8 }
+export {
+	checkAgainst,
+	isInterval,
+	readTagged,
+	TAG,
+	valuesEqual,
+	wellFormedUtf8,
+	wireTagOf,
+	writeCanonicalLiteral,
+	writeTagged
+}
