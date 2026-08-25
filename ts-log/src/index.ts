@@ -21,6 +21,7 @@ export {
 	ErrChainMismatch,
 	ErrContention,
 	ErrGapDetected,
+	ErrManifestMissing,
 	ErrRefused,
 	ErrReplayDiverged,
 	ErrSpanningCommit,

@@ -116,7 +116,8 @@ of the object file and its parent directory.
 Exported sentinel values on the SDK idiom, checked with `errors.is`,
 never by message strings: `ErrRefused` (typed per cause — batch shape,
 version, fingerprint, manifest shape, checkpoint braid-set drift),
-`ErrSpanningCommit`, `ErrGapDetected`, `ErrReplayDiverged`,
+`ErrManifestMissing` (a replica found no manifest; only the writer
+births a store), `ErrSpanningCommit`, `ErrGapDetected`, `ErrReplayDiverged`,
 `ErrChainMismatch` (cause `"prev" | "slot" |
 "timestamp"`), `ErrContention` (cause `hot-key` or `slot-race`),
 `ErrStore` (the vendor channel, present in every wrapped store
