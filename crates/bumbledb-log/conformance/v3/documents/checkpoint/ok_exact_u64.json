@@ -1,0 +1,17 @@
+{
+  "kind": "checkpoint",
+  "expect": "ok",
+  "schema": "kitchen",
+  "value": {
+    "braids": {
+      "c00000000": {
+        "g": "18446744073709551615",
+        "hash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "ts": "9007199254740993"
+      }
+    },
+    "catalog": "abababababababababababababababababababababababababababababababab",
+    "writer": "9007199254740993",
+    "prev": null
+  }
+}

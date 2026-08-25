@@ -1,0 +1,8 @@
+{
+  "expect": "refusal",
+  "kind": "manifest",
+  "of": "documents/manifest/ok_headed",
+  "op": "truncate",
+  "len": 167,
+  "refusal": "Malformed"
+}

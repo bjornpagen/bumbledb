@@ -1,0 +1,6 @@
+{
+  "kind": "checkpoint",
+  "expect": "refusal",
+  "schema": "kitchen",
+  "refusal": "Version"
+}

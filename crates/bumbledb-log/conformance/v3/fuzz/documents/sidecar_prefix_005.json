@@ -1,0 +1,9 @@
+{
+  "expect": "refusal",
+  "kind": "sidecar",
+  "of": "documents/sidecar/ok_pending",
+  "op": "truncate",
+  "len": 5,
+  "refusal": "Malformed",
+  "schema": "kitchen"
+}

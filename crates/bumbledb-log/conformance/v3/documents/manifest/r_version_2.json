@@ -1,0 +1,5 @@
+{
+  "kind": "manifest",
+  "expect": "refusal",
+  "refusal": "Version"
+}

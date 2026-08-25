@@ -1,0 +1,8 @@
+{
+  "kind": "manifest",
+  "expect": "ok",
+  "value": {
+    "fingerprint": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "checkpoint": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+  }
+}

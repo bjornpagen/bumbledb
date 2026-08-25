@@ -1,0 +1,9 @@
+{
+  "expect": "refusal",
+  "fingerprint": "c00de0a96a8b2741bc96dacedc74936db3dacb498d10d65182b2521eb4b47593",
+  "of": "batch/ok_empty_ops",
+  "op": "truncate",
+  "len": 84,
+  "refusal": "Truncated",
+  "schema": "kitchen"
+}

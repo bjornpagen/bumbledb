@@ -1,0 +1,83 @@
+{
+  "comment": "TS codec fuzz lane mirrors the Rust mutation storm in f9_fuzz.rs. Replay against every listed ok golden. An accepted mutant must re-encode or re-render byte-identically; every refusal is typed and any offset it carries is in bounds.",
+  "prng": {
+    "name": "XorShift64",
+    "next": "x ^= x << 13; x ^= x >> 7; x ^= x << 17; wrapping u64",
+    "seeds": {
+      "batch_soup": "0xf9f90001d00dfeed",
+      "batch_storm": "0xf9f90002cafeb0ba",
+      "document_soup": "0xf9f90003beef5eed",
+      "manifest_storm": "0xf9f900040dd50f00",
+      "checkpoint_storm": "0xf9f90005ca11ab1e",
+      "sidecar_storm": "0xf9f9000700000aaa",
+      "sidecar_soup": "0xf9f9000800000bbb"
+    },
+    "batch_soup_cuts": [
+      0,
+      4,
+      8,
+      40,
+      44,
+      100,
+      104
+    ],
+    "batch_soup_iters": 700,
+    "batch_storm_iters": 2000,
+    "document_soup_iters": 12000,
+    "document_storm_iters": 6000
+  },
+  "operators": [
+    {
+      "id": 0,
+      "name": "byte_flip",
+      "desc": "xor 1..=4 positions with a nonzero byte"
+    },
+    {
+      "id": 2,
+      "name": "truncate",
+      "desc": "keep a random prefix, including empty"
+    },
+    {
+      "id": 3,
+      "name": "insert_chunk",
+      "desc": "insert 1..=17 random bytes at a random index"
+    },
+    {
+      "id": 4,
+      "name": "delete_chunk",
+      "desc": "delete 1..=16 bytes at a random index"
+    },
+    {
+      "id": 5,
+      "name": "splice_u32max",
+      "desc": "overwrite 4 bytes with 0xffffffff LE"
+    }
+  ],
+  "goldens": {
+    "batch": [
+      "batch/ok_all_tags",
+      "batch/ok_empty_ops",
+      "batch/ok_exact_u64",
+      "batch/ok_string_bom",
+      "batch/ok_conflict_classes",
+      "batch/ok_closed_empty",
+      "batch/ok_serial_global"
+    ],
+    "manifest": [
+      "documents/manifest/ok_genesis",
+      "documents/manifest/ok_headed"
+    ],
+    "checkpoint": [
+      "documents/checkpoint/ok_genesis",
+      "documents/checkpoint/ok_linked",
+      "documents/checkpoint/ok_exact_u64",
+      "documents/checkpoint/ok_booking"
+    ],
+    "sidecar": [
+      "documents/sidecar/ok_genesis",
+      "documents/sidecar/ok_pending",
+      "documents/sidecar/ok_exact_u64"
+    ]
+  },
+  "alphabet": "0123456789abcdef\"{}:,nulvig "
+}
