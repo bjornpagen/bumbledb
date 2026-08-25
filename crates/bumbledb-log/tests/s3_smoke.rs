@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bumbledb::SchemaDescriptor;
 use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
@@ -34,10 +35,18 @@ fn missing_required() -> Vec<&'static str> {
         .collect()
 }
 
+/// Pid, clock nanos, and a process-local sequence. Machines and
+/// re-runs cannot share a prefix: seq resets, pid reuses, nanos does
+/// not.
 fn unique_prefix(tag: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     format!(
-        "smoke/{}/{}/{tag}",
+        "smoke/{}/{}/{}/{tag}",
         std::process::id(),
+        nanos,
         PREFIX_SEQ.fetch_add(1, Ordering::Relaxed)
     )
 }
