@@ -142,7 +142,7 @@ function refusalKind(error: Error): string {
 	return cause.kind
 }
 
-function descriptorOf(sidecar: { schema: string; fingerprint?: string }): Descriptor {
+function descriptorOf(sidecar: { schema: string; fingerprint?: string | undefined }): Descriptor {
 	if (sidecar.fingerprint !== undefined) {
 		return pinned(sidecar.schema, sidecar.fingerprint)
 	}
@@ -499,7 +499,10 @@ if (!present) {
 				if (sidecar.expect === "ok") {
 					if (rel.includes("/batch/")) {
 						assert.ok(sidecar.schema !== undefined, `${rel}: schema`)
-						const descriptor = descriptorOf(sidecar)
+						const descriptor = descriptorOf({
+							schema: sidecar.schema,
+							fingerprint: sidecar.fingerprint
+						})
 						const decoded = decodeBatch(descriptor, bytes)
 						const again = encodeBatch(descriptor, decoded.header, decoded.ops)
 						assert.equal(toHex(again), toHex(bytes), `${rel}: accepted mutant is a fixpoint`)
