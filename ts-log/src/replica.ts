@@ -24,7 +24,7 @@ import { ErrGapDetected, ErrReplayDiverged, refuse } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { checkpointJsonKey, checkpointMdbKey, generation, logKey, manifestKey } from "#keys.ts"
 import type { CheckpointFacts } from "#manifest.ts"
-import { parseCheckpoint, parseManifest, renderManifest } from "#manifest.ts"
+import { auditCatalog, parseCheckpoint, parseManifest, renderManifest } from "#manifest.ts"
 import type { Etag, ObjectStore } from "#store.ts"
 import type { Value } from "#value.ts"
 
@@ -138,6 +138,50 @@ function generationOf<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
 	return core.db.read(function readGeneration(instance) {
 		return instance.generation
 	})
+}
+
+function hexOfDigest(raw: unknown): string {
+	if (typeof raw === "string") {
+		return raw
+	}
+	if (raw instanceof Uint8Array) {
+		return toHex(raw)
+	}
+	throw errors.new(`catalogDigest is not a digest: ${typeof raw}`)
+}
+
+/** The opened store's catalog digest. The SDK may expose it on the
+ *  handle or on the read instance; either spelling is the computed claim. */
+function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): string {
+	const handle = core.db as unknown as { catalogDigest?: () => unknown }
+	if (typeof handle.catalogDigest === "function") {
+		return hexOfDigest(handle.catalogDigest())
+	}
+	return core.db.read(function readCatalog(instance) {
+		const carrier = instance as { catalogDigest?: unknown }
+		if (typeof carrier.catalogDigest === "function") {
+			return hexOfDigest(carrier.catalogDigest())
+		}
+		if (typeof carrier.catalogDigest === "string") {
+			return carrier.catalogDigest
+		}
+		throw errors.new("the opened store does not expose catalogDigest")
+	})
+}
+
+/** The local vector equals the published checkpoint vector and no
+ *  pending term is outstanding — the seed/open floor the catalog claim
+ *  is audited against. */
+function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
+	if (core.checkpoint === null || core.pending !== null) {
+		return false
+	}
+	for (const [braid, head] of core.checkpoint.braids) {
+		if (chainEntry(core, braid).g !== head.g) {
+			return false
+		}
+	}
+	return true
 }
 
 function chainSum<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
@@ -423,6 +467,7 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 			if (generation !== sum) {
 				throw errors.new(`checkpoint store opened at generation ${generation}, its vector sums to ${sum}`)
 			}
+			auditCatalog(core.checkpoint, catalogDigestOf(core))
 			await persistSidecar(core)
 			return
 		}
@@ -615,6 +660,9 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 
 	if (coldPending !== null) {
 		await resolveColdPending(core, coldPending)
+	}
+	if (atCheckpointFloor(core)) {
+		auditCatalog(core.checkpoint, catalogDigestOf(core))
 	}
 	await sweepRotations(core)
 	return core
