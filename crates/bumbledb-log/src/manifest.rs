@@ -3,17 +3,20 @@
 //! UTF-8 JSON with a fixed field order, so parse and render are exact
 //! template walks (hand-rolled on purpose: a general JSON reader would
 //! accept re-orderings and whitespace the canon forbids). The manifest
-//! is a pure pointer: every checkpoint fact lives in
-//! `ckpt/{digest}.json` beside the store bytes whose digest names both,
-//! the document's `prev` is proven by the manifest CAS that installs
-//! it, and the mutable CAS surface of the whole protocol is one 64-hex
-//! field. This module also owns the object key layout, so every
-//! consumer spells a key exactly one way.
+//! is a pointer to the head of an immutable Merkle list: every
+//! checkpoint fact lives in `ckpt/{digest}.json` beside the store
+//! bytes that share that digest, the digest is the blake3 of the
+//! document's full bytes including `prev`, and the mutable CAS surface
+//! of the whole protocol is one 64-hex field. This module also owns
+//! the object key layout, so every consumer spells a key exactly one
+//! way.
 
 use std::collections::BTreeMap;
 
 use crate::braids::{BraidId, Braids};
-use crate::store::{Create, ObjectStore, Result as StoreResult, StoreKey, Swap};
+use crate::store::{
+    prove_create, prove_swap, Create, ObjectStore, Result as StoreResult, StoreKey, Swap,
+};
 
 /// The one accepted manifest, checkpoint, and sidecar document version.
 pub const DOC_VERSION: u64 = 3;
@@ -398,6 +401,14 @@ impl Checkpoint {
         })
     }
 
+    /// blake3 of the canonical rendering. `prev` is inside the hash, so
+    /// two documents that differ only in the backlink are different
+    /// objects at different keys.
+    #[must_use]
+    pub fn digest(&self) -> [u8; 32] {
+        *blake3::hash(&self.render()).as_bytes()
+    }
+
     /// The vector sum — the checkpoint order's total order.
     #[must_use]
     pub fn sum(&self) -> u64 {
@@ -432,8 +443,9 @@ pub fn create_manifest<S: ObjectStore>(
 pub enum Published {
     /// The candidate replaced the incumbent pointer.
     Replaced,
-    /// The incumbent's vector sum is at least the candidate's; the
-    /// candidate's objects are gc fodder.
+    /// The incumbent's vector sum is at least the candidate's. The
+    /// candidate is a known-orphan object: addressable by its digest
+    /// and collected as the complement of the reachable spine.
     Kept {
         incumbent: [u8; 32],
     },
@@ -452,25 +464,27 @@ pub enum PublishRefusal {
 
 /// Publishes `candidate` under the checkpoint order: the candidate
 /// replaces the incumbent iff its vector sum is strictly greater; a
-/// `Moved` CAS re-reads and re-applies the order. The candidate's
-/// document is rendered and uploaded inside the loop, so its `prev`
-/// always names the incumbent the winning CAS actually replaced —
-/// proven by the CAS itself, never hoped — and every retained
-/// checkpoint stays reachable from the manifest by the backlink walk.
-/// Termination is structural — every successful swap strictly raises
-/// the incumbent sum.
+/// `Moved` CAS re-reads and re-applies the order. The document is
+/// named by the blake3 of its full bytes, `prev` included, and is
+/// written once with `put_create`; `Exists` is byte-identity. The
+/// manifest points at the head of that immutable list. Termination
+/// is structural — every successful swap strictly raises the
+/// incumbent sum.
 pub fn publish_checkpoint<S: ObjectStore>(
     store: &S,
     prefix: &str,
     braids: &Braids,
-    candidate: [u8; 32],
-    heads: &BTreeMap<BraidId, Head>,
-    catalog: [u8; 32],
-    writer: u64,
+    candidate: &Checkpoint,
 ) -> StoreResult<Published> {
-    let candidate_sum: u64 = heads
-        .values()
-        .fold(0u64, |acc, head| acc.saturating_add(head.g));
+    let bytes = candidate.render();
+    let digest = *blake3::hash(&bytes).as_bytes();
+    let key = ckpt_json_key(prefix, &digest);
+    loop {
+        match prove_create(store, &key, &bytes, store.put_create(&key, &bytes)?)? {
+            Create::Created(_) | Create::Exists => break,
+            Create::Ambiguous => {}
+        }
+    }
     loop {
         let Some(fetched) = store.get(&manifest_key(prefix))? else {
             return Ok(Published::Refused(PublishRefusal::ManifestMissing));
@@ -482,7 +496,7 @@ pub fn publish_checkpoint<S: ObjectStore>(
             }
         };
         if let Some(incumbent) = manifest.checkpoint {
-            if incumbent == candidate {
+            if incumbent == digest {
                 return Ok(Published::Replaced);
             }
             let Some(doc) = store.get(&ckpt_json_key(prefix, &incumbent))? else {
@@ -496,49 +510,23 @@ pub fn publish_checkpoint<S: ObjectStore>(
                     return Ok(Published::Refused(PublishRefusal::Checkpoint(error)));
                 }
             };
-            if candidate_sum <= incumbent_doc.sum() {
+            if candidate.sum() <= incumbent_doc.sum() {
                 return Ok(Published::Kept { incumbent });
             }
         }
-        let doc = Checkpoint {
-            braids: heads.clone(),
-            catalog,
-            writer,
-            prev: manifest.checkpoint,
-        };
-        upsert(store, &ckpt_json_key(prefix, &candidate), &doc.render())?;
         let next = Manifest {
             fingerprint: manifest.fingerprint,
-            checkpoint: Some(candidate),
+            checkpoint: Some(digest),
         };
-        match store.put_swap(&manifest_key(prefix), &next.render(), &fetched.etag)? {
+        let body = next.render();
+        match prove_swap(
+            store,
+            &manifest_key(prefix),
+            &body,
+            store.put_swap(&manifest_key(prefix), &body, &fetched.etag)?,
+        )? {
             Swap::Swapped(_) => return Ok(Published::Replaced),
             Swap::Moved | Swap::Ambiguous => {}
-        }
-    }
-}
-
-/// Writes `bytes` at `key` whatever stands there: create when absent,
-/// byte-equal stands, anything else swaps under the read etag. The one
-/// consumer is the checkpoint document whose `prev` a CAS race
-/// re-renders.
-fn upsert<S: ObjectStore>(store: &S, key: &StoreKey, bytes: &[u8]) -> StoreResult<()> {
-    loop {
-        match store.put_create(key, bytes)? {
-            Create::Created(_) => return Ok(()),
-            Create::Ambiguous => continue,
-            Create::Exists => {
-                let Some(existing) = store.get(key)? else {
-                    continue;
-                };
-                if existing.bytes == bytes {
-                    return Ok(());
-                }
-                match store.put_swap(key, bytes, &existing.etag)? {
-                    Swap::Swapped(_) => return Ok(()),
-                    Swap::Moved | Swap::Ambiguous => {}
-                }
-            }
         }
     }
 }
