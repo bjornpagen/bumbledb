@@ -18,8 +18,11 @@
 //! ```
 //!
 //! `count` is unsigned, so a negative demand is unconstructible.
-//! Counter mutations carry the writer's fencing token (20): a stale
-//! holder's write is the token the store CAS no longer wins.
+//! Exhausted is that draw, not the block increment: a last partial
+//! block still leases when `next + count` fits. Counter mutations
+//! carry the writer's fencing token (20): a stale holder's write is
+//! the token the store CAS no longer wins. A cache-hit `Drawn` is
+//! not a write; a write always names the token it rides.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -28,7 +31,7 @@ use bumbledb::schema::{FieldId, RelationId};
 
 use crate::manifest::Text;
 use crate::store::{
-    prove_create, prove_swap, Create, ObjectStore, Result as StoreResult, StoreKey, Swap,
+    Create, Etag, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create, prove_swap,
 };
 
 /// The lease width: one CAS increment claims this many ids.
@@ -68,30 +71,68 @@ pub enum LeaseRefusal {
 
 /// `Lease.draw(count)`: `OverWidth | Exhausted | Drawn`, plus `Counter`
 /// when the object is not a decimal. `Drawn` carries the fencing token
-/// the counter write rode.
+/// the counter write rode, or the writer's token when the draw was a
+/// cache hit and there was no write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Leased {
     Drawn { range: Range<u64>, token: u64 },
     Refused(LeaseRefusal),
 }
 
-/// Leases one block `[n, n+4096)` for `(relation, field)`: birth via
-/// create-only PUT claiming `[0, 4096)`, otherwise GET + CAS with
-/// unbounded `Moved` retry — every retry is someone else's successful
-/// lease, so the loop always advances globally. `token` is the fencing
-/// token this write carries (20).
+/// A counter mutation: the bytes and the fencing token they ride (20).
+struct Fenced<'a> {
+    bytes: &'a [u8],
+    token: u64,
+}
+
+/// Counter birth. The write carries `token` — a stale holder is the
+/// token the store CAS no longer wins. `Drawn` takes this token, not
+/// a token that skipped the write.
+fn put_create<S: ObjectStore>(
+    store: &S,
+    key: &StoreKey,
+    bytes: &[u8],
+    token: u64,
+) -> StoreResult<(Create, u64)> {
+    let write = Fenced { bytes, token };
+    Ok((store.put_create(key, write.bytes)?, write.token))
+}
+
+/// Counter CAS. The write carries `token` — a stale holder is the
+/// token the store CAS no longer wins. `Drawn` takes this token, not
+/// a token that skipped the write.
+fn put_swap<S: ObjectStore>(
+    store: &S,
+    key: &StoreKey,
+    bytes: &[u8],
+    etag: &Etag,
+    token: u64,
+) -> StoreResult<(Swap, u64)> {
+    let write = Fenced { bytes, token };
+    Ok((store.put_swap(key, write.bytes, etag)?, write.token))
+}
+
+/// Leases one block for `(relation, field)` that can serve `count`:
+/// birth via create-only PUT claiming `[0, 4096)`, otherwise GET + CAS
+/// with unbounded `Moved` retry — every retry is someone else's
+/// successful lease, so the loop always advances globally. `token` is
+/// the fencing token this write carries (20). Exhausted is
+/// `next + count`, decided before the CAS; a last partial block
+/// saturates at `u64::MAX` when the width would overflow but the draw
+/// still fits. `OverWidth` is not this function's refusal.
 pub fn lease_block<S: ObjectStore>(
     store: &S,
     prefix: &str,
     relation: RelationId,
     field: FieldId,
     token: u64,
+    count: u64,
 ) -> StoreResult<Leased> {
     let key = ids_key(prefix, relation, field);
     loop {
         let Some(fetched) = store.get(&key)? else {
             let birth = format!("{LEASE_WIDTH}");
-            let outcome = store.put_create(&key, birth.as_bytes())?;
+            let (outcome, token) = put_create(store, &key, birth.as_bytes(), token)?;
             match prove_create(store, &key, birth.as_bytes(), outcome)? {
                 Create::Created(_) => {
                     return Ok(Leased::Drawn {
@@ -105,16 +146,14 @@ pub fn lease_block<S: ObjectStore>(
         let Some(next) = parse_counter(&fetched.bytes) else {
             return Ok(Leased::Refused(LeaseRefusal::Counter { relation, field }));
         };
-        let Some(end) = next.checked_add(LEASE_WIDTH) else {
+        // 10 §3: Exhausted is `next + count`, not the block width.
+        if next.checked_add(count).is_none() {
             return Ok(Leased::Refused(LeaseRefusal::Exhausted { relation, field }));
-        };
+        }
+        let end = next.saturating_add(LEASE_WIDTH);
         let body = format!("{end}");
-        match prove_swap(
-            store,
-            &key,
-            body.as_bytes(),
-            store.put_swap(&key, body.as_bytes(), &fetched.etag)?,
-        )? {
+        let (outcome, token) = put_swap(store, &key, body.as_bytes(), &fetched.etag, token)?;
+        match prove_swap(store, &key, body.as_bytes(), outcome)? {
             Swap::Swapped(_) => {
                 return Ok(Leased::Drawn {
                     range: next..end,
@@ -160,7 +199,8 @@ impl Leases {
 
     /// Draws `count` contiguous ids, from the cached block when it
     /// holds enough, otherwise from one fresh CAS lease. `count` is
-    /// unsigned.
+    /// unsigned. A cache hit is not a write; a miss writes under
+    /// `self.token`.
     pub fn draw<S: ObjectStore>(
         &mut self,
         store: &S,
@@ -196,7 +236,7 @@ impl Leases {
                 Some(_) => {}
             }
         }
-        match lease_block(store, prefix, relation, field, self.token)? {
+        match lease_block(store, prefix, relation, field, self.token, count)? {
             Leased::Drawn {
                 range: block,
                 token,
@@ -245,6 +285,21 @@ mod tests {
         assert_eq!(token, TOKEN);
 
         let key = ids_key("", REL, FIELD);
+        let after_birth = store.get(&key).unwrap().unwrap();
+        assert_eq!(after_birth.bytes, b"4096");
+        let Leased::Drawn { range, token } = leases.draw(&store, "", REL, FIELD, 2).expect("cache")
+        else {
+            panic!("cache hit is Drawn");
+        };
+        assert_eq!(range, 3..5);
+        assert_eq!(token, TOKEN);
+        let after_hit = store.get(&key).unwrap().unwrap();
+        assert_eq!(
+            after_hit.bytes, after_birth.bytes,
+            "cache-hit Drawn is not a write"
+        );
+        assert_eq!(after_hit.etag, after_birth.etag);
+
         store
             .put_swap(
                 &key,
@@ -259,6 +314,61 @@ mod tests {
                 relation: REL,
                 field: FIELD
             })
+        );
+    }
+
+    #[test]
+    fn exhausted_is_next_plus_count_not_the_block_width() {
+        let store = MemStore::new();
+        let mut birth = Leases::new(TOKEN);
+        assert!(matches!(
+            birth.draw(&store, "", REL, FIELD, 1).expect("birth"),
+            Leased::Drawn { .. }
+        ));
+        let key = ids_key("", REL, FIELD);
+        let next = u64::MAX - 10;
+        store
+            .put_swap(
+                &key,
+                next.to_string().as_bytes(),
+                &store.get(&key).unwrap().unwrap().etag,
+            )
+            .expect("counter just below u64::MAX");
+
+        let mut fits = Leases::new(TOKEN);
+        let Leased::Drawn { range, token } = fits.draw(&store, "", REL, FIELD, 1).expect("fits")
+        else {
+            panic!("next + 1 fits: Drawn, not Exhausted-by-width");
+        };
+        assert_eq!(range, next..next + 1);
+        assert_eq!(token, TOKEN);
+        let after = store.get(&key).unwrap().unwrap();
+        assert_eq!(
+            after.bytes,
+            u64::MAX.to_string().as_bytes(),
+            "the last partial block saturates at u64::MAX"
+        );
+
+        let mut over = Leases::new(TOKEN);
+        store
+            .put_swap(
+                &key,
+                next.to_string().as_bytes(),
+                &store.get(&key).unwrap().unwrap().etag,
+            )
+            .expect("restore next");
+        assert_eq!(
+            over.draw(&store, "", REL, FIELD, 11)
+                .expect("count overflows"),
+            Leased::Refused(LeaseRefusal::Exhausted {
+                relation: REL,
+                field: FIELD
+            })
+        );
+        assert_eq!(
+            store.get(&key).unwrap().unwrap().bytes,
+            next.to_string().as_bytes(),
+            "Exhausted does not mutate the counter"
         );
     }
 
