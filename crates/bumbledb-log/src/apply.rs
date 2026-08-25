@@ -13,6 +13,51 @@ use crate::braids::BraidId;
 use crate::codec::{Codec, DecodeError, OpKind};
 use crate::sidecar::{Chain, ChainEntry};
 
+/// Classification of a pending batch against the occupant and the
+/// generation the store shows. One fold: publisher, fallback, and
+/// open-recovery match the same arms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingFold {
+    /// Occupant bytes are the pending bytes — the slot is ours.
+    Ours,
+    /// Occupant is someone else; the store sits at the vector sum.
+    TheirsUnapplied,
+    /// Occupant is someone else; the store already counts the pending.
+    TheirsApplied,
+    /// No occupant; the store sits at the vector sum.
+    AbsentUnapplied,
+    /// No occupant; the store already counts the pending.
+    AbsentApplied,
+    /// The slot sits at or below the published floor.
+    BelowFloor,
+    /// The store generation is neither the vector sum nor sum+1.
+    Phantom,
+}
+
+/// Re-judges a pending batch against the winner-current occupant and
+/// the generation the store shows. Remaining work is data: the arm
+/// names what is left to publish, clear, or discard.
+#[must_use]
+pub fn fold_pending(
+    sum: u64,
+    generation: u64,
+    occupant: Option<&[u8]>,
+    pending_bytes: &[u8],
+    below_floor: bool,
+) -> PendingFold {
+    if below_floor {
+        return PendingFold::BelowFloor;
+    }
+    match occupant {
+        Some(bytes) if bytes == pending_bytes => PendingFold::Ours,
+        Some(_) if generation == sum => PendingFold::TheirsUnapplied,
+        Some(_) => PendingFold::TheirsApplied,
+        None if generation == sum => PendingFold::AbsentUnapplied,
+        None if generation == sum.saturating_add(1) => PendingFold::AbsentApplied,
+        None => PendingFold::Phantom,
+    }
+}
+
 /// The three proved causes of `ChainMismatch` — one identity, each arm
 /// carrying the two values whose disagreement convicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,24 +111,20 @@ pub enum ApplyRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
     /// The engine commit advanced the generation — the ordinary arm.
-    Advanced {
-        generation: u64,
-    },
+    Advanced { generation: u64 },
     /// The engine took its no-op arm and the identity landed exact: the
     /// legitimate crash-window re-absorption.
-    Absorbed {
-        generation: u64,
-    },
+    Absorbed { generation: u64 },
     Rejected(Violations),
     Refused(ApplyRefusal),
 }
 
 /// Applies the log object at `(braid, slot)` to the store: full decode,
 /// chain discipline, one `db.write` with ops in listed order, then the
-/// state-change instrument. `applied_pending` is the wholeness
-/// identity's last term (1 exactly when a pending batch is applied but
-/// unpublished, 0 otherwise). On `Advanced`/`Absorbed` the in-memory
-/// chain has advanced; persisting it is the caller's step two.
+/// state-change instrument. The identity's last term is a function of
+/// the chain: `Pending` counts one, `Settled` counts none. On
+/// `Advanced`/`Absorbed` the in-memory chain has advanced; persisting
+/// it is the caller's step two.
 pub fn apply<T>(
     db: &Db<T>,
     chain: &mut Chain,
@@ -145,7 +186,11 @@ pub fn apply<T>(
     };
     let generation = committed.generation.value();
 
-    let identity = chain.sum() - position.g + slot + applied_pending;
+    let term = match chain {
+        Chain::Pending { .. } => 1,
+        Chain::Settled { .. } => applied_pending,
+    };
+    let identity = chain.sum() - position.g + slot + term;
     if generation < identity {
         return Ok(Applied::Refused(ApplyRefusal::PublishLawViolation {
             braid,
@@ -156,7 +201,7 @@ pub fn apply<T>(
         }));
     }
 
-    chain.entries.insert(
+    chain.entries_mut().insert(
         braid,
         ChainEntry {
             g: slot,
