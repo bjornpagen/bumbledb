@@ -96,6 +96,85 @@ fn check_query(
     }
 }
 
+/// One light scenario, tiny protocol — a smoke test, not a measurement.
+#[cfg(feature = "obs")]
+#[test]
+fn traced_scenarios_land_the_warm_cold_pair_and_flame() {
+    use crate::harness::Protocol;
+    let root = std::env::temp_dir().join("bumbledb-scenario-trace-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("root");
+    let modes = super::QueryModes {
+        trace_root: Some(root.clone()),
+        alloc: false,
+    };
+    let only = vec!["points".to_owned()];
+    let proto = Protocol {
+        warmups: 1,
+        samples: 2,
+    };
+    let (_markdown, reports) =
+        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("traced scenario run");
+    assert!(!reports.is_empty(), "points scenario has queries");
+    for r in &reports {
+        assert!(r.flame.is_some(), "{}/{}: warm flame", r.scenario, r.name);
+        let dir = root.join("trace").join("scenarios").join(r.scenario);
+        for half in ["warm", "cold"] {
+            let json = dir.join(format!("{}.{half}.json", r.name));
+            let text = std::fs::read_to_string(&json)
+                .unwrap_or_else(|e| panic!("{}: {e}", json.display()));
+            assert!(
+                text.starts_with("[\n") && text.ends_with("\n]\n"),
+                "{} parses as a Chrome array",
+                json.display()
+            );
+            let folded = dir.join(format!("{}.{half}.folded", r.name));
+            let f = std::fs::read_to_string(&folded)
+                .unwrap_or_else(|e| panic!("{}: {e}", folded.display()));
+            for line in f.lines() {
+                let count = line.rsplit(' ').next().expect("a self-ns tail");
+                assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(feature = "obs")]
+#[test]
+fn the_alloc_pass_scopes_a_reading_per_query() {
+    use crate::harness::Protocol;
+    let root = std::env::temp_dir().join("bumbledb-scenario-alloc-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("root");
+    let modes = super::QueryModes {
+        trace_root: None,
+        alloc: true,
+    };
+    let only = vec!["points".to_owned()];
+    let proto = Protocol {
+        warmups: 1,
+        samples: 2,
+    };
+    let (_markdown, reports) =
+        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("alloc scenario run");
+    assert!(!reports.is_empty());
+    for r in &reports {
+        assert!(
+            r.alloc.is_some(),
+            "{}/{}: per-query alloc",
+            r.scenario,
+            r.name
+        );
+        assert!(r.flame.is_none(), "the alloc pass writes no traces");
+    }
+    assert!(
+        !root.join("trace").exists(),
+        "the alloc pass writes no trace tree"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[cfg(feature = "obs")]
 #[test]
 fn a_failed_capture_never_leaves_the_thread_local_capture_live() {

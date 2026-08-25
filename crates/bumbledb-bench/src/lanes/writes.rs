@@ -903,6 +903,112 @@ mod tests {
         assert_eq!(rows[1].get("ghz"), Some(&Value::Null));
     }
 
+    fn lane_rows(out: &Path) -> crate::json::Value {
+        let raw = std::fs::read_to_string(out.join("writes-report.json")).expect("artifact");
+        crate::json::parse(&raw).expect("valid JSON")
+    }
+
+    #[test]
+    fn tiny_ladder_runs_and_verifies_post_state() {
+        let dir = scratch("tiny-ladder");
+        let out = dir.join("out");
+        let code = run(&crate::cli::WritesArgs {
+            scale: Scale::Tiny,
+            seed: 1,
+            dir: dir.clone(),
+            lanes: vec![DurabilityLane::Nosync],
+            batches: vec![1, 10],
+            samples: Some(4),
+            trace: false,
+            out: Some(out.clone()),
+        })
+        .expect("the tiny ladder runs");
+        assert_eq!(code, 0);
+        let parsed = lane_rows(&out);
+        let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
+        assert_eq!(lanes.len(), 1);
+        assert_eq!(lanes[0].get("lane").and_then(Value::as_str), Some("nosync"));
+        assert_eq!(
+            lanes[0].get("sqlite_sync").and_then(Value::as_str),
+            Some("wal+synchronous=OFF")
+        );
+        let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
+        let names: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| row.get("name").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "commit_b1",
+                "commit_b10",
+                "delete_b1",
+                "delete_b10",
+                "insert_stream"
+            ],
+            "the ladder rows, insert_stream last"
+        );
+        for row in rows {
+            for side in ["ours", "theirs"] {
+                let min = row
+                    .get(side)
+                    .and_then(|stats| stats.get("min"))
+                    .and_then(Value::as_f64)
+                    .expect("min");
+                assert!(min > 0.0, "{side} stats must be positive");
+            }
+            for key in [
+                "commits_per_sec_ours",
+                "commits_per_sec_theirs",
+                "rows_per_sec_ours",
+                "rows_per_sec_theirs",
+            ] {
+                let rate = row.get(key).and_then(Value::as_f64).expect("rate");
+                assert!(rate > 0.0, "{key} must be positive");
+            }
+        }
+
+        assert!(!out.join("scratch").exists());
+        assert!(out.join("writes-report.md").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn durable_lane_runs_the_same_contract() {
+        let dir = scratch("durable-lane");
+        let out = dir.join("out");
+        let code = run(&crate::cli::WritesArgs {
+            scale: Scale::Tiny,
+            seed: 1,
+            dir: dir.clone(),
+            lanes: vec![DurabilityLane::Durable],
+            batches: vec![1],
+            samples: Some(4),
+            trace: false,
+            out: Some(out.clone()),
+        })
+        .expect("the durable lane runs");
+        assert_eq!(code, 0);
+        let parsed = lane_rows(&out);
+        let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
+        assert_eq!(lanes.len(), 1);
+        assert_eq!(
+            lanes[0].get("lane").and_then(Value::as_str),
+            Some("durable")
+        );
+        assert_eq!(
+            lanes[0].get("sqlite_sync").and_then(Value::as_str),
+            Some("wal+synchronous=FULL+fullfsync=ON")
+        );
+        let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
+        let names: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| row.get("name").and_then(Value::as_str))
+            .collect();
+        assert_eq!(names, vec!["commit_b1", "delete_b1", "insert_stream"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// same body again REFUSES — and the refusal commits NOTHING (the
     #[test]
     fn delete_refuses_a_missing_row() {
@@ -991,6 +1097,53 @@ mod tests {
             "the divergent count is named: {err}"
         );
         drop((db, conn));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "obs")]
+    #[test]
+    fn traced_writes_land_the_lmdb_commit_span() {
+        let dir = scratch("traced-ladder");
+        let out = dir.join("out");
+        let code = run(&crate::cli::WritesArgs {
+            scale: Scale::Tiny,
+            seed: 1,
+            dir: dir.clone(),
+            lanes: vec![DurabilityLane::Nosync],
+            batches: vec![1],
+            samples: Some(2),
+            trace: true,
+            out: Some(out.clone()),
+        })
+        .expect("the traced tiny ladder runs (post-state gate included)");
+        assert_eq!(code, 0);
+        let md = std::fs::read_to_string(out.join("writes-report.md")).expect("markdown");
+        assert!(md.contains("Flame summaries"), "{md}");
+        let lane_dir = out.join("trace").join("writes").join("nosync");
+        for cell in ["commit_b1", "delete_b1"] {
+            let json_path = lane_dir.join(format!("{cell}.json"));
+            let text = std::fs::read_to_string(&json_path)
+                .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
+            assert!(
+                text.starts_with("[\n") && text.ends_with("\n]\n"),
+                "{} parses as a Chrome array",
+                json_path.display()
+            );
+            let folded = std::fs::read_to_string(lane_dir.join(format!("{cell}.folded")))
+                .expect("the folded twin lands beside the json");
+            assert!(!folded.is_empty(), "a non-degenerate fold: {cell}");
+            for line in folded.lines() {
+                let count = line.rsplit(' ').next().expect("a self-ns tail");
+                assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
+            }
+        }
+        let commit = std::fs::read_to_string(lane_dir.join("commit_b1.json")).expect("commit");
+        assert!(
+            commit.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
+            "the LMDB commit span reaches the commit cell's artifact"
+        );
+
+        assert!(!lane_dir.join("insert_stream.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
