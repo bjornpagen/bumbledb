@@ -18,15 +18,7 @@ import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
 import { generation, logKey } from "#keys.ts"
-import {
-	ZERO_HASH,
-	applyOps,
-	clearPending,
-	coreOf,
-	entriesOf,
-	holdPending,
-	openReplica
-} from "#replica.ts"
+import { applyOps, clearPending, coreOf, entriesOf, holdPending, openReplica, ZERO_HASH } from "#replica.ts"
 import { fsStore } from "#store.ts"
 import { Booking, Ledger, Note } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
@@ -89,7 +81,10 @@ function digestOf(bytes: Uint8Array) {
 	return digest32(new Uint8Array(internalBlake3(bytes)))
 }
 
-async function plantWriterPrefix(mode: Mode, step: WriterStep): Promise<{
+async function plantWriterPrefix(
+	mode: Mode,
+	step: WriterStep
+): Promise<{
 	store: ReturnType<typeof fsStore>
 	prefix: string
 	dir: string
@@ -201,9 +196,7 @@ describe("the writer crash matrix (56)", function suite() {
 			const writer = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
 			const core = coreOf(writer.replica)
 			const descriptor = descriptorOf(Ledger)
-			const ops: Op[] = [
-				{ op: "insert", relation: "Booking", rows: [[9n, 1n, "orphan", { start: 1n, end: 2n }]] }
-			]
+			const ops: Op[] = [{ op: "insert", relation: "Booking", rows: [[9n, 1n, "orphan", { start: 1n, end: 2n }]] }]
 			const bytes = encodeBatch(
 				Ledger,
 				{

@@ -6,7 +6,6 @@
  * a JSON number path are not in the language.
  */
 
-import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
 import { digest32, fromHex, U64_MAX, utf8Encoder } from "#bytes.ts"
 

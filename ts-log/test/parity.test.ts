@@ -356,14 +356,18 @@ if (!present) {
 					assert.ok(fixture.header !== undefined)
 					const header = fixture.header
 					const caught = errors.trySync(function encodeIt() {
-						return encodeBatch(descriptor, {
-							fingerprint: digest32FromHex(fixture.fingerprint),
-							braid: braid(header.braid),
-							braidGen: generation(BigInt(header.braidGen)),
-							prev: digestField(header.prev),
-							writer: BigInt(header.writer),
-							timestamp: BigInt(header.timestamp)
-						}, [])
+						return encodeBatch(
+							descriptor,
+							{
+								fingerprint: digest32FromHex(fixture.fingerprint),
+								braid: braid(header.braid),
+								braidGen: generation(BigInt(header.braidGen)),
+								prev: digestField(header.prev),
+								writer: BigInt(header.writer),
+								timestamp: BigInt(header.timestamp)
+							},
+							[]
+						)
 					})
 					assert.ok(caught.error, `${stem}: expected an encode refusal`)
 					assert.ok(errors.is(caught.error, ErrRefused), `${stem}: expected ErrRefused`)

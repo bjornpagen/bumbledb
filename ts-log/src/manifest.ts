@@ -9,8 +9,8 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import { checkedAddU64, hex32, utf8Encoder } from "#bytes.ts"
 import type { Digest32 } from "#bytes.ts"
+import { checkedAddU64, hex32, utf8Encoder } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braid } from "#descriptor.ts"
 import { DOC_VERSION, Text } from "#document.ts"

@@ -87,7 +87,10 @@ function encodeBatch(theory: Theory, header: EncodeHeader, ops: readonly Op[]): 
 			throw errors.new(`op cites unknown relation ${op.relation}`)
 		}
 		if (relation.closed) {
-			refuse({ kind: "ClosedRelation", op: opIndex, relation: relation.id }, `op ${opIndex} writes closed relation ${relation.name}`)
+			refuse(
+				{ kind: "ClosedRelation", op: opIndex, relation: relation.id },
+				`op ${opIndex} writes closed relation ${relation.name}`
+			)
 		}
 		if (!members.includes(relation.id)) {
 			throw errors.new(`op relation ${op.relation} is outside braid ${header.braid} — a spanning batch is unencodable`)
@@ -235,16 +238,10 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 		const relationId = reader.u32le("op relation")
 		const relation = descriptor.relations[relationId]
 		if (relation === undefined) {
-			refuse(
-				{ kind: "UnknownRelation", op, relation: relationId },
-				`op ${op} cites unknown relation ${relationId}`
-			)
+			refuse({ kind: "UnknownRelation", op, relation: relationId }, `op ${op} cites unknown relation ${relationId}`)
 		}
 		if (relation.closed) {
-			refuse(
-				{ kind: "ClosedRelation", op, relation: relationId },
-				`op ${op} writes closed relation ${relation.name}`
-			)
+			refuse({ kind: "ClosedRelation", op, relation: relationId }, `op ${op} writes closed relation ${relation.name}`)
 		}
 		if (!members.includes(relationId)) {
 			refuse(
