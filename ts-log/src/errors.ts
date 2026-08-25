@@ -89,11 +89,7 @@ type RefusalCause =
 	| { readonly kind: "Arity"; readonly op: number; readonly relation: string; readonly row: number }
 	| { readonly kind: "Malformed"; readonly at: number }
 	| { readonly kind: "Overflow" }
-	| { readonly kind: "ManifestShape" }
 	| { readonly kind: "ManifestVersion"; readonly version: number }
-	| { readonly kind: "SidecarShape" }
-	| { readonly kind: "SidecarVersion"; readonly version: number }
-	| { readonly kind: "CheckpointShape" }
 	| { readonly kind: "CheckpointBraids"; readonly carried: readonly string[]; readonly derived: readonly string[] }
 	| { readonly kind: "CheckpointDigest"; readonly expected: string; readonly computed: string }
 	| { readonly kind: "NoOpSlot"; readonly braid: Braid; readonly slot: Generation; readonly writer: bigint }
