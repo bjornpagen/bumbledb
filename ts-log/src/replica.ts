@@ -80,9 +80,10 @@ interface Core<Rels extends SchemaRelations> {
 	readonly theory: Schema<Rels>
 	readonly descriptor: Descriptor
 	db: Db<Rels>
-	chain: Map<Braid, ChainEntry>
-	pending: Pending | null
-	pendingOps: readonly Op[] | null
+	/** Settled|Pending. Generation is chainGeneration(this.chain) — a
+	 *  total function of the sum. There is no pending Option beside the
+	 *  vector and no 0|1 addend a reader can skip (§30). */
+	chain: Chain
 	manifestEtag: Etag | null
 	checkpoint: CheckpointFacts | null
 	checkpointDigest: string | null
@@ -163,9 +164,13 @@ function zeroChain(descriptor: Descriptor): Map<Braid, ChainEntry> {
 	return chain
 }
 
+function entriesOf<Rels extends SchemaRelations>(core: Core<Rels>): Map<Braid, ChainEntry> {
+	return core.chain.entries as Map<Braid, ChainEntry>
+}
+
 function chainEntry<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid): ChainEntry {
 	const id = braidOf(core.theory, braid)
-	const entry = core.chain.get(id)
+	const entry = entriesOf(core).get(id)
 	if (entry === undefined) {
 		throw errors.new(`braid ${id} is not derived from this theory`)
 	}
@@ -208,29 +213,28 @@ function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): string
 }
 
 function chainOf<Rels extends SchemaRelations>(core: Core<Rels>): Chain {
-	if (core.pending === null) {
-		return { tag: "settled", entries: core.chain }
-	}
-	return { tag: "pending", entries: core.chain, batch: core.pending }
+	return core.chain
 }
 
-function chainSum<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
-	let sum = 0n
-	for (const entry of core.chain.values()) {
-		sum += entry.g
-	}
-	return sum
+/** Pending-arm payload: recorded ops ride on the batch, not a third
+ *  Option beside the vector. Wire Pending is {braid,gen,bytes}; ops is
+ *  the in-memory field of that arm (§30). */
+type HeldBatch = Pending & { readonly ops: readonly Op[] | null }
+
+function holdPending<Rels extends SchemaRelations>(core: Core<Rels>, batch: Pending, ops: readonly Op[] | null): void {
+	const held: HeldBatch = { braid: batch.braid, gen: batch.gen, bytes: batch.bytes, ops }
+	core.chain = { tag: "pending", entries: entriesOf(core), batch: held }
 }
 
-function pendingTerm<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
-	return chainOf(core).tag === "pending" ? 1n : 0n
+function settleHeld<Rels extends SchemaRelations>(core: Core<Rels>): void {
+	core.chain = { tag: "settled", entries: entriesOf(core) }
 }
 
 /** The local vector equals the published checkpoint vector and the
  *  chain is Settled — the seed/open floor the catalog claim is audited
  *  against. */
 function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
-	if (core.checkpoint === null || chainOf(core).tag === "pending") {
+	if (core.checkpoint === null || core.chain.tag === "pending") {
 		return false
 	}
 	for (const [braid, head] of core.checkpoint.braids) {
@@ -246,8 +250,7 @@ async function persistSidecar<Rels extends SchemaRelations>(core: Core<Rels>): P
 }
 
 async function settle<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	core.pending = null
-	core.pendingOps = null
+	settleHeld(core)
 	await persistSidecar(core)
 }
 
@@ -271,11 +274,16 @@ function adoptChain<Rels extends SchemaRelations>(core: Core<Rels>, chain: Chain
 			entries.set(id, { g: generation(0n), prev: ZERO_HASH, ts: 0n })
 		}
 	}
-	core.chain = entries
 	if (chain.tag === "pending") {
-		core.pending = { ...chain.batch, braid: braidOf(core.theory, chain.batch.braid) }
+		const held: HeldBatch = {
+			braid: braidOf(core.theory, chain.batch.braid),
+			gen: chain.batch.gen,
+			bytes: chain.batch.bytes,
+			ops: null
+		}
+		core.chain = { tag: "pending", entries, batch: held }
 	} else {
-		core.pending = null
+		core.chain = { tag: "settled", entries }
 	}
 }
 
@@ -353,9 +361,9 @@ async function applySlot<Rels extends SchemaRelations>(
 		}
 		throw errors.wrap(ErrReplayDiverged, `braid ${braid} slot ${slot} writer ${decoded.header.writer}`)
 	}
-	core.chain.set(braid, { g: slot, prev: blake3Digest(bytes), ts: decoded.header.timestamp })
+	entriesOf(core).set(braid, { g: slot, prev: blake3Digest(bytes), ts: decoded.header.timestamp })
 	await persistSidecar(core)
-	const expected = chainGeneration(chainOf(core))
+	const expected = chainGeneration(core.chain)
 	if (outcome.value.generation < expected) {
 		refuse(
 			{ kind: "NoOpSlot", braid, slot, writer: decoded.header.writer },
@@ -411,7 +419,7 @@ async function stepBraid<Rels extends SchemaRelations>(
 		}
 		return { tag: "tip" }
 	}
-	const chain = chainOf(core)
+	const chain = core.chain
 	if (chain.tag === "pending" && id === chain.batch.braid && next === chain.batch.gen) {
 		if (!bytesEqual(fetched.bytes, chain.batch.bytes)) {
 			return { tag: "reseed", cause: "lost-pending-fork" }
@@ -476,27 +484,12 @@ async function runPass<Rels extends SchemaRelations>(
 	return { tag: "advanced", vector: vectorOf(core) }
 }
 
-async function catchUpBraid<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	braid: Braid,
-	phase: ApplyPhase
-): Promise<"tip" | "discard"> {
-	const step = await stepBraid(core, braid, phase)
-	if (step.tag === "tip" || step.tag === "wedged") {
-		return "tip"
-	}
-	if (step.tag === "reseed") {
-		return "discard"
-	}
-	return "tip"
-}
-
 function allBraids<Rels extends SchemaRelations>(core: Core<Rels>): Braid[] {
 	return [...core.descriptor.braidMembers.keys()]
 }
 
 function wholenessHolds<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
-	return generationOf(core) === chainGeneration(chainOf(core))
+	return generationOf(core) === chainGeneration(core.chain)
 }
 
 async function adoptManifest<Rels extends SchemaRelations>(
@@ -555,7 +548,8 @@ async function refreshManifest<Rels extends SchemaRelations>(core: Core<Rels>): 
 }
 
 /** Bootstraps a fresh local store: from the current checkpoint when one
- *  exists, else `Db.create` at the zero vector. */
+ *  exists, else `Db.create` at the zero vector. Always holds Settled —
+ *  a prior Pending arm cannot survive beside the new vector. */
 async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	core.storeName = freshStoreName()
 	const target = storePath(core)
@@ -580,19 +574,20 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 			await fs.mkdir(target, { recursive: true })
 			await fs.writeFile(path.join(target, "data.mdb"), mdb.bytes)
 			core.db = await SdkDb.open(target, core.theory)
-			core.chain = new Map(
-				[...core.checkpoint.braids.entries()].map(function seed([raw, head]) {
-					const braid = braidOf(core.theory, raw)
-					return [braid, { g: head.g, prev: digest32FromHex(head.hash), ts: head.ts }] as const
-				})
-			)
-			let sum = 0n
-			for (const head of core.checkpoint.braids.values()) {
-				sum += head.g
+			core.chain = {
+				tag: "settled",
+				entries: new Map(
+					[...core.checkpoint.braids.entries()].map(function seed([raw, head]) {
+						const braid = braidOf(core.theory, raw)
+						return [braid, { g: head.g, prev: digest32FromHex(head.hash), ts: head.ts }] as const
+					})
+				)
 			}
 			const opened = generationOf(core)
-			if (opened !== sum) {
-				throw errors.new(`checkpoint store opened at generation ${opened}, its vector sums to ${sum}`)
+			if (opened !== chainGeneration(core.chain)) {
+				throw errors.new(
+					`checkpoint store opened at generation ${opened}, chain generation is ${chainGeneration(core.chain)}`
+				)
 			}
 			auditCatalog(core.checkpoint, catalogDigestOf(core))
 			core.provenance = { tag: "checkpoint-seeded", catalog: core.checkpointDigest }
@@ -605,7 +600,7 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 		throw errors.new("the theory's ground axioms were rejected at bootstrap")
 	}
 	core.db = created.value
-	core.chain = zeroChain(core.descriptor)
+	core.chain = { tag: "settled", entries: zeroChain(core.descriptor) }
 	core.provenance = { tag: "bootstrapped" }
 	await persistSidecar(core)
 }
@@ -631,7 +626,9 @@ function screamOf(context: string): { attempt(signature: string): void } {
 
 /** The disposable law: the directory is cache, never truth. The local
  *  LMDB path rotates because the engine has no close verb — the old
- *  environment is left for GC while the fresh pull takes a new path. */
+ *  environment is left for GC while the fresh pull takes a new path.
+ *  initializeStore writes Settled, so the open-identity is
+ *  chainGeneration(core.chain) — there is no addend a reader can skip. */
 async function discardAndReopen<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	const scream = screamOf("replica discard-and-re-pull")
 	for (;;) {
@@ -647,7 +644,7 @@ async function discardAndReopen<Rels extends SchemaRelations>(core: Core<Rels>):
 		if (outcome.tag === "refused") {
 			throw errors.wrap(ErrRefused, outcome.detail)
 		}
-		if (generationOf(core) === chainSum(core)) {
+		if (generationOf(core) === chainGeneration(core.chain)) {
 			return
 		}
 		scream.attempt("wholeness")
@@ -696,7 +693,7 @@ async function sweepRotations<Rels extends SchemaRelations>(core: Core<Rels>): P
  * so generation(chain) accounts for the unpublished apply.
  */
 async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	const chain = chainOf(core)
+	const chain = core.chain
 	if (chain.tag === "settled") {
 		return
 	}
@@ -707,17 +704,19 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 		await settle(core)
 		return
 	}
-	const before = generationOf(core)
 	const outcome = applyOps(core, decoded.data.ops)
 	if (outcome.tag === "rejected") {
 		await settle(core)
 		return
 	}
-	if (outcome.value.generation === before && before === chainSum(core)) {
+	// Store matches chainGeneration of the held Pending (sum+1) when the
+	// apply is in the db — just now, or already. A born-no-op leaves the
+	// store at the Settled generation, so the identity fails and we settle.
+	if (generationOf(core) !== chainGeneration(core.chain)) {
 		await settle(core)
 		return
 	}
-	core.pendingOps = decoded.data.ops
+	holdPending(core, chain.batch, decoded.data.ops)
 }
 
 /**
@@ -740,7 +739,7 @@ async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>
 		return
 	}
 	const slot = decoded.data.header.braidGen
-	if (core.chain.has(braid) && chainEntry(core, braid).g >= slot) {
+	if (entriesOf(core).has(braid) && chainEntry(core, braid).g >= slot) {
 		const published = await core.store.get(logKey(core.prefix, braid, slot))
 		if (published !== null && bytesEqual(published.bytes, pending.bytes)) {
 			return
@@ -749,8 +748,7 @@ async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>
 	const before = generationOf(core)
 	const outcome = applyOps(core, decoded.data.ops)
 	if (outcome.tag === "accepted" && outcome.value.generation > before) {
-		core.pending = { ...pending, braid }
-		core.pendingOps = decoded.data.ops
+		holdPending(core, { ...pending, braid }, decoded.data.ops)
 		await readdressPending(core, decoded.data.ops, decoded.data.header.writer)
 	}
 }
@@ -764,9 +762,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		theory: options.theory,
 		descriptor,
 		db: undefined as unknown as Db<Rels>,
-		chain: zeroChain(descriptor),
-		pending: null,
-		pendingOps: null,
+		chain: { tag: "settled", entries: zeroChain(descriptor) },
 		manifestEtag: null,
 		checkpoint: null,
 		checkpointDigest: null,
@@ -825,7 +821,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 
 	const outcome = await runPass(core, allBraids(core), "open")
 	if (outcome.tag === "reseed" || outcome.tag === "refused" || !wholenessHolds(core)) {
-		coldPending = core.pending ?? coldPending
+		coldPending = core.chain.tag === "pending" ? core.chain.batch : coldPending
 		await discardAndReopen(core)
 	}
 
@@ -846,7 +842,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
  * at the fresh tip.
  */
 async function repairDiscard<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	const coldPending = core.pending
+	const coldPending = core.chain.tag === "pending" ? core.chain.batch : null
 	await discardAndReopen(core)
 	if (coldPending !== null) {
 		await resolveColdPending(core, coldPending)
@@ -890,8 +886,7 @@ async function readdressPending<Rels extends SchemaRelations>(
 		},
 		ops
 	)
-	core.pending = { braid, gen: generation(entry.g + 1n), bytes }
-	core.pendingOps = ops
+	holdPending(core, { braid, gen: generation(entry.g + 1n), bytes }, ops)
 	await persistSidecar(core)
 }
 
@@ -901,7 +896,7 @@ function maxBigint(a: bigint, b: bigint): bigint {
 
 function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<Braid, Generation> {
 	const vector = new Map<Braid, Generation>()
-	for (const [id, entry] of core.chain) {
+	for (const [id, entry] of core.chain.entries) {
 		vector.set(id, entry.g)
 	}
 	return vector
@@ -987,17 +982,15 @@ export {
 	applyOps,
 	applySlot,
 	blake3Hex,
-	catchUpBraid,
 	chainEntry,
 	chainOf,
-	chainSum,
 	clearPending,
 	coreOf,
 	discardAndReopen,
 	generationOf,
+	holdPending,
 	maxBigint,
 	openReplica,
-	pendingTerm,
 	persistSidecar,
 	readdressPending,
 	vectorOf,
