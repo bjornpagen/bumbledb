@@ -9,6 +9,7 @@ use bumbledb::Violations;
 
 use crate::braids::BraidId;
 use crate::codec::{ByteSink, Op, append_value};
+use crate::sidecar::Chain;
 
 use super::{
     Core, DRAIN_MAX_BYTES, DRAIN_MAX_WRITES, Durability, Error, Inner, Live, ObjectStore, Result,
@@ -159,7 +160,7 @@ where
             fail_all(&picked, Error::Wedged { braid });
             return;
         }
-        if core.chain.pending.is_some()
+        if matches!(core.chain, Chain::Pending { .. })
             && let Err(error) = self.resolve_backlog(core, None, &mut Live::default())
         {
             fail_all(&picked, error);
@@ -259,18 +260,17 @@ where
     /// accumulate `JoinHandle`s.
     fn reap(&self) {
         let mut threads = lock(&self.threads);
-        for handle in threads.extract_if(.., std::thread::JoinHandle::is_finished) {
+        for handle in threads.extract_if(.., |handle| handle.is_finished()) {
             let _ = handle.join();
         }
     }
 
     fn publisher(self: &Arc<Self>, bytes: &[u8], segments: &[Vec<Op>]) -> Publisher {
         let mut core = lock(&self.core);
-        let matches = core
-            .chain
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.bytes == bytes);
+        let matches = match &core.chain {
+            Chain::Pending { batch, .. } => batch.bytes == bytes,
+            Chain::Settled { .. } => false,
+        };
         if matches {
             Publisher::Ran(self.resolve_backlog(&mut core, Some(segments), &mut Live::default()))
         } else {

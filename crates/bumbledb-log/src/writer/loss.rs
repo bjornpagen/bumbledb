@@ -7,6 +7,7 @@ use bumbledb::{Value, Violations};
 
 use crate::braids::BraidId;
 use crate::codec::MAGIC;
+use crate::sidecar::Chain;
 
 use super::{
     AckMode, ContentionCause, Core, Deposition, Inner, ObjectStore, Result, StepHook, Theory,
@@ -73,7 +74,10 @@ where
             });
             core.ack = AckMode::Published;
         }
-        let carried = core.chain.pending.clone();
+        let carried = match &core.chain {
+            Chain::Pending { batch, .. } => Some(batch.clone()),
+            Chain::Settled { .. } => None,
+        };
         self.re_establish(core, carried)
     }
 
