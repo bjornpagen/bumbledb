@@ -1,9 +1,11 @@
 /**
  * Little-endian byte primitives shared by the codec and the
- * fingerprint mirror. Every multi-byte integer on the batch wire
- * is little-endian; the fingerprint's canonical literal encoding is the
- * engine's big-endian order-preserving form — both live here so no third
- * spelling can appear.
+ * fingerprint mirror, plus the hex grammar every document digest
+ * walks. Every multi-byte integer on the batch wire is little-endian;
+ * the fingerprint's canonical literal encoding is the engine's
+ * big-endian order-preserving form; a digest is 32 bytes, rendered as
+ * 64 lowercase hex characters. Integer order and hex width live here
+ * so no third spelling can appear.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -12,6 +14,12 @@ const U64_MAX = 0xffffffffffffffffn
 const I64_MIN = -0x8000000000000000n
 const I64_MAX = 0x7fffffffffffffffn
 const I64_SIGN_BIT = 0x8000000000000000n
+
+const utf8Encoder = new TextEncoder()
+const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+
+declare const digest32Brand: unique symbol
+type Digest32 = Uint8Array & { readonly [digest32Brand]: typeof digest32Brand }
 
 class ByteWriter {
 	private buf: Uint8Array
@@ -44,6 +52,10 @@ class ByteWriter {
 		this.grow(raw.length)
 		this.buf.set(raw, this.len)
 		this.len += raw.length
+	}
+
+	array32(value: Digest32): void {
+		this.bytes(value)
 	}
 
 	u16le(value: number): void {
@@ -148,6 +160,10 @@ class ByteReader {
 		return new Uint8Array(this.take(count, what))
 	}
 
+	array32(what: string): Digest32 {
+		return digest32(this.take(32, what))
+	}
+
 	u16le(what: string): number {
 		const raw = this.take(2, what)
 		return (raw[0] ?? 0) | ((raw[1] ?? 0) << 8)
@@ -198,6 +214,16 @@ function bytesCompare(a: Uint8Array, b: Uint8Array): number {
 
 const HEX_DIGITS = "0123456789abcdef"
 
+function hexNibble(byte: number): number | undefined {
+	if (byte >= 0x30 && byte <= 0x39) {
+		return byte - 0x30
+	}
+	if (byte >= 0x61 && byte <= 0x66) {
+		return byte - 0x61 + 10
+	}
+	return undefined
+}
+
 function toHex(bytes: Uint8Array): string {
 	let out = ""
 	for (const byte of bytes) {
@@ -208,29 +234,34 @@ function toHex(bytes: Uint8Array): string {
 }
 
 function fromHex(hex: string): Uint8Array {
-	if (hex.length % 2 !== 0 || /[^0-9a-f]/.test(hex)) {
+	const raw = utf8Encoder.encode(hex)
+	if (raw.length % 2 !== 0) {
 		throw errors.new(`not lowercase hex: ${hex}`)
 	}
-	const out = new Uint8Array(hex.length / 2)
-	for (let i = 0; i < out.length; i++) {
-		const hi = HEX_DIGITS.indexOf(hex[i * 2] ?? "")
-		const lo = HEX_DIGITS.indexOf(hex[i * 2 + 1] ?? "")
-		if (hi < 0 || lo < 0) {
+	const out = new Uint8Array(raw.length / 2)
+	for (let i = 0, j = 0; i < raw.length; i += 2, j++) {
+		const hiByte = raw[i]
+		const loByte = raw[i + 1]
+		if (hiByte === undefined || loByte === undefined) {
 			throw errors.new(`not lowercase hex: ${hex}`)
 		}
-		out[i] = (hi << 4) | lo
+		const hi = hexNibble(hiByte)
+		const lo = hexNibble(loByte)
+		if (hi === undefined || lo === undefined) {
+			throw errors.new(`not lowercase hex: ${hex}`)
+		}
+		out[j] = (hi << 4) | lo
 	}
 	return out
 }
-
-declare const digest32Brand: unique symbol
-type Digest32 = Uint8Array & { readonly [digest32Brand]: typeof digest32Brand }
 
 function digest32(bytes: Uint8Array): Digest32 {
 	if (bytes.length !== 32) {
 		throw errors.new(`digest is not 32 bytes: ${bytes.length}`)
 	}
-	return bytes as Digest32
+	const out = new Uint8Array(32)
+	out.set(bytes)
+	return out as Digest32
 }
 
 function digest32FromHex(hex: string): Digest32 {
@@ -250,9 +281,6 @@ function checkedAddU64(a: bigint, b: bigint): bigint | undefined {
 	const sum = a + b
 	return sum > U64_MAX ? undefined : sum
 }
-
-const utf8Encoder = new TextEncoder()
-const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 export type { Digest32 }
 export {
