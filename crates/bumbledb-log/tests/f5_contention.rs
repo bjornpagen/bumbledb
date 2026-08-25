@@ -4,7 +4,7 @@
 //! gap-free with each slot created once, every `prev` hash verified,
 //! every acked commit appearing exactly once, all replicas converging
 //! on `catalog_digest`, and the wholeness identity
-//! `generation == Σ vector + |pending|` asserted on every store — the
+//! `generation ≡ generation(chain)` asserted on every store — the
 //! invariant the loss path must never bend. A loss whose effects the
 //! winner already performed re-judges to the engine's net no-op and
 //! lands `Accepted` at the current generation with nothing published;
@@ -199,7 +199,7 @@ fn open_at(root: PathBuf, dir: &Path, writer_id: u64) -> Writer<SchemaDescriptor
     open_writer(FsStore::new(root), dir, writer_id)
 }
 
-/// The wholeness identity `generation == Σ vector + |pending|` — the
+/// The wholeness identity `generation ≡ generation(chain)` — the
 /// invariant the loss path must never bend, asserted on every
 /// writer after every fixture.
 fn assert_whole<S, H>(writer: &Writer<SchemaDescriptor, S, H>, context: &str)
@@ -208,12 +208,10 @@ where
     H: StepHook + 'static,
 {
     let generation = writer.with_db(|db| db.generation().expect("generation").value());
-    let sum: u64 = writer.vector().values().sum();
-    let pending = u64::from(writer.backlog().is_some());
     assert_eq!(
         generation,
-        sum + pending,
-        "the wholeness identity on {context}"
+        writer.chain().generation(),
+        "generation ≡ generation(chain) on {context}"
     );
 }
 

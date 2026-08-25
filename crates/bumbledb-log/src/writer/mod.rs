@@ -295,8 +295,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// The current checkpoint pointer and its parsed document.
 pub(crate) type Floor = Option<([u8; 32], Checkpoint)>;
 
+/// Presence of the local store. Access matches this sum;
+/// `Unmounted` refuses — a missing store is not a pointer.
+pub(crate) enum WriterState<T: Theory + Clone> {
+    Mounted { db: Arc<Db<T>> },
+    Unmounted,
+}
+
 pub(crate) struct Core<T: Theory + Clone> {
-    pub(crate) db: Option<Arc<Db<T>>>,
+    /// Mounted holds the engine store; Unmounted is the arm access
+    /// refuses.
+    pub(crate) db: WriterState<T>,
     pub(crate) chain: Chain,
     pub(crate) floor: Floor,
     pub(crate) wedged: BTreeMap<BraidId, Corruption>,
@@ -310,14 +319,16 @@ pub(crate) struct Core<T: Theory + Clone> {
 }
 
 impl<T: Theory + Clone> Core<T> {
-    pub(crate) fn db(&self) -> &Db<T> {
-        self.db
-            .as_deref()
-            .expect("an established writer holds a store")
+    /// Unmounted refuses; access never dereferences a missing store.
+    pub(crate) fn db(&self) -> Result<&Db<T>> {
+        match &self.db {
+            WriterState::Mounted { db } => Ok(db),
+            WriterState::Unmounted => Err(Error::Refused(OpenRefusal::Unmounted)),
+        }
     }
 
-    pub(crate) fn generation(&self) -> std::result::Result<u64, Fault> {
-        Ok(self.db().generation().map_err(Fault::Engine)?.value())
+    pub(crate) fn generation(&self) -> Result<u64> {
+        Ok(self.db()?.generation().map_err(Fault::Engine)?.value())
     }
 }
 
@@ -490,7 +501,7 @@ where
             maps,
             queues,
             core: Mutex::new(Core {
-                db: None,
+                db: WriterState::Unmounted,
                 chain: Chain::Settled {
                     entries: BTreeMap::new(),
                 },
@@ -613,9 +624,10 @@ where
 
     /// Read access to the engine's own surface — the store the writer
     /// serves reads from, current as of the last drained commit.
-    pub fn with_db<R>(&self, f: impl FnOnce(&Db<T>) -> R) -> R {
+    /// Unmounted refuses; access never dereferences a missing store.
+    pub fn with_db<R>(&self, f: impl FnOnce(&Db<T>) -> R) -> Result<R> {
         let core = lock(&self.inner.core);
-        f(core.db())
+        Ok(f(core.db()?))
     }
 
     /// The handle's role. A writer births the store; a replica
@@ -629,6 +641,12 @@ where
     #[must_use]
     pub fn vector(&self) -> Vector {
         lock(&self.inner.core).chain.vector()
+    }
+
+    /// The chain the store must match: `generation ≡ generation(chain)`.
+    #[must_use]
+    pub fn chain(&self) -> Chain {
+        lock(&self.inner.core).chain.clone()
     }
 
     /// Losses since open. A loss and a re-judgment are the same event
