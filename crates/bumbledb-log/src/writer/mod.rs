@@ -32,7 +32,7 @@ pub(crate) use drain::{Request, Resolved, Waiter};
 pub(crate) use loss::Live;
 pub(crate) use pending::PendingArm;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -119,6 +119,15 @@ pub enum BraidOutcome {
 pub enum AckMode {
     Published,
     Local,
+}
+
+/// Who holds the prefix. Role is a field on the handle, not an
+/// accident of which `open` was called: only a writer births a
+/// store; a replica that finds no manifest refuses `ManifestMissing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Writer,
+    Replica,
 }
 
 /// Writer construction knobs: the identity and the ack mode.
@@ -321,6 +330,7 @@ pub(crate) struct Inner<T: Theory + Clone, S: ObjectStore, H: StepHook> {
     pub(crate) schema: Schema,
     pub(crate) fingerprint: [u8; 32],
     pub(crate) writer_id: u64,
+    pub(crate) role: Role,
     pub(crate) hook: H,
     pub(crate) losses: AtomicU64,
     pub(crate) leases: Mutex<Leases>,
@@ -337,10 +347,58 @@ pub enum WriterOpened<T: Theory + Clone, S: ObjectStore, H: StepHook = NoFaults>
     Refused(OpenRefusal),
 }
 
-/// The writer handle. Clones of the inner state ride the detached
-/// publisher and checkpoint-duty threads; `quiesce` joins them.
+/// The writer handle. Role is `Role::Writer` — this handle births
+/// the store when the manifest is absent. Clones of the inner state
+/// ride the detached publisher and checkpoint-duty threads; `quiesce`
+/// joins them.
 pub struct Writer<T: Theory + Clone, S: ObjectStore, H: StepHook = NoFaults> {
     inner: Arc<Inner<T, S, H>>,
+}
+
+/// The legible scream of an unbounded repair loop: a warning every
+/// eighth attempt naming the current signature, and an alarm the
+/// moment a previously-seen signature recurs. The scream tracks the
+/// *set* of recent signatures, not the last one, so an A,B,A,B loop
+/// trips on the first recurrence of either.
+pub(crate) struct Scream {
+    context: &'static str,
+    seen: BTreeSet<&'static str>,
+    alarmed: BTreeSet<&'static str>,
+    attempts: u64,
+}
+
+impl Scream {
+    const WARN_EVERY: u64 = 8;
+
+    pub(crate) fn new(context: &'static str) -> Self {
+        Self {
+            context,
+            seen: BTreeSet::new(),
+            alarmed: BTreeSet::new(),
+            attempts: 0,
+        }
+    }
+
+    /// Records one repair attempt. Returns whether this attempt
+    /// tripped the alarm for a recurring signature.
+    pub(crate) fn attempt(&mut self, signature: &'static str) -> bool {
+        self.attempts += 1;
+        let recurred = !self.seen.insert(signature);
+        let alarmed = recurred && self.alarmed.insert(signature);
+        if alarmed {
+            eprintln!(
+                "bumbledb-log alarm: {} repair signature recurs: {signature}",
+                self.context
+            );
+        }
+        if self.attempts.is_multiple_of(Self::WARN_EVERY) {
+            eprintln!(
+                "bumbledb-log warning: {} repair attempt {}: {signature}",
+                self.context, self.attempts
+            );
+        }
+        alarmed
+    }
 }
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -390,18 +448,10 @@ where
         let descriptor: SchemaDescriptor = theory.clone().descriptor();
         let maps = schema_maps(&descriptor);
         let store = Arc::new(store);
-
-        if store
-            .get(&manifest_key(prefix))
-            .map_err(|err| Error::Fault(Fault::Store(err)))?
-            .is_none()
-        {
-            let manifest = Manifest {
-                fingerprint,
-                checkpoint: None,
-            };
-            let _ = create_manifest(store.as_ref(), prefix, &manifest)
-                .map_err(|err| Error::Fault(Fault::Store(err)))?;
+        let role = Role::Writer;
+        match role {
+            Role::Writer => Self::birth_store(store.as_ref(), prefix, fingerprint)?,
+            Role::Replica => {}
         }
 
         let queues: BTreeMap<BraidId, Mutex<VecDeque<Request>>> = codec
@@ -420,16 +470,16 @@ where
             schema,
             fingerprint,
             writer_id: options.writer_id,
+            role,
             hook,
             losses: AtomicU64::new(0),
-            leases: Mutex::new(Leases::new()),
+            leases: Mutex::new(Leases::new(options.writer_id)),
             maps,
             queues,
             core: Mutex::new(Core {
                 db: None,
-                chain: Chain {
+                chain: Chain::Settled {
                     entries: BTreeMap::new(),
-                    pending: None,
                 },
                 floor: None,
                 wedged: BTreeMap::new(),
@@ -450,7 +500,7 @@ where
             if let Some(refusal) = inner.open_establish(&mut core)? {
                 return Ok(WriterOpened::Refused(refusal));
             }
-            if core.chain.pending.is_some() {
+            if matches!(core.chain, Chain::Pending { .. }) {
                 match inner.resolve_backlog(&mut core, None, &mut Live::default()) {
                     Ok(()) | Err(Error::Contention { .. }) => {}
                     Err(error) => return Err(error),
@@ -458,6 +508,24 @@ where
             }
         }
         Ok(WriterOpened::Ready(Self { inner }))
+    }
+
+    /// Births the prefix when the manifest is absent. Only a writer
+    /// calls this; a replica refuses `ManifestMissing` instead.
+    fn birth_store(store: &S, prefix: &str, fingerprint: [u8; 32]) -> Result<()> {
+        if store
+            .get(&manifest_key(prefix))
+            .map_err(|err| Error::Fault(Fault::Store(err)))?
+            .is_none()
+        {
+            let manifest = Manifest {
+                fingerprint,
+                checkpoint: None,
+            };
+            let _ = create_manifest(store, prefix, &manifest)
+                .map_err(|err| Error::Fault(Fault::Store(err)))?;
+        }
+        Ok(())
     }
 
     /// Runs `body` against a fresh batch and commits the recorded ops
@@ -537,6 +605,13 @@ where
         f(core.db())
     }
 
+    /// The handle's role. A writer births the store; a replica
+    /// refuses an absent manifest.
+    #[must_use]
+    pub fn role(&self) -> Role {
+        self.inner.role
+    }
+
     /// The writer's vector: per-braid applied counts.
     #[must_use]
     pub fn vector(&self) -> Vector {
@@ -562,11 +637,10 @@ where
     /// commit.
     #[must_use]
     pub fn backlog(&self) -> Option<BraidId> {
-        lock(&self.inner.core)
-            .chain
-            .pending
-            .as_ref()
-            .map(|pending| pending.braid)
+        match &lock(&self.inner.core).chain {
+            Chain::Pending { batch, .. } => Some(batch.braid),
+            Chain::Settled { .. } => None,
+        }
     }
 
     /// Braids wedged read-only by corruption-class verdicts.
@@ -705,5 +779,29 @@ where
             StepControl::Continue => Ok(()),
             StepControl::Crash => Err(Error::InjectedCrash { step }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Scream;
+
+    #[test]
+    fn scream_alarms_on_first_recurrence_in_the_set() {
+        let mut scream = Scream::new("test");
+        assert!(!scream.attempt("A"));
+        assert!(!scream.attempt("B"));
+        assert!(scream.attempt("A"));
+        assert!(scream.attempt("B"));
+        assert!(!scream.attempt("A"));
+        assert!(!scream.attempt("C"));
+    }
+
+    #[test]
+    fn scream_alarms_on_consecutive_repeat() {
+        let mut scream = Scream::new("test");
+        assert!(!scream.attempt("A"));
+        assert!(scream.attempt("A"));
+        assert!(!scream.attempt("A"));
     }
 }
