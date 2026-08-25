@@ -92,8 +92,13 @@ function checkAgainst(context: string, type: ValueTypeSpec, value: Value): void 
 			if (value.start < lo || value.end > hi || value.start >= value.end) {
 				throw errors.new(`${context}: interval bounds out of range or empty`)
 			}
-			if (type.width !== undefined && value.end - value.start !== type.width) {
-				throw errors.new(`${context}: interval width must be ${type.width}`)
+			if (type.width !== undefined) {
+				if (value.end === hi) {
+					throw errors.new(`${context}: fixed interval end is the domain ceiling`)
+				}
+				if (value.end - value.start !== type.width) {
+					throw errors.new(`${context}: interval width must be ${type.width}`)
+				}
 			}
 			return
 		}
@@ -119,7 +124,11 @@ function writeTagged(out: ByteWriter, type: ValueTypeSpec, value: Value): void {
 			return
 		}
 		case "string": {
-			const raw = utf8Encoder.encode(value as string)
+			const text = value as string
+			if (!text.isWellFormed()) {
+				throw errors.new("string cell is not well-formed UTF-8")
+			}
+			const raw = utf8Encoder.encode(text)
 			out.u8(TAG.string)
 			out.u32le(raw.length)
 			out.bytes(raw)
@@ -207,7 +216,7 @@ function readTagged(reader: ByteReader, type: ValueTypeSpec, refusal: TaggedRefu
 			}
 			const start = type.element === "u64" ? reader.u64le("interval start") : reader.i64le("interval start")
 			const end = start + type.width
-			if (type.element === "u64" ? end > U64_MAX : end > I64_MAX) {
+			if (type.element === "u64" ? end >= U64_MAX : end >= I64_MAX) {
 				refusal.intervalOverflow()
 			}
 			return { start, end }

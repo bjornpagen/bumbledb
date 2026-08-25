@@ -14,7 +14,7 @@ function sourceOf(name: string): string {
  *  store verb on some path. */
 describe("the temporal gate", function suite() {
 	test("the pure protocol modules are synchronous and never import the store", function pure() {
-		for (const name of ["codec.ts", "braids.ts", "value.ts", "bytes.ts", "descriptor.ts", "keys.ts"]) {
+		for (const name of ["codec.ts", "braids.ts", "value.ts", "bytes.ts", "descriptor.ts", "keys.ts", "document.ts"]) {
 			const source = sourceOf(name)
 			assert.ok(!source.includes("async "), `${name} declares an async function`)
 			assert.ok(!source.includes("await "), `${name} awaits`)

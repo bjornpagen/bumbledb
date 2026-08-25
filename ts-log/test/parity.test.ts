@@ -20,7 +20,7 @@ import type { Value } from "#value.ts"
  * must carry the same cross-implementation identity. Skipped with a
  * reason when the corpus is not present in the working tree.
  */
-const corpusRoot = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/corpus")
+const corpusRoot = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/v3")
 const present = fs.existsSync(path.join(corpusRoot, "schemas.json"))
 
 type CorpusValue = Record<string, unknown>
@@ -280,7 +280,7 @@ interface ChainFixture {
 
 if (!present) {
 	describe("parity goldens", function suite() {
-		test("skipped: crates/bumbledb-log/conformance/corpus is not in the tree", { skip: true }, function absent() {})
+		test("skipped: crates/bumbledb-log/conformance/v3 is not in the tree", { skip: true }, function absent() {})
 	})
 } else {
 	const schemasRaw = JSON.parse(fs.readFileSync(path.join(corpusRoot, "schemas.json"), "utf8")) as {
@@ -342,9 +342,28 @@ if (!present) {
 			}
 			const stem = file.slice(0, -5)
 			test(`batch/${stem}`, function golden() {
-				const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as BatchFixture
-				const bytes = new Uint8Array(fs.readFileSync(path.join(corpusRoot, "batch", `${stem}.bin`)))
+				const fixture = JSON.parse(fs.readFileSync(path.join(corpusRoot, "batch", file), "utf8")) as BatchFixture & {
+					expect: "ok" | "refusal" | "encode-refusal"
+				}
 				const descriptor = pinned(fixture)
+				if (fixture.expect === "encode-refusal") {
+					assert.ok(fixture.header !== undefined)
+					const caught = errors.trySync(function encodeIt() {
+						return encodeBatch(descriptor, {
+							fingerprint: fixture.fingerprint,
+							braid: braid(fixture.header.braid),
+							braidGen: generation(BigInt(fixture.header.braidGen)),
+							prev: fixture.header.prev,
+							writer: BigInt(fixture.header.writer),
+							timestamp: BigInt(fixture.header.timestamp)
+						}, [])
+					})
+					assert.ok(caught.error, `${stem}: expected an encode refusal`)
+					assert.ok(errors.is(caught.error, ErrRefused), `${stem}: expected ErrRefused`)
+					assert.equal(refusalOf(caught.error)?.kind, fixture.refusal, `${stem}: encode refusal identity`)
+					return
+				}
+				const bytes = new Uint8Array(fs.readFileSync(path.join(corpusRoot, "batch", `${stem}.bin`)))
 				if (fixture.expect === "refusal") {
 					const caught = errors.trySync(function decodeIt() {
 						return decodeBatch(descriptor, bytes)
@@ -413,7 +432,8 @@ if (!present) {
 				assert.equal(data?.cause, fixture.cause, `${stem}: cause`)
 				assert.equal(data?.braid, fixture.braid, `${stem}: fetched braid`)
 				assert.equal(data?.slot, BigInt(fixture.slot), `${stem}: slot`)
-				assert.equal(data?.writer, BigInt(fixture.writer ?? ""), `${stem}: writer`)
+				assert.ok(fixture.writer !== undefined && fixture.writer.length > 0, `${stem}: writer is present`)
+				assert.equal(data?.writer, BigInt(fixture.writer), `${stem}: writer`)
 			})
 		}
 	})

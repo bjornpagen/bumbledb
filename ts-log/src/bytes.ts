@@ -213,22 +213,61 @@ function fromHex(hex: string): Uint8Array {
 	}
 	const out = new Uint8Array(hex.length / 2)
 	for (let i = 0; i < out.length; i++) {
-		out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+		const hi = HEX_DIGITS.indexOf(hex[i * 2] ?? "")
+		const lo = HEX_DIGITS.indexOf(hex[i * 2 + 1] ?? "")
+		if (hi < 0 || lo < 0) {
+			throw errors.new(`not lowercase hex: ${hex}`)
+		}
+		out[i] = (hi << 4) | lo
 	}
 	return out
 }
 
-const utf8Encoder = new TextEncoder()
-const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true })
+declare const digest32Brand: unique symbol
+type Digest32 = Uint8Array & { readonly [digest32Brand]: typeof digest32Brand }
 
+function digest32(bytes: Uint8Array): Digest32 {
+	if (bytes.length !== 32) {
+		throw errors.new(`digest is not 32 bytes: ${bytes.length}`)
+	}
+	return bytes as Digest32
+}
+
+function digest32FromHex(hex: string): Digest32 {
+	return digest32(fromHex(hex))
+}
+
+function hex32(bytes: Digest32): string {
+	return toHex(bytes)
+}
+
+function saturatingAddU64(a: bigint, b: bigint): bigint {
+	const sum = a + b
+	return sum > U64_MAX ? U64_MAX : sum
+}
+
+function checkedAddU64(a: bigint, b: bigint): bigint | undefined {
+	const sum = a + b
+	return sum > U64_MAX ? undefined : sum
+}
+
+const utf8Encoder = new TextEncoder()
+const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+
+export type { Digest32 }
 export {
 	ByteReader,
 	ByteWriter,
 	bytesCompare,
 	bytesEqual,
+	checkedAddU64,
+	digest32,
+	digest32FromHex,
 	fromHex,
+	hex32,
 	I64_MAX,
 	I64_MIN,
+	saturatingAddU64,
 	toHex,
 	U64_MAX,
 	utf8Encoder,

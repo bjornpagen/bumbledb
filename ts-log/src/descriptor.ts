@@ -91,6 +91,35 @@ interface SerialStatement {
 	readonly braid: Braid
 }
 
+function serialAtOf(
+	relations: readonly RelationInfo[],
+	statements: readonly StatementInfo[],
+	braidOfRelation: ReadonlyMap<number, Braid>
+): SerialStatement[] {
+	const serialAt: SerialStatement[] = []
+	for (const statement of statements) {
+		if (statement.kind === "functionality" && statement.projection.length === 0) {
+			const relation = relations[statement.relation]
+			if (relation !== undefined && relation.fields.length > 0) {
+				const braid = braidOfRelation.get(statement.relation)
+				if (braid !== undefined) {
+					serialAt.push({ statement: statement.id, braid })
+				}
+			}
+		}
+		if (statement.kind === "capacity" && statement.target.projection.length === 0) {
+			const targetRelation = relations[statement.target.relation]
+			if (targetRelation !== undefined && !targetRelation.closed) {
+				const braid = braidOfRelation.get(statement.target.relation)
+				if (braid !== undefined) {
+					serialAt.push({ statement: statement.id, braid })
+				}
+			}
+		}
+	}
+	return serialAt
+}
+
 interface Descriptor {
 	readonly relations: readonly RelationInfo[]
 	readonly relationByName: ReadonlyMap<string, RelationInfo>
@@ -267,25 +296,7 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 
 	const statements = sealed.statements.map(statementOf)
 	const { braidOfRelation, braidMembers } = deriveBraids(relations, statements)
-
-	const serialAtStatements: SerialStatement[] = []
-	for (const statement of statements) {
-		if (statement.kind === "functionality" && statement.projection.length === 0) {
-			const braid = braidOfRelation.get(statement.relation)
-			if (braid !== undefined) {
-				serialAtStatements.push({ statement: statement.id, braid })
-			}
-		}
-		if (statement.kind === "capacity" && statement.target.projection.length === 0) {
-			const targetRelation = relations[statement.target.relation]
-			if (targetRelation !== undefined && !targetRelation.closed) {
-				const braid = braidOfRelation.get(statement.target.relation)
-				if (braid !== undefined) {
-					serialAtStatements.push({ statement: statement.id, braid })
-				}
-			}
-		}
-	}
+	const serialAtStatements = serialAtOf(relations, statements, braidOfRelation)
 
 	const fingerprint = sealed.fingerprint
 	return {
@@ -597,25 +608,7 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 	}
 
 	const { braidOfRelation, braidMembers } = deriveBraids(relations, statements)
-
-	const serialAtStatements: SerialStatement[] = []
-	for (const statement of statements) {
-		if (statement.kind === "functionality" && statement.projection.length === 0) {
-			const braid = braidOfRelation.get(statement.relation)
-			if (braid !== undefined) {
-				serialAtStatements.push({ statement: statement.id, braid })
-			}
-		}
-		if (statement.kind === "capacity" && statement.target.projection.length === 0) {
-			const targetRelation = relations[statement.target.relation]
-			if (targetRelation !== undefined && !targetRelation.closed) {
-				const braid = braidOfRelation.get(statement.target.relation)
-				if (braid !== undefined) {
-					serialAtStatements.push({ statement: statement.id, braid })
-				}
-			}
-		}
-	}
+	const serialAtStatements = serialAtOf(relations, statements, braidOfRelation)
 
 	const fingerprint = "00".repeat(32)
 	return {

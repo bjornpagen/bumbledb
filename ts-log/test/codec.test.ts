@@ -119,6 +119,51 @@ describe("the command codec", function suite() {
 		)
 	})
 
+	test("version 2 refuses", function versionTwo() {
+		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
+		bytes[OFFSET.version] = 2
+		assert.equal(
+			refusalKindOf(function decodeIt() {
+				return decodeBatch(Ledger, bytes)
+			}),
+			"Version"
+		)
+	})
+
+	test("a short prev cannot encode", function shortPrev() {
+		assert.equal(
+			refusalKindOf(function encodeIt() {
+				return encodeBatch(Ledger, { ...headerOf(), prev: "aabb" }, opsOf())
+			}),
+			"DigestWidth"
+		)
+	})
+
+	test("a lone surrogate cannot encode", function loneSurrogate() {
+		assert.throws(function encodeIt() {
+			return encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Holder", rows: [[1n, "\uD800"]] }])
+		})
+	})
+
+	test("a fixed interval whose end is the domain ceiling cannot encode", function ray() {
+		const Wide = relation("Wide", { lease: interval(u64, 1n) })
+		const WideTheory = schema("WideTheory", { Wide }, [])
+		assert.throws(function encodeIt() {
+			return encodeBatch(
+				WideTheory,
+				{
+					fingerprint: descriptorOf(WideTheory).fingerprint,
+					braid: braid("c00000000"),
+					braidGen: generation(1n),
+					prev: ZERO,
+					writer: 1n,
+					timestamp: 0n
+				},
+				[{ op: "insert", relation: "Wide", rows: [[{ start: (1n << 64n) - 1n, end: 1n << 64n }]] }]
+			)
+		})
+	})
+
 	test("nonzero flags refuse", function flags() {
 		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
 		bytes[OFFSET.flags] = 1
