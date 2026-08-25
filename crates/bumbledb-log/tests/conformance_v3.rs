@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::{Codec, DecodeError, MAGIC, VERSION};
 use bumbledb_log::manifest::{
-    Checkpoint, CheckpointError, DOC_VERSION, Manifest, ManifestError, hex32,
+    Checkpoint, CheckpointError, DOC_VERSION, Head, Manifest, ManifestError,
 };
-use bumbledb_log::sidecar::{Chain, ChainEntry, SidecarError};
+use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarError};
 use serde_json::Value as Json;
 
 fn v3() -> PathBuf {
@@ -92,57 +92,78 @@ fn json_stems_under(rel: &str) -> BTreeSet<String> {
     stems
 }
 
-fn render_manifest(parsed: &Manifest) -> Json {
-    serde_json::json!({
-        "fingerprint": hex32(&parsed.fingerprint),
-        "checkpoint": parsed.checkpoint.as_ref().map(hex32),
-    })
+fn decimal_u64(label: &str, value: &Json) -> u64 {
+    assert_decimal_string(label, value);
+    value.as_str().expect("decimal").parse().expect("u64")
 }
 
-fn render_checkpoint(parsed: &Checkpoint) -> Json {
-    let mut braids = serde_json::Map::new();
-    for (braid, head) in &parsed.braids {
+fn optional_digest(value: &Json) -> Option<[u8; 32]> {
+    match value {
+        Json::Null => None,
+        other => Some(digest32(other.as_str().expect("digest"))),
+    }
+}
+
+fn expected_manifest(value: &Json) -> Manifest {
+    Manifest {
+        fingerprint: digest32(value["fingerprint"].as_str().expect("fingerprint")),
+        checkpoint: optional_digest(&value["checkpoint"]),
+    }
+}
+
+fn expected_checkpoint(codec: &Codec, value: &Json) -> Checkpoint {
+    let mut braids = BTreeMap::new();
+    for (name, head) in value["braids"].as_object().expect("braids") {
+        assert_decimal_string(&format!("{name}.g"), &head["g"]);
+        assert_decimal_string(&format!("{name}.ts"), &head["ts"]);
         braids.insert(
-            braid.to_string(),
-            serde_json::json!({
-                "g": head.g.to_string(),
-                "hash": hex32(&head.hash),
-                "ts": head.ts.to_string(),
-            }),
+            parse_braid_text(codec, name),
+            Head {
+                g: decimal_u64(&format!("{name}.g"), &head["g"]),
+                hash: digest32(head["hash"].as_str().expect("hash")),
+                ts: decimal_u64(&format!("{name}.ts"), &head["ts"]),
+            },
         );
     }
-    serde_json::json!({
-        "braids": braids,
-        "catalog": hex32(&parsed.catalog),
-        "writer": parsed.writer.to_string(),
-        "prev": parsed.prev.as_ref().map(hex32),
-    })
+    assert_decimal_string("writer", &value["writer"]);
+    Checkpoint {
+        braids,
+        catalog: digest32(value["catalog"].as_str().expect("catalog")),
+        writer: decimal_u64("writer", &value["writer"]),
+        prev: optional_digest(&value["prev"]),
+    }
 }
 
-fn render_sidecar(parsed: &Chain) -> Json {
-    let mut chain = serde_json::Map::new();
-    for (braid, entry) in parsed.entries() {
-        chain.insert(
-            braid.to_string(),
-            serde_json::json!({
-                "g": entry.g.to_string(),
-                "prev": hex32(&entry.prev),
-                "ts": entry.ts.to_string(),
-            }),
+fn expected_sidecar(codec: &Codec, value: &Json) -> Chain {
+    let mut entries = BTreeMap::new();
+    for (name, entry) in value["chain"].as_object().expect("chain") {
+        entries.insert(
+            parse_braid_text(codec, name),
+            ChainEntry {
+                g: decimal_u64(&format!("{name}.g"), &entry["g"]),
+                prev: digest32(entry["prev"].as_str().expect("prev")),
+                ts: decimal_u64(&format!("{name}.ts"), &entry["ts"]),
+            },
         );
     }
-    let pending = match parsed {
-        Chain::Pending { batch, .. } => Some(serde_json::json!({
-            "braid": batch.braid.to_string(),
-            "gen": batch.slot.to_string(),
-            "bytes": support::hex(&batch.bytes),
-        })),
-        Chain::Settled { .. } => None,
-    };
-    serde_json::json!({
-        "chain": chain,
-        "pending": pending,
-    })
+    match &value["pending"] {
+        Json::Null => Chain::Settled { entries },
+        pending => {
+            assert_decimal_string("pending.gen", &pending["gen"]);
+            assert_lowercase_hex(
+                "pending.bytes",
+                pending["bytes"].as_str().expect("pending hex"),
+            );
+            Chain::Pending {
+                entries,
+                batch: Pending {
+                    braid: parse_braid_text(codec, pending["braid"].as_str().expect("braid")),
+                    slot: decimal_u64("pending.gen", &pending["gen"]),
+                    bytes: support::unhex(pending["bytes"].as_str().expect("bytes")),
+                },
+            }
+        }
+    }
 }
 
 fn parse_braid_text(codec: &Codec, text: &str) -> bumbledb_log::braids::BraidId {
@@ -342,8 +363,8 @@ fn inventory_documents_parse_and_rerender() {
                     let parsed = Manifest::parse(&bytes).expect("manifest parses");
                     assert_eq!(parsed.render(), bytes, "{rel}: manifest fixpoint");
                     assert_eq!(
-                        render_manifest(&parsed),
-                        sidecar["value"],
+                        parsed,
+                        expected_manifest(&sidecar["value"]),
                         "{rel}: manifest value"
                     );
                 }
@@ -354,15 +375,10 @@ fn inventory_documents_parse_and_rerender() {
                         Checkpoint::parse(&bytes, codec.braids()).expect("checkpoint parses");
                     assert_eq!(parsed.render(), bytes, "{rel}: checkpoint fixpoint");
                     assert_eq!(
-                        render_checkpoint(&parsed),
-                        sidecar["value"],
+                        parsed,
+                        expected_checkpoint(&codec, &sidecar["value"]),
                         "{rel}: checkpoint value"
                     );
-                    for (braid, head) in sidecar["value"]["braids"].as_object().expect("braids") {
-                        assert_decimal_string(&format!("{rel}.{braid}.g"), &head["g"]);
-                        assert_decimal_string(&format!("{rel}.{braid}.ts"), &head["ts"]);
-                    }
-                    assert_decimal_string(&format!("{rel}.writer"), &sidecar["value"]["writer"]);
                 }
                 "sidecar" => {
                     let schema = sidecar["schema"].as_str().expect("schema");
@@ -370,17 +386,10 @@ fn inventory_documents_parse_and_rerender() {
                     let parsed = Chain::parse(&bytes, codec.braids()).expect("sidecar parses");
                     assert_eq!(parsed.render(), bytes, "{rel}: sidecar fixpoint");
                     assert_eq!(
-                        render_sidecar(&parsed),
-                        sidecar["value"],
+                        parsed,
+                        expected_sidecar(&codec, &sidecar["value"]),
                         "{rel}: sidecar value"
                     );
-                    if let Some(pending) = sidecar["value"]["pending"].as_object() {
-                        assert_decimal_string(&format!("{rel}.pending.gen"), &pending["gen"]);
-                        assert_lowercase_hex(
-                            &format!("{rel}.pending.bytes"),
-                            pending["bytes"].as_str().expect("pending hex"),
-                        );
-                    }
                 }
                 other => panic!("{rel}: unknown kind {other}"),
             },

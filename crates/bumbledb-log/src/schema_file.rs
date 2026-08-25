@@ -2,9 +2,11 @@
 //! crate's corpus schema object — `{relations, statements}` — so a
 //! second descriptor grammar cannot exist.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::ops::Index;
 use std::path::Path;
 
 use bumbledb::schema::{
@@ -12,13 +14,12 @@ use bumbledb::schema::{
     RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{Interval, Value};
-use serde_json::Value as Json;
 
 /// Why a theory file refused to become a descriptor.
 #[derive(Debug)]
 pub enum TheoryFile {
     Io(io::Error),
-    Json(serde_json::Error),
+    Json(&'static str),
     Shape(&'static str),
 }
 
@@ -43,8 +44,268 @@ pub fn load(path: &Path) -> Result<SchemaDescriptor, TheoryFile> {
 
 /// Parse the theory-file grammar from bytes already in memory.
 pub fn parse(raw: &str) -> Result<SchemaDescriptor, TheoryFile> {
-    let json: Json = serde_json::from_str(raw).map_err(TheoryFile::Json)?;
-    parse_schema(&json)
+    parse_schema(&read_tree(raw)?)
+}
+
+enum Json {
+    Null,
+    Bool(bool),
+    U64(u64),
+    String(String),
+    Array(Vec<Json>),
+    Object(BTreeMap<String, Json>),
+}
+
+const NULL: Json = Json::Null;
+
+impl Json {
+    fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::U64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn as_array(&self) -> Option<&Vec<Json>> {
+        match self {
+            Self::Array(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn as_object(&self) -> Option<&BTreeMap<String, Json>> {
+        match self {
+            Self::Object(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<&Json> {
+        self.as_object().and_then(|object| object.get(key))
+    }
+
+    const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+}
+
+impl Index<&str> for Json {
+    type Output = Json;
+
+    fn index(&self, key: &str) -> &Json {
+        self.get(key).unwrap_or(&NULL)
+    }
+}
+
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+fn read_tree(raw: &str) -> Result<Json, TheoryFile> {
+    let mut cur = Cursor {
+        bytes: raw.as_bytes(),
+        at: 0,
+    };
+    let value = cur.value()?;
+    cur.skip_ws();
+    if cur.at != cur.bytes.len() {
+        return Err(TheoryFile::Json("trailing"));
+    }
+    Ok(value)
+}
+
+impl Cursor<'_> {
+    fn skip_ws(&mut self) {
+        while self.bytes.get(self.at).is_some_and(u8::is_ascii_whitespace) {
+            self.at += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.at).copied()
+    }
+
+    fn bump(&mut self) -> Result<u8, TheoryFile> {
+        let byte = self.peek().ok_or(TheoryFile::Json("truncated"))?;
+        self.at += 1;
+        Ok(byte)
+    }
+
+    fn eat(&mut self, want: u8) -> Result<(), TheoryFile> {
+        if self.bump()? == want {
+            Ok(())
+        } else {
+            Err(TheoryFile::Json("token"))
+        }
+    }
+
+    fn lit(&mut self, want: &[u8]) -> Result<(), TheoryFile> {
+        if self
+            .bytes
+            .get(self.at..)
+            .is_some_and(|rest| rest.starts_with(want))
+        {
+            self.at += want.len();
+            if matches!(
+                self.peek(),
+                Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+            ) {
+                return Err(TheoryFile::Json("token"));
+            }
+            Ok(())
+        } else {
+            Err(TheoryFile::Json("token"))
+        }
+    }
+
+    fn value(&mut self) -> Result<Json, TheoryFile> {
+        self.skip_ws();
+        match self.peek() {
+            Some(b'{') => Ok(Json::Object(self.object()?)),
+            Some(b'[') => Ok(Json::Array(self.array()?)),
+            Some(b'"') => Ok(Json::String(self.string()?)),
+            Some(b't') => {
+                self.lit(b"true")?;
+                Ok(Json::Bool(true))
+            }
+            Some(b'f') => {
+                self.lit(b"false")?;
+                Ok(Json::Bool(false))
+            }
+            Some(b'n') => {
+                self.lit(b"null")?;
+                Ok(Json::Null)
+            }
+            Some(b'0'..=b'9') => Ok(Json::U64(self.number()?)),
+            _ => Err(TheoryFile::Json("value")),
+        }
+    }
+
+    fn object(&mut self) -> Result<BTreeMap<String, Json>, TheoryFile> {
+        self.eat(b'{')?;
+        self.skip_ws();
+        let mut map = BTreeMap::new();
+        if self.peek() == Some(b'}') {
+            self.at += 1;
+            return Ok(map);
+        }
+        loop {
+            self.skip_ws();
+            let key = self.string()?;
+            self.skip_ws();
+            self.eat(b':')?;
+            let value = self.value()?;
+            map.insert(key, value);
+            self.skip_ws();
+            match self.bump()? {
+                b',' => {}
+                b'}' => return Ok(map),
+                _ => return Err(TheoryFile::Json("object")),
+            }
+        }
+    }
+
+    fn array(&mut self) -> Result<Vec<Json>, TheoryFile> {
+        self.eat(b'[')?;
+        self.skip_ws();
+        let mut items = Vec::new();
+        if self.peek() == Some(b']') {
+            self.at += 1;
+            return Ok(items);
+        }
+        loop {
+            items.push(self.value()?);
+            self.skip_ws();
+            match self.bump()? {
+                b',' => {}
+                b']' => return Ok(items),
+                _ => return Err(TheoryFile::Json("array")),
+            }
+        }
+    }
+
+    fn string(&mut self) -> Result<String, TheoryFile> {
+        self.eat(b'"')?;
+        let mut out = Vec::new();
+        loop {
+            match self.bump()? {
+                b'"' => {
+                    return String::from_utf8(out).map_err(|_| TheoryFile::Json("utf8"));
+                }
+                b'\\' => match self.bump()? {
+                    b'"' => out.push(b'"'),
+                    b'\\' => out.push(b'\\'),
+                    b'/' => out.push(b'/'),
+                    b'n' => out.push(b'\n'),
+                    b'r' => out.push(b'\r'),
+                    b't' => out.push(b'\t'),
+                    b'b' => out.push(0x08),
+                    b'f' => out.push(0x0c),
+                    b'u' => {
+                        let scalar = self.hex4()?;
+                        let ch = char::from_u32(scalar).ok_or(TheoryFile::Json("unicode"))?;
+                        let mut buf = [0; 4];
+                        out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                    }
+                    _ => return Err(TheoryFile::Json("escape")),
+                },
+                byte if byte < 0x20 => return Err(TheoryFile::Json("control")),
+                byte => out.push(byte),
+            }
+        }
+    }
+
+    fn hex4(&mut self) -> Result<u32, TheoryFile> {
+        let mut n = 0u32;
+        for _ in 0..4 {
+            let digit = match self.bump()? {
+                b @ b'0'..=b'9' => u32::from(b - b'0'),
+                b @ b'a'..=b'f' => u32::from(b - b'a' + 10),
+                b @ b'A'..=b'F' => u32::from(b - b'A' + 10),
+                _ => return Err(TheoryFile::Json("hex")),
+            };
+            n = (n << 4) | digit;
+        }
+        Ok(n)
+    }
+
+    fn number(&mut self) -> Result<u64, TheoryFile> {
+        let start = self.at;
+        match self.bump()? {
+            b'0' => {
+                if matches!(self.peek(), Some(b'0'..=b'9')) {
+                    return Err(TheoryFile::Json("number"));
+                }
+            }
+            b'1'..=b'9' => {
+                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    self.at += 1;
+                }
+            }
+            _ => return Err(TheoryFile::Json("number")),
+        }
+        if matches!(self.peek(), Some(b'.' | b'e' | b'E' | b'-' | b'+')) {
+            return Err(TheoryFile::Json("number"));
+        }
+        let text = std::str::from_utf8(&self.bytes[start..self.at])
+            .map_err(|_| TheoryFile::Json("number"))?;
+        text.parse().map_err(|_| TheoryFile::Json("number"))
+    }
 }
 
 fn parse_schema(json: &Json) -> Result<SchemaDescriptor, TheoryFile> {
@@ -351,7 +612,7 @@ fn as_u16(json: &Json, field: &'static str) -> Result<u16, TheoryFile> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TheoryFile, parse};
+    use super::{parse, TheoryFile};
 
     #[test]
     fn a_multi_arm_value_is_shape() {
@@ -369,5 +630,13 @@ mod tests {
     fn a_short_binding_pair_is_shape() {
         let raw = r#"{"relations":[{"name":"a","fields":[{"name":"id","type":"u64"}]},{"name":"b","fields":[{"name":"id","type":"u64"}]}],"statements":[{"containment":{"source":{"relation":0,"projection":[0],"selection":[[0]]},"target":{"relation":1,"projection":[0]}}}]}"#;
         assert!(matches!(parse(raw), Err(TheoryFile::Shape(_))));
+    }
+
+    #[test]
+    fn note_theory_is_a_descriptor() {
+        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"u64"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
+        let schema = parse(raw).expect("note theory");
+        assert_eq!(schema.relations.len(), 1);
+        assert_eq!(schema.statements.len(), 1);
     }
 }

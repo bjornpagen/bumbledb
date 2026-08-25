@@ -842,6 +842,11 @@ mod tests {
     use super::{Codec, DecodeError, VERSION, bytes_back};
     use std::path::Path;
 
+    use bumbledb::schema::{
+        FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+        SchemaDescriptor, StatementDescriptor, ValueType,
+    };
+
     fn corpus_fingerprint(schema: &str) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"bumbledb-log corpus fingerprint: ");
@@ -849,14 +854,80 @@ mod tests {
         *hasher.finalize().as_bytes()
     }
 
+    fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
+        FieldDescriptor {
+            name: name.into(),
+            value_type,
+            generation: Generation::None,
+        }
+    }
+
+    fn kitchen() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "Sample".into(),
+                fields: vec![
+                    field("flag", ValueType::Bool),
+                    field("count", ValueType::U64),
+                    field("delta", ValueType::I64),
+                    field("label", ValueType::String),
+                    field("code", ValueType::FixedBytes { len: 3 }),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                        },
+                    ),
+                    field(
+                        "lane",
+                        ValueType::Interval {
+                            element: IntervalElement::I64,
+                        },
+                    ),
+                    field(
+                        "slot",
+                        ValueType::FixedInterval {
+                            element: IntervalElement::U64,
+                            width: 5,
+                        },
+                    ),
+                    field(
+                        "off",
+                        ValueType::FixedInterval {
+                            element: IntervalElement::I64,
+                            width: 5,
+                        },
+                    ),
+                ],
+                extension: None,
+            }],
+            statements: vec![StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::from([FieldId(1)]),
+            }],
+        }
+    }
+
+    fn blank() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "Tick".into(),
+                fields: vec![],
+                extension: None,
+            }],
+            statements: vec![StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::from([]),
+            }],
+        }
+    }
+
     fn codec_named(name: &str) -> Codec {
-        let raw = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("conformance/v3/schemas.json"),
-        )
-        .expect("schemas.json");
-        let json: serde_json::Value = serde_json::from_str(&raw).expect("schemas parse");
-        let descriptor =
-            crate::schema_file::parse(&json["schemas"][name].to_string()).expect("schema");
+        let descriptor = match name {
+            "kitchen" => kitchen(),
+            "blank" => blank(),
+            other => panic!("{other}: fixture schema"),
+        };
         Codec::new(&descriptor, corpus_fingerprint(name))
     }
 
