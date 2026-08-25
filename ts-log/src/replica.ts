@@ -15,7 +15,7 @@ import { internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { parse } from "#braids.ts"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, digest32, digest32FromHex, saturatingAddU64, toHex } from "#bytes.ts"
+import { bytesEqual, digest32, hex32, saturatingAddU64, toHex } from "#bytes.ts"
 import type { Chain, ChainEntry, Pending } from "#chain.ts"
 import { chainGeneration, chainSum, readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
@@ -26,7 +26,7 @@ import { ErrRefused, ErrReplayDiverged, refuse, refuseManifestMissing, wrapStore
 import type { Generation } from "#keys.ts"
 import {
 	CKPT_SCRATCH_LEASE,
-	checkpointJsonKey,
+	ckptDocKey,
 	checkpointMdbKey,
 	generation,
 	LEASE_NAMESPACE,
@@ -51,7 +51,7 @@ const WAIT_FOR_POLL_MS = 20
 
 type ReplicaState =
 	| { readonly tag: "bootstrapped" }
-	| { readonly tag: "checkpoint-seeded"; readonly catalog: string }
+	| { readonly tag: "checkpoint-seeded"; readonly catalog: Digest32 }
 	| { readonly tag: "sidecar-resumed"; readonly floor: ReadonlyMap<Braid, Generation> }
 
 type RefreshOutcome =
@@ -97,7 +97,7 @@ interface Core<Rels extends SchemaRelations> {
 	chain: Chain
 	manifestEtag: Etag | null
 	checkpoint: CheckpointFacts | null
-	checkpointDigest: string | null
+	checkpointDigest: Digest32 | null
 	passes: number
 	closed: boolean
 	storeName: string
@@ -194,30 +194,24 @@ function generationOf<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
 	})
 }
 
-function hexOfDigest(raw: unknown): string {
-	if (typeof raw === "string") {
-		return raw
-	}
+function digestOfCatalog(raw: unknown): Digest32 {
 	if (raw instanceof Uint8Array) {
-		return toHex(raw)
+		return digest32(raw)
 	}
 	throw errors.new(`catalogDigest is not a digest: ${typeof raw}`)
 }
 
 /** The opened store's catalog digest. The SDK may expose it on the
  *  handle or on the read instance; either spelling is the computed claim. */
-function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): string {
+function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): Digest32 {
 	const handle = core.db as unknown as { catalogDigest?: () => unknown }
 	if (typeof handle.catalogDigest === "function") {
-		return hexOfDigest(handle.catalogDigest())
+		return digestOfCatalog(handle.catalogDigest())
 	}
 	return core.db.read(function readCatalog(instance) {
 		const carrier = instance as { catalogDigest?: unknown }
 		if (typeof carrier.catalogDigest === "function") {
-			return hexOfDigest(carrier.catalogDigest())
-		}
-		if (typeof carrier.catalogDigest === "string") {
-			return carrier.catalogDigest
+			return digestOfCatalog(carrier.catalogDigest())
 		}
 		throw errors.new("the opened store does not expose catalogDigest")
 	})
@@ -563,19 +557,23 @@ async function adoptManifest<Rels extends SchemaRelations>(
 	etag: Etag
 ): Promise<void> {
 	const manifest = parseManifest(bytes)
-	if (manifest.fingerprint !== core.descriptor.fingerprint) {
+	if (!bytesEqual(manifest.fingerprint, digest32(core.descriptor.fingerprintBytes))) {
 		refuse(
-			{ kind: "FingerprintMismatch", carried: manifest.fingerprint, expected: core.descriptor.fingerprint },
+			{
+				kind: "FingerprintMismatch",
+				carried: hex32(manifest.fingerprint),
+				expected: core.descriptor.fingerprint
+			},
 			"the store's manifest names a different theory"
 		)
 	}
 	if (manifest.checkpoint === null) {
 		core.checkpoint = null
 		core.checkpointDigest = null
-	} else if (manifest.checkpoint !== core.checkpointDigest) {
-		const facts = await core.store.get(checkpointJsonKey(core.prefix, manifest.checkpoint))
+	} else if (core.checkpointDigest === null || !bytesEqual(manifest.checkpoint, core.checkpointDigest)) {
+		const facts = await core.store.get(ckptDocKey(core.prefix, manifest.checkpoint))
 		if (facts === null) {
-			throw errors.new(`manifest points at absent checkpoint ${manifest.checkpoint}`)
+			throw errors.new(`manifest points at absent checkpoint ${hex32(manifest.checkpoint)}`)
 		}
 		const checkpoint = parseCheckpoint(facts.bytes)
 		for (const id of checkpoint.braids.keys()) {
@@ -620,9 +618,9 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 	await fs.rm(target, { recursive: true, force: true })
 	await fs.mkdir(core.dir, { recursive: true })
 	if (core.checkpoint !== null && core.checkpointDigest !== null) {
-		const mdb = await core.store.get(checkpointMdbKey(core.prefix, core.checkpointDigest))
+		const mdb = await core.store.get(checkpointMdbKey(core.prefix, hex32(core.checkpointDigest)))
 		if (mdb === null) {
-			throw errors.new(`checkpoint ${core.checkpointDigest} names an absent .mdb`)
+			throw errors.new(`checkpoint ${hex32(core.checkpointDigest)} names an absent .mdb`)
 		}
 		await fs.mkdir(target, { recursive: true })
 		await fs.writeFile(path.join(target, "data.mdb"), mdb.bytes)
@@ -632,7 +630,7 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 			entries: new Map(
 				[...core.checkpoint.braids.entries()].map(function seed([raw, head]) {
 					const braid = braidOf(core.theory, raw)
-					return [braid, { g: head.g, prev: digest32FromHex(head.hash), ts: head.ts }] as const
+					return [braid, { g: head.g, prev: head.hash, ts: head.ts }] as const
 				})
 			)
 		}
@@ -734,9 +732,9 @@ async function sweepReservedKeys<Rels extends SchemaRelations>(core: Core<Rels>)
 	const read = await errors.try(fs.readFile(lease))
 	if (read.error === undefined) {
 		const digest = parseCkptScratch(read.data)
-		if (digest !== null && digest !== core.checkpointDigest) {
-			await core.store.delete(checkpointJsonKey(core.prefix, digest))
-			await core.store.delete(checkpointMdbKey(core.prefix, digest))
+		if (digest !== null && (core.checkpointDigest === null || !bytesEqual(digest, core.checkpointDigest))) {
+			await core.store.delete(ckptDocKey(core.prefix, digest))
+			await core.store.delete(checkpointMdbKey(core.prefix, hex32(digest)))
 		}
 	}
 	await fs.rm(path.join(core.dir, TEMP_NAMESPACE), { recursive: true, force: true })
@@ -967,7 +965,7 @@ async function readdressPending<Rels extends SchemaRelations>(
 	const bytes = encodeBatch(
 		core.descriptor,
 		{
-			fingerprint: digest32FromHex(core.descriptor.fingerprint),
+			fingerprint: digest32(core.descriptor.fingerprintBytes),
 			braid,
 			braidGen: generation(entry.g + 1n),
 			prev: entry.prev,
