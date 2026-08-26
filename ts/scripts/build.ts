@@ -30,6 +30,18 @@ function build(): void {
 
 	fs.rmSync(distDir, { recursive: true, force: true })
 
+	// Incremental release artifacts keep the previous CARGO_PKG_VERSION in
+	// engineVersion(); a lockstep bump must remint bumbledb-node.
+	const clean = spawnSync("cargo", ["clean", "-p", "bumbledb-node", "--release", "--manifest-path", crateManifest], {
+		stdio: "inherit"
+	})
+	if (clean.error) {
+		throw errors.wrap(clean.error, "spawn cargo clean")
+	}
+	if (clean.status !== 0) {
+		throw errors.new(`cargo clean exited with status ${clean.status}`)
+	}
+
 	const cargo = spawnSync("cargo", ["build", "--release", "--manifest-path", crateManifest], {
 		stdio: "inherit"
 	})
@@ -41,7 +53,8 @@ function build(): void {
 	}
 
 	ensureLocalPlatformPackage(shapePackageDir, localPackageDir)
-	const artifact = path.join(packageRoot, "crate", "target", "release", nativeArtifactName(process.platform))
+	const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(packageRoot, "crate", "target")
+	const artifact = path.join(targetDir, "release", nativeArtifactName(process.platform))
 	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
 	fs.copyFileSync(artifact, nodeBinary)
 
