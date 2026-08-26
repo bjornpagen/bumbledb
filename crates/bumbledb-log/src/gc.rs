@@ -78,9 +78,9 @@ pub enum Gc {
     Refused(GcRefusal),
 }
 
-/// The gc verb: one sweep under window `window_ms`. Ages against
-/// `now_ms` as the publish stamp — the checkpointer's clock when the
-/// caller has not threaded a distinct stamp (see [`gc_at`]).
+/// The gc verb: one sweep under window `window_ms`. Each log object
+/// ages against `now_ms` by its batch timestamp; a distinct publish
+/// stamp is [`gc_at`].
 ///
 /// # Errors
 pub fn gc<S: ObjectStore>(
@@ -138,14 +138,31 @@ pub fn gc_at<S: ObjectStore>(
     };
 
     let mut sweep = Sweep::default();
-    let old = clock.now_ms.saturating_sub(clock.publish_ms) > window_ms;
+    let unit_old = clock.now_ms.saturating_sub(clock.publish_ms) > window_ms;
+    let per_slot = clock.publish_ms == clock.now_ms;
+    let ckpt_old = if per_slot {
+        clock.now_ms > window_ms
+    } else {
+        unit_old
+    };
 
     for (braid, head) in &doc.braids {
-        let marker = sweep_log_braid(store, prefix, codec, *braid, head.g, old, &mut sweep)?;
+        let marker = sweep_log_braid(
+            store,
+            prefix,
+            codec,
+            *braid,
+            head.g,
+            window_ms,
+            clock,
+            per_slot,
+            unit_old,
+            &mut sweep,
+        )?;
         sweep.swept_below.insert(*braid, marker);
     }
 
-    sweep_checkpoints(store, prefix, codec, doc.prev, old, &mut sweep)?;
+    sweep_checkpoints(store, prefix, codec, doc.prev, ckpt_old, &mut sweep)?;
 
     Ok(Gc::Swept(sweep))
 }
