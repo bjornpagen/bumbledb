@@ -58,7 +58,16 @@ import type {
 	ShapeOf,
 	VarsOf
 } from "#query/scope.ts"
-import { fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term } from "#query/scope.ts"
+import {
+	fieldAntiJoins,
+	fieldJoins,
+	inferred,
+	isTerm,
+	makeParam,
+	makeSetParam,
+	renderFieldKind,
+	term
+} from "#query/scope.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 
 type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], MatchOwner>
@@ -469,7 +478,8 @@ function resolveBindings(
 	context: ChainContext,
 	label: string,
 	relation: MatchOwner,
-	bindings: Readonly<Record<string, unknown>>
+	bindings: Readonly<Record<string, unknown>>,
+	joins: (a: ClassedField, b: ClassedField) => boolean = fieldJoins
 ): ResolvedBindings {
 	const entries: BindingEntry[] = []
 	const vars: AnyVar[] = []
@@ -494,7 +504,7 @@ function resolveBindings(
 					const ref = value
 					const mint = mintSlotOf(context, ref)
 					const positionSlot: ClassedField = { field: declared.field, class: fieldClass }
-					if (!fieldJoins(mint, positionSlot)) {
+					if (!joins(mint, positionSlot)) {
 						throw errors.new(
 							`${label}: the variable ${ref.label} joins domain-unequal fields — minted at ${renderFieldKind(mint)}, reused at ${renderFieldKind(positionSlot)} (a var joins only class-equal slots; bare pairs only with bare)`
 						)
@@ -648,7 +658,7 @@ function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCon
 				return value !== undefined
 			})
 		)
-		const resolved = resolveBindings(context, `negated relation ${relation.name}`, relation, bindings)
+		const resolved = resolveBindings(context, `negated relation ${relation.name}`, relation, bindings, fieldAntiJoins)
 		return Object.freeze({
 			items: Object.freeze([...state.items, Object.freeze({ kind: "negated" as const, atom: resolved.atom })]),
 			bound: state.bound,

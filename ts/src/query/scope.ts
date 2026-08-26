@@ -175,6 +175,31 @@ type JoinOk<A extends ClassedField, B extends ClassedField> = [
 		: false
 	: false
 
+type U64Wire<F extends AnyField> = F extends { readonly kind: "u64" }
+	? RosterOf<F> extends undefined
+		? true
+		: false
+	: false
+
+/**
+ * Anti-join class safety: class-equal slots, plus same-identity u64
+ * (fresh mint, foreign-key copy, or bare u64) when one side is bare.
+ * Two distinct generators stay refused. Closed-roster u64 is not a
+ * wire identity.
+ */
+type AntiJoinOk<A extends ClassedField, B extends ClassedField> =
+	JoinOk<A, B> extends true
+		? true
+		: U64Wire<A["field"]> extends true
+			? U64Wire<B["field"]> extends true
+				? [A["class"]] extends [undefined]
+					? true
+					: [B["class"]] extends [undefined]
+						? true
+						: false
+				: false
+			: false
+
 function fieldJoins(a: ClassedField, b: ClassedField): boolean {
 	const widthA = "width" in a.field ? a.field.width : undefined
 	const widthB = "width" in b.field ? b.field.width : undefined
@@ -189,6 +214,17 @@ function fieldJoins(a: ClassedField, b: ClassedField): boolean {
 		elementA === elementB &&
 		rosterA === rosterB
 	)
+}
+
+function u64Wire(field: AnyField): boolean {
+	return field.kind === "u64" && rosterOf(field) === undefined
+}
+
+function fieldAntiJoins(a: ClassedField, b: ClassedField): boolean {
+	if (fieldJoins(a, b)) {
+		return true
+	}
+	return u64Wire(a.field) && u64Wire(b.field) && (a.class === undefined || b.class === undefined)
 }
 
 function renderFieldKind(slot: ClassedField): string {
@@ -220,6 +256,7 @@ interface ParamEntry {
 }
 
 export type {
+	AntiJoinOk,
 	AnyTerm,
 	AnyVar,
 	ClassedField,
@@ -241,4 +278,4 @@ export type {
 	Var,
 	VarsOf
 }
-export { fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term, v }
+export { fieldAntiJoins, fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term, v }

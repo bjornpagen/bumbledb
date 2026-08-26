@@ -17,7 +17,7 @@ import type { Param, ParamsRecord } from "#query/scope.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { contained } from "#statements.ts"
+import { contained, key } from "#statements.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
@@ -1239,4 +1239,65 @@ describe("the query surface against a real store", function suite() {
 		assert.equal(plain.data.interiors.length, 0, "a plain query carries no interiors")
 		assert.equal(plain.data.kind, "cq", "a plain query is a CQ")
 	})
+})
+
+test("not() joins a fresh mint with its u64 copy and a partial-key anti-join", function mintClassAntiJoin() {
+	const SourceNode = relation("SourceNode", { node: u64.fresh })
+	const NodeLowering = relation("NodeLowering", { node: u64, body: str })
+	const SourceFramework = relation("SourceFramework", { node: u64, name: str })
+	const FrameworkLowering = relation("FrameworkLowering", { sourceNode: u64, body: str })
+	const CoreStatement = relation("CoreStatement", { corpus: u64, statement: u64 })
+	const OtherMint = relation("OtherMint", { id: u64.fresh })
+	const Oracle = schema(
+		"Oracle",
+		{ SourceNode, NodeLowering, SourceFramework, FrameworkLowering, CoreStatement, OtherMint },
+		[
+			contained(on(NodeLowering, "node"), on(SourceNode, "node")),
+			key(SourceFramework, ["node"]),
+			contained(on(FrameworkLowering, "sourceNode"), on(SourceFramework, "node"))
+		]
+	)
+
+	const freshVsCopy = query(Oracle).rule((r) => {
+		const { node } = v(NodeLowering)
+		return r.match(NodeLowering, { node }).where(r.not(SourceNode, { node })).find({ node })
+	})
+	assert.equal(freshVsCopy.data.kind, "cq")
+
+	const opposite = query(Oracle).rule((r) => {
+		const { node } = v(SourceNode)
+		return r.match(SourceNode, { node }).where(r.not(NodeLowering, { node })).find({ node })
+	})
+	assert.equal(opposite.data.kind, "cq")
+
+	const twoPlain = query(Oracle).rule((r) => {
+		const { sourceNode } = v(FrameworkLowering)
+		return r
+			.match(FrameworkLowering, { sourceNode })
+			.where(r.not(SourceFramework, { node: sourceNode }))
+			.find({ sourceNode })
+	})
+	assert.equal(twoPlain.data.kind, "cq")
+
+	const partialKey = query(Oracle).rule((r) => {
+		const { node } = v(SourceNode)
+		return r
+			.match(SourceNode, { node })
+			.where(r.not(CoreStatement, { statement: node }))
+			.find({ node })
+	})
+	assert.equal(partialKey.data.kind, "cq")
+
+	assert.throws(function twoGenerators() {
+		query(Oracle).rule((r) => {
+			const { node } = v(SourceNode)
+			return (
+				r
+					.match(SourceNode, { node })
+					// @ts-expect-error — two generators stay refused
+					.where(r.not(OtherMint, { id: node }))
+					.find({ node })
+			)
+		})
+	}, /domain-unequal/)
 })

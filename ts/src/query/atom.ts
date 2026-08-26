@@ -2,6 +2,7 @@ import * as errors from "@superbuilders/errors"
 import type { AnyField, ClosedIdField, ClosedRoster, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
+	AntiJoinOk,
 	AnyVar,
 	ClassedField,
 	JoinOk,
@@ -450,7 +451,7 @@ type EqOk<Classes extends SchemaClasses, L, R> = L extends AnyVar
 	: false
 
 type NotBindingOk<Classes extends SchemaClasses, S extends ClassedField, T> = T extends AnyVar
-	? JoinOk<MintSlotOf<Classes, T>, S> extends true
+	? AntiJoinOk<MintSlotOf<Classes, T>, S> extends true
 		? true
 		: false
 	: true
