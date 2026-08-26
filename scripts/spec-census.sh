@@ -324,7 +324,7 @@ while IFS= read -r hit; do
   fi
 done < <(grep -nEi -- "$purged_spelling" "${purged_docs[@]}" 2>/dev/null || true)
 
-# ---- (i): comment hygiene (proposals/purge/comment-gates.md) ----------
+# ---- (i): comment hygiene ----------
 # Banned tokens in comments across crates/*/src, ts/src, ts/crate, lean/.
 # Allowlist mechanism mirrors lane (f): exact-phrase entries, each with a
 # one-line justification. Zero-match assertion per token; a nonzero match
