@@ -137,7 +137,16 @@ pub fn braids(descriptor: &SchemaDescriptor) -> Braids {
                 projection,
             } => {
                 let node = usize::try_from(relation.0).expect("u32 fits usize");
-                if ordinary.get(node) == Some(&true) && projection.is_empty() {
+                // Empty determinant on a relation that has fields: one
+                // global group. A zero-field relation's empty
+                // projection is its only key.
+                if ordinary.get(node) == Some(&true)
+                    && projection.is_empty()
+                    && descriptor
+                        .relations
+                        .get(node)
+                        .is_some_and(|rel| !rel.fields.is_empty())
+                {
                     serial_at.push(id);
                 }
             }
