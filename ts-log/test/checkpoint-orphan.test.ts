@@ -5,7 +5,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, digest32, hex32 } from "#bytes.ts"
+import { bytesEqual, digest32 } from "#bytes.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
 import {
 	CKPT_SCRATCH_LEASE,
@@ -56,7 +56,7 @@ function scratchPath(dir: string): string {
 }
 
 function mdbKey(prefix: string, digest: Digest32) {
-	return checkpointMdbKey(prefix, hex32(digest))
+	return checkpointMdbKey(prefix, digest)
 }
 
 async function birth(store: ReturnType<typeof memStore>, prefix: string): Promise<void> {

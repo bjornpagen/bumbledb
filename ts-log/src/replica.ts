@@ -26,8 +26,8 @@ import { ErrRefused, ErrReplayDiverged, refuse, refuseManifestMissing, wrapStore
 import type { Generation } from "#keys.ts"
 import {
 	CKPT_SCRATCH_LEASE,
-	ckptDocKey,
 	checkpointMdbKey,
+	ckptDocKey,
 	generation,
 	LEASE_NAMESPACE,
 	logKey,
@@ -642,7 +642,7 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 	await fs.rm(target, { recursive: true, force: true })
 	await fs.mkdir(core.dir, { recursive: true })
 	if (core.checkpoint !== null && core.checkpointDigest !== null) {
-		const mdb = await core.store.get(checkpointMdbKey(core.prefix, hex32(core.checkpointDigest)))
+		const mdb = await core.store.get(checkpointMdbKey(core.prefix, core.checkpointDigest))
 		if (mdb === null) {
 			throw errors.new(`checkpoint ${hex32(core.checkpointDigest)} names an absent .mdb`)
 		}
@@ -758,7 +758,7 @@ async function sweepReservedKeys<Rels extends SchemaRelations>(core: Core<Rels>)
 		const digest = parseCkptScratch(read.data)
 		if (digest !== null && (core.checkpointDigest === null || !bytesEqual(digest, core.checkpointDigest))) {
 			await core.store.delete(ckptDocKey(core.prefix, digest))
-			await core.store.delete(checkpointMdbKey(core.prefix, hex32(digest)))
+			await core.store.delete(checkpointMdbKey(core.prefix, digest))
 		}
 	}
 	await fs.rm(path.join(core.dir, TEMP_NAMESPACE), { recursive: true, force: true })

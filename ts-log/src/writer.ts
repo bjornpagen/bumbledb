@@ -37,8 +37,8 @@ import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, refuseSlotRetired,
 import type { Generation } from "#keys.ts"
 import {
 	CKPT_SCRATCH_LEASE,
-	ckptDocKey,
 	checkpointMdbKey,
+	ckptDocKey,
 	encodeCkptScratch,
 	generation,
 	idsKey,
@@ -642,11 +642,7 @@ type Published =
 	| { readonly tag: "kept"; readonly incumbent: Digest32 }
 	| { readonly tag: "refused"; readonly reason: PublishRefusal }
 
-async function putCreateOnce(
-	store: ObjectStore,
-	key: ReturnType<typeof ckptDocKey>,
-	bytes: Uint8Array
-): Promise<void> {
+async function putCreateOnce(store: ObjectStore, key: ReturnType<typeof ckptDocKey>, bytes: Uint8Array): Promise<void> {
 	for (;;) {
 		const created = await store.putCreate(key, bytes)
 		if (created.tag === "created" || created.tag === "exists") {

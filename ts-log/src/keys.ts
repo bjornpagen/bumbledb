@@ -12,8 +12,8 @@
 
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
-import { digest32, hex32, U64_MAX } from "#bytes.ts"
 import type { Digest32 } from "#bytes.ts"
+import { digest32, hex32, U64_MAX } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 
 /** A segment wearing this suffix — after format characters are stripped — is not a key. */
@@ -206,8 +206,8 @@ function tenantPrefix(root: string, tenant: string): string {
 export type { Generation, StoreKey }
 export {
 	CKPT_SCRATCH_LEASE,
-	ckptDocKey,
 	checkpointMdbKey,
+	ckptDocKey,
 	encodeCkptScratch,
 	generation,
 	hex16,
