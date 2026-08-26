@@ -526,12 +526,6 @@ where
             if let Some(refusal) = inner.open_establish(&mut core)? {
                 return Ok(WriterOpened::Refused(refusal));
             }
-            if matches!(core.chain, Chain::Pending { .. }) {
-                match inner.resolve_backlog(&mut core, None, &mut Live::default()) {
-                    Ok(()) | Err(Error::Contention { .. }) => {}
-                    Err(error) => return Err(error),
-                }
-            }
         }
         Ok(WriterOpened::Ready(Self { inner }))
     }

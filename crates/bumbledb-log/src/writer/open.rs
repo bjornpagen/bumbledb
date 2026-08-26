@@ -115,6 +115,9 @@ where
                 core.ckpt_sum = core.floor.as_ref().map_or(0, |(_, doc)| doc.sum());
                 if matches!(core.chain, Chain::Pending { .. }) {
                     match self.resolve_backlog(core, None, &mut Live::default()) {
+                        // SlotRace Contention leaves the applied batch
+                        // in Pending; publication retries on the next
+                        // commit.
                         Ok(()) | Err(Error::Contention { .. }) => {}
                         Err(error) => return Err(error),
                     }
