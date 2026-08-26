@@ -29,10 +29,7 @@ use std::ops::Range;
 
 use bumbledb::schema::{FieldId, RelationId};
 
-use crate::store::{
-    Create, Etag, Fenced, ObjectStore, Result as StoreResult, StoreKey, Swap, prove_create,
-    prove_swap,
-};
+use crate::store::{Create, Etag, Fenced, ObjectStore, Result as StoreResult, StoreKey, Swap};
 
 /// The lease width: one CAS increment claims this many ids.
 pub const LEASE_WIDTH: u64 = 4096;
@@ -111,11 +108,15 @@ fn put_swap<S: ObjectStore>(
 /// Leases one block for `(relation, field)` that can serve `count`:
 /// birth via create-only PUT claiming `[0, 4096)`, otherwise GET + CAS
 /// with unbounded `Moved` retry — every retry is someone else's
-/// successful lease, so the loop always advances globally. `token` is
-/// the fencing token this write carries (20). Exhausted is
-/// `next + count`, decided before the CAS; a last partial block
-/// saturates at `u64::MAX` when the width would overflow but the draw
-/// still fits. `OverWidth` is not this function's refusal.
+/// successful lease, so the loop always advances globally. `Ambiguous`
+/// is not a draw: every writer that read the same `next` writes the
+/// same increment body, so a GET that matches those bytes does not
+/// name this writer. The loop re-reads and takes the next block
+/// (unique, never dense). `token` is the fencing token this write
+/// carries (20). Exhausted is `next + count`, decided before the CAS;
+/// a last partial block saturates at `u64::MAX` when the width would
+/// overflow but the draw still fits. `OverWidth` is not this
+/// function's refusal.
 ///
 /// # Errors
 pub fn lease_block<S: ObjectStore>(
@@ -131,7 +132,7 @@ pub fn lease_block<S: ObjectStore>(
         let Some(fetched) = store.get(&key)? else {
             let birth = format!("{LEASE_WIDTH}");
             let (outcome, token) = put_create(store, &key, birth.as_bytes(), token)?;
-            match prove_create(store, &key, birth.as_bytes(), outcome)? {
+            match outcome {
                 Create::Created(_) => {
                     return Ok(Leased::Drawn {
                         range: 0..LEASE_WIDTH,
@@ -151,7 +152,7 @@ pub fn lease_block<S: ObjectStore>(
         let end = next.saturating_add(LEASE_WIDTH);
         let body = format!("{end}");
         let (outcome, token) = put_swap(store, &key, body.as_bytes(), &fetched.etag, token)?;
-        match prove_swap(store, &key, body.as_bytes(), outcome)? {
+        match outcome {
             Swap::Swapped(_) => {
                 return Ok(Leased::Drawn {
                     range: next..end,
@@ -464,5 +465,76 @@ mod tests {
         assert_eq!(parse_counter(b"4 096"), None);
         assert_eq!(parse_counter(b"4096\n"), None);
         assert_eq!(parse_counter(b"18446744073709551616"), None);
+    }
+
+    /// A CAS that lands and then reports Ambiguous. Every writer that
+    /// read the same `next` writes the same increment body, so a GET
+    /// that matches those bytes is not this writer's draw.
+    struct HideFirstSwap {
+        inner: MemStore,
+        hidden: std::sync::atomic::AtomicBool,
+    }
+
+    impl crate::store::ObjectStore for HideFirstSwap {
+        fn get(&self, key: &StoreKey) -> StoreResult<Option<crate::store::Fetched>> {
+            self.inner.get(key)
+        }
+
+        fn get_if_changed(
+            &self,
+            key: &StoreKey,
+            etag: &crate::store::Etag,
+        ) -> StoreResult<crate::store::Poll> {
+            self.inner.get_if_changed(key, etag)
+        }
+
+        fn put_create<'a>(
+            &self,
+            key: &StoreKey,
+            body: impl Into<Fenced<'a>>,
+        ) -> StoreResult<Create> {
+            self.inner.put_create(key, body)
+        }
+
+        fn put_swap<'a>(
+            &self,
+            key: &StoreKey,
+            body: impl Into<Fenced<'a>>,
+            etag: &crate::store::Etag,
+        ) -> StoreResult<Swap> {
+            let outcome = self.inner.put_swap(key, body, etag)?;
+            if matches!(outcome, Swap::Swapped(_))
+                && !self.hidden.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Ok(Swap::Ambiguous);
+            }
+            Ok(outcome)
+        }
+
+        fn delete(&self, key: &StoreKey) -> StoreResult<()> {
+            self.inner.delete(key)
+        }
+    }
+
+    #[test]
+    fn an_ambiguous_increment_is_not_this_writers_block() {
+        let store = HideFirstSwap {
+            inner: MemStore::new(),
+            hidden: std::sync::atomic::AtomicBool::new(false),
+        };
+        let birth = lease_block(&store, "", REL, FIELD, TOKEN, 1).expect("birth");
+        let Leased::Drawn { range, .. } = birth else {
+            panic!("birth is Drawn");
+        };
+        assert_eq!(range, 0..LEASE_WIDTH);
+        let next = lease_block(&store, "", REL, FIELD, TOKEN, 1).expect("retry");
+        let Leased::Drawn { range, .. } = next else {
+            panic!("retry is Drawn");
+        };
+        assert_eq!(
+            range,
+            LEASE_WIDTH * 2..LEASE_WIDTH * 3,
+            "Ambiguous is not a draw; the loop takes the next block"
+        );
     }
 }
