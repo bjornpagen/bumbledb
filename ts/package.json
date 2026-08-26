@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb",
-	"version": "0.19.0",
+	"version": "0.19.1",
 	"description": "Embedded relational database for TypeScript with typed schemas, queries, and commit-time constraints",
 	"type": "module",
 	"exports": {
