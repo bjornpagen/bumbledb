@@ -15,6 +15,27 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
+`0.19.2` is the structural-invariant release over `0.19.1` — the TS type
+tier proves what it says. The roster is a nonempty declaration-order
+handle VECTOR (`ClosedHandleTuple`; an empty vocabulary is unspellable),
+`SignatureOf` is the ONE structural interpreter of a field descriptor
+(the positive-join wall and the face pairing wall read the same tuple —
+the face tier's handle-union spelling is gone), and the judgment kernel
+(`Same`, `SameLen` in `src/judgment.ts`) carries definitional equality
+and Peano length equality for the closed-id anti-join. The face runtime
+twin compares rosters structurally (name + handle vector), matching its
+own type wall. Wire, manifest, storage format (**8**), C ABI
+(**generation 4**), and every fingerprint pin are UNTOUCHED — the
+cross-host schema fingerprint pin replays byte-identical. The payload
+`closed` tier is spelled `closed(name, handles, columns, axioms)`; the
+bare tier is unchanged.
+
+`0.19.1` is the closed-id anti-join release over `0.19.0` — `not()`
+joins two closed ids whose handle vectors have the same length even when
+the vocabulary names differ, and a fresh u64 mint anti-joins its
+foreign-key copy when one side is bare. Class-equal stays required for
+two generators; the positive-join wall did not weaken. No pin moved.
+
 **0.19.0 reads nothing 0.18.0 wrote.** The protocol documents are
 binary v:3 (`manifest`, `ckpt/{digest}`, `chain` — the `.json` keys
 are gone), the batch and document grammar is one binary language, and
@@ -252,21 +273,21 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits the workspace version and the roster manifests; the
-build enforces the match. The workspace version is `0.19.0` in this tree;
+build enforces the match. The workspace version is `0.19.2` in this tree;
 `pnpm run build` asserts the lockstep on every run.
 
-## Runbook (0.19.0, darwin-arm64 host, owner)
+## Runbook (0.19.2, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.19.0 (the build asserts it — the
+# 1. The lockstep is already set to 0.19.2 (the build asserts it — the
 #    platform pins are NOT repo fields, they inject at pack time):
-#    - Cargo.toml [workspace.package] version = "0.19.0" (the one writer)
-#    - every path on scripts/version-roster.txt equals 0.19.0
-#    - ts-log peerDependencies["@bjornpagen/bumbledb"] is ^0.19.0
-#    bdb_abi_version() answers 4 (unchanged: an added JS export is not
+#    - Cargo.toml [workspace.package] version = "0.19.2" (the one writer)
+#    - every path on scripts/version-roster.txt equals 0.19.2
+#    - ts-log peerDependencies["@bjornpagen/bumbledb"] is ^0.19.2
+#    bdb_abi_version() answers 4 (unchanged: a type-tier refactor is not
 #    an ABI event).
 
 # 2. Download Lane C's linux-arm64 artifacts from a green
@@ -310,13 +331,13 @@ pnpm publish --no-git-checks ./npm/linux-arm64
 pnpm publish --no-git-checks
 
 # 6. Verify the three versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.19.0 version
-pnpm view @bjornpagen/bumbledb-linux-arm64@0.19.0 version
-pnpm view @bjornpagen/bumbledb@0.19.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.19.2 version
+pnpm view @bjornpagen/bumbledb-linux-arm64@0.19.2 version
+pnpm view @bjornpagen/bumbledb@0.19.2 version
 
 # 7. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.19.0 <release-commit> -m "bumbledb 0.19.0" && git push origin v0.19.0
+#    git tag -a v0.19.2 <release-commit> -m "bumbledb 0.19.2" && git push origin v0.19.2
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -338,10 +359,10 @@ minutes) refuses any just-published package for ~24h, so consumers who do not
 exclude `@bjornpagen/*` (this repo does, in `ts/pnpm-workspace.yaml`) cannot
 install a fresh release until a day after publish.
 
-## Publish of @bjornpagen/bumbledb-log 0.19.0 (after the SDK lands)
+## Publish of @bjornpagen/bumbledb-log 0.19.2 (after the SDK lands)
 
-The log driver publishes AFTER the three 0.19.0 SDK packages verify in
-the registry — its peerDependency is `^0.19.0`, unresolvable a minute
+The log driver publishes AFTER the three 0.19.2 SDK packages verify in
+the registry — its peerDependency is `^0.19.2`, unresolvable a minute
 earlier. It is a platformless package: pure TypeScript source
 (`files` ships `src/` + README, `exports` points at `src/index.ts`), no
 napi half, no platform sibling, no pack-time pin injection — so the
@@ -352,21 +373,21 @@ manifest already carries `publishConfig.access: "public"` and
 names only the peer range.
 
 ```sh
-# From the ts-log/ package root, after step 6 above answers 0.19.0 thrice.
+# From the ts-log/ package root, after step 6 above answers 0.19.2 thrice.
 cd ts-log
-pnpm install          # resolves the ^0.19.0 peer against the registry now
+pnpm install          # resolves the ^0.19.2 peer against the registry now
 pnpm test             # node --test, the ONE test spelling
 pnpm run typecheck
 pnpm run lint
 pnpm publish --no-git-checks   # interactive OTP, same as the SDK packages
 
 # Verify:
-pnpm view @bjornpagen/bumbledb-log@0.19.0 version
+pnpm view @bjornpagen/bumbledb-log@0.19.2 version
 ```
 
-The package's own version is `0.19.0` — `ts-log/package.json` is on
+The package's own version is `0.19.2` — `ts-log/package.json` is on
 `scripts/version-roster.txt`, and `assertVersionLockstep` asserts both
-that version and the peer range `^0.19.0`.
+that version and the peer range `^0.19.2`.
 
 ## Post-publish: the primer cutover lands
 
