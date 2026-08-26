@@ -12,6 +12,7 @@ type Expect<T extends true> = T extends true ? true : never
 const Kind = closed("Kind", ["Checking", "Savings"])
 const Grade = closed(
 	"Grade",
+	["DirectPass", "Failed"],
 	{ mastered: bool },
 	{
 		DirectPass: { mastered: true },

@@ -58,6 +58,7 @@ import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import type { FaceData } from "#face.ts"
+import type { Same } from "#judgment.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import type { SchemaRelation, SchemaRelations } from "#schema.ts"
 import { renderStatement, type Statement } from "#statements.ts"
@@ -196,7 +197,7 @@ type WallScan<Comps extends readonly string[], Gens extends string, Pairs extend
 		: WallScan<T, Gens, Pairs>
 	: unknown
 
-type SetEq<A extends string, B extends string> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+type SetEq<A extends string, B extends string> = Same<A, B>
 
 type KeyEntry = readonly [string, string]
 

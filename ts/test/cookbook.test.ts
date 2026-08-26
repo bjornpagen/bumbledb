@@ -365,6 +365,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	test("7. the classification", async function r07() {
 		const Kind = closed(
 			"Kind",
+			["DirectPass", "JudgedPass", "Failed"],
 			{ mastered: bool, rank: u64 },
 			{
 				DirectPass: { mastered: true, rank: 30n },
@@ -404,6 +405,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 	test("8. the sub-vocabulary", async function r08() {
 		const Severity = closed(
 			"Severity",
+			["Info", "Warning", "Critical", "Fatal"],
 			{ pages: bool },
 			{
 				Info: { pages: false },

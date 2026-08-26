@@ -360,6 +360,7 @@ by ψ-selections. Axioms are declared, never written.
 // A rubric change is a new theory — exactly right for meaning.
 const Kind = closed(
 	"Kind",
+	["DirectPass", "JudgedPass", "Failed"],
 	{ mastered: bool, rank: u64 },
 	{
 		DirectPass: { mastered: true, rank: 30n },
@@ -425,6 +426,7 @@ itself**, fixed when the schema is built.
 ```ts
 const Severity = closed(
 	"Severity",
+	["Info", "Warning", "Critical", "Fatal"],
 	{ pages: bool },
 	{
 		Info: { pages: false },

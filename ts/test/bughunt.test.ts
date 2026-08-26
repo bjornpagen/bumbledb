@@ -277,7 +277,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		)
 		assert.throws(
 			function closedPayloadRefused() {
-				closed("Tag", { label: str }, { A: { label: "\uD800" } })
+				closed("Tag", ["A"], { label: str }, { A: { label: "\uD800" } })
 			},
 			/well-formed string/,
 			"a closed payload string is refused at construction"

@@ -30,6 +30,7 @@ const DIGEST = new TextEncoder().encode("0123456789abcdef")
 const Status = closed("Status", ["Open", "Frozen"])
 const Kind = closed(
 	"Kind",
+	["DirectPass", "Failed"],
 	{ mastered: bool, weight: u64, span: interval(u64) },
 	{
 		DirectPass: { mastered: true, weight: 2n, span: span(1n, 3n) },

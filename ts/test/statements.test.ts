@@ -46,6 +46,7 @@ function buildCalendar() {
 function buildMastery() {
 	const Grade = closed(
 		"Grade",
+		["Failed", "DirectPass"],
 		{ mastered: bool, score: u64 },
 		{
 			Failed: { mastered: false, score: 0n },
@@ -70,6 +71,7 @@ function buildRacks() {
 function buildSeverity() {
 	const Sev = closed(
 		"Sev",
+		["Info", "Critical"],
 		{ level: u64 },
 		{
 			Info: { level: 1n },
@@ -694,7 +696,7 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	test("a handle named `where` is ordinary roster data — NO name is reserved, both tiers", function probeNoReservedNames() {
 		const bare = closed("Fine", ["where"])
 		assert.deepEqual(bare.data.handles, ["where"])
-		const payload = closed("AlsoFine", { pages: bool }, { where: { pages: true } })
+		const payload = closed("AlsoFine", ["where"], { pages: bool }, { where: { pages: true } })
 		assert.deepEqual(payload.data.handles, ["where"])
 		assert.equal(payload.axioms.where.pages, true)
 		const selected = payload.where({ pages: true })

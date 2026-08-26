@@ -32,10 +32,21 @@ function span(start: bigint, end: bigint): IntervalValue {
 	return Object.freeze({ start, end })
 }
 
-interface ClosedRoster<Name extends string = string, H extends string = string> {
+/**
+ * Nonempty declaration-order handle vector — the ONE roster carrier. The
+ * handle union is `Handles[number]`, the ordinal of a handle is its tuple
+ * position, and the roster size is the tuple length. An empty vocabulary
+ * is unspellable.
+ */
+type ClosedHandleTuple = readonly [string, ...string[]]
+
+interface ClosedRoster<Name extends string, Handles extends ClosedHandleTuple> {
 	readonly name: Name
-	readonly handles: readonly H[]
+	readonly handles: Handles
 }
+
+/** The roster top type — what an erased carrier knows about any roster. */
+type AnyClosedRoster = ClosedRoster<string, ClosedHandleTuple>
 
 interface BoolField {
 	readonly kind: "bool"
@@ -73,12 +84,42 @@ interface IntervalField<
 	readonly width: Width
 }
 
-interface ClosedIdField<Name extends string = string, H extends string = string> {
+interface ClosedIdField<Name extends string, Handles extends ClosedHandleTuple> {
 	readonly kind: "u64"
-	readonly closed: ClosedRoster<Name, H>
+	readonly closed: ClosedRoster<Name, Handles>
 }
 
-type AnyField = BoolField | StrField | U64Field | FreshU64Field | I64Field | BytesField | IntervalField | ClosedIdField
+/** The closed-id top type — the erased carrier's view of any closed id. */
+type AnyClosedIdField = ClosedIdField<string, ClosedHandleTuple>
+
+type AnyField =
+	| BoolField
+	| StrField
+	| U64Field
+	| FreshU64Field
+	| I64Field
+	| BytesField
+	| IntervalField
+	| AnyClosedIdField
+
+/**
+ * The ONE structural interpreter of a field descriptor — the positional
+ * signature every equality judgment reads (the positive join wall in
+ * `#query/scope.ts` and the face pairing wall in `#face.ts`). Two fields
+ * are one shape exactly when their signatures are the same tuple: kind,
+ * width, interval element, and the roster as name plus the handle VECTOR
+ * (order and length carry meaning; a set would forget both).
+ */
+type SignatureOf<F extends AnyField> = readonly [
+	F["kind"],
+	F extends { readonly width: infer W } ? W : undefined,
+	F extends { readonly element: infer E } ? E : undefined,
+	F extends {
+		readonly closed: { readonly name: infer N extends string; readonly handles: infer H extends ClosedHandleTuple }
+	}
+		? readonly [N, H]
+		: undefined
+]
 
 type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 	? boolean
@@ -106,11 +147,42 @@ function literalShapeError(context: string, expected: string, value: unknown): E
 	return errors.new(`${context}: expected ${expected}, got ${typeof value}`)
 }
 
-function rosterOf(field: AnyField | undefined): ClosedRoster | undefined {
+function rosterOf(field: AnyField | undefined): AnyClosedRoster | undefined {
 	if (field !== undefined && "closed" in field) {
 		return field.closed
 	}
 	return undefined
+}
+
+/**
+ * The runtime twin of roster equality inside {@link SignatureOf}: same
+ * vocabulary name, same handle vector (order and length). Two absent
+ * rosters agree; a roster never agrees with a bare field.
+ */
+function rostersAgree(a: AnyClosedRoster | undefined, b: AnyClosedRoster | undefined): boolean {
+	if (a === undefined || b === undefined) {
+		return a === b
+	}
+	return (
+		a.name === b.name &&
+		a.handles.length === b.handles.length &&
+		a.handles.every(function sameHandle(handle, index) {
+			return handle === b.handles[index]
+		})
+	)
+}
+
+/**
+ * The runtime twin of {@link SignatureOf} equality — the ONE spelling of
+ * "these two descriptors are one shape". Kind, width, interval element,
+ * and the roster vector must all agree.
+ */
+function signaturesAgree(a: AnyField, b: AnyField): boolean {
+	const widthA = "width" in a ? a.width : undefined
+	const widthB = "width" in b ? b.width : undefined
+	const elementA = "element" in a ? a.element : undefined
+	const elementB = "element" in b ? b.element : undefined
+	return a.kind === b.kind && widthA === widthB && elementA === elementB && rostersAgree(rosterOf(a), rosterOf(b))
 }
 
 function isIntervalValue(value: unknown): value is IntervalValue {
@@ -124,7 +196,7 @@ function isIntervalValue(value: unknown): value is IntervalValue {
 	)
 }
 
-function handleLiteral(closed: ClosedRoster, value: unknown): LiteralSpec {
+function handleLiteral(closed: AnyClosedRoster, value: unknown): LiteralSpec {
 	if (typeof value !== "string") {
 		throw literalShapeError("selection literal", `a ${closed.name} handle name (string)`, value)
 	}
@@ -245,9 +317,12 @@ function literalOf(field: AnyField, value: unknown): LiteralSpec {
 }
 
 export type {
+	AnyClosedIdField,
+	AnyClosedRoster,
 	AnyField,
 	BoolField,
 	BytesField,
+	ClosedHandleTuple,
 	ClosedIdField,
 	ClosedRoster,
 	FreshU64Field,
@@ -255,6 +330,7 @@ export type {
 	Infer,
 	IntervalField,
 	IntervalValue,
+	SignatureOf,
 	StrField,
 	U64Field
 }
@@ -269,6 +345,8 @@ export {
 	literalOf,
 	literalShapeError,
 	rosterOf,
+	rostersAgree,
+	signaturesAgree,
 	span,
 	str,
 	u64

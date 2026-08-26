@@ -30,6 +30,7 @@ after(function cleanup() {
 
 const Sev = closed(
 	"Sev",
+	["Info", "Warn", "Crit", "Fatal"],
 	{ pages: bool, rank: u64 },
 	{
 		Info: { pages: false, rank: 1n },

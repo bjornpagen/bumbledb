@@ -1,7 +1,7 @@
 /**
  * H1 pins — the precise roster type. A closed reference descriptor carries
- * its vocabulary name AND handle union in the TYPE (`ClosedIdField<"Kind",
- * "DirectPass" | "JudgedPass" | "Failed">` — the name literal keeps two
+ * its vocabulary name AND handle tuple in the TYPE (`ClosedIdField<"Kind",
+ * readonly ["DirectPass", "JudgedPass", "Failed"]>` — the name literal keeps two
  * same-shaped vocabularies distinct, 063), `Infer` yields the union as the
  * column's VALUE TYPE, and
  * every `Infer`-reading surface (`Fact`) sees it. A wrong
@@ -17,7 +17,16 @@ import { test } from "node:test"
 
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
-import { type ClosedIdField, type ClosedRoster, type Infer, u64 } from "#fields.ts"
+import {
+	type AnyClosedIdField,
+	bytes,
+	type ClosedIdField,
+	type ClosedRoster,
+	type Infer,
+	type SignatureOf,
+	u64
+} from "#fields.ts"
+import type { Same, SameLen } from "#judgment.ts"
 import { type Fact, relation } from "#relation.ts"
 import { contained } from "#statements.ts"
 
@@ -50,9 +59,9 @@ type Cases = [
 			}
 		>
 	>,
-	Expect<Equal<typeof Kind.id, ClosedIdField<"Kind", "DirectPass" | "JudgedPass" | "Failed">>>,
-	Expect<Equal<(typeof Kind.id)["closed"], ClosedRoster<"Kind", "DirectPass" | "JudgedPass" | "Failed">>>,
-	Expect<Equal<typeof Kind.id extends ClosedIdField ? true : false, true>>
+	Expect<Equal<typeof Kind.id, ClosedIdField<"Kind", readonly ["DirectPass", "JudgedPass", "Failed"]>>>,
+	Expect<Equal<(typeof Kind.id)["closed"], ClosedRoster<"Kind", readonly ["DirectPass", "JudgedPass", "Failed"]>>>,
+	Expect<Equal<typeof Kind.id extends AnyClosedIdField ? true : false, true>>
 ]
 
 type OverlapCases = [
@@ -60,6 +69,42 @@ type OverlapCases = [
 	// the non-shared names do NOT cross vocabularies
 	Expect<Equal<"Manual" extends Infer<typeof Kind.id> ? true : false, false>>,
 	Expect<Equal<"Failed" extends Infer<typeof Method.id> ? true : false, false>>
+]
+
+/**
+ * The judgment kernel, proven at its own tier. `SameLen` is Peano equality
+ * on handle vectors: zero/zero holds, successor recurses on successor, an
+ * open array carries no Nat and proves NOTHING (not even against itself).
+ * `Same` is definitional equality — a vector is not its element union, and
+ * order is meaning: reordering a roster changes the type.
+ */
+type KernelCases = [
+	Expect<Equal<SameLen<readonly ["a", "b"], readonly ["x", "y"]>, true>>,
+	Expect<Equal<SameLen<readonly ["a", "b"], readonly ["x"]>, false>>,
+	Expect<Equal<SameLen<readonly ["a"], readonly ["x", "y"]>, false>>,
+	Expect<Equal<SameLen<readonly string[], readonly string[]>, false>>,
+	Expect<Equal<SameLen<readonly ["a"], readonly string[]>, false>>,
+	Expect<Equal<Same<readonly ["a", "b"], readonly ["a", "b"]>, true>>,
+	Expect<Equal<Same<readonly ["a", "b"], readonly ["b", "a"]>, false>>,
+	Expect<Equal<Same<readonly ["a", "b"], "a" | "b">, false>>
+]
+
+const Tag = bytes(16)
+
+/**
+ * The ONE structural interpreter: a field's signature is the positional
+ * tuple every equality judgment reads. The roster slot carries the name
+ * literal AND the handle vector — not a handle set.
+ */
+type SignatureCases = [
+	Expect<
+		Equal<
+			SignatureOf<typeof Kind.id>,
+			readonly ["u64", undefined, undefined, readonly ["Kind", readonly ["DirectPass", "JudgedPass", "Failed"]]]
+		>
+	>,
+	Expect<Equal<SignatureOf<typeof Tag>, readonly ["bytes", 16, undefined, undefined]>>,
+	Expect<Equal<Same<SignatureOf<typeof Kind.id>, SignatureOf<typeof Method.id>>, false>>
 ]
 
 function sharedHandleAssignsAcrossVocabularies(shared: "DirectPass"): [Infer<typeof Kind.id>, Infer<typeof Method.id>] {
@@ -84,6 +129,16 @@ test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slo
 	}, /is a Kind reference but Answer\.id is a Answer reference/)
 })
 
+test("handle order is meaning at BOTH tiers — a reordered roster is a different vocabulary", function probeOrderCarriesMeaning() {
+	const Forward = closed("Palette", ["Red", "Green"])
+	const Reversed = closed("Palette", ["Green", "Red"])
+	const Paint = relation("Paint", { color: Forward.id })
+	assert.throws(function reorderedPairing() {
+		// @ts-expect-error — the roster slot is a vector, not a set: [Red, Green] and [Green, Red] are different types, so the faces do not pair
+		contained(on(Paint, "color"), on(Reversed, "id"))
+	}, /closedness rides the descriptor/)
+})
+
 test("the precise type's runtime twin is the same frozen declaration-order roster", function probeRuntimeTwin() {
 	assert.ok(Object.isFrozen(Kind.id))
 	assert.ok(Object.isFrozen(Kind.id.closed))
@@ -103,5 +158,5 @@ test("the precise type's runtime twin is the same frozen declaration-order roste
 	assert.equal(insertRefusals().length, 2)
 })
 
-export type { Cases, OverlapCases }
+export type { Cases, KernelCases, OverlapCases, SignatureCases }
 export { insertRefusals, sharedHandleAssignsAcrossVocabularies }

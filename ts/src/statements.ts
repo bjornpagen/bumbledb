@@ -12,7 +12,7 @@ import {
 } from "#capacity.ts"
 import { isClosedMember, sealedFieldOf } from "#closed.ts"
 import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
-import { type ClosedRoster, rosterOf } from "#fields.ts"
+import { type AnyClosedRoster, rosterOf, rostersAgree } from "#fields.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { type CapacityWindowSpec, renderCapacityWindow, renderWeight, type WeightSpec } from "#spec.ts"
 
@@ -67,7 +67,7 @@ interface KeyStatement<R extends AnyRelation, Projection extends readonly string
 	readonly data: KeyData<R, Projection>
 }
 
-function renderRosterSide(roster: ClosedRoster | undefined): string {
+function renderRosterSide(roster: AnyClosedRoster | undefined): string {
 	return roster === undefined ? "a bare column" : `a ${roster.name} reference`
 }
 
@@ -96,7 +96,7 @@ function assertRosterAgreement(source: FaceData, target: FaceData, statement: St
 		}
 		const sourceRoster = rosterOf(sealedFieldOf(source.owner, fieldName))
 		const targetRoster = rosterOf(sealedFieldOf(target.owner, targetField))
-		if (sourceRoster !== targetRoster) {
+		if (!rostersAgree(sourceRoster, targetRoster)) {
 			throw errors.new(
 				`${source.owner.name}.${fieldName} is ${renderRosterSide(sourceRoster)} but ${target.owner.name}.${targetField} is ${renderRosterSide(targetRoster)} — closedness rides the descriptor: a closed reference is spelled with the vocabulary's own id descriptor (one meaning, one spelling), so faces pair closed-with-closed through one roster or bare-with-bare, never across — ${renderStatement(statement)}`
 			)

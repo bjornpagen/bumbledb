@@ -108,8 +108,9 @@ mod ledger {
 // through the host enum in scope; `Currency::Usd` is the qualified form.
 use ledger::{Currency, Ledger};
 
-/// A process-unique store tag: several tests build the case table in
-/// parallel threads, so a case's temp store may never collide by name.
+/// A store tag unique within this process: the counter separates the
+/// case stores one test builds; the process id in [`TempDir`]'s path
+/// separates the sibling test processes that each build the whole table.
 fn unique_tag(tag: &str) -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);

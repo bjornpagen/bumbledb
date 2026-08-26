@@ -1301,3 +1301,101 @@ test("not() joins a fresh mint with its u64 copy and a partial-key anti-join", f
 		})
 	}, /domain-unequal/)
 })
+
+test("not() joins two closed ids that share a handle set or roster length", function closedIdAntiJoin() {
+	const SourceGrade = closed("SourceGrade", ["K", "1", "2"])
+	const Grade = closed("Grade", ["K", "1", "2"])
+	const CodeKind = closed("CodeKind", ["primary", "alternate"])
+	const ClassificationScheme = closed("ClassificationScheme", ["reported", "source-normalized"])
+	const SourceClassificationScheme = closed("SourceClassificationScheme", ["reported", "provider-normalized"])
+	const SourceNode = relation("SourceNode", { node: u64.fresh })
+	const SourceStatementGrade = relation("SourceStatementGrade", {
+		node: u64,
+		grade: SourceGrade.id
+	})
+	const SourceStatementClassification = relation("SourceStatementClassification", {
+		node: u64,
+		scheme: SourceClassificationScheme.id
+	})
+	const Statement = relation("Statement", { statement: u64.fresh })
+	const StatementGrade = relation("StatementGrade", { statement: u64, grade: Grade.id })
+	const StatementClassification = relation("StatementClassification", {
+		statement: u64,
+		scheme: ClassificationScheme.id
+	})
+	const StatementLowering = relation("StatementLowering", { statement: u64, sourceNode: u64 })
+	const StatementCode = relation("StatementCode", { statement: u64, kind: CodeKind.id })
+	const Oracle = schema(
+		"ClosedOracle",
+		{
+			SourceGrade,
+			Grade,
+			CodeKind,
+			ClassificationScheme,
+			SourceClassificationScheme,
+			SourceNode,
+			SourceStatementGrade,
+			SourceStatementClassification,
+			Statement,
+			StatementGrade,
+			StatementClassification,
+			StatementLowering,
+			StatementCode
+		},
+		[
+			contained(on(SourceStatementGrade, "node"), on(SourceNode, "node")),
+			contained(on(SourceStatementClassification, "node"), on(SourceNode, "node")),
+			contained(on(StatementGrade, "statement"), on(Statement, "statement")),
+			contained(on(StatementClassification, "statement"), on(Statement, "statement")),
+			contained(on(StatementCode, "statement"), on(Statement, "statement")),
+			contained(on(StatementLowering, "statement"), on(Statement, "statement")),
+			contained(on(StatementLowering, "sourceNode"), on(SourceNode, "node"))
+		]
+	)
+
+	const image = query(Oracle).rule((r) => {
+		const { statement, grade } = v(StatementGrade)
+		const { sourceNode: node } = v(StatementLowering)
+		return r
+			.match(StatementGrade, { statement, grade })
+			.match(StatementLowering, { statement, sourceNode: node })
+			.where(r.not(SourceStatementGrade, { node, grade }))
+			.find({ statement })
+	})
+	assert.equal(image.data.kind, "cq")
+
+	const opposite = query(Oracle).rule((r) => {
+		const { node, grade } = v(SourceStatementGrade)
+		const { statement } = v(StatementLowering)
+		return r
+			.match(SourceStatementGrade, { node, grade })
+			.match(StatementLowering, { statement, sourceNode: node })
+			.where(r.not(StatementGrade, { statement, grade }))
+			.find({ statement })
+	})
+	assert.equal(opposite.data.kind, "cq")
+
+	const scheme = query(Oracle).rule((r) => {
+		const { statement, scheme } = v(StatementClassification)
+		const { sourceNode: node } = v(StatementLowering)
+		return r
+			.match(StatementClassification, { statement, scheme })
+			.match(StatementLowering, { statement, sourceNode: node })
+			.where(r.not(SourceStatementClassification, { node, scheme }))
+			.find({ statement })
+	})
+	assert.equal(scheme.data.kind, "cq")
+
+	assert.throws(function closedVocabularyMismatch() {
+		query(Oracle).rule((r) => {
+			const { statement, grade } = v(StatementGrade)
+			return (
+				r
+					.match(StatementGrade, { statement, grade })
+					// @ts-expect-error — Grade.id vs CodeKind.id are different closed vocabularies
+					.where(r.not(StatementCode, { statement, kind: grade }))
+					.find({ statement })
+			)
+		})
+	}, /domain-unequal/)
+})

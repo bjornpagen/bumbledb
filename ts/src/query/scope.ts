@@ -1,8 +1,9 @@
 import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { sealedFieldsOf } from "#closed.ts"
-import type { AnyField, Infer } from "#fields.ts"
-import { rosterOf } from "#fields.ts"
+import type { AnyField, Infer, SignatureOf } from "#fields.ts"
+import { rosterOf, signaturesAgree } from "#fields.ts"
+import type { Same, SameLen } from "#judgment.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryParam } from "#native.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
@@ -19,7 +20,7 @@ type MatchFields<R extends MatchOwner> = R extends AnyClosed
 		? RelationFields<R>
 		: never
 
-interface Var<F extends AnyField = AnyField, RN extends string = string, K extends string = string> {
+interface Var<F extends AnyField, RN extends string, K extends string> {
 	readonly [term]: "var"
 	readonly owner: MatchOwner & { readonly name: RN }
 	readonly column: K
@@ -27,19 +28,19 @@ interface Var<F extends AnyField = AnyField, RN extends string = string, K exten
 	readonly label: string
 }
 
-type AnyVar = Var
+type AnyVar = Var<AnyField, string, string>
 
-interface Param<Name extends string = string> {
+interface Param<Name extends string> {
 	readonly [term]: "param"
 	readonly name: Name
 }
 
-interface SetParam<Name extends string = string> {
+interface SetParam<Name extends string> {
 	readonly [term]: "setParam"
 	readonly name: Name
 }
 
-type AnyTerm = Var | Param | SetParam
+type AnyTerm = AnyVar | Param<string> | SetParam<string>
 
 function isTerm(value: unknown): value is AnyTerm {
 	return typeof value === "object" && value !== null && term in value
@@ -147,81 +148,75 @@ type UnionToIntersection<U> = (U extends unknown ? (member: U) => void : never) 
 
 type ShapeOf<U> = [U] extends [never] ? Record<never, never> : Flatten<UnionToIntersection<U>>
 
-type WidthOf<F extends AnyField> = F extends { readonly width: infer W } ? W : undefined
+/**
+ * A slot's identity for the positive-join judgment: the field's structural
+ * signature ({@link SignatureOf} — the ONE interpreter, shared with the
+ * face pairing wall) plus the slot's law class.
+ */
+type SlotSignature<S extends ClassedField> = readonly [SignatureOf<S["field"]>, S["class"]]
 
-type ElementOf<F extends AnyField> = F extends { readonly element: infer E } ? E : undefined
-
-type RosterOf<F extends AnyField> = F extends {
-	readonly closed: { readonly name: infer N extends string; readonly handles: readonly (infer H extends string)[] }
-}
-	? readonly [N, H]
-	: undefined
-
-type JoinOk<A extends ClassedField, B extends ClassedField> = [
-	A["field"]["kind"],
-	A["class"],
-	WidthOf<A["field"]>,
-	ElementOf<A["field"]>,
-	RosterOf<A["field"]>
-] extends [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>, RosterOf<B["field"]>]
-	? [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>, RosterOf<B["field"]>] extends [
-			A["field"]["kind"],
-			A["class"],
-			WidthOf<A["field"]>,
-			ElementOf<A["field"]>,
-			RosterOf<A["field"]>
-		]
-		? true
-		: false
-	: false
+type JoinOk<A extends ClassedField, B extends ClassedField> = Same<SlotSignature<A>, SlotSignature<B>>
 
 type U64Wire<F extends AnyField> = F extends { readonly kind: "u64" }
-	? RosterOf<F> extends undefined
-		? true
-		: false
+	? F extends { readonly closed: unknown }
+		? false
+		: true
 	: false
+
+type ClosedHandles<F extends AnyField> = F extends {
+	readonly closed: { readonly handles: infer H extends readonly string[] }
+}
+	? H
+	: never
+
+/**
+ * Two closed ids anti-join when their handle vectors carry the same Peano
+ * length ({@link SameLen}: zero equals zero, successor recurses on
+ * successor). A bare field has no vector and proves nothing.
+ */
+type ClosedIdOk<A extends AnyField, B extends AnyField> = [ClosedHandles<A>] extends [never]
+	? false
+	: [ClosedHandles<B>] extends [never]
+		? false
+		: SameLen<ClosedHandles<A>, ClosedHandles<B>>
 
 /**
  * Anti-join class safety: class-equal slots, plus same-identity u64
- * (fresh mint, foreign-key copy, or bare u64) when one side is bare.
- * Two distinct generators stay refused. Closed-roster u64 is not a
- * wire identity.
+ * (fresh mint, foreign-key copy, or bare u64) when one side is bare,
+ * plus two closed-id fields whose handle tuples have the same length.
+ * Two distinct generators stay refused.
  */
 type AntiJoinOk<A extends ClassedField, B extends ClassedField> =
 	JoinOk<A, B> extends true
 		? true
-		: U64Wire<A["field"]> extends true
-			? U64Wire<B["field"]> extends true
-				? [A["class"]] extends [undefined]
-					? true
-					: [B["class"]] extends [undefined]
+		: ClosedIdOk<A["field"], B["field"]> extends true
+			? true
+			: U64Wire<A["field"]> extends true
+				? U64Wire<B["field"]> extends true
+					? [A["class"]] extends [undefined]
 						? true
-						: false
+						: [B["class"]] extends [undefined]
+							? true
+							: false
+					: false
 				: false
-			: false
 
 function fieldJoins(a: ClassedField, b: ClassedField): boolean {
-	const widthA = "width" in a.field ? a.field.width : undefined
-	const widthB = "width" in b.field ? b.field.width : undefined
-	const elementA = "element" in a.field ? a.field.element : undefined
-	const elementB = "element" in b.field ? b.field.element : undefined
-	const rosterA = rosterOf(a.field)
-	const rosterB = rosterOf(b.field)
-	return (
-		a.field.kind === b.field.kind &&
-		a.class === b.class &&
-		widthA === widthB &&
-		elementA === elementB &&
-		rosterA === rosterB
-	)
+	return a.class === b.class && signaturesAgree(a.field, b.field)
 }
 
 function u64Wire(field: AnyField): boolean {
 	return field.kind === "u64" && rosterOf(field) === undefined
 }
 
+function closedIdAntiJoins(a: AnyField, b: AnyField): boolean {
+	const rosterA = rosterOf(a)
+	const rosterB = rosterOf(b)
+	return rosterA !== undefined && rosterB !== undefined && rosterA.handles.length === rosterB.handles.length
+}
+
 function fieldAntiJoins(a: ClassedField, b: ClassedField): boolean {
-	if (fieldJoins(a, b)) {
+	if (fieldJoins(a, b) || closedIdAntiJoins(a.field, b.field)) {
 		return true
 	}
 	return u64Wire(a.field) && u64Wire(b.field) && (a.class === undefined || b.class === undefined)

@@ -108,7 +108,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	})
 
 	test("row 8: closed target, a payload projection — refused by CLOSEDNESS, its own message", function closedPayload() {
-		const Sev = closed("Sev", { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
+		const Sev = closed("Sev", ["Info", "Critical"], { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
 		const Task = relation("Task", { level: u64 })
 		assert.throws(function payloadTarget() {
 			// @ts-expect-error — the TargetKeyWall verdict: a closed target is addressed by its synthetic id only
@@ -117,7 +117,7 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	})
 
 	test("row 8 sub-case: a declared payload key equal to the projection changes nothing — closedness judges first", function closedPayloadKeyed() {
-		const Sev = closed("Sev", { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
+		const Sev = closed("Sev", ["Info", "Critical"], { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
 		const Task = relation("Task", { level: u64 })
 
 		// arm refuses BEFORE the key search, so a declared payload key

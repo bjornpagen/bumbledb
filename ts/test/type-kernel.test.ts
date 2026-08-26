@@ -9,6 +9,7 @@ function buildLedgerPieces() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
 	const Grade = closed(
 		"Grade",
+		["DirectPass", "Failed"],
 		{ mastered: bool },
 		{
 			DirectPass: { mastered: true },
@@ -119,7 +120,7 @@ describe("closed relations", function describeClosed() {
 		assert.ok(Object.isFrozen(Kind.columns))
 		assert.deepStrictEqual(Kind.columns, {})
 
-		const width: 8 = closed("Sev", { tag: bytes(8) }, { Info: { tag: new Uint8Array(8) } }).columns.tag.width
+		const width: 8 = closed("Sev", ["Info"], { tag: bytes(8) }, { Info: { tag: new Uint8Array(8) } }).columns.tag.width
 		assert.equal(width, 8)
 	})
 
@@ -130,22 +131,23 @@ describe("closed relations", function describeClosed() {
 
 		const bare = closed("Kind", ["Checking", "match"])
 		assert.deepStrictEqual(bare.data.handles, ["Checking", "match"])
-		const payload = closed("Sev", { pages: bool }, { where: { pages: true } })
+		const payload = closed("Sev", ["where"], { pages: bool }, { where: { pages: true } })
 		assert.equal(payload.axioms.where.pages, true)
 	})
 
 	test("an empty payload roster is a construction error", function probeEmptyRoster() {
 		assert.throws(function emptyAxioms() {
-			closed("Sev", { pages: bool }, {})
+			// @ts-expect-error — an empty handle vector is not a roster
+			closed("Sev", [], { pages: bool }, {})
 		}, /at least one handle/)
 	})
 
 	test("integer-index column and handle names are rejected (declaration-order law)", function probeNumericNames() {
 		assert.throws(function numericColumn() {
-			closed("Bad", { "0": bool }, { X: { "0": true } })
+			closed("Bad", ["X"], { "0": bool }, { X: { "0": true } })
 		}, /integer index/)
 		assert.throws(function numericHandle() {
-			closed("Bad", { pages: bool }, { "7": { pages: true } })
+			closed("Bad", ["7"], { pages: bool }, { "7": { pages: true } })
 		}, /integer index/)
 	})
 

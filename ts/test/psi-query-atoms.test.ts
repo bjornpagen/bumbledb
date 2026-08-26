@@ -30,6 +30,7 @@ after(function cleanup() {
 
 const Sev = closed(
 	"Sev",
+	["Info", "Warn", "Crit", "Fatal"],
 	{ pages: bool, rank: u64 },
 	{
 		Info: { pages: false, rank: 1n },
@@ -310,7 +311,7 @@ describe("ψ query atoms over closed relations", function suite() {
 	})
 
 	test("a payload column joins a same-CLASS field of another atom; a different-CLASS reuse is the same wall", function payloadClassJoins() {
-		const Grade = closed("Grade", { rank: u64 }, { Failed: { rank: 1n }, Passed: { rank: 2n } })
+		const Grade = closed("Grade", ["Failed", "Passed"], { rank: u64 }, { Failed: { rank: 1n }, Passed: { rank: 2n } })
 		const Course = relation("Course", { id: u64.fresh, level: u64 })
 		const Rubric = schema("Rubric", { Grade, Course }, [
 			key(Course, ["level"]),

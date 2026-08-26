@@ -124,6 +124,7 @@ const Golden = schema(
 
 const Grade = closed(
 	"Grade",
+	["Failed", "DirectPass"],
 	{ mastered: bool },
 	{
 		Failed: { mastered: false },

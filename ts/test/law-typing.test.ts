@@ -61,7 +61,12 @@ describe("the three class laws", function laws() {
 	})
 
 	test("a ψ-selected closed face pairs exactly like the bare face — the selection changes classes not at all", function psiPairing() {
-		const Grade = closed("Grade", { mastered: str }, { Failed: { mastered: "no" }, DirectPass: { mastered: "yes" } })
+		const Grade = closed(
+			"Grade",
+			["Failed", "DirectPass"],
+			{ mastered: str },
+			{ Failed: { mastered: "no" }, DirectPass: { mastered: "yes" } }
+		)
 		const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
 		const Mastery = schema("Mastery", { Grade, Certificate }, [
 			contained(on(Certificate, "grade"), on(Grade.where({ mastered: "yes" }), "id"))
@@ -244,10 +249,15 @@ describe("the runtime/type agreement and the wire", function agreement() {
 	test("a plain __proto__ declaration entry is refused — the Annex B setter would silently drop the key", function protoEntries() {
 		const litHandles = { __proto__: { pages: 1n }, Warn: { pages: 2n } }
 		assert.throws(function protoLiteralHandle() {
-			closed("Sev", { pages: u64 }, litHandles)
+			closed("Sev", ["__proto__", "Warn"], { pages: u64 }, litHandles)
 		}, /prototype was replaced/)
 
-		const Sev = closed("Sev", { pages: u64 }, { ["__proto__"]: { pages: 1n }, Warn: { pages: 2n } })
+		const Sev = closed(
+			"Sev",
+			["__proto__", "Warn"],
+			{ pages: u64 },
+			{ ["__proto__"]: { pages: 1n }, Warn: { pages: 2n } }
+		)
 		assert.deepStrictEqual([...Sev.data.handles], ["__proto__", "Warn"])
 		assert.ok(Object.hasOwn(Sev.axioms, "__proto__"))
 		assert.deepStrictEqual(Object.getOwnPropertyDescriptor(Sev.axioms, "__proto__")?.value, { pages: 1n })

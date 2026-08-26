@@ -40,6 +40,7 @@ import { bool, closed, contained, Db, type Infer, key, on, query, relation, sche
 // Its ID type is the union "DirectPass" | "JudgedPass" | "Failed".
 const Kind = closed(
 	"Kind",
+	["DirectPass", "JudgedPass", "Failed"],
 	{ mastered: bool, rank: u64 },
 	{
 		DirectPass: { mastered: true, rank: 30n },

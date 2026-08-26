@@ -1,5 +1,5 @@
 import * as errors from "@superbuilders/errors"
-import type { AnyField, ClosedIdField, ClosedRoster, Infer, IntervalValue } from "#fields.ts"
+import type { AnyClosedRoster, AnyField, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AntiJoinOk,
@@ -77,7 +77,7 @@ type FindEntryData =
 interface FindColumn {
 	readonly name: string
 	readonly entry: FindEntryData
-	readonly closed: ClosedRoster | undefined
+	readonly closed: AnyClosedRoster | undefined
 	readonly slot: ClassedField | undefined
 }
 
@@ -140,7 +140,7 @@ type DerivedTable = InteriorData | RecHead
 
 type BindingInput<F extends AnyField> =
 	| Infer<F>
-	| (F extends ClosedIdField ? readonly Infer<F>[] : never)
+	| (F extends { readonly closed: { readonly handles: readonly string[] } } ? readonly Infer<F>[] : never)
 	| (F extends { readonly kind: "interval" } ? bigint : never)
 	| AnyVar
 	| Param<string>
@@ -364,7 +364,7 @@ function not(
  * closed-bound terms — the construction-time validations in
  * `#query/lower.ts` are that ban's runtime twin.
  */
-type NumericVarOk<V extends AnyVar> = V["field"] extends { readonly closed: ClosedRoster }
+type NumericVarOk<V extends AnyVar> = V["field"] extends { readonly closed: AnyClosedRoster }
 	? false
 	: V["field"]["kind"] extends "u64" | "i64"
 		? true

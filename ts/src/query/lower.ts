@@ -1,6 +1,6 @@
 import * as errors from "@superbuilders/errors"
 import { sealedFieldsOf } from "#closed.ts"
-import type { AnyField, ClosedRoster } from "#fields.ts"
+import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { assertDeclarationOrderKey, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
@@ -1171,7 +1171,7 @@ function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaCl
 	return raw
 }
 
-function renderClosedSlice(closed: ClosedRoster | undefined): string {
+function renderClosedSlice(closed: AnyClosedRoster | undefined): string {
 	return closed === undefined ? "a bare value" : `a ${closed.name} reference`
 }
 
@@ -1187,7 +1187,7 @@ function headSignature(column: FindColumn): string {
 	return `${column.name}:${agg.op}`
 }
 
-function renderParamAnchor(roster: ClosedRoster | undefined): string {
+function renderParamAnchor(roster: AnyClosedRoster | undefined): string {
 	return roster === undefined ? "a non-closed position" : `a ${roster.name} reference`
 }
 

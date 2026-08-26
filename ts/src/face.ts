@@ -1,6 +1,7 @@
 import * as errors from "@superbuilders/errors"
 import type { AnyClosed, AnySelectedClosed, PayloadField } from "#closed.ts"
-import type { AnyField } from "#fields.ts"
+import type { AnyField, SignatureOf } from "#fields.ts"
+import type { Same } from "#judgment.ts"
 import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
 import { renderLiteralSet } from "#spec.ts"
 
@@ -46,24 +47,25 @@ type FaceFields<S extends FaceSource> = S extends AnySelected
 				? "id" | (keyof Row & string)
 				: never
 
-type ShapeOf<F extends AnyField> = readonly [
-	F["kind"],
-	F extends { readonly element: unknown } ? undefined : F extends { readonly width: infer W } ? W : undefined,
-	F extends { readonly element: infer E } ? E : undefined,
-	F extends {
-		readonly closed: { readonly name: infer N extends string; readonly handles: readonly (infer H extends string)[] }
-	}
-		? readonly [N, H]
-		: undefined
-]
+/**
+ * The wire shape a face projects: the field's {@link SignatureOf} with an
+ * interval's width erased. A fixed-width interval pairs with a plain one —
+ * width is a measure label, not wire structure. Bytes width IS wire
+ * structure and stays. The roster stays the full handle vector.
+ */
+type ProjectedSignature<F extends AnyField> = F extends { readonly kind: "interval" }
+	? readonly [F["kind"], undefined, F extends { readonly element: infer E } ? E : undefined, undefined]
+	: SignatureOf<F>
 
-type ShapeIn<Fields extends FieldsShape, K extends string> = K extends keyof Fields ? ShapeOf<Fields[K]> : undefined
+type ShapeIn<Fields extends FieldsShape, K extends string> = K extends keyof Fields
+	? ProjectedSignature<Fields[K]>
+	: undefined
 
 type ProjectedShape<S extends FaceSource, K extends string> = S extends AnySelected
 	? ShapeIn<RelationFields<S["relation"]>, K>
 	: S extends AnySelectedClosed
 		? K extends "id"
-			? ShapeOf<S["relation"]["id"]>
+			? ProjectedSignature<S["relation"]["id"]>
 			: ShapeIn<S["relation"]["columns"], K>
 		: S extends AnyRelation
 			? ShapeIn<RelationFields<S>, K>
@@ -72,7 +74,7 @@ type ProjectedShape<S extends FaceSource, K extends string> = S extends AnySelec
 						readonly columns: infer Cols extends Record<string, PayloadField>
 					}
 				? K extends "id"
-					? ShapeOf<Id>
+					? ProjectedSignature<Id>
 					: ShapeIn<Cols, K>
 				: undefined
 
@@ -92,11 +94,7 @@ interface FaceArityMismatch<Left, Right> {
 }
 
 type SameArity<A extends AnyFace, B extends AnyFace> =
-	Arity<A> extends Arity<B>
-		? Arity<B> extends Arity<A>
-			? unknown
-			: FaceArityMismatch<Arity<A>, Arity<B>>
-		: FaceArityMismatch<Arity<A>, Arity<B>>
+	Same<Arity<A>, Arity<B>> extends true ? unknown : FaceArityMismatch<Arity<A>, Arity<B>>
 
 interface FaceShapeMismatch<Left, Right> {
 	readonly "face shape mismatch — positionwise kind, width, element, and closed roster must be equal on both sides": readonly [
@@ -106,11 +104,7 @@ interface FaceShapeMismatch<Left, Right> {
 }
 
 type SameShapes<A extends AnyFace, B extends AnyFace> =
-	FaceShapes<A> extends FaceShapes<B>
-		? FaceShapes<B> extends FaceShapes<A>
-			? unknown
-			: FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
-		: FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
+	Same<FaceShapes<A>, FaceShapes<B>> extends true ? unknown : FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
 
 function on<S extends FaceSource, const F extends FaceFields<S>>(source: S, field: F): Face<S, readonly [F]>
 function on<S extends FaceSource, const P extends readonly [FaceFields<S>, ...FaceFields<S>[]]>(

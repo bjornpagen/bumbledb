@@ -23,6 +23,7 @@ after(function cleanup() {
 const Kind = closed("Kind", ["Checking", "Savings"])
 const Grade = closed(
 	"Grade",
+	["DirectPass", "Retried", "Failed"],
 	{ mastered: bool, score: u64 },
 	{
 		DirectPass: { mastered: true, score: 100n },
@@ -124,8 +125,8 @@ describe("handles named like methods — pure data, no reserved names", function
 	})
 })
 
-describe("the 3-arg closed — the payload tier in one call", function describeThreeArg() {
-	test("the 3-arg spelling mints the whole payload surface", function probeThreeArg() {
+describe("the payload closed — handle tuple, columns, axioms", function describePayloadClosed() {
+	test("the payload spelling mints the whole payload surface", function probePayload() {
 		assert.equal(Grade.name, "Grade")
 		assert.deepStrictEqual(Grade.data.handles, ["DirectPass", "Retried", "Failed"])
 		assert.equal(Grade.axioms.Retried.score, 60n)
@@ -136,29 +137,29 @@ describe("the 3-arg closed — the payload tier in one call", function describeT
 
 	test("the curried spelling is deleted: uncompilable, with a pointed runtime refusal", function probeCurriedRefusal() {
 		assert.throws(function curriedAtRuntime() {
-			// @ts-expect-error — closed(name, columns)(axioms) died with 0.3.0: the payload tier is closed(name, columns, axioms)
+			// @ts-expect-error — closed(name, columns)(axioms) died with 0.3.0: the payload tier is closed(name, handles, columns, axioms)
 			closed("Grade", { mastered: bool })({ DirectPass: { mastered: true } })
 		}, /closed relation Grade: payload columns declared without ground axioms/)
 	})
 
-	test("the bare tier takes no axioms — the inadmissible third argument is refused", function probeBareAxioms() {
-		assert.throws(function bareWithAxioms() {
-			// @ts-expect-error — a handle tuple declares no columns, so ground axioms are inadmissible
-			closed("Bad", ["Solo"], { Solo: {} })
-		}, /closed relation Bad: the bare tier declares no columns, so ground axioms are inadmissible/)
+	test("columns without axioms are refused — the payload tier is four arguments", function probeMissingAxioms() {
+		assert.throws(function columnsWithoutAxioms() {
+			// @ts-expect-error — columns without axioms: the payload tier is closed(name, handles, columns, axioms)
+			closed("Bad", ["Solo"], { pages: bool })
+		}, /closed relation Bad: payload columns declared without ground axioms/)
 	})
 
 	test("dishonest axiom values still face the ONE literal machine at construction", function probeLiteralMachine() {
 		assert.throws(function wrongShapedAxiom() {
 			// @ts-expect-error — a bool column refuses a string at the type; the literal machine is the runtime twin
-			closed("Bad", { pages: bool }, { Loud: { pages: "yes" }, Quiet: { pages: false } })
+			closed("Bad", ["Loud", "Quiet"], { pages: bool }, { Loud: { pages: "yes" }, Quiet: { pages: false } })
 		}, /expected boolean/)
 	})
 
 	test("a payload column named id is a construction-time error — the sealed shape mints the synthetic id itself", function probeIdColumn() {
 		assert.throws(function idColumn() {
 			// @ts-expect-error — "id" is unspellable in a column block (PayloadColumns); the runtime wall is the twin
-			closed("Bad", { id: bool }, { A: { id: true }, B: { id: false } })
+			closed("Bad", ["A", "B"], { id: bool }, { A: { id: true }, B: { id: false } })
 		}, /closed relation Bad: the payload column id collides with the sealed shape's synthetic id/)
 	})
 })
@@ -172,6 +173,7 @@ describe("the 3-arg closed — the payload tier in one call", function describeT
 function wrongValueErrsOnItsProperty(): unknown {
 	return closed(
 		"Grade",
+		["Pass", "Fail"],
 		{ mastered: bool },
 		{
 			Pass: {

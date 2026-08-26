@@ -28,7 +28,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import type { AnyField, ClosedRoster } from "#fields.ts"
+import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { FactValue } from "#native.ts"
 import type { AnyRelation, Fact, FreshKeys, RelationData } from "#relation.ts"
@@ -61,7 +61,7 @@ function isStringIndexed(value: object): value is Readonly<Record<string, unknow
  * violation. `indexOf` is the whole machine (the roster is ≤ 256 rows,
  * engine law — no map is warranted).
  */
-function closedCellOf(context: string, closed: ClosedRoster, name: string): FactValue {
+function closedCellOf(context: string, closed: AnyClosedRoster, name: string): FactValue {
 	const id = closed.handles.indexOf(name)
 	if (id === -1) {
 		throw errors.new(
@@ -71,7 +71,7 @@ function closedCellOf(context: string, closed: ClosedRoster, name: string): Fact
 	return BigInt(id)
 }
 
-function handleOf(context: string, closed: ClosedRoster, cell: FactValue): string {
+function handleOf(context: string, closed: AnyClosedRoster, cell: FactValue): string {
 	if (typeof cell !== "bigint") {
 		throw literalShapeError(context, `a ${closed.name} handle id (bigint)`, cell)
 	}

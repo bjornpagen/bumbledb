@@ -100,9 +100,12 @@ export type {
 } from "#face.ts"
 export { on } from "#face.ts"
 export type {
+	AnyClosedIdField,
+	AnyClosedRoster,
 	AnyField,
 	BoolField,
 	BytesField,
+	ClosedHandleTuple,
 	ClosedIdField,
 	ClosedRoster,
 	FreshU64Field,
@@ -110,10 +113,12 @@ export type {
 	Infer,
 	IntervalField,
 	IntervalValue,
+	SignatureOf,
 	StrField,
 	U64Field
 } from "#fields.ts"
 export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
+export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower } from "#lower.ts"
 export type { KeyFact } from "#marshal.ts"
