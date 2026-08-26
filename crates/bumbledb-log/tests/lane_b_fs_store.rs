@@ -1,11 +1,13 @@
-//! On-disk protocol of `FsStore`: parent directories, the dead-owner
-//! lockfile, and the computed etag that is never stored. Five-verb
-//! semantics that do not touch a disk live on `MemStore`.
+//! On-disk protocol of `FsStore`: parent directories, the fenced CAS
+//! lease under `~lease`, and the computed etag that is never stored.
+//! Five-verb semantics that do not touch a disk live on `MemStore`.
 
 use std::path::PathBuf;
 
 use bumbledb_log::store::fs::{FsStore, content_etag};
-use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
+use bumbledb_log::store::{
+    Create, LEASE_NAMESPACE, Lease, ObjectStore, StoreKey, Swap, TEMP_NAMESPACE, WriterId,
+};
 
 fn fresh_root(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -48,7 +50,7 @@ fn malformed_keys_are_refused_at_the_boundary() {
 }
 
 #[test]
-fn a_dead_owners_lockfile_beside_the_key_is_broken_by_put_swap() {
+fn an_expired_lease_is_broken_by_put_swap() {
     let root = fresh_root("dead_lock");
     let store = FsStore::new(&root);
     let Create::Created(birth) = store
@@ -57,14 +59,22 @@ fn a_dead_owners_lockfile_beside_the_key_is_broken_by_put_swap() {
     else {
         panic!("fresh key must be Created");
     };
-    std::fs::write(root.join("manifest.lock"), b"999999999").expect("plant dead lock");
+    let lease_dir = root.join(LEASE_NAMESPACE).join("manifest");
+    std::fs::create_dir_all(&lease_dir).expect("lease dir");
+    let dead = Lease {
+        holder: WriterId(999_999_999),
+        token: 1,
+        expires: 0,
+    };
+    std::fs::write(lease_dir.join("1"), dead.encode()).expect("plant expired lease");
+    std::fs::write(lease_dir.join("~head"), b"1").expect("plant head");
     let swapped = store
         .put_swap(&StoreKey::of("manifest"), b"v2", &birth)
         .expect("swap");
     assert_eq!(swapped, Swap::Swapped(content_etag(b"v2")));
     assert!(
-        !root.join("manifest.lock").exists(),
-        "the broken lock leaves no residue"
+        !lease_dir.join("1").exists(),
+        "the broken lease leaves no residue"
     );
 }
 
@@ -82,7 +92,7 @@ fn the_verbs_leave_no_sidecar_beside_the_object() {
         .put_swap(&StoreKey::of("manifest"), b"v2", &birth)
         .expect("swap");
     store.get(&StoreKey::of("manifest")).expect("get");
-    let names: Vec<String> = std::fs::read_dir(&root)
+    let siblings: Vec<String> = std::fs::read_dir(&root)
         .expect("read root")
         .map(|entry| {
             entry
@@ -91,10 +101,15 @@ fn the_verbs_leave_no_sidecar_beside_the_object() {
                 .to_string_lossy()
                 .into_owned()
         })
+        .filter(|name| name != TEMP_NAMESPACE && name != LEASE_NAMESPACE)
         .collect();
     assert_eq!(
-        names,
+        siblings,
         vec!["manifest".to_string()],
-        "the object's bytes are the whole on-disk record"
+        "the object's bytes are the whole record at the key; temps and leases live under reserved namespaces"
+    );
+    assert!(
+        !root.join("manifest.lock").exists(),
+        "a lock-suffix sibling is not the mutation lock"
     );
 }
