@@ -7,7 +7,6 @@
 //! distinct type with no replica, so every verb on it is a compile-time
 //! refusal.
 
-use std::fs;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bumbledb::Theory;
 
 use crate::replica::{Fault, OpenRefusal, Opened, Replica};
-use crate::store::fence::{DIR_TTL_MS, HeldLease, LeaseBusy, acquire_dir};
+use crate::store::fence::{DIR_TTL_MS, HeldLease, LeaseBusy, acquire_named};
 use crate::store::{
     Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
     WriterId, segment_ok,
@@ -236,8 +235,7 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
             return self.finish_live();
         }
         let local = self.dir.join(id);
-        fs::create_dir_all(&local)?;
-        let lease = match acquire_dir(&local, Self::holder()) {
+        let lease = match acquire_named(&self.dir, id, Self::holder()) {
             Ok(lease) => lease,
             Err(LeaseBusy::Live) => return Ok(Tenant::Refused(TenantRefusal::Exclusive)),
             Err(LeaseBusy::Io(err)) => return Err(Fault::Io(err)),

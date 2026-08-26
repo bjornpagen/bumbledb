@@ -316,6 +316,22 @@ pub fn acquire_dir(root: &Path, holder: WriterId) -> Result<HeldLease, LeaseBusy
     }
 }
 
+/// One-shot exclusivity for a named slot under `root`. Tokens live at
+/// `{root}/~lease/{key}`, outside the disposable replica directory
+/// `{root}/{key}`. A live holder is `Live`, not waited.
+///
+/// # Errors
+pub fn acquire_named(root: &Path, key: &str, holder: WriterId) -> Result<HeldLease, LeaseBusy> {
+    let dir = root.join(LEASE_NAMESPACE).join(key);
+    loop {
+        match acquire_once(root, &dir, holder, DIR_TTL_MS) {
+            Ok(Some(held)) => return Ok(held),
+            Ok(None) => {}
+            Err(busy) => return Err(busy),
+        }
+    }
+}
+
 impl HeldLease {
     /// The fencing token this holder's writes carry.
     #[must_use]
