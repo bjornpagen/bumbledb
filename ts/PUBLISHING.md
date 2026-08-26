@@ -298,6 +298,8 @@ pnpm exec biome check .
 # 4. Publish BOTH PLATFORM packages FIRST — the main's exact-pinned
 #    optional deps must already exist in the registry when the main
 #    resolves. (Interactive: npm prompts for the 2FA one-time password.)
+#    linux-arm64/pnpm-workspace.yaml names linux in supportedArchitectures
+#    so this darwin host can pack it; the tarball os/cpu stay linux/arm64.
 pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks ./npm/linux-arm64
 

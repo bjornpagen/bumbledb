@@ -75,6 +75,13 @@ describe("the shipped set, single-sourced", function suite() {
 			assert.deepEqual(manifest.cpu, [cpu])
 		}
 	})
+
+	test("the linux tarball is packable from the darwin publish host", function linuxPackHost() {
+		const yaml = fs.readFileSync(new URL("../npm/linux-arm64/pnpm-workspace.yaml", import.meta.url), "utf8")
+		assert.match(yaml, /supportedArchitectures:/)
+		assert.match(yaml, /^\s+-\s+current$/m)
+		assert.match(yaml, /^\s+-\s+linux$/m)
+	})
 })
 
 describe("the dev-twin manifest derives from the publish manifest", function suite() {
