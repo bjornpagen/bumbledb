@@ -27,7 +27,7 @@ import {
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, checkedAddU64, digest32, digest32FromHex, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
+import { bytesEqual, checkedAddU64, digest32, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
@@ -570,7 +570,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	const bytes = encodeBatch(
 		core.descriptor,
 		{
-			fingerprint: digest32FromHex(core.descriptor.fingerprint),
+			fingerprint: digest32(core.descriptor.fingerprintBytes),
 			braid,
 			braidGen: generation(entry.g + 1n),
 			prev: digestPrev(entry.prev),
@@ -862,7 +862,7 @@ async function openWriter<Rels extends SchemaRelations>(
 	if (isReplica(source)) {
 		return writerOn(source)
 	}
-	await birthStore(source.store, source.prefix, digest32FromHex(descriptorOf(source.theory).fingerprint))
+	await birthStore(source.store, source.prefix, digest32(descriptorOf(source.theory).fingerprintBytes))
 	return writerOn(await openReplica(source))
 }
 
