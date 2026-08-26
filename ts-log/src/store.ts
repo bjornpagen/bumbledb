@@ -105,7 +105,7 @@ interface LeaseFile {
 }
 
 /** Ceiling of the jittered wait between probes of an unexpired lease. */
-const LEASE_RETRY_MS = 10
+const LOCK_RETRY_MS = 10
 
 /** Mutation-lease lifetime: long enough for one verb, short enough to expire after a crash. */
 const MUTATION_LEASE_MS = 30_000
@@ -359,7 +359,7 @@ async function acquireFsLease(
 				throw errors.new("replica directory has an owner")
 			}
 			await new Promise(function later(resolve) {
-				setTimeout(resolve, Math.random() * LEASE_RETRY_MS)
+				setTimeout(resolve, Math.random() * LOCK_RETRY_MS)
 			})
 			continue
 		}
