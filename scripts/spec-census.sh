@@ -409,7 +409,7 @@ one_owner_rust=(
   LOCK_RETRY_MS
 )
 for name in "${one_owner_rust[@]}"; do
-  count=$(grep -rE "const ${name}[[:space:]]*:" crates/bumbledb-log/src --include='*.rs' | wc -l | tr -d ' ')
+  count=$(grep -rE "const ${name}[[:space:]]*:" crates/bumbledb-log/src --include='*.rs' | wc -l | tr -d ' ' || true)
   if [ "$count" -ne 1 ]; then
     echo "spec-census: FAIL — lane (j) constant '$name' has $count defining sites in crates/bumbledb-log/src (one owner required)" >&2
     fail=1
@@ -423,7 +423,7 @@ one_owner_ts=(
   LOCK_RETRY_MS
 )
 for name in "${one_owner_ts[@]}"; do
-  count=$(grep -rE "const ${name}[[:space:]]*=" ts-log/src --include='*.ts' | wc -l | tr -d ' ')
+  count=$(grep -rE "const ${name}[[:space:]]*=" ts-log/src --include='*.ts' | wc -l | tr -d ' ' || true)
   if [ "$count" -ne 1 ]; then
     echo "spec-census: FAIL — lane (j) constant '$name' has $count defining sites in ts-log/src (one owner required)" >&2
     fail=1
