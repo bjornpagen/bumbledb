@@ -72,10 +72,14 @@ fn crossing_the_sum_cadence_publishes_a_checkpoint() {
         .get(&ckpt_mdb_key("", &digest))
         .expect("get")
         .expect("checkpoint object");
+    assert!(
+        !mdb.bytes.is_empty(),
+        "the store bytes sit beside the document"
+    );
     assert_eq!(
-        *blake3::hash(&mdb.bytes).as_bytes(),
+        doc.digest(),
         digest,
-        "content-addressed: the name is the digest of the bytes"
+        "content-addressed: the name is the digest of the document, including prev"
     );
     drop(writer);
 
