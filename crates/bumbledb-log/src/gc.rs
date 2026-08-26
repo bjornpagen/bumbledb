@@ -54,6 +54,33 @@ pub struct PublishClock {
     pub publish_ms: u64,
 }
 
+/// Window plus clock. `gc()` sets both hands equal, so a slot ages
+/// against its batch timestamp; `gc_at` with a distinct publish stamp
+/// ages the below-floor prefix as one unit.
+#[derive(Clone, Copy)]
+struct Age {
+    window_ms: u64,
+    clock: PublishClock,
+}
+
+impl Age {
+    fn log_eligible(self, timestamp: u64) -> bool {
+        if self.clock.publish_ms == self.clock.now_ms {
+            self.clock.now_ms.saturating_sub(timestamp) > self.window_ms
+        } else {
+            self.clock.now_ms.saturating_sub(self.clock.publish_ms) > self.window_ms
+        }
+    }
+
+    fn checkpoints_old(self) -> bool {
+        if self.clock.publish_ms == self.clock.now_ms {
+            self.clock.now_ms > self.window_ms
+        } else {
+            self.clock.now_ms.saturating_sub(self.clock.publish_ms) > self.window_ms
+        }
+    }
+}
+
 /// Why the sweep refused to run at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GcRefusal {
@@ -138,31 +165,21 @@ pub fn gc_at<S: ObjectStore>(
     };
 
     let mut sweep = Sweep::default();
-    let unit_old = clock.now_ms.saturating_sub(clock.publish_ms) > window_ms;
-    let per_slot = clock.publish_ms == clock.now_ms;
-    let ckpt_old = if per_slot {
-        clock.now_ms > window_ms
-    } else {
-        unit_old
-    };
+    let age = Age { window_ms, clock };
 
     for (braid, head) in &doc.braids {
-        let marker = sweep_log_braid(
-            store,
-            prefix,
-            codec,
-            *braid,
-            head.g,
-            window_ms,
-            clock,
-            per_slot,
-            unit_old,
-            &mut sweep,
-        )?;
+        let marker = sweep_log_braid(store, prefix, codec, *braid, head.g, age, &mut sweep)?;
         sweep.swept_below.insert(*braid, marker);
     }
 
-    sweep_checkpoints(store, prefix, codec, doc.prev, ckpt_old, &mut sweep)?;
+    sweep_checkpoints(
+        store,
+        prefix,
+        codec,
+        doc.prev,
+        age.checkpoints_old(),
+        &mut sweep,
+    )?;
 
     Ok(Gc::Swept(sweep))
 }
@@ -176,7 +193,7 @@ fn sweep_log_braid<S: ObjectStore>(
     codec: &Codec,
     braid: BraidId,
     floor: u64,
-    old: bool,
+    age: Age,
     sweep: &mut Sweep,
 ) -> StoreResult<u64> {
     let mut marker = 0;
@@ -189,10 +206,10 @@ fn sweep_log_braid<S: ObjectStore>(
                 slot += 1;
             }
             Some(object) => {
-                if !old {
+                let Ok(batch) = codec.decode(&object.bytes) else {
                     break;
-                }
-                if codec.decode(&object.bytes).is_err() {
+                };
+                if !age.log_eligible(batch.header.timestamp) {
                     break;
                 }
                 store.delete(&key)?;
