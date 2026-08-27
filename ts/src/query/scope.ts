@@ -286,4 +286,15 @@ export type {
 	Var,
 	VarsOf
 }
-export { fieldAntiJoins, fieldJoins, headFieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term, v }
+export {
+	fieldAntiJoins,
+	fieldJoins,
+	headFieldJoins,
+	inferred,
+	isTerm,
+	makeParam,
+	makeSetParam,
+	renderFieldKind,
+	term,
+	v
+}
