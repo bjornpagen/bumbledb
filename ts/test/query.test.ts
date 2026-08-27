@@ -241,7 +241,7 @@ describe("the query surface against a real store", function suite() {
 					const { id: x } = v(Account)
 					return r.match(Account, { id: x }).find({ x })
 				})
-		}, /a head column joins only class-equal slots/)
+		}, /a head column joins class-equal slots/)
 
 		const legal = query(Ledger)
 			.rule((r) => {
@@ -1398,4 +1398,103 @@ test("not() joins two closed ids that share a handle set or roster length", func
 			)
 		})
 	}, /domain-unequal/)
+})
+
+describe("union heads over the u64 wire", function suite() {
+	const Roster = relation("Roster", { record: u64 })
+	const Accepted = relation("Accepted", { record: u64 })
+	const Mirror = relation("Mirror", { record: u64 })
+	const W = schema("W", { Roster, Accepted, Mirror }, [
+		key(Accepted, ["record"]),
+		contained(on(Mirror, "record"), on(Accepted, "record"))
+	])
+	const ROSTER_ID = 0
+	const ACCEPTED_ID = 1
+	let wdb: DbHandle
+
+	before(async function seed() {
+		const created = await native.dbCreate(path.join(tmpRoot, "wire-union"), lower(W))
+		assert.equal(created.tag, "accepted", "the store admits")
+		wdb = created.db
+		const committed = native.dbWrite(wdb, function write(tx) {
+			native.txInsert(tx, ROSTER_ID, 1n, [1n])
+			native.txInsert(tx, ROSTER_ID, 1n, [2n])
+			native.txInsert(tx, ACCEPTED_ID, 1n, [2n])
+			native.txInsert(tx, ACCEPTED_ID, 1n, [3n])
+			return true
+		})
+		assert.equal(committed.tag, "accepted", "the seed admits")
+	})
+
+	test("a union head admits the bare/classed u64 pairing the anti-join admits", function exactCover() {
+		const disagreement = query(W)
+			.rule((r) => {
+				const { record } = v(Roster)
+				return r.match(Roster, { record }).where(r.not(Accepted, { record })).find({ record })
+			})
+			.rule((r) => {
+				const { record } = v(Accepted)
+				return r.match(Accepted, { record }).where(r.not(Roster, { record })).find({ record })
+			})
+		const prepared = native.dbPrepare(wdb, lowerQuery(disagreement))
+		if (!prepared.ok) {
+			assert.fail(`engine prepare refused: ${prepared.message}`)
+		}
+		const rows = native.dbRead(wdb, function read(instance, _witness) {
+			return native.preparedExecute(prepared.prepared, instance, wireParams(disagreement.data.params, {}))
+		})
+		native.preparedClose(prepared.prepared)
+		const records = decodeAnswers<{ record: bigint }>(disagreement.data.finds, rows)
+			.map(function r(row) {
+				return row.record
+			})
+			.sort(function asc(a, b) {
+				return a < b ? -1 : 1
+			})
+		assert.deepEqual(records, [1n, 3n])
+	})
+
+	test("the classed rule may lead: the merged head is the meet", function classedLeads() {
+		const led = query(W)
+			.rule((r) => {
+				const { record } = v(Accepted)
+				return r.match(Accepted, { record }).where(r.not(Roster, { record })).find({ record })
+			})
+			.rule((r) => {
+				const { record } = v(Roster)
+				return r.match(Roster, { record }).where(r.not(Accepted, { record })).find({ record })
+			})
+		const lead = led.data.finds[0]
+		assert.ok(lead !== undefined && lead.slot !== undefined)
+		assert.equal(lead.slot.class, undefined, "a bare rule demotes the head column's class claim")
+	})
+
+	test("a class-agreeing union keeps its head class", function classKept() {
+		const agreeing = query(W)
+			.rule((r) => {
+				const { record } = v(Accepted)
+				return r.match(Accepted, { record }).find({ record })
+			})
+			.rule((r) => {
+				const { record } = v(Mirror)
+				return r.match(Mirror, { record }).find({ record })
+			})
+		const lead = agreeing.data.finds[0]
+		assert.ok(lead !== undefined && lead.slot !== undefined)
+		assert.notEqual(lead.slot.class, undefined, "class-equal rules keep the head's provenance")
+	})
+
+	test("the wire wall stands: distinct heads still refuse", function wallHolds() {
+		assert.throws(function misaligned() {
+			query(W)
+				.rule((r) => {
+					const { record } = v(Roster)
+					return r.match(Roster, { record }).find({ record })
+				})
+				.rule((r) => {
+					const { record } = v(Accepted)
+					return r.match(Accepted, { record }).find({ record: r.count() })
+				})
+		}, /derives the same head/)
+	})
 })

@@ -215,11 +215,27 @@ function closedIdAntiJoins(a: AnyField, b: AnyField): boolean {
 	return rosterA !== undefined && rosterB !== undefined && rosterA.handles.length === rosterB.handles.length
 }
 
+function u64BareWirePair(a: ClassedField, b: ClassedField): boolean {
+	return u64Wire(a.field) && u64Wire(b.field) && (a.class === undefined || b.class === undefined)
+}
+
 function fieldAntiJoins(a: ClassedField, b: ClassedField): boolean {
 	if (fieldJoins(a, b) || closedIdAntiJoins(a.field, b.field)) {
 		return true
 	}
-	return u64Wire(a.field) && u64Wire(b.field) && (a.class === undefined || b.class === undefined)
+	return u64BareWirePair(a, b)
+}
+
+/**
+ * Union-head class safety, the anti-join law's head twin: class-equal
+ * slots, plus same-identity u64 wire when one side is bare. A head cell
+ * is a value that flows to the caller either way — the class is
+ * provenance, not wire shape — and the merged head carries the meet:
+ * a bare rule demotes the column's class claim to bare, so downstream
+ * joins cannot inherit provenance a rule never proved.
+ */
+function headFieldJoins(a: ClassedField, b: ClassedField): boolean {
+	return fieldJoins(a, b) || u64BareWirePair(a, b)
 }
 
 function renderFieldKind(slot: ClassedField): string {
@@ -270,4 +286,4 @@ export type {
 	Var,
 	VarsOf
 }
-export { fieldAntiJoins, fieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term, v }
+export { fieldAntiJoins, fieldJoins, headFieldJoins, inferred, isTerm, makeParam, makeSetParam, renderFieldKind, term, v }

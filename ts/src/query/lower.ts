@@ -61,6 +61,7 @@ import type {
 import {
 	fieldAntiJoins,
 	fieldJoins,
+	headFieldJoins,
 	inferred,
 	isTerm,
 	makeParam,
@@ -1304,7 +1305,15 @@ interface RawQuery {
 	reach(name: string, arms: never): never
 }
 
-function assertAlignedHeads(label: string, rules: readonly RuleData[]): void {
+/**
+ * Verifies every rule derives the same head and returns the MERGED head:
+ * the meet of the rules' column slots. A head column joins class-equal
+ * slots, and — the anti-join law's head twin — same-identity u64 wire
+ * with at least one side bare; when the bare arm admits the pair, the
+ * merged column's class claim demotes to bare, so a consumer joining
+ * the head cannot inherit provenance a rule never proved.
+ */
+function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly FindColumn[] {
 	const first = rules[0]
 	if (first === undefined) {
 		throw errors.new(`${label} needs at least one rule`)
@@ -1327,13 +1336,33 @@ function assertAlignedHeads(label: string, rules: readonly RuleData[]): void {
 			if (lead === undefined) {
 				return
 			}
-			if (lead.slot !== undefined && column.slot !== undefined && !fieldJoins(lead.slot, column.slot)) {
+			if (lead.slot !== undefined && column.slot !== undefined && !headFieldJoins(lead.slot, column.slot)) {
 				throw errors.new(
-					`every rule of ${label} derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(lead.slot)} in rule 0 but at ${renderFieldKind(column.slot)} in rule ${index} (a head column joins only class-equal slots; bare pairs only with bare)`
+					`every rule of ${label} derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(lead.slot)} in rule 0 but at ${renderFieldKind(column.slot)} in rule ${index} (a head column joins class-equal slots; same-wire u64 admits a bare side, and the merged head is bare)`
 				)
 			}
 		})
 	})
+	const merged = first.finds.map(function meetColumn(lead, position) {
+		const slot = lead.slot
+		if (slot === undefined || slot.class === undefined) {
+			return lead
+		}
+		const demoted = rules.some(function bareElsewhere(rule) {
+			const column = rule.finds[position]
+			return column !== undefined && column.slot !== undefined && column.slot.class !== slot.class
+		})
+		if (!demoted) {
+			return lead
+		}
+		return Object.freeze({
+			name: lead.name,
+			entry: lead.entry,
+			closed: lead.closed,
+			slot: Object.freeze({ field: slot.field, class: undefined })
+		})
+	})
+	return Object.freeze(merged)
 }
 
 function afterMainError(what: string): Error {
@@ -1348,7 +1377,7 @@ function makeRawQuery(
 	rec: RecData | undefined,
 	rules: readonly RuleData[]
 ): RawQuery {
-	assertAlignedHeads("a query", rules)
+	const mergedFinds = alignedHeadOf("a query", rules)
 	const first = rules[0]
 	if (first === undefined) {
 		throw errors.new("a query needs at least one rule")
@@ -1363,7 +1392,7 @@ function makeRawQuery(
 					kind: "cq" as const,
 					interiors: frozenInteriors,
 					rules: frozenRules,
-					finds: first.finds,
+					finds: mergedFinds,
 					params
 				})
 			: Object.freeze({
@@ -1371,7 +1400,7 @@ function makeRawQuery(
 					interiors: frozenInteriors,
 					rec,
 					rules: frozenRules,
-					finds: first.finds,
+					finds: mergedFinds,
 					params
 				})
 	const value: RawQuery = {
@@ -1413,12 +1442,8 @@ function collectInterior<Rels extends SchemaRelations, Classes extends SchemaCla
 	const rules = builds.map(function buildRule(buildOne) {
 		return buildOne(makeInteriorRuleScope<Rels, Classes>(theory, env, name)).rule
 	})
-	assertAlignedHeads(`interior ${name}`, rules)
-	const first = rules[0]
-	if (first === undefined) {
-		throw errors.new(`query: interior ${name} needs at least one rule`)
-	}
-	return Object.freeze({ name, finds: first.finds, rules: Object.freeze(rules) })
+	const mergedFinds = alignedHeadOf(`interior ${name}`, rules)
+	return Object.freeze({ name, finds: mergedFinds, rules: Object.freeze(rules) })
 }
 
 function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>(
@@ -1439,22 +1464,27 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	const base = baseBuilds.map(function buildBase(buildOne) {
 		return buildOne(makeRecRuleScope<Rels, Classes>(theory, baseEnv, handle, "rec-base")).rule
 	})
-	assertAlignedHeads(`rec ${name}`, base)
+	const baseFinds = alignedHeadOf(`rec ${name}`, base)
 	const first = base[0]
 	if (first === undefined) {
 		throw errors.new(`query: rec ${name} has no base arms`)
 	}
-	const firstFind = first.finds[0]
+	const firstFind = baseFinds[0]
 	if (firstFind === undefined) {
 		throw errors.new(`query: rec ${name} has no head`)
 	}
-	const finds: RecHead["finds"] = [firstFind, ...first.finds.slice(1)]
+	const finds: RecHead["finds"] = [firstFind, ...baseFinds.slice(1)]
 	const head: RecHead = Object.freeze({ name, finds })
 	const recEnv: DerivedEnv = { interiors, rec: head }
 	const rec = recBuilds.map(function buildRec(buildOne) {
 		return buildOne(makeRecRuleScope<Rels, Classes>(theory, recEnv, head, "rec-arm")).rule
 	})
-	assertAlignedHeads(`rec ${name}`, [...base, ...rec])
+	const mergedAll = alignedHeadOf(`rec ${name}`, [...base, ...rec])
+	const mergedFirst = mergedAll[0]
+	if (mergedFirst === undefined) {
+		throw errors.new(`query: rec ${name} has no head`)
+	}
+	const sealedFinds: RecHead["finds"] = [mergedFirst, ...mergedAll.slice(1)]
 	const firstRec = rec[0]
 	if (firstRec === undefined) {
 		throw errors.new(`query: rec ${name} has no rec arms`)
@@ -1463,7 +1493,7 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	const sealedRec: RecData["rec"] = [firstRec, ...rec.slice(1)]
 	const recData: RecData = Object.freeze({
 		name,
-		finds,
+		finds: sealedFinds,
 		base: sealedBase,
 		rec: sealedRec
 	})
