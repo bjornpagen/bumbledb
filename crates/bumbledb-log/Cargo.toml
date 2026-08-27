@@ -4,11 +4,22 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+default = ["store"]
+# The S3 backend and its runtime. Off, the grammar core — codec, braids,
+# vector, sidecar/manifest documents, keys/scratch, fs/mem stores —
+# compiles dependency-lean.
+store = ["dep:object_store", "dep:tokio"]
+
 [dependencies]
 bumbledb = { path = "../bumbledb" }
 blake3 = "1.8.5"
-object_store = { version = "0.14.1", features = ["aws"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time"] }
+object_store = { version = "0.14.1", features = ["aws"], optional = true }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time"], optional = true }
+
+[[bin]]
+name = "duty"
+required-features = ["store"]
 
 [dev-dependencies]
 bumbledb = { path = "../bumbledb", features = ["trace"] }

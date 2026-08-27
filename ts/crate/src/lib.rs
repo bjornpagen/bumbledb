@@ -19,6 +19,7 @@ use napi_derive::napi;
 
 #[cfg(test)]
 mod fingerprint_lock;
+pub mod log;
 mod marshal;
 mod tags;
 

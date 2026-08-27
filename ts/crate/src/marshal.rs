@@ -73,12 +73,16 @@ fn js_type_name(ty: JsType) -> &'static str {
     }
 }
 
-fn req<T: FromNapiValue>(obj: &Object, key: &str, ctx: impl std::fmt::Display) -> napi::Result<T> {
+pub(crate) fn req<T: FromNapiValue>(
+    obj: &Object,
+    key: &str,
+    ctx: impl std::fmt::Display,
+) -> napi::Result<T> {
     obj.get::<T>(key)?
         .ok_or_else(|| err(format!("bumbledb marshal: missing `{key}` in {ctx}")))
 }
 
-fn req_at<T: FromNapiValue>(
+pub(crate) fn req_at<T: FromNapiValue>(
     arr: &Array,
     index: u32,
     ctx: impl std::fmt::Display,
@@ -110,7 +114,7 @@ pub(crate) fn i64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Resul
     Ok(word)
 }
 
-fn ordinal(value: f64, ctx: &str) -> napi::Result<u32> {
+pub(crate) fn ordinal(value: f64, ctx: &str) -> napi::Result<u32> {
     if !(value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= f64::from(u32::MAX))
     {
         return Err(err(format!(
@@ -125,7 +129,7 @@ fn ordinal(value: f64, ctx: &str) -> napi::Result<u32> {
     Ok(value as u32)
 }
 
-fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
+pub(crate) fn u16_id(value: u32, ctx: &str) -> napi::Result<u16> {
     u16::try_from(value)
         .map_err(|_| err(format!("bumbledb marshal: {ctx}: id {value} exceeds u16")))
 }
@@ -594,7 +598,7 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
     Ok(params)
 }
 
-fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
+pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
     let kind: String = req(obj, "kind", "value type")?;
     match kind.as_str() {
         tags::value_type::BOOL => Ok(ValueType::Bool),

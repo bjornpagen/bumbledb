@@ -1682,6 +1682,7 @@ export type {
 	AbandonedArm,
 	Admission,
 	CapacityViolation,
+	CollectionWrite,
 	Committed,
 	ContainmentViolation,
 	DeclaredKeyFact,

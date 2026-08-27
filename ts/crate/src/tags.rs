@@ -9,6 +9,7 @@ use bumbledb::{
     AggOp, AtomSource, CmpOp, ConditionTree, Direction, ErrorFamily, FindTerm, HeadOp, HeadTerm,
     Query, StatementKind, Term, Value,
 };
+use bumbledb_log::codec::{EncodeError, OpKind};
 
 use crate::marshal::OwnedParam;
 
@@ -318,6 +319,36 @@ wire_tags! {
         OVERFLOW: ErrorFamily::Overflow => "overflow",
         RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",
         CORRUPTION: ErrorFamily::Corruption => "corruption",
+    }
+}
+
+wire_tags! {
+    /// `bumbledb_log::codec::OpKind` — the batch op verb, both directions
+    /// (`log_op_in` parses it, the decode wire renders it). The spelling is
+    /// the conformance corpus's (`conformance/v3/batch/*.json`).
+    mod log_op for unit OpKind {
+        INSERT: OpKind::Insert => "insert",
+        DELETE: OpKind::Delete => "delete",
+    }
+}
+
+wire_tags! {
+    /// `bumbledb_log::codec::EncodeError` — the encode-refusal identity
+    /// kinds. The log core spells decode identities itself
+    /// (`DecodeError::identity`); the encode enum carries none, so the
+    /// bridge is the one speller — exhaustively, so a new core variant
+    /// fails compile HERE. The roster is a row family of the
+    /// `log-identities.json` mint table.
+    mod log_encode_refusal for EncodeError {
+        FINGERPRINT_MISMATCH: EncodeError::FingerprintMismatch => "FingerprintMismatch",
+        UNKNOWN_BRAID: EncodeError::UnknownBraid { .. } => "UnknownBraid",
+        UNKNOWN_RELATION: EncodeError::UnknownRelation { .. } => "UnknownRelation",
+        CLOSED_RELATION: EncodeError::ClosedRelation { .. } => "ClosedRelation",
+        OP_RELATION_OUTSIDE_BRAID: EncodeError::OpRelationOutsideBraid { .. } => "OpRelationOutsideBraid",
+        ARITY: EncodeError::Arity { .. } => "Arity",
+        VALUE: EncodeError::Value { .. } => "Value",
+        TOO_MANY_OPS: EncodeError::TooManyOps => "TooManyOps",
+        TOO_MANY_ROWS: EncodeError::TooManyRows { .. } => "TooManyRows",
     }
 }
 

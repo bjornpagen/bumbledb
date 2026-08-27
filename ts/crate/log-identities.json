@@ -1,0 +1,35 @@
+{
+  "comment": "The refusal-identity mint table, one row family per bumbledb-log refusal enum, spelled exactly as crates/bumbledb-log spells them (DecodeError::identity and the document identity() methods; batchEncode is the bridge's exhaustive spelling of EncodeError). The bridge marshal refuses to cross any kind outside its family row, and src/log.rs's golden test pins this file to the in-crate tables. This is the S2 stub; S3 replaces it with the generated table under the same shape.",
+  "batchDecode": [
+    "Truncated",
+    "BadMagic",
+    "Version",
+    "Flags",
+    "FingerprintMismatch",
+    "UnknownBraid",
+    "UnknownOpKind",
+    "UnknownRelation",
+    "ClosedRelation",
+    "OpRelationOutsideBraid",
+    "TagMismatch",
+    "BoolByte",
+    "InvalidUtf8",
+    "EmptyInterval",
+    "IntervalOverflow",
+    "TrailingBytes"
+  ],
+  "batchEncode": [
+    "FingerprintMismatch",
+    "UnknownBraid",
+    "UnknownRelation",
+    "ClosedRelation",
+    "OpRelationOutsideBraid",
+    "Arity",
+    "Value",
+    "TooManyOps",
+    "TooManyRows"
+  ],
+  "manifest": ["Malformed", "Version"],
+  "checkpoint": ["Malformed", "Version", "Overflow", "UnknownBraid", "BraidSet"],
+  "sidecar": ["Malformed", "Version", "UnknownBraid", "Overflow"]
+}

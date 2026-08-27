@@ -26,6 +26,9 @@ missing_errors_doc = "allow"
 [dependencies]
 
 bumbledb = { path = "../../crates/bumbledb" }
+# The grammar core only: the store feature (object_store + tokio) stays
+# out of the cdylib; IO lives in the TypeScript driver.
+bumbledb-log = { path = "../../crates/bumbledb-log", default-features = false }
 napi = { version = "3", default-features = true, features = ["napi8"] }
 napi-derive = "3"
 

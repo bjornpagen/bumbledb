@@ -47,6 +47,7 @@ export type {
 	AbandonedArm,
 	Admission,
 	CapacityViolation,
+	CollectionWrite,
 	Committed,
 	ContainmentViolation,
 	DeclaredKeyFact,
@@ -125,6 +126,26 @@ export type { KeyFact } from "#marshal.ts"
 export { factOf, rowOf } from "#marshal.ts"
 export type {
 	FactValue,
+	LogBatch,
+	LogBatchDecodeKind,
+	LogBatchEncodeKind,
+	LogBatchHeader,
+	LogBraidComponent,
+	LogBraids,
+	LogChain,
+	LogChainEntry,
+	LogCheckpointDoc,
+	LogCheckpointHead,
+	LogCheckpointKind,
+	LogCodecHandle,
+	LogManifestDoc,
+	LogManifestKind,
+	LogOpIn,
+	LogOpKind,
+	LogOpOut,
+	LogPendingBatch,
+	LogResult,
+	LogSidecarKind,
 	ParsedQuery,
 	QueryIr,
 	SealedDescriptor,
@@ -134,7 +155,22 @@ export type {
 	SealedWeight,
 	StatementKindTag
 } from "#native.ts"
-export { internalBlake3, internalDescriptor } from "#native.ts"
+export {
+	internalBlake3,
+	internalDescriptor,
+	internalLogBraidsOf,
+	internalLogCodec,
+	internalLogDecodeBatch,
+	internalLogEncodeBatch,
+	internalLogParseCheckpoint,
+	internalLogParseCkptScratch,
+	internalLogParseManifest,
+	internalLogParseSidecar,
+	internalLogRenderCheckpoint,
+	internalLogRenderCkptScratch,
+	internalLogRenderManifest,
+	internalLogRenderSidecar
+} from "#native.ts"
 
 export type {
 	AnyCond,

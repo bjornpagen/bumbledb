@@ -17,6 +17,13 @@ type TxHandle = { readonly __brand: "bumbledb.tx" }
 
 type PreparedHandle = { readonly __brand: "bumbledb.prepared" }
 
+/**
+ * The sealed per-theory log codec (`crates/bumbledb-log`): descriptor
+ * parsed once — vocabulary + braid map — beside the fingerprint the wire
+ * pins. Immutable plain data; no lifecycle verbs.
+ */
+type LogCodecHandle = { readonly __brand: "bumbledb.logCodec" }
+
 interface WireMutationReport {
 	readonly submitted: bigint
 	readonly changed: bigint
@@ -130,6 +137,144 @@ type ConditionTreeIr =
 	| { readonly kind: "or"; readonly children: readonly ConditionTreeIr[] }
 
 type StatementKindTag = "functionality" | "containment" | "capacity"
+
+/**
+ * A log grammar lane's domain outcome: the payload, or a refusal row
+ * whose `kind` is an identity string spelled exactly as
+ * `crates/bumbledb-log` spells it (the `log-identities.json` mint table).
+ */
+type LogResult<T, K extends string> =
+	| { readonly ok: true; readonly value: T }
+	| { readonly ok: false; readonly kind: K; readonly message: string }
+
+/** `DecodeError::identity` — the batch decode refusal identities. */
+type LogBatchDecodeKind =
+	| "Truncated"
+	| "BadMagic"
+	| "Version"
+	| "Flags"
+	| "FingerprintMismatch"
+	| "UnknownBraid"
+	| "UnknownOpKind"
+	| "UnknownRelation"
+	| "ClosedRelation"
+	| "OpRelationOutsideBraid"
+	| "TagMismatch"
+	| "BoolByte"
+	| "InvalidUtf8"
+	| "EmptyInterval"
+	| "IntervalOverflow"
+	| "TrailingBytes"
+
+/** The batch encode refusal identities (`EncodeError`, bridge-spelled). */
+type LogBatchEncodeKind =
+	| "FingerprintMismatch"
+	| "UnknownBraid"
+	| "UnknownRelation"
+	| "ClosedRelation"
+	| "OpRelationOutsideBraid"
+	| "Arity"
+	| "Value"
+	| "TooManyOps"
+	| "TooManyRows"
+
+/** `ManifestError::identity`. */
+type LogManifestKind = "Malformed" | "Version"
+
+/** `CheckpointError::identity`. */
+type LogCheckpointKind = "Malformed" | "Version" | "Overflow" | "UnknownBraid" | "BraidSet"
+
+/** `SidecarError::identity`. */
+type LogSidecarKind = "Malformed" | "Version" | "UnknownBraid" | "Overflow"
+
+/**
+ * The batch header both directions. The codec handle is the fingerprint
+ * authority — the wire never carries one. `braid` is the raw braid id
+ * (the smallest relation id in its component).
+ */
+interface LogBatchHeader {
+	readonly braid: number
+	readonly braidGen: bigint
+	readonly prev: Uint8Array
+	readonly writer: bigint
+	readonly timestamp: bigint
+}
+
+type LogOpKind = "insert" | "delete"
+
+/**
+ * One op inbound to `logEncodeBatch`: rows carry TAGGED values (the
+ * query-literal lane's inbound spelling) so the bridge stays layout-blind
+ * and the codec core is the one judge of every cell.
+ */
+interface LogOpIn {
+	readonly kind: LogOpKind
+	readonly relation: number
+	readonly rows: ReadonlyArray<readonly TaggedValue[]>
+}
+
+/** One decoded op: rows cross exactly as the engine's `ValueOut` walk. */
+interface LogOpOut {
+	readonly kind: LogOpKind
+	readonly relation: number
+	readonly rows: FactValue[][]
+}
+
+interface LogBatch {
+	readonly header: LogBatchHeader
+	readonly ops: readonly LogOpOut[]
+}
+
+interface LogBraidComponent {
+	readonly braid: number
+	readonly relations: readonly number[]
+}
+
+/** The braid decomposition + serial-at statement ids of one theory. */
+interface LogBraids {
+	readonly components: readonly LogBraidComponent[]
+	readonly serialAt: readonly number[]
+}
+
+/** The manifest document: an absent `checkpoint` is the store-birth null arm. */
+interface LogManifestDoc {
+	readonly fingerprint: Uint8Array
+	readonly checkpoint?: Uint8Array
+}
+
+interface LogCheckpointHead {
+	readonly braid: number
+	readonly g: bigint
+	readonly hash: Uint8Array
+	readonly ts: bigint
+}
+
+/** The `ckpt/{digest}` document. Derived facts (digest, vector sum) stay derived. */
+interface LogCheckpointDoc {
+	readonly braids: readonly LogCheckpointHead[]
+	readonly catalog: Uint8Array
+	readonly writer: bigint
+	readonly prev?: Uint8Array
+}
+
+interface LogChainEntry {
+	readonly braid: number
+	readonly g: bigint
+	readonly prev: Uint8Array
+	readonly ts: bigint
+}
+
+interface LogPendingBatch {
+	readonly braid: number
+	readonly slot: bigint
+	readonly bytes: Uint8Array
+}
+
+/** The chain sidecar document: an absent `pending` is the `Settled` arm. */
+interface LogChain {
+	readonly entries: readonly LogChainEntry[]
+	readonly pending?: LogPendingBatch
+}
 
 interface ManifestField {
 	readonly name: string
@@ -419,6 +564,34 @@ interface Native {
 	): FactValue[] | null
 	ownedPrepare(instance: OwnedHandle, query: ParsedQuery): PrepareResult
 	ownedExecute(prepared: PreparedHandle, instance: OwnedHandle, params: readonly QueryParam[]): FactValue[][]
+
+	logCodec(descriptor: SealedDescriptor): LogCodecHandle
+
+	logBraidsOf(descriptor: SealedDescriptor): LogBraids
+
+	logEncodeBatch(
+		handle: LogCodecHandle,
+		header: LogBatchHeader,
+		ops: readonly LogOpIn[]
+	): LogResult<Uint8Array, LogBatchEncodeKind>
+
+	logDecodeBatch(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogBatch, LogBatchDecodeKind>
+
+	logParseManifest(bytes: Uint8Array): LogResult<LogManifestDoc, LogManifestKind>
+
+	logRenderManifest(doc: LogManifestDoc): Uint8Array
+
+	logParseCheckpoint(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogCheckpointDoc, LogCheckpointKind>
+
+	logRenderCheckpoint(handle: LogCodecHandle, doc: LogCheckpointDoc): Uint8Array
+
+	logParseSidecar(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogChain, LogSidecarKind>
+
+	logRenderSidecar(handle: LogCodecHandle, chain: LogChain): Uint8Array
+
+	logParseCkptScratch(bytes: Uint8Array): Uint8Array | null
+
+	logRenderCkptScratch(digest: Uint8Array): Uint8Array
 }
 
 const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64"] as const
@@ -476,6 +649,109 @@ function internalBlake3(data: Uint8Array): Uint8Array {
 function internalDescriptor(spec: SchemaSpec): SealedDescriptor {
 	return bridged("bumbledb descriptor", function sealSpec() {
 		return binding.descriptor(spec)
+	})
+}
+
+/**
+ * @internal the sealed per-theory log codec off the `DescriptorWire` —
+ * one implementation of the protocol grammar (`crates/bumbledb-log`),
+ * lent to the replication driver (`@bjornpagen/bumbledb-log`). Not SDK
+ * API; the export is deliberately undocumented in the package surface.
+ */
+function internalLogCodec(descriptor: SealedDescriptor): LogCodecHandle {
+	return bridged("bumbledb-log codec", function sealCodec() {
+		return binding.logCodec(descriptor)
+	})
+}
+
+/**
+ * @internal the braid decomposition + serial-at statement ids, riding
+ * the same `DescriptorWire`; the driver caches the result per theory
+ * beside the codec handle. Not SDK API.
+ */
+function internalLogBraidsOf(descriptor: SealedDescriptor): LogBraids {
+	return bridged("bumbledb-log braids", function deriveBraids() {
+		return binding.logBraidsOf(descriptor)
+	})
+}
+
+/** @internal batch encode through the sealed codec. Not SDK API. */
+function internalLogEncodeBatch(
+	handle: LogCodecHandle,
+	header: LogBatchHeader,
+	ops: readonly LogOpIn[]
+): LogResult<Uint8Array, LogBatchEncodeKind> {
+	return bridged("bumbledb-log encode", function encodeBatch() {
+		return binding.logEncodeBatch(handle, header, ops)
+	})
+}
+
+/** @internal batch decode through the sealed codec. Not SDK API. */
+function internalLogDecodeBatch(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogBatch, LogBatchDecodeKind> {
+	return bridged("bumbledb-log decode", function decodeBatch() {
+		return binding.logDecodeBatch(handle, bytes)
+	})
+}
+
+/** @internal manifest document parse — grammar only, no IO. Not SDK API. */
+function internalLogParseManifest(bytes: Uint8Array): LogResult<LogManifestDoc, LogManifestKind> {
+	return bridged("bumbledb-log manifest parse", function parseManifest() {
+		return binding.logParseManifest(bytes)
+	})
+}
+
+/** @internal the manifest's one encoding, byte-exact for CAS bodies. Not SDK API. */
+function internalLogRenderManifest(doc: LogManifestDoc): Uint8Array {
+	return bridged("bumbledb-log manifest render", function renderManifest() {
+		return binding.logRenderManifest(doc)
+	})
+}
+
+/** @internal checkpoint document parse against the theory's braids. Not SDK API. */
+function internalLogParseCheckpoint(
+	handle: LogCodecHandle,
+	bytes: Uint8Array
+): LogResult<LogCheckpointDoc, LogCheckpointKind> {
+	return bridged("bumbledb-log checkpoint parse", function parseCheckpoint() {
+		return binding.logParseCheckpoint(handle, bytes)
+	})
+}
+
+/** @internal checkpoint document render. Not SDK API. */
+function internalLogRenderCheckpoint(handle: LogCodecHandle, doc: LogCheckpointDoc): Uint8Array {
+	return bridged("bumbledb-log checkpoint render", function renderCheckpoint() {
+		return binding.logRenderCheckpoint(handle, doc)
+	})
+}
+
+/** @internal chain sidecar parse — the fs half stays in the driver. Not SDK API. */
+function internalLogParseSidecar(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogChain, LogSidecarKind> {
+	return bridged("bumbledb-log sidecar parse", function parseSidecar() {
+		return binding.logParseSidecar(handle, bytes)
+	})
+}
+
+/** @internal chain sidecar render. Not SDK API. */
+function internalLogRenderSidecar(handle: LogCodecHandle, chain: LogChain): Uint8Array {
+	return bridged("bumbledb-log sidecar render", function renderSidecar() {
+		return binding.logRenderSidecar(handle, chain)
+	})
+}
+
+/**
+ * @internal the digest a scratch-lease body names, or null — the refusal
+ * is undifferentiated by law. Not SDK API.
+ */
+function internalLogParseCkptScratch(bytes: Uint8Array): Uint8Array | null {
+	return bridged("bumbledb-log scratch parse", function parseScratch() {
+		return binding.logParseCkptScratch(bytes)
+	})
+}
+
+/** @internal the scratch-lease body: version byte + 32-byte digest. Not SDK API. */
+function internalLogRenderCkptScratch(digest: Uint8Array): Uint8Array {
+	return bridged("bumbledb-log scratch render", function renderScratch() {
+		return binding.logRenderCkptScratch(digest)
 	})
 }
 
@@ -539,6 +815,26 @@ export type {
 	InstanceHandle,
 	InteriorIr,
 	IntervalValue,
+	LogBatch,
+	LogBatchDecodeKind,
+	LogBatchEncodeKind,
+	LogBatchHeader,
+	LogBraidComponent,
+	LogBraids,
+	LogChain,
+	LogChainEntry,
+	LogCheckpointDoc,
+	LogCheckpointHead,
+	LogCheckpointKind,
+	LogCodecHandle,
+	LogManifestDoc,
+	LogManifestKind,
+	LogOpIn,
+	LogOpKind,
+	LogOpOut,
+	LogPendingBatch,
+	LogResult,
+	LogSidecarKind,
 	Manifest,
 	ManifestField,
 	ManifestRelation,
@@ -579,6 +875,18 @@ export {
 	errorFromThrow,
 	internalBlake3,
 	internalDescriptor,
+	internalLogBraidsOf,
+	internalLogCodec,
+	internalLogDecodeBatch,
+	internalLogEncodeBatch,
+	internalLogParseCheckpoint,
+	internalLogParseCkptScratch,
+	internalLogParseManifest,
+	internalLogParseSidecar,
+	internalLogRenderCheckpoint,
+	internalLogRenderCkptScratch,
+	internalLogRenderManifest,
+	internalLogRenderSidecar,
 	loadNativeBinding,
 	native,
 	SHIPPED_PLATFORMS
