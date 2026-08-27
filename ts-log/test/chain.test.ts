@@ -1,17 +1,24 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import type { LogCodecHandle } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { digest32, digest32FromHex, toHex } from "#bytes.ts"
 import type { Chain } from "#chain.ts"
 import { parseSidecar, renderSidecar } from "#chain.ts"
-import type { Braid } from "#descriptor.ts"
-import { braid } from "#descriptor.ts"
+import { braid, descriptorOf } from "#descriptor.ts"
 import { ErrRefused, refusalOf } from "#errors.ts"
 import { generation } from "#keys.ts"
+import { Grid, Ledger } from "#test/fixtures.ts"
 
 const HOME = braid("c00000000")
+const NOTES = braid("c00000002")
 const ZERO = digest32(new Uint8Array(32))
 const ZERO_HEX = "0".repeat(64)
+
+/** The sealed handle is the braid authority: parse and render walk it. */
+const LEDGER = descriptorOf(Ledger).codec
+/** Grid's decomposition mints one braid; Ledger's Note braid is foreign to it. */
+const GRID = descriptorOf(Grid).codec
 
 function genesis(): Chain {
 	return {
@@ -20,9 +27,9 @@ function genesis(): Chain {
 	}
 }
 
-function refuseKind(bytes: Uint8Array, known?: ReadonlySet<Braid>): string {
+function refuseKind(codec: LogCodecHandle, bytes: Uint8Array): string {
 	const ran = errors.trySync(function parseIt() {
-		return parseSidecar(bytes, known)
+		return parseSidecar(codec, bytes)
 	})
 	assert.ok(ran.error, "expected a refusal")
 	assert.ok(errors.is(ran.error, ErrRefused), `expected ErrRefused, got: ${ran.error.message}`)
@@ -34,35 +41,34 @@ function refuseKind(bytes: Uint8Array, known?: ReadonlySet<Braid>): string {
 describe("the chain sidecar", function suite() {
 	test("prev is 32 raw bytes", function digestPrev() {
 		const chain = genesis()
-		const bytes = renderSidecar(chain)
-		const parsed = parseSidecar(bytes)
+		const bytes = renderSidecar(LEDGER, chain)
+		const parsed = parseSidecar(LEDGER, bytes)
 		const entry = parsed.entries.get(HOME)
 		assert.ok(entry !== undefined)
 		assert.ok(entry.prev instanceof Uint8Array)
 		assert.equal(entry.prev.length, 32)
 		assert.deepEqual(entry.prev, digest32FromHex(ZERO_HEX))
-		assert.equal(toHex(renderSidecar(parsed)), toHex(bytes))
+		assert.equal(toHex(renderSidecar(LEDGER, parsed)), toHex(bytes))
 	})
 
 	test("a leading byte other than 3 is Version", function version() {
-		const bytes = renderSidecar(genesis())
+		const bytes = renderSidecar(LEDGER, genesis())
 		bytes[0] = 2
-		assert.equal(refuseKind(bytes), "Version")
+		assert.equal(refuseKind(LEDGER, bytes), "Version")
 	})
 
-	test("an unknown braid refuses", function unknownBraid() {
-		const foreign = braid("c0000ffff")
-		const bytes = renderSidecar({
+	test("a braid outside the handle's decomposition refuses", function unknownBraid() {
+		const bytes = renderSidecar(LEDGER, {
 			tag: "settled",
-			entries: new Map([[foreign, { g: generation(0n), prev: ZERO, ts: 0n }]])
+			entries: new Map([[NOTES, { g: generation(0n), prev: ZERO, ts: 0n }]])
 		} satisfies Chain)
-		assert.equal(refuseKind(bytes, new Set([HOME])), "UnknownBraid")
+		assert.equal(refuseKind(GRID, bytes), "UnknownBraid")
 	})
 
 	test("trailing bytes refuse", function trailing() {
-		const bytes = renderSidecar(genesis())
+		const bytes = renderSidecar(LEDGER, genesis())
 		const padded = new Uint8Array(bytes.length + 1)
 		padded.set(bytes)
-		assert.equal(refuseKind(padded), "Malformed")
+		assert.equal(refuseKind(LEDGER, padded), "Malformed")
 	})
 })

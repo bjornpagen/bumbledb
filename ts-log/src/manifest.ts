@@ -15,12 +15,11 @@ import {
 	internalLogRenderCheckpoint,
 	internalLogRenderManifest
 } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, digest32, hex32 } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
-import { ErrRefused, refuse } from "#errors.ts"
+import { refuse } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
 import { Vector } from "#vector.ts"
@@ -36,9 +35,8 @@ interface Manifest {
  * core's own identity string, so the cause payload holds the data this
  * side owns — the document's length, its version byte (byte 0 of every
  * v:3 document) — and nothing invented. The raw braid id of an
- * `UnknownBraid` rides the message; `NaN` marks the uncrossed slot.
- * `BraidSet` has no `RefusalCause` arm and crosses as the bare
- * sentinel.
+ * `UnknownBraid` rides the message; the drifted set of a `BraidSet`
+ * rides the message the same way.
  */
 function refuseBridged(kind: LogManifestKind | LogCheckpointKind, message: string, bytes: Uint8Array): never {
 	switch (kind) {
@@ -47,9 +45,9 @@ function refuseBridged(kind: LogManifestKind | LogCheckpointKind, message: strin
 		case "Overflow":
 			return refuse({ kind: "Overflow" }, message)
 		case "UnknownBraid":
-			return refuse({ kind: "UnknownBraid", braid: Number.NaN }, message)
+			return refuse({ kind: "UnknownBraid" }, message)
 		case "BraidSet":
-			throw errors.wrap(ErrRefused, message)
+			return refuse({ kind: "BraidSet" }, message)
 		case "Malformed":
 			return refuse({ kind: "Malformed", at: bytes.length }, message)
 	}
@@ -159,5 +157,5 @@ function auditCatalog(facts: CheckpointFacts | null, computed: Digest32): void {
 	)
 }
 
-export type { CheckpointFacts, CheckpointHead, Manifest }
+export type { CheckpointFacts, CheckpointHead }
 export { auditCatalog, checkpointVector, parseCheckpoint, parseManifest, renderCheckpoint, renderManifest }

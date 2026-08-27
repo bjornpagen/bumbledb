@@ -665,7 +665,6 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	const bytes = encodeBatch(
 		core.descriptor,
 		{
-			fingerprint: digest32(core.descriptor.fingerprintBytes),
 			braid,
 			braidGen: generation(entry.g + 1n),
 			prev: digestPrev(entry.prev),
@@ -973,8 +972,6 @@ export type {
 	Durability,
 	EmptyCommit,
 	Landing,
-	Published,
-	PublishRefusal,
 	Writer
 }
 export { openWriter, publishCheckpoint }

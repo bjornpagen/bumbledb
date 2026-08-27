@@ -82,7 +82,7 @@ function chainGeneration(chain: Chain): bigint {
  * core's own identity string, so the cause payload holds the data this
  * side owns — the document's length, its version byte (byte 0 of every
  * v:3 document). The raw braid id of an `UnknownBraid` rides the
- * message; `NaN` marks the uncrossed slot.
+ * message.
  */
 function refuseBridged(kind: LogSidecarKind, message: string, bytes: Uint8Array): never {
 	switch (kind) {
@@ -91,7 +91,7 @@ function refuseBridged(kind: LogSidecarKind, message: string, bytes: Uint8Array)
 		case "Overflow":
 			return refuse({ kind: "Overflow" }, message)
 		case "UnknownBraid":
-			return refuse({ kind: "UnknownBraid", braid: Number.NaN }, message)
+			return refuse({ kind: "UnknownBraid" }, message)
 		case "Malformed":
 			return refuse({ kind: "Malformed", at: bytes.length }, message)
 	}
@@ -177,5 +177,5 @@ async function writeSidecar(codec: LogCodecHandle, file: string, chain: Chain): 
 	}
 }
 
-export type { Chain, ChainEntry, Pending, SidecarRead }
+export type { Chain, ChainEntry, Pending }
 export { CHAIN_FILE, chainGeneration, chainSum, parseSidecar, readSidecar, renderSidecar, writeSidecar }

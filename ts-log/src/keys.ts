@@ -13,6 +13,7 @@
  */
 
 import * as fs from "node:fs"
+import { internalLogParseCkptScratch, internalLogRenderCkptScratch } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import type { Digest32 } from "#bytes.ts"
@@ -58,7 +59,6 @@ function loadTildeFamily(): Set<string> {
 const TILDE_FAMILY = loadTildeFamily()
 
 const FORMAT_OR_SEPARATOR = regex("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Zs}]", "u")
-const FORMAT_CHARS = regex("\\p{Cf}", "gu")
 const SLASH_TRIM = regex("^/+|/+$", "g")
 
 declare const storeKeyBrand: unique symbol
@@ -80,10 +80,6 @@ function tildeFamilyPrefix(seg: string): boolean {
 		return false
 	}
 	return TILDE_FAMILY.has(first)
-}
-
-function stripFormat(seg: string): string {
-	return seg.replace(FORMAT_CHARS, "")
 }
 
 /** One path segment of a key or a tenant id: the same grammar. */
@@ -111,10 +107,6 @@ function parsePrefix(raw: string): string {
 		return ""
 	}
 	return storeKey(raw.replace(SLASH_TRIM, ""))
-}
-
-function isReservedName(name: string): boolean {
-	return tildeFamilyPrefix(stripFormat(name))
 }
 
 function reservedTemp(pid: number, seq: number): string {
@@ -146,30 +138,19 @@ function scratchCkptName(): string {
 	return reservedName(`${LEASE_NAMESPACE}/${CKPT_SCRATCH_LEASE}`)
 }
 
-const SCRATCH_VERSION = 3
-
-/** The scratch-lease body: version byte 3, then the 32-byte digest. */
+/** The scratch-lease body, spelled by the one grammar (`crates/bumbledb-log`). */
 function encodeCkptScratch(digest: Digest32): Uint8Array {
-	const out = new Uint8Array(33)
-	out[0] = SCRATCH_VERSION
-	out.set(digest, 1)
-	return out
+	return internalLogRenderCkptScratch(digest)
 }
 
-/** The digest a scratch-lease body names, or null. */
-function scratchCkptDigest(bytes: Uint8Array): Digest32 | null {
-	if (bytes.length !== 33) {
-		return null
-	}
-	const version = bytes[0]
-	if (version !== SCRATCH_VERSION) {
-		return null
-	}
-	return digest32(bytes.subarray(1))
-}
-
+/** The digest a scratch-lease body names, or null — the one grammar's
+ *  parse, branded; the refusal is undifferentiated by law. */
 function parseCkptScratch(bytes: Uint8Array): Digest32 | null {
-	return scratchCkptDigest(bytes)
+	const named = internalLogParseCkptScratch(bytes)
+	if (named === null) {
+		return null
+	}
+	return digest32(named)
 }
 
 function generation(raw: bigint): Generation {
@@ -221,11 +202,8 @@ export {
 	ckptDocKey,
 	encodeCkptScratch,
 	generation,
-	hex16,
 	idsKey,
-	isReservedName,
 	LEASE_NAMESPACE,
-	LOCK_SUFFIX,
 	logKey,
 	manifestKey,
 	parseCkptScratch,
@@ -233,9 +211,7 @@ export {
 	reservedLease,
 	reservedName,
 	reservedTemp,
-	scratchCkptDigest,
 	scratchCkptName,
-	segmentOk,
 	storeKey,
 	TEMP_NAMESPACE,
 	tenantPrefix

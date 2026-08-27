@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 
 /// A segment wearing this suffix is not a key. Old lockfile names stay
 /// unaddressable; the mutation lock is a fenced CAS lease, not a path.
-pub const LOCK_SUFFIX: &str = ".lock";
+const LOCK_SUFFIX: &str = ".lock";
 
 /// Reserved first-segment names no [`StoreKey`] can spell. Temps and
 /// leases live here, disjoint from every honest key.
@@ -179,15 +179,6 @@ impl fmt::Display for StoreKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WriterId(pub u64);
 
-/// Whether a foreign process can be treated as gone. `Unknown` never
-/// breaks a lease — expiry of the lease's own bytes is the only break.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Liveness {
-    Alive,
-    Dead,
-    Unknown,
-}
-
 /// A fenced CAS lease: identity is the token, not a path. Acquired and
 /// broken only through exclusive create of the next token; a contender
 /// takes the next token iff the current lease is expired.
@@ -199,23 +190,10 @@ pub struct Lease {
 }
 
 impl Lease {
-    #[must_use]
-    pub fn expired(&self, now_ms: u64) -> bool {
-        self.expires <= now_ms
-    }
-
     /// Expiry of the lease's own bytes. The lock is not a probe.
     #[must_use]
     pub fn breakable(&self, now_ms: u64) -> bool {
-        self.expired(now_ms)
-    }
-
-    /// A foreign-process probe never breaks on [`Liveness::Unknown`]
-    /// or [`Liveness::Alive`]. Only `Dead` plus expiry yields a break,
-    /// and the mutation lock does not call this — it uses expiry alone.
-    #[must_use]
-    pub fn break_on_probe(&self, now_ms: u64, liveness: Liveness) -> bool {
-        matches!(liveness, Liveness::Dead) && self.expired(now_ms)
+        self.expires <= now_ms
     }
 
     #[must_use]
@@ -310,9 +288,6 @@ pub struct StoreError {
     pub source: std::io::Error,
 }
 
-/// The store-error brand the contract names.
-pub type ErrStore = StoreError;
-
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -325,6 +300,7 @@ impl fmt::Display for StoreError {
 
 impl std::error::Error for StoreError {}
 
+/// The store outcome shell every verb returns.
 pub type Result<T> = std::result::Result<T, StoreError>;
 
 /// A write body that carries the fencing token the CAS can lose to (20).
@@ -614,14 +590,8 @@ mod tests {
         };
         let parsed = Lease::parse(&lease.encode()).expect("parse");
         assert_eq!(parsed, lease);
-        assert!(lease.expired(100));
-        assert!(!lease.expired(99));
         assert!(lease.breakable(100));
         assert!(!lease.breakable(99));
-        assert!(!lease.break_on_probe(100, Liveness::Unknown));
-        assert!(!lease.break_on_probe(100, Liveness::Alive));
-        assert!(lease.break_on_probe(100, Liveness::Dead));
-        assert!(!lease.break_on_probe(99, Liveness::Dead));
     }
 
     #[test]

@@ -233,7 +233,6 @@ function renderWeight(weight: WeightSpec): string {
 export type {
 	CapacityBoundSpec,
 	CapacityWindowSpec,
-	ClosedSpec,
 	FieldSpec,
 	LiteralSetSpec,
 	LiteralSpec,

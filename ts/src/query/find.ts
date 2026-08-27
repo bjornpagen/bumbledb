@@ -4,7 +4,6 @@ import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyVar, MintSlotOf } from "#query/scope.ts"
 
 type FoldOpName = "sum" | "min" | "max" | "pack"
-type AggOpName = "count" | FoldOpName
 
 interface CountAgg {
 	readonly agg: "count"
@@ -90,19 +89,5 @@ type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
 	readonly [K in keyof F]: F[K] extends AnyVar ? MintSlotOf<Classes, F[K]> : never
 }
 
-export type {
-	Agg,
-	AggOpName,
-	AnyAgg,
-	CheckFind,
-	CheckRecFind,
-	CountAgg,
-	FindEntry,
-	FindEntryOk,
-	FindShape,
-	FindValue,
-	FoldOpName,
-	HeadRecordOf,
-	RowOfFind
-}
+export type { Agg, CheckFind, CheckRecFind, FindEntry, FindShape, HeadRecordOf, RowOfFind }
 export { count, max, min, pack, sum }

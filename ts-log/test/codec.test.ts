@@ -73,7 +73,6 @@ describe("the command codec seat", function suite() {
 		const encoded = encodeBatch(
 			WideTheory,
 			{
-				fingerprint: digest32(descriptorOf(WideTheory).fingerprintBytes),
 				braid: braid("c00000000"),
 				braidGen: generation(1n),
 				prev: ZERO_DIGEST,
@@ -114,7 +113,6 @@ describe("the command codec seat", function suite() {
 			return encodeBatch(
 				WideTheory,
 				{
-					fingerprint: digest32(descriptorOf(WideTheory).fingerprintBytes),
 					braid: braid("c00000000"),
 					braidGen: generation(1n),
 					prev: ZERO_DIGEST,
@@ -134,7 +132,6 @@ describe("the command codec seat", function suite() {
 				return encodeBatch(
 					WideTheory,
 					{
-						fingerprint: digest32(descriptorOf(WideTheory).fingerprintBytes),
 						braid: braid("c00000000"),
 						braidGen: generation(1n),
 						prev: ZERO_DIGEST,

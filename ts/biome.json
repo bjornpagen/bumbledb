@@ -1,13 +1,8 @@
 {
 	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-	"vcs": {
-		"enabled": false,
-		"clientKind": "git",
-		"useIgnoreFile": false
-	},
 	"files": {
 		"ignoreUnknown": false,
-		"includes": ["**", "!**/node_modules", "!**/.next", "!**/.expo", "!**/dist", "!**/out", "!**/crate", "!**/npm"],
+		"includes": ["**", "!**/node_modules", "!**/dist", "!**/crate", "!**/npm"],
 		"maxSize": 5000000
 	},
 	"formatter": {
@@ -21,7 +16,6 @@
 		"enabled": true,
 		"rules": {
 			"suspicious": {
-				"noArrayIndexKey": "off",
 				"noDoubleEquals": "off"
 			},
 			"complexity": {
@@ -40,7 +34,6 @@
 				"noUnusedVariables": "error",
 				"noUnusedFunctionParameters": "error"
 			},
-			"nursery": {},
 			"style": {
 				"noUnusedTemplateLiteral": {
 					"level": "error",
@@ -58,7 +51,6 @@
 				"useAsConstAssertion": "error",
 				"useDefaultParameterLast": "error",
 				"useEnumInitializers": "error",
-				"useSelfClosingElements": "error",
 				"useSingleVarDeclarator": "error",
 				"useNumberNamespace": "error",
 				"noInferrableTypes": "error",
@@ -67,12 +59,6 @@
 					"level": "error",
 					"fix": "safe"
 				}
-			},
-			"a11y": {
-				"useKeyWithClickEvents": "off"
-			},
-			"performance": {
-				"noImgElement": "error"
 			}
 		}
 	},

@@ -236,24 +236,5 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 	}
 }
 
-/**
- * The same descriptor under a pinned fingerprint — for stores whose
- * identity is carried (a manifest, a conformance sidecar) rather than
- * recomputed.
- */
-function withFingerprint(descriptor: Descriptor, fingerprint: string): Descriptor {
-	return {
-		relations: descriptor.relations,
-		relationByName: descriptor.relationByName,
-		statements: descriptor.statements,
-		braidOfRelation: descriptor.braidOfRelation,
-		braidMembers: descriptor.braidMembers,
-		serialAtStatements: descriptor.serialAtStatements,
-		codec: descriptor.codec,
-		fingerprint,
-		fingerprintBytes: fromHex(fingerprint)
-	}
-}
-
 export type { Braid, Descriptor, FieldInfo, RelationInfo, SerialStatement, Theory }
-export { braid, braidHex, descriptorOf, withFingerprint }
+export { braid, braidHex, descriptorOf, serialAtFrom }

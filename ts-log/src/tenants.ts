@@ -17,11 +17,11 @@ import * as path from "node:path"
 import type { Schema, SchemaRelations } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
-import { tenantPrefix } from "#keys.ts"
+import { TEMP_NAMESPACE, tenantPrefix } from "#keys.ts"
 import type { Replica } from "#replica.ts"
 import { openReplica } from "#replica.ts"
 import type { FsLease, ObjectStore } from "#store.ts"
-import { acquireFsLease, encodeLease, parseLease, releaseFsLease } from "#store.ts"
+import { acquireFsLease, encodeLease, parseLease, releaseFsLease, sweepStaleTemps, syncedTemp } from "#store.ts"
 
 const PINNED_TENANT = "_shared"
 const TENANT_ID = regex("^[A-Za-z0-9._-]+$")
@@ -111,22 +111,12 @@ async function renewDirLease(held: FsLease, ttlMs: number): Promise<void> {
 		throw errors.new("directory lease is no longer ours")
 	}
 	const body = encodeLease({ holder: held.holder, token: held.token, expires: BigInt(Date.now() + ttlMs) })
-	const tmp = `${held.path}.renew.${process.pid}`
-	const file = await fs.open(tmp, "w")
-	const written = await errors.try(
-		(async function writeAll() {
-			await file.writeFile(body)
-			await file.sync()
-		})()
-	)
-	await file.close()
-	if (written.error) {
-		await fs.rm(tmp, { force: true })
-		throw written.error
-	}
-	const replaced = await errors.try(fs.rename(tmp, held.path))
+	// The temp lives under the reserved `{root}/~tmp` namespace, where a
+	// crash strands sweepable litter — never beside the lease path.
+	const temp = await syncedTemp(held.root, body)
+	const replaced = await errors.try(fs.rename(temp, held.path))
 	if (replaced.error) {
-		await fs.rm(tmp, { force: true })
+		await fs.rm(temp, { force: true })
 		if (codeOf(replaced.error) === "ENOENT") {
 			return
 		}
@@ -178,6 +168,9 @@ function openTenants<Rels extends SchemaRelations>(options: OpenTenantsOptions<R
 	const renewEveryMs = Math.max(1, Math.floor(dirLeaseMs / 3))
 	const open = new Map<string, TenantSlot<Rels>>()
 	const opening = new Map<string, Promise<LiveHandle<Rels>>>()
+	/** The pool root's `~tmp` holds lease mint/renew/release temps; stale
+	 *  ones are crash litter swept once per pool open, best-effort. */
+	const swept = errors.try(sweepStaleTemps(path.join(options.dir, TEMP_NAMESPACE)))
 	let tick = 0
 	let closed = false
 	let renewTimer: ReturnType<typeof setInterval> | undefined
@@ -307,6 +300,7 @@ function openTenants<Rels extends SchemaRelations>(options: OpenTenantsOptions<R
 	}
 
 	async function openOne(tenant: string): Promise<LiveHandle<Rels>> {
+		await swept
 		const dir = path.join(options.dir, tenant)
 		/** The dir-lease mirrors Rust `acquire_named`: tokens live at
 		 *  `{options.dir}/~lease/{tenant}`, outside the disposable replica
@@ -416,5 +410,5 @@ function openTenants<Rels extends SchemaRelations>(options: OpenTenantsOptions<R
 	}
 }
 
-export type { DisposedHandle, LiveHandle, OpenTenantsOptions, Tenants }
+export type { OpenTenantsOptions, Tenants }
 export { openTenants }

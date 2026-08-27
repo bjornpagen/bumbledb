@@ -710,7 +710,7 @@ function memStore(): ObjectStore {
 
 export type { S3Config, S3Credentials } from "#store-s3.ts"
 export { s3Store } from "#store-s3.ts"
-export type { Create, CreateProbe, Etag, Fetched, FsLease, Lease, ObjectStore, Poll, Swap, SwapProbe }
+export type { Create, Etag, Fetched, FsLease, ObjectStore, Poll, Swap }
 export {
 	acquireFsLease,
 	encodeLease,
@@ -721,5 +721,7 @@ export {
 	parseLease,
 	releaseFsLease,
 	resolveAmbiguousCreate,
-	resolveAmbiguousSwap
+	resolveAmbiguousSwap,
+	sweepStaleTemps,
+	syncedTemp
 }

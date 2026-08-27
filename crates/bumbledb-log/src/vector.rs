@@ -102,11 +102,27 @@ impl FromIterator<(BraidId, u64)> for Vector {
 
 #[cfg(test)]
 mod tests {
-    use super::{CheckpointOrder, Overflow, Vector};
-    use crate::braids::BraidId;
+    use bumbledb::schema::{RelationDescriptor, SchemaDescriptor};
 
+    use super::{CheckpointOrder, Overflow, Vector};
+    use crate::braids::{BraidId, braids};
+
+    /// Mints braid `raw` the one honest way: a statement-free theory of
+    /// disconnected relations makes every relation its own braid.
     fn braid(raw: u32) -> BraidId {
-        BraidId::from_raw(raw)
+        let descriptor = SchemaDescriptor {
+            relations: (0..=raw)
+                .map(|id| RelationDescriptor {
+                    name: format!("r{id}").into(),
+                    fields: vec![],
+                    extension: None,
+                })
+                .collect(),
+            statements: vec![],
+        };
+        braids(&descriptor)
+            .parse(raw)
+            .expect("a disconnected relation is its own braid")
     }
 
     #[test]

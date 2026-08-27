@@ -11,6 +11,7 @@
       "documents/sidecar",
       "fuzz/documents"
     ],
+    "identity-table": ["identities.json"],
     "key-grammar": ["keys"],
     "lease-body": ["lease"],
     "machine-constants": ["machine-constants.json"],

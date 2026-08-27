@@ -252,7 +252,6 @@ interface ParamEntry {
 
 export type {
 	AntiJoinOk,
-	AnyTerm,
 	AnyVar,
 	ClassedField,
 	ExactVars,
@@ -261,7 +260,6 @@ export type {
 	JoinOk,
 	MatchFields,
 	MatchOwner,
-	MintClassOf,
 	MintSlotOf,
 	Param,
 	ParamEntry,
@@ -269,7 +267,6 @@ export type {
 	ParamValueAt,
 	SetParam,
 	ShapeOf,
-	UnionToIntersection,
 	Var,
 	VarsOf
 }

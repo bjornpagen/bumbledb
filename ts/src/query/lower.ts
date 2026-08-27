@@ -85,9 +85,6 @@ interface RuleValue<Row, P extends ParamsRecord, Head extends HeadShape = undefi
 
 type AnyRuleValue = RuleValue<unknown, ParamsRecord, HeadShape>
 
-type HeadOf<T> =
-	InferredOf<T> extends { readonly head: infer H extends Readonly<Record<string, ClassedField>> } ? H : undefined
-
 type InteriorBindingOk<V> = V extends AnyVar ? true : false
 
 type CheckInteriorBindings<B> = {
@@ -1949,11 +1946,6 @@ function lowerQuery(q: AnyQuery): ParsedQuery {
 export type {
 	AnyQuery,
 	AnyRuleValue,
-	HeadOf,
-	HeadShape,
-	InteriorRuleChain,
-	InteriorRuleScope,
-	ParamsOf,
 	Query,
 	QueryData,
 	QueryParams,
@@ -1963,12 +1955,9 @@ export type {
 	QueryRuleChain,
 	QueryRuleScope,
 	QueryStart,
-	RawChain,
-	RawScope,
 	RecRuleChain,
 	RecRuleScope,
-	RowOf,
 	RuleValue,
 	TermOps
 }
-export { lowerQuery, makeRawScope, query, taggedCmpLiteral, taggedLiteral }
+export { lowerQuery, query, taggedCmpLiteral }

@@ -45,17 +45,17 @@ impl ByteSink for Vec<u8> {
 /// A string cell: well-formed UTF-8 by construction. The encoder writes
 /// these bytes only; a lone surrogate cannot enter.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WellFormedUtf8(Box<str>);
+struct WellFormedUtf8(Box<str>);
 
 impl WellFormedUtf8 {
     /// A Rust `str` is well-formed UTF-8; this is the encode-side proof.
     #[must_use]
-    pub fn of(text: &str) -> Self {
+    fn of(text: &str) -> Self {
         Self(Box::from(text))
     }
 
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    fn as_str(&self) -> &str {
         &self.0
     }
 
@@ -235,7 +235,8 @@ pub struct Batch {
 }
 
 /// Encode-side refusals: typed, named by op, relation, row, and field
-/// where one exists.
+/// where one exists. `identity` is the cross-implementation name the
+/// identity table pins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncodeError {
     FingerprintMismatch,
@@ -271,6 +272,24 @@ pub enum EncodeError {
     TooManyRows {
         op: usize,
     },
+}
+
+impl EncodeError {
+    /// The refusal's stable cross-implementation name.
+    #[must_use]
+    pub const fn identity(&self) -> &'static str {
+        match self {
+            Self::FingerprintMismatch => "FingerprintMismatch",
+            Self::UnknownBraid { .. } => "UnknownBraid",
+            Self::UnknownRelation { .. } => "UnknownRelation",
+            Self::ClosedRelation { .. } => "ClosedRelation",
+            Self::OpRelationOutsideBraid { .. } => "OpRelationOutsideBraid",
+            Self::Arity { .. } => "Arity",
+            Self::Value { .. } => "Value",
+            Self::TooManyOps => "TooManyOps",
+            Self::TooManyRows { .. } => "TooManyRows",
+        }
+    }
 }
 
 /// Decode-side refusals. `identity` is the cross-implementation name
@@ -845,7 +864,7 @@ fn decode_value(
 
 #[cfg(test)]
 mod tests {
-    use super::{Codec, DecodeError, VERSION, bytes_back};
+    use super::{Codec, DecodeError, EncodeError, VERSION, bytes_back};
     use std::path::Path;
 
     use bumbledb::schema::{
@@ -972,6 +991,15 @@ mod tests {
     fn truncated_identity_is_stable() {
         assert_eq!(DecodeError::Truncated { offset: 0 }.identity(), "Truncated");
         assert_eq!(DecodeError::Version { got: 2 }.identity(), "Version");
+    }
+
+    #[test]
+    fn encode_identity_is_stable() {
+        assert_eq!(EncodeError::TooManyOps.identity(), "TooManyOps");
+        assert_eq!(
+            EncodeError::FingerprintMismatch.identity(),
+            "FingerprintMismatch"
+        );
     }
 
     #[test]

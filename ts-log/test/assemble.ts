@@ -24,7 +24,7 @@ import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import { fromHex } from "#bytes.ts"
 import type { Braid, Descriptor, FieldInfo, RelationInfo } from "#descriptor.ts"
-import { braidHex } from "#descriptor.ts"
+import { braidHex, serialAtFrom } from "#descriptor.ts"
 
 const ID_CLASS = regex("^(.*)\\.id$")
 
@@ -380,23 +380,7 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 			braidOfRelation.set(member, id)
 		}
 	}
-	const serialAtStatements = braids.serialAt.map(function joinBraid(id) {
-		const statement = statements.find(function byId(candidate) {
-			return candidate.id === id
-		})
-		if (statement === undefined) {
-			refuseShape(`serial-at statement ${id} is not in the assembled statements`)
-		}
-		if (statement.kind === "containment") {
-			refuseShape(`serial-at statement ${id} is a containment`)
-		}
-		const relation = statement.kind === "functionality" ? statement.relation : statement.target.relation
-		const braid = braidOfRelation.get(relation)
-		if (braid === undefined) {
-			refuseShape(`serial-at statement ${id} relation ${relation} is in no braid`)
-		}
-		return { statement: id, braid }
-	})
+	const serialAtStatements = serialAtFrom(braids.serialAt, statements, braidOfRelation)
 
 	return {
 		relations,

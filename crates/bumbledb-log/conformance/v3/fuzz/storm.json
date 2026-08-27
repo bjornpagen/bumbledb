@@ -1,5 +1,5 @@
 {
-  "comment": "TS codec fuzz lane mirrors the Rust mutation storm in f9_fuzz.rs. Replay against every listed ok golden. An accepted mutant must re-encode or re-render byte-identically; every refusal is typed and any offset it carries is in bounds.",
+  "comment": "The standing hostile reader's recipe: f9_fuzz.rs replays the mutation storm against every listed ok golden. An accepted mutant must re-encode or re-render byte-identically; every refusal is typed and any offset it carries is in bounds.",
   "prng": {
     "name": "XorShift64",
     "next": "x ^= x << 13; x ^= x >> 7; x ^= x << 17; wrapping u64",
@@ -21,10 +21,10 @@
       100,
       104
     ],
-    "batch_soup_iters": 700,
-    "batch_storm_iters": 2000,
-    "document_soup_iters": 12000,
-    "document_storm_iters": 6000
+    "batch_soup_iters": 4000,
+    "batch_storm_iters": 12000,
+    "document_soup_iters": 48000,
+    "document_storm_iters": 24000
   },
   "operators": [
     {
@@ -51,6 +51,11 @@
       "id": 5,
       "name": "splice_u32max",
       "desc": "overwrite 4 bytes with 0xffffffff LE"
+    },
+    {
+      "id": 6,
+      "name": "copy_chunk",
+      "desc": "overwrite 1..=16 bytes at a random index with a same-length chunk copied from another random index"
     }
   ],
   "goldens": {

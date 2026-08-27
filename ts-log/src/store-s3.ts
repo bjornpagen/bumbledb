@@ -373,5 +373,5 @@ function s3Store(config: S3Config): ObjectStore {
 	}
 }
 
-export type { S3Config, S3Credentials, StaticKeys }
+export type { S3Config, S3Credentials }
 export { joinPrefix, s3Store }

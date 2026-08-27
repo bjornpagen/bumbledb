@@ -15,7 +15,7 @@ import { factOf, internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { parse } from "#braids.ts"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, digest32, hex32, saturatingAddU64, toHex } from "#bytes.ts"
+import { bytesEqual, digest32, hex32, saturatingAddU64 } from "#bytes.ts"
 import type { Chain, ChainEntry, Pending } from "#chain.ts"
 import { chainGeneration, chainSum, readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
@@ -137,10 +137,6 @@ function withGate<Rels extends SchemaRelations, R>(core: Core<Rels>, body: () =>
 	return run
 }
 
-function blake3Hex(bytes: Uint8Array): string {
-	return toHex(new Uint8Array(internalBlake3(bytes)))
-}
-
 function blake3Digest(bytes: Uint8Array): Digest32 {
 	return digest32(new Uint8Array(internalBlake3(bytes)))
 }
@@ -169,7 +165,7 @@ function braidOf(theory: Schema<SchemaRelations> | Schema<never>, raw: Braid): B
 	const id = Number.parseInt(raw.slice(1), 16)
 	const parsed = parse(theory, id)
 	if (parsed === undefined) {
-		refuse({ kind: "UnknownBraid", braid: Number.isFinite(id) ? id : 0 }, `unknown braid ${raw}`)
+		refuse({ kind: "UnknownBraid" }, `unknown braid ${raw}`)
 	}
 	return parsed
 }
@@ -204,10 +200,6 @@ function generationOf<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
 /** The opened store's catalog digest — the engine handle's computed claim. */
 function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): Digest32 {
 	return digest32(core.db.catalogDigest())
-}
-
-function chainOf<Rels extends SchemaRelations>(core: Core<Rels>): Chain {
-	return core.chain
 }
 
 /** Pending-arm payload: recorded ops and the batch header's timestamp
@@ -254,7 +246,7 @@ function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): bool
 }
 
 async function persistSidecar<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	await writeSidecar(core.descriptor.codec, sidecarPath(core), chainOf(core))
+	await writeSidecar(core.descriptor.codec, sidecarPath(core), core.chain)
 }
 
 /** Writes the checkpoint store file and fsyncs the file and its parent
@@ -569,16 +561,9 @@ async function adoptManifest<Rels extends SchemaRelations>(
 		if (facts === null) {
 			throw errors.new(`manifest points at absent checkpoint ${hex32(manifest.checkpoint)}`)
 		}
-		const checkpoint = parseCheckpoint(core.descriptor.codec, facts.bytes)
-		for (const id of checkpoint.braids.keys()) {
-			braidOf(core.theory, id)
-		}
-		const carried = [...checkpoint.braids.keys()].sort()
-		const derived = [...core.descriptor.braidMembers.keys()].sort()
-		if (carried.join(",") !== derived.join(",")) {
-			refuse({ kind: "CheckpointBraids", carried, derived }, "checkpoint braid set drifted from the derived braids")
-		}
-		core.checkpoint = checkpoint
+		// The codec-backed parseCheckpoint judges the braid set against the
+		// sealed handle — an unknown or drifted braid refuses at parse.
+		core.checkpoint = parseCheckpoint(core.descriptor.codec, facts.bytes)
 		core.checkpointDigest = manifest.checkpoint
 	}
 	// The pointer is adopted only after the checkpoint it names is in
@@ -868,17 +853,10 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	if (sidecar.tag === "fault") {
 		throw wrapStore(sidecar.io, `read sidecar ${sidecarPath(core)}`)
 	}
-	if (sidecar.tag === "read") {
-		for (const id of sidecar.chain.entries.keys()) {
-			braidOf(core.theory, id)
-		}
-		if (sidecar.chain.tag === "pending") {
-			braidOf(core.theory, sidecar.chain.batch.braid)
-		}
-	}
-	if (sidecar.tag === "corrupt") {
-		coldPending = null
-	} else if (existing !== null && sidecar.tag === "read") {
+	// The codec-backed readSidecar judges every braid against the sealed
+	// handle — a foreign braid is a corrupt sidecar, and a corrupt
+	// sidecar is discarded cache (the disposable law), never adopted.
+	if (existing !== null && sidecar.tag === "read") {
 		core.storeName = existing
 		const openedDb = await errors.try(SdkDb.open(storePath(core), options.theory))
 		if (openedDb.error === undefined) {
@@ -891,7 +869,6 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	if (!opened) {
 		if (sidecar.tag === "read" && sidecar.chain.tag === "pending") {
 			coldPending = sidecar.chain.batch
-			braidOf(core.theory, coldPending.braid)
 		}
 		await initializeStore(core)
 	}
@@ -959,7 +936,6 @@ async function readdressPending<Rels extends SchemaRelations>(
 	const bytes = encodeBatch(
 		core.descriptor,
 		{
-			fingerprint: digest32(core.descriptor.fingerprintBytes),
 			braid,
 			braidGen: generation(entry.g + 1n),
 			prev: entry.prev,
@@ -1063,24 +1039,11 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 	return replica
 }
 
-export type {
-	ApplyPhase,
-	Core,
-	OpenReplicaOptions,
-	PendingFold,
-	RefreshOutcome,
-	Replica,
-	ReplicaState,
-	SlotApply,
-	Waited
-}
+export type { Core, OpenReplicaOptions, RefreshOutcome, Replica, Waited }
 export {
 	applyOps,
-	applySlot,
 	belowFloor,
-	blake3Hex,
 	chainEntry,
-	chainOf,
 	clearPending,
 	coreOf,
 	discardAndReopen,
@@ -1093,8 +1056,6 @@ export {
 	pendingOf,
 	persistSidecar,
 	readdressPending,
-	vectorOf,
-	wholenessHolds,
 	withGate,
 	ZERO_HASH
 }

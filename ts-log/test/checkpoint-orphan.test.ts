@@ -33,7 +33,6 @@ after(function cleanup() {
 
 const encoder = new TextEncoder()
 const descriptor = descriptorOf(Ledger)
-const known = new Set(descriptor.braidMembers.keys())
 const fingerprint = digest32(descriptor.fingerprintBytes)
 
 function facts(homeG: bigint): CheckpointFacts {
@@ -48,7 +47,7 @@ function facts(homeG: bigint): CheckpointFacts {
 }
 
 function digestOf(candidate: CheckpointFacts): Digest32 {
-	return digest32(new Uint8Array(internalBlake3(renderCheckpoint(candidate))))
+	return digest32(new Uint8Array(internalBlake3(renderCheckpoint(descriptor.codec, candidate))))
 }
 
 function scratchPath(dir: string): string {
@@ -72,7 +71,10 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 		await birth(store, prefix)
 		const incumbent = facts(10n)
 		const incumbentDigest = digestOf(incumbent)
-		const planted = await store.putCreate(ckptDocKey(prefix, incumbentDigest), renderCheckpoint(incumbent))
+		const planted = await store.putCreate(
+			ckptDocKey(prefix, incumbentDigest),
+			renderCheckpoint(descriptor.codec, incumbent)
+		)
 		assert.equal(planted.tag, "created")
 		await store.putCreate(mdbKey(prefix, incumbentDigest), encoder.encode("incumbent-mdb"))
 		const fetched = await store.get(manifestKey(prefix))
@@ -86,7 +88,7 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 
 		const candidate = facts(1n)
 		const digest = digestOf(candidate)
-		const published = await publishCheckpoint(store, prefix, dir, known, candidate, encoder.encode("loser-mdb"))
+		const published = await publishCheckpoint(store, prefix, dir, Ledger, candidate, encoder.encode("loser-mdb"))
 		assert.equal(published.tag, "kept")
 		if (published.tag === "kept") {
 			assert.ok(bytesEqual(published.incumbent, incumbentDigest))
@@ -103,7 +105,7 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 		const dir = path.join(tmpRoot, "refused")
 		const candidate = facts(1n)
 		const digest = digestOf(candidate)
-		const published = await publishCheckpoint(store, prefix, dir, known, candidate, encoder.encode("refused-mdb"))
+		const published = await publishCheckpoint(store, prefix, dir, Ledger, candidate, encoder.encode("refused-mdb"))
 		assert.equal(published.tag, "refused")
 		if (published.tag === "refused") {
 			assert.equal(published.reason, "manifest-missing")
@@ -120,7 +122,7 @@ describe("the loser self-deletes its ckpt pair", function suite() {
 		await birth(store, prefix)
 		const candidate = facts(1n)
 		const digest = digestOf(candidate)
-		const published = await publishCheckpoint(store, prefix, dir, known, candidate, encoder.encode("winner-mdb"))
+		const published = await publishCheckpoint(store, prefix, dir, Ledger, candidate, encoder.encode("winner-mdb"))
 		assert.equal(published.tag, "replaced")
 		assert.ok((await store.get(ckptDocKey(prefix, digest))) !== null)
 		assert.ok((await store.get(mdbKey(prefix, digest))) !== null)
@@ -136,7 +138,7 @@ describe("open sweeps reserved scratch", function suite() {
 		await birth(store, prefix)
 		const stranded = facts(1n)
 		const digest = digestOf(stranded)
-		await store.putCreate(ckptDocKey(prefix, digest), renderCheckpoint(stranded))
+		await store.putCreate(ckptDocKey(prefix, digest), renderCheckpoint(descriptor.codec, stranded))
 		await store.putCreate(mdbKey(prefix, digest), encoder.encode("strand-mdb"))
 		fs.mkdirSync(path.join(dir, LEASE_NAMESPACE), { recursive: true })
 		fs.writeFileSync(scratchPath(dir), encodeCkptScratch(digest))

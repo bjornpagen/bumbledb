@@ -5,15 +5,15 @@
 //! etag is the blake3 of the content. The mutation lock is a fenced
 //! CAS lease under `~lease`, broken only on expiry of its own bytes.
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use super::fence::{
     HeldLease, acquire_mutation, sweep_reserved, sync_ancestors, sync_parent, synced_temp,
 };
 use super::{
-    Create, ErrStore, Etag, Fenced, Fetched, LEASE_NAMESPACE, Lease, ObjectStore, Poll, Result,
+    Create, Etag, Fenced, Fetched, LEASE_NAMESPACE, Lease, ObjectStore, Poll, Result, StoreError,
     StoreKey, Swap, TEMP_NAMESPACE, WriterId,
 };
 
@@ -89,8 +89,8 @@ fn write_generation(root: &Path, dest: &Path, token: u64) -> io::Result<()> {
     Ok(())
 }
 
-fn infra<'k>(op: &'static str, key: &'k str) -> impl FnOnce(io::Error) -> ErrStore + 'k {
-    move |source| ErrStore {
+fn infra<'k>(op: &'static str, key: &'k str) -> impl FnOnce(io::Error) -> StoreError + 'k {
+    move |source| StoreError {
         op,
         key: key.to_string(),
         source,
@@ -224,7 +224,7 @@ impl ObjectStore for FsStore {
         match read_fetched(&path).map_err(infra("get_if_changed", key.as_str()))? {
             Some(fetched) if fetched.etag == *etag => Ok(Poll::Unchanged),
             Some(fetched) => Ok(Poll::Changed(fetched)),
-            None => Err(ErrStore {
+            None => Err(StoreError {
                 op: "get_if_changed",
                 key: key.to_string(),
                 source: io::Error::from(io::ErrorKind::NotFound),
@@ -351,42 +351,6 @@ impl ObjectStore for FsStore {
         };
         run().map_err(infra("delete", key.as_str()))
     }
-}
-
-/// Write `bytes` through an exclusive temp and fsync the object plus its
-/// parent — the checkpoint-seed durability law, available to any
-/// caller that materializes an mdb beside a sidecar. Newly created
-/// ancestors are dir-fsynced before the ack.
-///
-/// # Errors
-pub fn durable_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path.parent().unwrap_or(path);
-    fs::create_dir_all(parent)?;
-    if parent.parent().is_some() {
-        sync_parent(parent)?;
-    }
-    let temp = {
-        let seq = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let name = format!(".{}.{}", std::process::id(), seq);
-        let temp = parent.join(name);
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        if let Err(err) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-            drop(file);
-            let _ = fs::remove_file(&temp);
-            return Err(err);
-        }
-        temp
-    };
-    if let Err(err) = fs::rename(&temp, path).and_then(|()| sync_parent(path)) {
-        let _ = fs::remove_file(&temp);
-        return Err(err);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

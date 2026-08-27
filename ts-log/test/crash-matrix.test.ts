@@ -25,6 +25,7 @@ import { openWriter } from "#writer.ts"
 
 const NOTES = braid("c00000002")
 const HOME = braid("c00000000")
+const CODEC = descriptorOf(Ledger).codec
 const WRITER_STEPS = [
 	"encode",
 	"pending-write",
@@ -94,12 +95,10 @@ async function plantWriterPrefix(
 	const writerDir = dir("w")
 	const writer = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
 	const core = coreOf(writer.replica)
-	const descriptor = descriptorOf(Ledger)
 	const ops = matrixOps()
 	const bytes = encodeBatch(
 		Ledger,
 		{
-			fingerprint: digest32(descriptor.fingerprintBytes),
 			braid: NOTES,
 			braidGen: generation(1n),
 			prev: ZERO_HASH,
@@ -114,7 +113,7 @@ async function plantWriterPrefix(
 		return { store, prefix, dir: writerDir, bytes }
 	}
 
-	holdPending(core, { braid: NOTES, gen: generation(1n), bytes }, ops)
+	holdPending(core, { braid: NOTES, slot: generation(1n), bytes }, ops, 1n)
 
 	const publishedAck = step === "ack-local" && mode === "published"
 	if (step !== "pending-write") {
@@ -141,9 +140,9 @@ async function plantWriterPrefix(
 
 async function recoverWriter(store: ReturnType<typeof fsStore>, prefix: string, writerDir: string) {
 	const writer = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
-	const sidecar = await readSidecar(path.join(writerDir, "chain"))
-	assert.equal(sidecar.tag, "read")
-	return { writer, sidecar }
+	const sidecar = await readSidecar(CODEC, path.join(writerDir, "chain"))
+	assert.ok(sidecar.tag === "read")
+	return { writer, chain: sidecar.chain }
 }
 
 describe("the writer crash matrix (56)", function suite() {
@@ -151,8 +150,8 @@ describe("the writer crash matrix (56)", function suite() {
 		for (const step of WRITER_STEPS) {
 			test(`${mode}/${step}: recovery names Settled and the slot arm`, async function cell() {
 				const planted = await plantWriterPrefix(mode, step)
-				const { writer, sidecar } = await recoverWriter(planted.store, planted.prefix, planted.dir)
-				assert.equal(sidecar.chain.tag, "settled", `${mode}/${step}: recovery leaves Settled`)
+				const { writer, chain } = await recoverWriter(planted.store, planted.prefix, planted.dir)
+				assert.equal(chain.tag, "settled", `${mode}/${step}: recovery leaves Settled`)
 				assert.equal(writer.replica.vector.get(NOTES) ?? 0n, lands(step) ? 1n : 0n, `${mode}/${step}`)
 
 				const slot = await planted.store.get(logKey(planted.prefix, NOTES, generation(1n)))
@@ -195,12 +194,10 @@ describe("the writer crash matrix (56)", function suite() {
 			const writerDir = dir("w")
 			const writer = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
 			const core = coreOf(writer.replica)
-			const descriptor = descriptorOf(Ledger)
 			const ops: Op[] = [{ op: "insert", relation: "Booking", rows: [[9n, 1n, "orphan", { start: 1n, end: 2n }]] }]
 			const bytes = encodeBatch(
 				Ledger,
 				{
-					fingerprint: digest32(descriptor.fingerprintBytes),
 					braid: HOME,
 					braidGen: generation(1n),
 					prev: ZERO_HASH,
@@ -209,12 +206,12 @@ describe("the writer crash matrix (56)", function suite() {
 				},
 				ops
 			)
-			holdPending(core, { braid: HOME, gen: generation(1n), bytes }, ops)
+			holdPending(core, { braid: HOME, slot: generation(1n), bytes }, ops, 1n)
 			await writer.replica[Symbol.asyncDispose]()
 
 			const recovered = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
-			const sidecar = await readSidecar(path.join(writerDir, "chain"))
-			assert.equal(sidecar.tag, "read")
+			const sidecar = await readSidecar(CODEC, path.join(writerDir, "chain"))
+			assert.ok(sidecar.tag === "read")
 			assert.equal(sidecar.chain.tag, "settled", `${mode}: rejection cleared to Settled`)
 			assert.equal(recovered.replica.vector.get(HOME) ?? 0n, 0n, mode)
 			const slot = await store.get(logKey(prefix, HOME, generation(1n)))
@@ -247,7 +244,6 @@ describe("the writer crash matrix (56)", function suite() {
 			const bytes = encodeBatch(
 				Ledger,
 				{
-					fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes),
 					braid: NOTES,
 					braidGen: generation(2n),
 					prev: entry.prev,
@@ -256,7 +252,7 @@ describe("the writer crash matrix (56)", function suite() {
 				},
 				ops
 			)
-			holdPending(core, { braid: NOTES, gen: generation(2n), bytes }, ops)
+			holdPending(core, { braid: NOTES, slot: generation(2n), bytes }, ops, entry.ts + 1n)
 			if (step === "apply-local") {
 				const applied = applyOps(core, ops)
 				assert.equal(applied.tag, "accepted")
@@ -264,8 +260,8 @@ describe("the writer crash matrix (56)", function suite() {
 			await writer.replica[Symbol.asyncDispose]()
 
 			const recovered = await openWriter({ store, prefix, dir: writerDir, theory: Ledger })
-			const sidecar = await readSidecar(path.join(writerDir, "chain"))
-			assert.equal(sidecar.tag, "read")
+			const sidecar = await readSidecar(CODEC, path.join(writerDir, "chain"))
+			assert.ok(sidecar.tag === "read")
 			assert.equal(sidecar.chain.tag, "settled", `${step}: born-noop settles`)
 			assert.equal(recovered.replica.vector.get(NOTES), 1n, step)
 			const second = await store.get(logKey(prefix, NOTES, generation(2n)))
@@ -298,7 +294,8 @@ describe("the replica crash matrix (56)", function suite() {
 			)
 			const replicaDir = dir("replica")
 			const replica = await openReplica({ store, prefix, dir: replicaDir, theory: Ledger })
-			await replica.waitFor(new Map([[NOTES, generation(1n)]]))
+			const waited = await replica.waitFor(new Map([[NOTES, generation(1n)]]))
+			assert.ok(waited.tag === "reached", `prefix ${len}: waitFor reaches the committed slot`)
 			assert.equal(replica.vector.get(NOTES), 1n)
 
 			assert.equal(
@@ -327,8 +324,8 @@ describe("the replica crash matrix (56)", function suite() {
 
 			const recovered = await openReplica({ store, prefix, dir: replicaDir, theory: Ledger })
 			assert.equal(recovered.vector.get(NOTES), 2n, `prefix ${len}`)
-			const sidecar = await readSidecar(path.join(replicaDir, "chain"))
-			assert.equal(sidecar.tag, "read")
+			const sidecar = await readSidecar(CODEC, path.join(replicaDir, "chain"))
+			assert.ok(sidecar.tag === "read")
 			assert.equal(sidecar.chain.tag, "settled", `prefix ${len}: catch-up leaves Settled`)
 			const present = recovered.db.read(function has(instance) {
 				return instance.scan(Note).some(function row(fact) {

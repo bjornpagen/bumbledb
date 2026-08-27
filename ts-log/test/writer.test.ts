@@ -293,7 +293,6 @@ describe("the floor is a write-path invariant", function suite() {
 		const zombie = encodeBatch(
 			descriptor,
 			{
-				fingerprint: digest32(descriptor.fingerprintBytes),
 				braid: HOME,
 				braidGen: generation(1n),
 				prev: digest32(new Uint8Array(32)),
@@ -302,7 +301,7 @@ describe("the floor is a write-path invariant", function suite() {
 			},
 			ops
 		)
-		holdPending(core, { braid: HOME, gen: generation(1n), bytes: zombie }, ops)
+		holdPending(core, { braid: HOME, slot: generation(1n), bytes: zombie }, ops, 1n)
 		core.checkpoint = floorFacts(1n)
 		assert.equal(
 			foldPending(chainSum(core.chain), generationOf(core), null, zombie, belowFloor(core, HOME, generation(1n))).tag,

@@ -11,12 +11,12 @@ use std::time::Duration;
 use super::{LEASE_NAMESPACE, Lease, TEMP_NAMESPACE, WriterId, jittered, unix_ms};
 
 /// How long a mutation lease stays current, in milliseconds.
-pub const MUTATION_TTL_MS: u64 = 5_000;
+const MUTATION_TTL_MS: u64 = 5_000;
 
 /// A live `synced_temp` exists only for write-then-link. Anything
 /// older than this is crash litter. Sweep deletes those files and
 /// never the whole `~tmp` tree: constructors share the root.
-pub const TEMP_STALE_MS: u64 = 30_000;
+const TEMP_STALE_MS: u64 = 30_000;
 
 /// How long a directory exclusivity lease stays current, in milliseconds.
 pub const DIR_TTL_MS: u64 = 300_000;
@@ -298,20 +298,6 @@ pub fn acquire_mutation(root: &Path, key: &str, holder: WriterId) -> io::Result<
                 std::thread::sleep(jittered(Duration::from_millis(LOCK_RETRY_MS)));
             }
             Err(LeaseBusy::Io(err)) => return Err(err),
-        }
-    }
-}
-
-/// One-shot directory exclusivity: a live holder is `Live`, not waited.
-///
-/// # Errors
-pub fn acquire_dir(root: &Path, holder: WriterId) -> Result<HeldLease, LeaseBusy> {
-    let dir = root.join(LEASE_NAMESPACE);
-    loop {
-        match acquire_once(root, &dir, holder, DIR_TTL_MS) {
-            Ok(Some(held)) => return Ok(held),
-            Ok(None) => {}
-            Err(busy) => return Err(busy),
         }
     }
 }

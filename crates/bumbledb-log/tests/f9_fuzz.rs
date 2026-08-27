@@ -134,11 +134,13 @@ fn doc_goldens(storm: &Json, section: &str, kind: DocKind) -> Vec<DocGolden> {
 }
 
 /// The general mutation operator set the storm recipe names: byte
-/// flips, a truncation, a chunk insertion, a chunk deletion, or a
-/// hostile all-ones u32 spliced over four bytes.
+/// flips, a truncation, a chunk insertion, a chunk deletion, a hostile
+/// all-ones u32 spliced over four bytes, or a same-length chunk copied
+/// from one index over another — a length-preserving mutant whose
+/// bytes are all plausible for the golden's alphabet.
 fn storm_mutant(prng: &mut XorShift, bytes: &[u8]) -> Vec<u8> {
     let mut out = bytes.to_vec();
-    match prng.next() % 6 {
+    match prng.next() % 7 {
         0 | 1 => {
             for _ in 0..=prng.below(4) {
                 if out.is_empty() {
@@ -164,10 +166,19 @@ fn storm_mutant(prng: &mut XorShift, bytes: &[u8]) -> Vec<u8> {
                 out.drain(at..end);
             }
         }
-        _ => {
+        5 => {
             if out.len() >= 4 {
                 let at = prng.below(out.len() - 3);
                 out[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            }
+        }
+        _ => {
+            if out.len() >= 2 {
+                let len = 1 + prng.below(16.min(out.len() - 1));
+                let src = prng.below(out.len() - len + 1);
+                let dst = prng.below(out.len() - len + 1);
+                let chunk: Vec<u8> = out[src..src + len].to_vec();
+                out[dst..dst + len].copy_from_slice(&chunk);
             }
         }
     }

@@ -26,12 +26,6 @@ impl BraidId {
     pub const fn raw(self) -> u32 {
         self.0.0
     }
-
-    /// The u32 the wire writes for this braid.
-    #[must_use]
-    pub(crate) const fn from_raw(raw: u32) -> Self {
-        Self(RelationId(raw))
-    }
 }
 
 impl std::fmt::Display for BraidId {

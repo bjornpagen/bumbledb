@@ -48,7 +48,8 @@ pub fn ids_key(prefix: &str, relation: RelationId, field: FieldId) -> StoreKey {
 }
 
 /// Typed lease refusals. None of these retry: each names a disagreement
-/// no repetition mends.
+/// no repetition mends. `identity` is the cross-implementation name the
+/// identity table pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeaseRefusal {
     /// The counter body is not a canonical decimal u64.
@@ -64,6 +65,18 @@ pub enum LeaseRefusal {
     /// A single draw larger than one lease width; the width is the
     /// protocol's one block size.
     OverWidth { requested: u64 },
+}
+
+impl LeaseRefusal {
+    /// The refusal's stable cross-implementation name.
+    #[must_use]
+    pub const fn identity(&self) -> &'static str {
+        match self {
+            Self::Counter { .. } => "Counter",
+            Self::Exhausted { .. } => "Exhausted",
+            Self::OverWidth { .. } => "OverWidth",
+        }
+    }
 }
 
 /// `Lease.draw(count)`: `OverWidth | Exhausted | Drawn`, plus `Counter`

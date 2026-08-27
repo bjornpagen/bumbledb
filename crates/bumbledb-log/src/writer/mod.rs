@@ -643,12 +643,6 @@ where
         }
     }
 
-    /// Braids wedged read-only by corruption-class verdicts.
-    #[must_use]
-    pub fn wedged_braids(&self) -> Vec<BraidId> {
-        lock(&self.inner.core).wedged.keys().copied().collect()
-    }
-
     /// Re-sizes the checkpoint cadence (both arms; the conformance pins
     /// re-size them).
     pub fn set_checkpoint_cadence(&self, sum: u64, bytes: u64) {

@@ -162,7 +162,7 @@ describe("s3 smoke", function suite() {
 		const out = await writer.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "s3-smoke" }])
 			const ids = batch.reserve(Booking, "id", 1n)
-			const id = ids[0]
+			const id = ids.at(0n)
 			assert.ok(id !== undefined)
 			batch.insert(Booking, [{ id, holder: 1n, slot: "s1", at: { start: 1n, end: 2n } }])
 		})
@@ -171,7 +171,8 @@ describe("s3 smoke", function suite() {
 
 		const b = await openReplica({ store, prefix: "", dir: path.join(dir, "b"), theory: Ledger })
 		if (out.tag === "accepted") {
-			await b.waitFor(new Map([[out.braid, out.generation]]))
+			const waited = await b.waitFor(new Map([[out.value.braid, out.value.slot]]))
+			assert.ok(waited.tag === "reached", "read-your-writes: waitFor reaches the committed slot")
 		}
 		const names = b.db.read(function readNames(instance) {
 			return instance.scan(Holder).map(function nameOf(fact) {

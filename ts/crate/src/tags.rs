@@ -6,8 +6,8 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{
-    AggOp, AtomSource, CmpOp, ConditionTree, Direction, ErrorFamily, FindTerm, HeadOp, HeadTerm,
-    Query, StatementKind, Term, Value,
+    AtomSource, CmpOp, ConditionTree, Direction, ErrorFamily, FindTerm, HeadOp, HeadTerm, Query,
+    StatementKind, Term, Value,
 };
 use bumbledb_log::codec::{EncodeError, OpKind};
 
@@ -207,11 +207,6 @@ wire_tags! {
         COUNT: HeadOp::Count => "count",
         PACK: HeadOp::Pack => "pack",
     }
-}
-
-#[allow(dead_code)]
-pub(crate) fn agg_op_tag(op: AggOp) -> &'static str {
-    head_op::tag(&op.head_op())
 }
 
 wire_tags! {

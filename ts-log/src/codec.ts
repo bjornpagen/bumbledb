@@ -22,7 +22,8 @@ import type {
 import { internalLogDecodeBatch, internalLogEncodeBatch } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
-import { bytesEqual, digest32, hex32 } from "#bytes.ts"
+import { bytesEqual, digest32 } from "#bytes.ts"
+import type { ChainEntry } from "#chain.ts"
 import type { Braid, Descriptor, Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
 import { refuse, refuseChain } from "#errors.ts"
@@ -45,13 +46,13 @@ interface BatchHeader {
 }
 
 /**
- * Encode input. Digest fields are raw bytes so a short `prev` reaches
- * the named `DigestWidth` refuse at this gate instead of dying at
- * `Digest32` construction. Decode still produces a branded
- * `BatchHeader`.
+ * Encode input. The handle is the fingerprint authority, so no
+ * fingerprint field exists here — encode fills the wire's from the
+ * sealed codec. `prev` is raw bytes so a short digest reaches the named
+ * `DigestWidth` refuse at this gate instead of dying at `Digest32`
+ * construction. Decode still produces a branded `BatchHeader`.
  */
 interface EncodeHeader {
-	readonly fingerprint: Uint8Array
 	readonly braid: Braid
 	readonly braidGen: Generation
 	readonly prev: Uint8Array
@@ -162,19 +163,15 @@ function opsIn(descriptor: Descriptor, ops: readonly Op[]): LogOpIn[] {
 
 /**
  * Encodes one batch through the sealed codec. The handle is the
- * fingerprint authority: the header's carried fingerprint must be the
- * descriptor's own (a short digest is `DigestWidth` at this gate) and
- * never rides the bridge. Braid membership, closedness, arity, and
+ * fingerprint authority: encode fills the wire's fingerprint from the
+ * sealed codec, so none rides the bridge (a short `prev` is
+ * `DigestWidth` at this gate). Braid membership, closedness, arity, and
  * value validity are the core's refusals, crossing with their identity
  * kinds.
  */
 function encodeBatch(theory: Theory, header: EncodeHeader, ops: readonly Op[]): Uint8Array {
 	const descriptor = descriptorOf(theory)
-	const fingerprint = asDigest(header.fingerprint, "fingerprint")
 	const prev = asDigest(header.prev, "prev")
-	if (!bytesEqual(fingerprint, descriptor.fingerprintBytes)) {
-		throw errors.new(`encode fingerprint ${hex32(fingerprint)} is not the descriptor's ${descriptor.fingerprint}`)
-	}
 	const outcome = internalLogEncodeBatch(
 		descriptor.codec,
 		{
@@ -222,12 +219,6 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	}
 }
 
-interface ChainEntry {
-	readonly g: Generation
-	readonly prev: Digest32
-	readonly ts: bigint
-}
-
 /**
  * The chain discipline (20 apply, step 1): one identity, three proved
  * causes — the header's slot identity (braid and generation, both
@@ -257,5 +248,5 @@ function verifyChain(header: BatchHeader, braid: Braid, slot: Generation, chain:
 	}
 }
 
-export type { BatchHeader, ChainEntry, DecodedBatch, Digest32, EncodeHeader, Op }
+export type { BatchHeader, ChainEntry, DecodedBatch, EncodeHeader, Op }
 export { decodeBatch, encodeBatch, verifyChain }

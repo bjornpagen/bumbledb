@@ -3,12 +3,13 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
+import { relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { digest32, digest32FromHex } from "#bytes.ts"
 import type { Chain } from "#chain.ts"
 import { CHAIN_FILE, renderSidecar } from "#chain.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
-import { ErrManifestMissing, ErrRefused, refusalOf } from "#errors.ts"
+import { ErrManifestMissing } from "#errors.ts"
 import { generation, manifestKey } from "#keys.ts"
 import { renderManifest } from "#manifest.ts"
 import { coreOf, openReplica } from "#replica.ts"
@@ -35,7 +36,7 @@ describe("replica open refusals", function suite() {
 		assert.ok(errors.is(caught.error, ErrManifestMissing))
 	})
 
-	test("sidecar open refuses an unknown braid through parse", async function unknownBraid() {
+	test("a sidecar naming a foreign braid is corrupt cache: open reseeds at zero", async function foreignBraid() {
 		const store = memStore()
 		const descriptor = descriptorOf(Ledger)
 		const created = await store.putCreate(
@@ -43,18 +44,34 @@ describe("replica open refusals", function suite() {
 			renderManifest({ fingerprint: digest32(descriptor.fingerprintBytes), checkpoint: null })
 		)
 		assert.equal(created.tag, "created")
-		const dir = path.join(tmpRoot, "unknown-braid")
-		fs.mkdirSync(dir, { recursive: true })
-		const unknown = braid("c0000ffff")
+		// A two-component theory whose codec spells braid c00000001 — a
+		// braid the Ledger's own decomposition lacks.
+		const A = relation("A", { id: u64.fresh, body: str })
+		const B = relation("B", { id: u64.fresh, body: str })
+		const Pair = schema("Pair", { A, B }, [])
+		const foreign = descriptorOf(Pair)
+		const alien = braid("c00000001")
+		assert.ok(foreign.braidMembers.has(alien), "Pair decomposes with braid c00000001")
+		assert.ok(!descriptor.braidMembers.has(alien), "the Ledger does not")
 		const planted: Chain = {
 			tag: "settled",
-			entries: new Map([[unknown, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n }]])
+			entries: new Map(
+				[...foreign.braidMembers.keys()].map(function seed(id) {
+					return [id, { g: generation(3n), prev: digest32(new Uint8Array(32)), ts: 0n }] as const
+				})
+			)
 		}
-		fs.writeFileSync(path.join(dir, CHAIN_FILE), renderSidecar(planted))
-		const caught = await errors.try(openReplica({ store, prefix: "prod/main", dir, theory: Ledger }))
-		assert.ok(caught.error)
-		assert.ok(errors.is(caught.error, ErrRefused))
-		assert.equal(refusalOf(caught.error)?.kind, "UnknownBraid")
+		const dir = path.join(tmpRoot, "foreign-braid")
+		fs.mkdirSync(dir, { recursive: true })
+		fs.writeFileSync(path.join(dir, CHAIN_FILE), renderSidecar(foreign.codec, planted))
+		// The codec-backed readSidecar refuses the foreign braid at parse,
+		// so the sidecar is corrupt cache and open reseeds fresh.
+		const replica = await openReplica({ store, prefix: "prod/main", dir, theory: Ledger })
+		assert.ok(replica.vector.size > 0)
+		for (const g of replica.vector.values()) {
+			assert.equal(g, 0n, "the reseeded replica stands at the zero vector")
+		}
+		await replica[Symbol.asyncDispose]()
 	})
 })
 
@@ -66,7 +83,7 @@ describe("adoptManifest is one transition", function suite() {
 		assert.ok(start !== -1 && end > start)
 		const body = source.slice(start, end)
 		const facts = body.indexOf("await core.store.get(ckptDocKey")
-		const checkpoint = body.indexOf("core.checkpoint = checkpoint")
+		const checkpoint = body.indexOf("core.checkpoint = parseCheckpoint")
 		const etag = body.indexOf("core.manifestEtag = etag")
 		assert.ok(facts !== -1, "checkpoint bytes are fetched")
 		assert.ok(checkpoint !== -1, "checkpoint facts are adopted")

@@ -6,9 +6,6 @@
 		"types": ["node"],
 		"module": "ESNext",
 		"moduleResolution": "Bundler",
-		"paths": {
-			"@bjornpagen/bumbledb/*": ["./src/*"]
-		},
 		"lib": ["ESNext"],
 		"target": "esnext",
 		"esModuleInterop": true,

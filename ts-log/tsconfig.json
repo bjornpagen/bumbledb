@@ -16,7 +16,6 @@
 		"strict": true,
 		"exactOptionalPropertyTypes": true,
 		"noEmit": true,
-		"declaration": false,
 		"resolveJsonModule": true,
 		"resolvePackageJsonImports": true,
 		"resolvePackageJsonExports": true,

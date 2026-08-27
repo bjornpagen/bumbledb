@@ -312,7 +312,6 @@ export type {
 	ContainmentData,
 	KeyData,
 	KeyStatement,
-	MirrorsData,
 	Statement,
 	StatementData
 }

@@ -203,6 +203,23 @@ fn temp_root(tag: &str) -> PathBuf {
     path
 }
 
+/// A case family registers chain-style: mixed `ok_`/`r_` stems under
+/// the family's directory.
+fn case_family_roster(roster: &Json, family: &str) -> BTreeSet<String> {
+    let family_stems = stems(&roster[family]);
+    assert!(!family_stems.is_empty(), "{family} goldens listed");
+    for stem in &family_stems {
+        assert!(
+            stem.starts_with("ok_") || stem.starts_with("r_"),
+            "{stem}: {family} stem style"
+        );
+    }
+    family_stems
+        .into_iter()
+        .map(|stem| format!("{family}/{stem}"))
+        .collect()
+}
+
 fn cause_name(cause: &ChainCause) -> &'static str {
     match cause {
         ChainCause::Slot { .. } => "slot",
@@ -289,6 +306,32 @@ fn inventory_is_the_v3_roster() {
         roster["fuzz_storm"].as_str().expect("storm path"),
         "fuzz/storm.json"
     );
+
+    for family in ["counter", "lease", "scratch"] {
+        let mut on_disk = json_stems_under(family);
+        if family == "lease" {
+            assert!(on_disk.remove("lease/placement"), "placement is pinned");
+        }
+        assert_eq!(
+            case_family_roster(&roster, family),
+            on_disk,
+            "inventory {family} roster matches the goldens"
+        );
+    }
+
+    for (key, path) in [
+        ("key_grammar", "keys/grammar.json"),
+        ("key_tilde_family", "keys/tilde-family.json"),
+        ("lease_placement", "lease/placement.json"),
+        ("machine_constants", "machine-constants.json"),
+    ] {
+        assert_eq!(
+            roster[key].as_str().expect("table path"),
+            path,
+            "{key}: registers as a single path"
+        );
+        assert!(v3().join(path).exists(), "{key}: table golden on disk");
+    }
 }
 
 #[test]
@@ -801,6 +844,157 @@ fn lease_goldens_parse_and_reencode() {
                 assert_eq!(Lease::parse(&bytes), None, "{rel}: refuses");
             }
             other => panic!("{rel}: unknown expect {other}"),
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn spec_generator_agrees() {
+    let schemas = schemas();
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("scripts")
+        .join("spec-gen.py");
+    assert!(script.exists(), "scripts/spec-gen.py is the third mind");
+    let out = temp_root("spec-gen");
+    let status = std::process::Command::new("python3")
+        .arg(&script)
+        .arg("--emit")
+        .arg(&out)
+        .status()
+        .expect("python3 runs the spec generator (spec-census.sh already requires python3)");
+    assert!(status.success(), "the spec generator emits");
+
+    let roster = inventory();
+    let mut covered: Vec<String> = stems(&roster["batch_ok"])
+        .into_iter()
+        .map(|stem| format!("batch/{stem}"))
+        .collect();
+    covered.extend(
+        stems(&roster["documents"])
+            .into_iter()
+            .filter(|stem| stem.rsplit('/').next().expect("stem").starts_with("ok_")),
+    );
+    for family in ["counter", "lease", "scratch"] {
+        let named: Vec<String> = stems(&roster[family])
+            .into_iter()
+            .filter(|stem| stem.starts_with("ok_"))
+            .map(|stem| format!("{family}/{stem}"))
+            .collect();
+        assert!(!named.is_empty(), "{family}: ok goldens spelled");
+        covered.extend(named);
+    }
+    assert!(!covered.is_empty(), "the generator covers the ok goldens");
+    for stem in &covered {
+        let spelled = std::fs::read(out.join(format!("{stem}.bin")))
+            .unwrap_or_else(|_| panic!("{stem}: the generator spells this golden"));
+        let golden = std::fs::read(v3().join(format!("{stem}.bin"))).expect("corpus golden");
+        assert_eq!(spelled, golden, "{stem}: spec and corpus agree byte-for-byte");
+    }
+
+    let index = read_json(&out.join("truncations/index.json"));
+    let families = index["families"].as_array().expect("truncation families");
+    assert_eq!(families.len(), 7, "one representative per byte family");
+    for entry in families {
+        let family = entry["family"].as_str().expect("family");
+        let of = entry["of"].as_str().expect("representative stem");
+        let body = support::unhex(entry["body"].as_str().expect("body hex"));
+        assert_eq!(
+            body,
+            std::fs::read(v3().join(format!("{of}.bin"))).expect("representative golden"),
+            "{of}: the representative body is the corpus golden"
+        );
+        let codec = entry
+            .get("schema")
+            .and_then(Json::as_str)
+            .map(|name| codec_named(&schemas, name));
+        for len in 0..body.len() {
+            let prefix = &body[..len];
+            match family {
+                "batch" => {
+                    let refusal = codec
+                        .as_ref()
+                        .expect("batch schema")
+                        .decode(prefix)
+                        .expect_err("a strict prefix refuses");
+                    assert_eq!(
+                        refusal.identity(),
+                        entry["refusal"].as_str().expect("identity"),
+                        "{of}[..{len}]: named refusal"
+                    );
+                    assert_decode_offset(of, &refusal, len);
+                }
+                "manifest" => {
+                    let error = Manifest::parse(prefix).expect_err("a strict prefix refuses");
+                    assert_eq!(
+                        error.identity(),
+                        entry["refusal"].as_str().expect("identity"),
+                        "{of}[..{len}]: named refusal"
+                    );
+                    if let ManifestError::Malformed { at } = error {
+                        assert!(at <= len, "{of}[..{len}]: offset in bounds");
+                    }
+                }
+                "checkpoint" => {
+                    let braids = codec.as_ref().expect("checkpoint schema").braids();
+                    let error =
+                        Checkpoint::parse(prefix, braids).expect_err("a strict prefix refuses");
+                    assert_eq!(
+                        error.identity(),
+                        entry["refusal"].as_str().expect("identity"),
+                        "{of}[..{len}]: named refusal"
+                    );
+                    if let CheckpointError::Malformed { at } = error {
+                        assert!(at <= len, "{of}[..{len}]: offset in bounds");
+                    }
+                }
+                "sidecar" => {
+                    let braids = codec.as_ref().expect("sidecar schema").braids();
+                    let error = Chain::parse(prefix, braids).expect_err("a strict prefix refuses");
+                    assert_eq!(
+                        error.identity(),
+                        entry["refusal"].as_str().expect("identity"),
+                        "{of}[..{len}]: named refusal"
+                    );
+                    if let SidecarError::Malformed { at } = error {
+                        assert!(at <= len, "{of}[..{len}]: offset in bounds");
+                    }
+                }
+                "scratch" => {
+                    assert_eq!(
+                        parse_ckpt_scratch(prefix),
+                        None,
+                        "{of}[..{len}]: an unreadable hint is silence"
+                    );
+                }
+                "counter" => {
+                    let want = &entry["prefixes"][len];
+                    let expected = match want {
+                        Json::Null => None,
+                        value => Some(decimal_u64(&format!("{of}[..{len}]"), value)),
+                    };
+                    assert_eq!(
+                        parse_counter(prefix),
+                        expected,
+                        "{of}[..{len}]: the counter law applied to the prefix"
+                    );
+                }
+                "lease" => {
+                    // The index mode is total: the line grammar does not
+                    // spell whether a cut body parses, only that parsing
+                    // returns. An accepted prefix is a section of its own
+                    // canonical render.
+                    if let Some(lease) = Lease::parse(prefix) {
+                        assert!(
+                            lease.encode().starts_with(prefix),
+                            "{of}[..{len}]: an accepted prefix opens its canonical render"
+                        );
+                    }
+                }
+                other => panic!("{of}: unknown truncation family {other}"),
+            }
         }
     }
 }

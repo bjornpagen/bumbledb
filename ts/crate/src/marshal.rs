@@ -1160,8 +1160,10 @@ fn nonempty<T>(items: Vec<T>, what: &str) -> napi::Result<NonEmpty<T>> {
     NonEmpty::from_vec(items).ok_or_else(|| err(format!("bumbledb marshal: empty {what}")))
 }
 
+// The wire's rec `head` is the TS builder's alignment datum; the core
+// `Rec` carries no head (the engine recomputes it from finds), so the
+// bridge reads the arms only.
 fn rec_in(obj: &Object, rec_id: InteriorId) -> napi::Result<Rec> {
-    let _ = head_in(obj, "rec head")?;
     let base_arr: Array = req(obj, "base", "rec base")?;
     let mut base = Vec::with_capacity(base_arr.len() as usize);
     for index in 0..base_arr.len() {
@@ -1183,9 +1185,11 @@ fn rec_in(obj: &Object, rec_id: InteriorId) -> napi::Result<Rec> {
 fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
     let interiors_arr: Array = req(obj, "interiors", "query")?;
     let mut interiors = Vec::with_capacity(interiors_arr.len() as usize);
+    // The wire's interior `head` is the TS builder's alignment datum; the
+    // core `Interior` carries no head (the engine recomputes it from
+    // finds), so the bridge reads the rules only.
     for index in 0..interiors_arr.len() {
         let interior = req_at::<Object>(&interiors_arr, index, "query interiors")?;
-        let _ = head_in(&interior, "interior head")?;
         let rules_arr: Array = req(&interior, "rules", "interior rules")?;
         let mut rules = Vec::with_capacity(rules_arr.len() as usize);
         for rule_index in 0..rules_arr.len() {

@@ -4,7 +4,7 @@
 //! is `Ambiguous`, never a proved `Exists` or `Moved`. Conditional
 //! writes are not retried by the transport. Credentials are consulted
 //! per request, off the worker threads. Body-stream failures ride
-//! `ErrStore`. The fencing token on a [`Fenced`] write is object
+//! `StoreError`. The fencing token on a [`Fenced`] write is object
 //! metadata: create records it as the generation a later swap can
 //! lose to, and `body.token <` that stored generation is `Moved`.
 
@@ -21,7 +21,7 @@ use object_store::{
 use tokio::runtime::{Builder, Handle, Runtime};
 
 use super::{
-    Create, ErrStore, Etag, Fenced, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
+    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
     parse_prefix, prove_create, prove_swap,
 };
 
@@ -257,8 +257,8 @@ fn join_prefix(prefix: &str, key: &str) -> String {
     }
 }
 
-fn infra(op: &'static str, key: &StoreKey, source: ObjError) -> ErrStore {
-    ErrStore {
+fn infra(op: &'static str, key: &StoreKey, source: ObjError) -> StoreError {
+    StoreError {
         op,
         key: key.to_string(),
         source: io::Error::other(source),
@@ -267,12 +267,12 @@ fn infra(op: &'static str, key: &StoreKey, source: ObjError) -> ErrStore {
 
 /// A body-stream failure is an infrastructure error, never a raw
 /// vendor error leaking past the store channel.
-fn stream_err(op: &'static str, key: &StoreKey, source: ObjError) -> ErrStore {
+fn stream_err(op: &'static str, key: &StoreKey, source: ObjError) -> StoreError {
     infra(op, key, source)
 }
 
 fn etag_of(op: &'static str, key: &StoreKey, raw: Option<String>) -> Result<Etag> {
-    raw.map(Etag).ok_or_else(|| ErrStore {
+    raw.map(Etag).ok_or_else(|| StoreError {
         op,
         key: key.to_string(),
         source: io::Error::new(io::ErrorKind::InvalidData, "vendor omitted ETag"),
@@ -720,7 +720,7 @@ mod tests {
     #[test]
     fn stream_failure_is_err_store() {
         let key = StoreKey::of("ckpt/digest.mdb");
-        let err: ErrStore = stream_err(
+        let err: StoreError = stream_err(
             "get",
             &key,
             ObjError::Generic {

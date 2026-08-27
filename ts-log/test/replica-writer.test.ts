@@ -6,7 +6,7 @@ import { after, describe, test } from "node:test"
 import * as errors from "@superbuilders/errors"
 import { digest32 } from "#bytes.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
-import { braid } from "#descriptor.ts"
+import { braid, descriptorOf } from "#descriptor.ts"
 import { ErrContention, ErrSpanningCommit } from "#errors.ts"
 import { generation, logKey, storeKey } from "#keys.ts"
 import { openReplica } from "#replica.ts"
@@ -17,6 +17,8 @@ const NOTES = braid("c00000002")
 
 import { Booking, Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
+
+const CODEC = descriptorOf(Ledger).codec
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-e2e-"))
 
@@ -50,19 +52,21 @@ describe("replica and writer over the mem store", function suite() {
 		const out = await writerA.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			const ids = batch.reserve(Booking, "id", 1n)
-			const id = ids[0]
+			const id = ids.at(0n)
 			assert.ok(id !== undefined)
 			batch.insert(Booking, [booking(id, 1n, "s1")])
 			return ids
 		})
 		assert.equal(out.tag, "accepted")
 		assert.ok(out.tag === "accepted")
-		assert.equal(out.braid, "c00000000")
-		assert.equal(out.generation, 1n)
-		assert.equal(out.durability, "published")
+		assert.equal(out.value.braid, "c00000000")
+		assert.equal(out.value.slot, 1n)
+		assert.equal(out.value.durability, "published")
+		assert.equal(out.value.value.empty, false)
 
 		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
-		await b.waitFor(new Map([[out.braid, out.generation]]))
+		const waited = await b.waitFor(new Map([[out.value.braid, out.value.slot]]))
+		assert.ok(waited.tag === "reached", "read-your-writes: waitFor reaches the committed slot")
 		const names = b.db.read(function readNames(instance) {
 			return instance.scan(Holder).map(function nameOf(fact) {
 				return fact.name
@@ -134,11 +138,11 @@ describe("replica and writer over the mem store", function suite() {
 			await a[Symbol.asyncDispose]()
 		}
 		const sidecarFile = path.join(dir("a"), "chain")
-		const sidecar = await readSidecar(sidecarFile)
-		assert.equal(sidecar.tag, "read")
+		const sidecar = await readSidecar(CODEC, sidecarFile)
+		assert.ok(sidecar.tag === "read")
 		const rewound = new Map(sidecar.chain.entries)
 		rewound.set(HOME, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n })
-		await writeSidecar(sidecarFile, { tag: "settled", entries: rewound })
+		await writeSidecar(CODEC, sidecarFile, { tag: "settled", entries: rewound })
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(again.vector.get(HOME), 2n)
@@ -163,11 +167,11 @@ describe("replica and writer over the mem store", function suite() {
 			await a[Symbol.asyncDispose]()
 		}
 		const sidecarFile = path.join(dir("a"), "chain")
-		const sidecar = await readSidecar(sidecarFile)
-		assert.equal(sidecar.tag, "read")
+		const sidecar = await readSidecar(CODEC, sidecarFile)
+		assert.ok(sidecar.tag === "read")
 		const torn = new Map(sidecar.chain.entries)
 		torn.set(NOTES, { g: generation(5n), prev: digest32(new Uint8Array(32).fill(1)), ts: 0n })
-		await writeSidecar(sidecarFile, { tag: "settled", entries: torn })
+		await writeSidecar(CODEC, sidecarFile, { tag: "settled", entries: torn })
 
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(again.vector.get(HOME), 1n)
@@ -238,15 +242,15 @@ describe("replica and writer over the mem store", function suite() {
 			batch.insert(Booking, [booking(100n, 1n, "s1")])
 			return 0
 		})
-		assert.ok(winner.tag === "accepted" && winner.generation === 2n)
+		assert.ok(winner.tag === "accepted" && winner.value.slot === 2n)
 
 		const published = await writerB.commit(function mint(batch) {
 			batch.insert(Booking, [booking(200n, 2n, "s2")])
 			return 0
 		})
 		assert.ok(published.tag === "accepted")
-		assert.equal(published.generation, 3n)
-		assert.equal(published.durability, "published")
+		assert.equal(published.value.slot, 3n)
+		assert.equal(published.value.durability, "published")
 
 		await a.refresh()
 		const slots = a.db.read(function readSlots(instance) {
@@ -262,7 +266,7 @@ describe("replica and writer over the mem store", function suite() {
 		await b[Symbol.asyncDispose]()
 	})
 
-	test("a net-noop-shaped loss re-judges to a net no-op: Accepted at the current generation, nothing published", async function netNoopLoss() {
+	test("a net-noop-shaped loss re-judges to a net no-op: Accepted at the current slot, nothing published", async function netNoopLoss() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
@@ -273,15 +277,15 @@ describe("replica and writer over the mem store", function suite() {
 			batch.insert(Holder, [{ id: 7n, name: "ada" }])
 			return 0
 		})
-		assert.ok(winner.tag === "accepted" && winner.generation === 1n)
+		assert.ok(winner.tag === "accepted" && winner.value.slot === 1n)
 
 		const absorbed = await writerB.commit(function mint(batch) {
 			batch.insert(Holder, [{ id: 7n, name: "ada" }])
 			return 0
 		})
 		assert.ok(absorbed.tag === "accepted")
-		assert.equal(absorbed.generation, 1n)
-		assert.equal(absorbed.durability, "published")
+		assert.equal(absorbed.value.slot, 1n)
+		assert.equal(absorbed.value.durability, "published")
 
 		const second = await store.get(storeKey("prod/main/log/c00000000/0000000000000002"))
 		assert.equal(second, null)
@@ -304,11 +308,12 @@ describe("replica and writer over the mem store", function suite() {
 			batch.insert(Ledger.relations.Note, [{ id: 1n, body: "memo" }])
 			return "both"
 		})
+		assert.ok(out.tag === "split")
 		assert.equal(out.value, "both")
 		assert.equal(out.outcomes.length, 2)
 		assert.deepEqual(
 			out.outcomes.map(function braidOf(outcome) {
-				return [outcome.braid, outcome.tag]
+				return [outcome.braid, outcome.admission.tag]
 			}),
 			[
 				["c00000000", "accepted"],
@@ -345,8 +350,8 @@ describe("replica and writer over the mem store", function suite() {
 			return 0
 		})
 		assert.ok(stale.tag === "accepted", "forty historical losses count nothing against the live bound")
-		assert.equal(stale.generation, 42n, "exactly one race at the tip: the re-judged batch lands at tip+1")
-		assert.equal(stale.durability, "published")
+		assert.equal(stale.value.slot, 42n, "exactly one race at the tip: the re-judged batch lands at tip+1")
+		assert.equal(stale.value.durability, "published")
 		assert.equal(b.vector.get(HOME), 42n)
 		const beyond = await store.get(storeKey("prod/main/log/c00000000/000000000000002b"))
 		assert.equal(beyond, null, "no slot beyond the single republication exists")

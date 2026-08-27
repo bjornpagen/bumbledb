@@ -34,13 +34,13 @@ pub use crate::vector::{CheckpointOrder, Overflow, Vector};
 /// with a conditional manifest poll, bounding hole-detection staleness
 /// by law rather than by luck. A chosen bounded-staleness knob,
 /// re-sized per deployment via [`Replica::set_heartbeat_every`].
-pub const HEARTBEAT_EVERY: u64 = 16;
+const HEARTBEAT_EVERY: u64 = 16;
 
 /// The re-poll cadence of [`Replica::wait_for`], its one consumer: the
 /// read-your-writes waiter sleeps this long between refresh passes
 /// that have not yet reached the target vector. The value is pinned in
 /// `conformance/v3/machine-constants.json`; both machines assert it.
-pub const WAIT_FOR_POLL_MS: u64 = 10;
+const WAIT_FOR_POLL_MS: u64 = 10;
 
 const DATA_FILE: &str = "data.mdb";
 
@@ -172,7 +172,7 @@ pub enum Provenance {
 /// Presence of the local store. The stepper matches this sum;
 /// `Unmounted` refuses — a missing store is not a pointer.
 #[allow(clippy::large_enum_variant)]
-pub enum ReplicaState<T: Theory + Clone> {
+enum ReplicaState<T: Theory + Clone> {
     Mounted { db: Db<T> },
     Unmounted,
 }
@@ -370,12 +370,6 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
     #[must_use]
     pub const fn provenance(&self) -> Provenance {
         self.provenance
-    }
-
-    /// Presence of the local store: `Mounted` or `Unmounted`.
-    #[must_use]
-    pub const fn state(&self) -> &ReplicaState<T> {
-        &self.state
     }
 
     /// A replica handle: it refuses `ManifestMissing` and never births.
@@ -974,11 +968,11 @@ pub(crate) fn write_checkpoint_bytes(dir: &Path, bytes: &[u8]) -> io::Result<()>
 
 /// The reserved-namespace scratch lease that names an in-flight
 /// checkpoint candidate. The successor GETs this document at open.
-pub const CKPT_SCRATCH_LEASE: &str = "ckpt-scratch";
+const CKPT_SCRATCH_LEASE: &str = "ckpt-scratch";
 
 /// `{dir}/~lease/ckpt-scratch` — known path, no LIST.
 #[must_use]
-pub fn ckpt_scratch_path(dir: &Path) -> PathBuf {
+fn ckpt_scratch_path(dir: &Path) -> PathBuf {
     dir.join(LEASE_NAMESPACE).join(CKPT_SCRATCH_LEASE)
 }
 

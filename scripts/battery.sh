@@ -10,6 +10,10 @@ cargo fmt --all --check
 echo "==> cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
+# The grammar core compiles dependency-lean: store off drops object_store and tokio.
+echo "==> cargo check -p bumbledb-log --no-default-features"
+cargo check -p bumbledb-log --no-default-features
+
 echo "==> cargo nextest run --workspace"
 cargo nextest --version || cargo install cargo-nextest --locked
 cargo nextest run --workspace

@@ -7,6 +7,10 @@
 # (l) the surface manifest (crates/bumbledb-log/conformance/v3/
 # surfaces.json) is pin-complete: every protocol surface names a live
 # golden, and every golden family names its surface.
+# (m) the identity table (crates/bumbledb-log/conformance/v3/
+# identities.json and its ts/crate/log-identities.json twin) is
+# byte-identical to a fresh emission of
+# `cargo run -p bumbledb-log --bin identities` — a unilateral kind is red.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -842,8 +846,36 @@ if [ "$pin_families" -eq 0 ]; then
   fail=1
 fi
 
+# ---- (m): the identity table is the emitter's output --------------------
+# identities.json is generated, never hand-edited: a fresh emission must
+# be byte-identical to the checked-in table and to its ts/crate twin, so
+# a refusal kind or outcome tag added on one side alone is a red census.
+
+IDENTITIES=crates/bumbledb-log/conformance/v3/identities.json
+IDENTITIES_TS=ts/crate/log-identities.json
+if ! identities_emitted=$(cargo run --quiet -p bumbledb-log --bin identities); then
+  echo "spec-census: FAIL — lane (m) identity emitter refused (cargo run -p bumbledb-log --bin identities)" >&2
+  fail=1
+else
+  for copy in "$IDENTITIES" "$IDENTITIES_TS"; do
+    if [ ! -f "$copy" ]; then
+      echo "spec-census: FAIL — lane (m) $copy missing" >&2
+      fail=1
+    elif ! printf '%s\n' "$identities_emitted" | cmp -s - "$copy"; then
+      echo "spec-census: FAIL — lane (m) $copy drifted from the emitter — regenerate: cargo run -p bumbledb-log --bin identities > $IDENTITIES && cp $IDENTITIES $IDENTITIES_TS" >&2
+      fail=1
+    fi
+  done
+fi
+
+# ---- (n): the spec generator spells the corpus (40 §1) ------------------
+# The third mind: scripts/spec-gen.py assembles every spelled ok golden
+# from the corpus metadata alone and diffs it against the checked-in
+# bytes — a reader agreeing with itself proves nothing.
+python3 scripts/spec-gen.py --check >/dev/null || { echo "spec-census: FAIL — lane (n) the spec generator disagrees with the corpus (scripts/spec-gen.py --check)" >&2; fail=1; }
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean, surface manifest $pin_surfaces surfaces / $pin_rows pins over $pin_families golden families"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean, surface manifest $pin_surfaces surfaces / $pin_rows pins over $pin_families golden families, identity table regeneration-clean"

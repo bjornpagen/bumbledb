@@ -70,6 +70,58 @@ binding.
   `.json` store-key line in the two driver scopes: corpus tables read
   by drivers are data references, not key spellings.
 
+## S3 — the oracle and the purge
+
+- **One speller per family**: `EncodeError::identity()` and
+  `LeaseRefusal::identity()` minted in the core; the bridge's tag table
+  became an assertee. Outcome families (admission/waited/refreshOutcome)
+  emit the lowercase tags hosts narrow; PascalCase `identity()` stays a
+  refusal-family convention.
+- **`RefreshOutcome` pins as a partition**: table rows
+  `advanced`/`refused` plus the frozen host-local arms `wedged`/`reseed`
+  — the machines keep two executors, and their extra arms are pinned,
+  not tabled. Host-side kinds are a frozen roster (`DigestWidth`,
+  `CheckpointDigest`, `NoOpSlot`), pinned as non-table kinds.
+- **Payload fields are seat-owned enrichments**: bridge mints carry the
+  bare kind ({kind, message} is the boundary); optional fields exist
+  only where the minting seat owns the datum. 28 invented per-site
+  fields died. `CheckpointBraids` died into the core's `BraidSet`.
+- **Unconstructible identity rows are asserted as unconstructible**,
+  never skipped: encode `FingerprintMismatch` by the wire itself (the
+  handle fills bytes 8..40), `TooManyOps`/`TooManyRows` by the
+  ECMAScript array ceiling (2^32−1 = u32::MAX exactly).
+- **The spec generator's honest boundary**: batch/document/counter/
+  lease/scratch ok-goldens generate byte-identical from metadata alone;
+  the chain family's bytes are not spellable from its sidecars and stay
+  owned by the decode/re-encode fixpoint lane. Corpus fingerprints are
+  synthetic pins, never recomputed — re-deriving would import the
+  reader's derivation into the third mind. Truncation sets generate at
+  test time (852 prefixes; python3 is already a census dependency).
+- **The storm raise**: 4–6× iterations across all four recipes plus the
+  `copy_chunk` mutation class (length-preserving, alphabet-plausible);
+  the knob is the recipe data, not the code.
+- **`codec.ts` stays on the temporal gate's pure roster**: the gate's
+  definition is synchronous and store-blind; a napi call is neither
+  async nor a store — FFI is not a temporal boundary.
+- **A sidecar naming a foreign braid is corrupt cache**, reseeded under
+  the disposable law — not a host-side refusal; the identity is pinned
+  by the corpus row, and replica open's braid-validation loops died as
+  unreachable behind the codec-backed reads.
+- **`BraidId::from_raw` died by honest minting**: the vector tests now
+  mint braids through `braids()` + `Braids::parse`, so "minted only by
+  braids" is true without exception. `ErrStore` fell to the no-alias
+  law; `Lease::expired` folded into `breakable`; nine in-file-only pubs
+  demoted to private so `dead_code` polices them.
+- **A test consumer is a consumer; type inference is a consumer**
+  (`ClosedSelectable` stays exported on a TS4023 proof). An export seat
+  without a consumer dies while its in-file-consumed declaration lives.
+- **The bridge's parsed-then-discarded interior/rec heads died on the
+  napi side only**; removing the head from the wire whole (and the C
+  bridge's twin discards, with its ABI bump) is a coordinated cut
+  deferred with the trigger written in the S3 openIssues.
+- **`ts`'s test script keeps its inner build**: CI's sdk lane invokes
+  `pnpm test` standalone, so the battery is not the only invoker.
+
 ## S2 — the bridge and the cutover
 
 - **The handle is the fingerprint authority.** The batch-header wire

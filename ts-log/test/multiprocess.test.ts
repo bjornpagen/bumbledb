@@ -4,7 +4,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import { digest32 } from "#bytes.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
 import { encodeBatch } from "#codec.ts"
 import { braid as asBraid, descriptorOf } from "#descriptor.ts"
@@ -22,6 +21,7 @@ import { openWriter } from "#writer.ts"
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-mp-"))
 const childScript = path.join(import.meta.dirname, "multiprocess-child.ts")
 const PREFIX = "prod/main"
+const CODEC = descriptorOf(Ledger).codec
 
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
@@ -96,13 +96,12 @@ describe("the TS multi-process lane", function suite() {
 			await writer.replica[Symbol.asyncDispose]()
 		}
 		const sidecarFile = path.join(victimDir, "chain")
-		const sidecar = await readSidecar(sidecarFile)
-		assert.equal(sidecar.tag, "read")
+		const sidecar = await readSidecar(CODEC, sidecarFile)
+		assert.ok(sidecar.tag === "read")
 		assert.equal(sidecar.chain.tag, "settled", "birth is Settled before the script plants Pending")
 		const bytes = encodeBatch(
 			Ledger,
 			{
-				fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes),
 				braid: notes,
 				braidGen: generation(1n),
 				prev: ZERO_HASH,
@@ -111,13 +110,13 @@ describe("the TS multi-process lane", function suite() {
 			},
 			[{ op: "insert", relation: "Note", rows: [[7n, "scripted"]] }]
 		)
-		await writeSidecar(sidecarFile, {
+		await writeSidecar(CODEC, sidecarFile, {
 			tag: "pending",
 			entries: sidecar.chain.entries,
-			batch: { braid: notes, gen: generation(1n), bytes }
+			batch: { braid: notes, slot: generation(1n), bytes }
 		})
-		const planted = await readSidecar(sidecarFile)
-		assert.equal(planted.tag, "read")
+		const planted = await readSidecar(CODEC, sidecarFile)
+		assert.ok(planted.tag === "read")
 		assert.equal(planted.chain.tag, "pending", "the test script wrote Pending at slot 1")
 
 		const recovered = spawnChild(["recover", bucket, victimDir, "7"])
@@ -132,8 +131,8 @@ describe("the TS multi-process lane", function suite() {
 		assert.equal(line.slot, "present")
 		await assertGapFreeChain(bucket, notes, 1n)
 
-		const after = await readSidecar(sidecarFile)
-		assert.equal(after.tag, "read")
+		const after = await readSidecar(CODEC, sidecarFile)
+		assert.ok(after.tag === "read")
 		assert.equal(after.chain.tag, "settled", "open published the Pending arm to Settled")
 
 		const verifier = await openReplica({ store: fsStore(bucket), prefix: PREFIX, dir: dir("verify"), theory: Ledger })
