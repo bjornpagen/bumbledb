@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-use bumbledb::Violations;
+use bumbledb::Admission;
 
 use crate::braids::BraidId;
 use crate::codec::{ByteSink, Op, append_value};
@@ -13,7 +13,7 @@ use crate::sidecar::Chain;
 
 use super::{
     Core, DRAIN_MAX_BYTES, DRAIN_MAX_WRITES, Durability, Error, Inner, Live, ObjectStore, Result,
-    Settled, StepHook, Theory, lock,
+    Settled, Slotted, StepHook, Theory, lock,
 };
 
 /// The detached publisher's result — a value the writer must consume.
@@ -36,14 +36,11 @@ impl Publisher {
     }
 }
 
+/// One request's resolution: the engine's admission carrying the slot
+/// payload, or the shared infrastructure failure.
 #[derive(Clone)]
 pub(crate) enum Resolved {
-    Accepted {
-        braid: BraidId,
-        generation: u64,
-        durability: Durability,
-    },
-    Rejected(Violations),
+    Judged(Admission<Slotted<()>>),
     Failed(Arc<Error>),
 }
 
@@ -182,18 +179,21 @@ where
             &mut Live::default(),
             Some(&waiters),
         ) {
-            Ok(Settled::Accepted { generation }) => {
+            Ok(Settled::Judged(Admission::Accepted(slot))) => {
                 for waiter in &waiters {
-                    waiter.resolve(Resolved::Accepted {
+                    waiter.resolve(Resolved::Judged(Admission::Accepted(Slotted {
+                        value: (),
                         braid,
-                        generation,
+                        slot,
                         durability: Durability::Published,
-                    });
+                    })));
                 }
             }
-            Ok(Settled::Rejected(violations)) => {
+            Ok(Settled::Judged(Admission::Rejected(violations))) => {
                 if picked.len() == 1 {
-                    picked[0].waiter.resolve(Resolved::Rejected(violations));
+                    picked[0]
+                        .waiter
+                        .resolve(Resolved::Judged(Admission::Rejected(violations)));
                 } else {
                     self.fallback(core, braid, &picked);
                 }
@@ -218,15 +218,15 @@ where
     ) {
         for request in requests {
             match self.discipline(core, braid, &request.ops, &mut Live::default(), None) {
-                Ok(Settled::Accepted { generation }) => {
-                    request.waiter.resolve(Resolved::Accepted {
-                        braid,
-                        generation,
-                        durability: Durability::Published,
-                    });
-                }
-                Ok(Settled::Rejected(violations)) => {
-                    request.waiter.resolve(Resolved::Rejected(violations));
+                Ok(Settled::Judged(admission)) => {
+                    request
+                        .waiter
+                        .resolve(Resolved::Judged(admission.map(|slot| Slotted {
+                            value: (),
+                            braid,
+                            slot,
+                            durability: Durability::Published,
+                        })));
                 }
                 Ok(Settled::Detached { .. }) => {
                     unreachable!("fallback passes no waiters, so no ack can detach")

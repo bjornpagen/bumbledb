@@ -1,0 +1,10 @@
+{
+  "comment": "Protocol constants both machines share, one value per fact. Every value is a decimal string per the corpus grammar. Rust asserts these in crates/bumbledb-log/src/replica.rs; the TS driver asserts the same entries.",
+  "v": 3,
+  "constants": {
+    "wait_for_poll_ms": "10",
+    "heartbeat_every": "16",
+    "loss_bound": "16",
+    "lease_width": "4096"
+  }
+}

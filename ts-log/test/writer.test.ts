@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import { internalBlake3 } from "@bjornpagen/bumbledb"
+import { internalBlake3, type SchemaRelations, type WriteTx } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { bytesEqual, digest32 } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
@@ -25,7 +25,7 @@ import {
 } from "#replica.ts"
 import { memStore } from "#store.ts"
 import { Holder, Ledger } from "#test/fixtures.ts"
-import { openWriter } from "#writer.ts"
+import { type Batch, openWriter } from "#writer.ts"
 
 const HOME = braid("c00000000")
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-writer-"))
@@ -64,7 +64,7 @@ describe("writer encode site", function suite() {
 		assert.ok(out.tag === "accepted")
 
 		const reader = await openReplica({ store, prefix, dir: dir("reader"), theory: Ledger })
-		await reader.waitFor(new Map([[HOME, out.generation]]))
+		await reader.waitFor(new Map([[HOME, out.value.slot]]))
 		assert.equal(reader.vector.get(HOME), 1n)
 		await writer.replica[Symbol.asyncDispose]()
 		await reader[Symbol.asyncDispose]()
@@ -99,7 +99,7 @@ describe("writer encode site", function suite() {
 		})
 		assert.equal(out.tag, "accepted")
 		assert.ok(out.tag === "accepted")
-		assert.equal(out.generation, 1n)
+		assert.equal(out.value.slot, 1n)
 
 		const published = await store.get(logKey(prefix, HOME, generation(1n)))
 		assert.ok(published !== null)
@@ -122,13 +122,13 @@ describe("writer encode site", function suite() {
 
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
 		const b = writerB.replica
-		await b.waitFor(new Map([[HOME, first.generation]]))
+		await b.waitFor(new Map([[HOME, first.value.slot]]))
 		const second = await writerB.commit(function more(batch) {
 			batch.insert(Holder, [{ id: 2n, name: "bob" }])
 			return 0
 		})
 		assert.ok(second.tag === "accepted")
-		assert.equal(second.generation, 2n)
+		assert.equal(second.value.slot, 2n)
 
 		const published = await store.get(logKey(prefix, HOME, generation(2n)))
 		assert.ok(published !== null)
@@ -139,6 +139,96 @@ describe("writer encode site", function suite() {
 
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
+	})
+})
+
+describe("one vocabulary", function suite() {
+	test("the recorder is the engine write surface: a WriteTx serves as a Batch", function subtype() {
+		function adopt<Rels extends SchemaRelations>(tx: WriteTx<Rels>): Batch<Rels> {
+			return tx
+		}
+		assert.equal(typeof adopt, "function")
+	})
+
+	test("the empty commit is not a commit: a distinct outcome, never a slot", async function emptyCommit() {
+		const { store, prefix, dir } = lane()
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const out = await writer.commit(function nothing() {
+			return 7
+		})
+		assert.deepEqual(out, { tag: "empty", value: 7 })
+		const split = await writer.commitSplit(function quiet() {
+			return "still"
+		})
+		assert.deepEqual(split, { tag: "empty", value: "still" })
+		assert.equal(await store.get(logKey(prefix, HOME, generation(1n))), null)
+		await writer.replica[Symbol.asyncDispose]()
+	})
+
+	test("reserve speaks the engine's FreshRange: zero is Empty, a draw is contiguous", async function freshRange() {
+		const { store, prefix, dir } = lane()
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const out = await writer.commit(function record(batch) {
+			const none = batch.reserve(Holder, "id", 0n)
+			assert.ok(none.empty)
+			assert.equal(none.count, 0n)
+			assert.deepEqual([...none], [])
+			const drawn = batch.reserve(Holder, "id", 3n)
+			assert.ok(!drawn.empty)
+			assert.equal(drawn.count, 3n)
+			assert.equal(drawn.endExclusive - drawn.start, 3n)
+			assert.deepEqual([...drawn], [drawn.start, drawn.start + 1n, drawn.start + 2n])
+			assert.equal(drawn.at(1n), drawn.start + 1n)
+			assert.equal(drawn.at(3n), undefined)
+			const report = batch.insert(Holder, [{ id: drawn.start, name: "ada" }])
+			assert.equal(report.submitted, 1n)
+			assert.equal(report.changed, 0n, "the recorder applies nothing; change is judged at commit")
+			return drawn.start
+		})
+		assert.ok(out.tag === "accepted")
+		assert.equal(out.value.value, 0n)
+		assert.equal(out.value.slot, 1n)
+		assert.equal(out.value.durability, "published")
+		await writer.replica[Symbol.asyncDispose]()
+	})
+
+	test("a draw the cached pool cannot serve refills the lease — never Exhausted", async function refill() {
+		const { store, prefix, dir } = lane()
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const out = await writer.commit(function burst(batch) {
+			const first = batch.reserve(Holder, "id", 4096n)
+			const second = batch.reserve(Holder, "id", 1n)
+			assert.ok(!first.empty)
+			assert.ok(!second.empty)
+			batch.insert(Holder, [{ id: second.start, name: "ada" }])
+			return { first: first.start, second: second.start }
+		})
+		assert.ok(out.tag === "accepted")
+		const ids = out.value.value
+		assert.ok(
+			ids.second < ids.first || ids.second >= ids.first + 4096n,
+			"the refilled draw is outside the abandoned block — unique, never dense"
+		)
+		await writer.replica[Symbol.asyncDispose]()
+	})
+
+	test("commitSplit outcomes are the engine's Admission beside the braid", async function splitAdmission() {
+		const { store, prefix, dir } = lane()
+		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
+		const split = await writer.commitSplit(function record(batch) {
+			batch.insert(Holder, [{ id: 1n, name: "ada" }])
+			return 0
+		})
+		assert.ok(split.tag === "split")
+		assert.equal(split.value, 0)
+		assert.equal(split.outcomes.length, 1)
+		const outcome = split.outcomes[0]
+		assert.ok(outcome !== undefined)
+		assert.equal(outcome.braid, HOME)
+		assert.ok(outcome.admission.tag === "accepted")
+		assert.equal(outcome.admission.value.slot, 1n)
+		assert.equal(outcome.admission.value.durability, "published")
+		await writer.replica[Symbol.asyncDispose]()
 	})
 })
 

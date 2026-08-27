@@ -38,7 +38,8 @@ pub const HEARTBEAT_EVERY: u64 = 16;
 
 /// The re-poll cadence of [`Replica::wait_for`], its one consumer: the
 /// read-your-writes waiter sleeps this long between refresh passes
-/// that have not yet reached the target vector.
+/// that have not yet reached the target vector. The value is pinned in
+/// `conformance/v3/machine-constants.json`; both machines assert it.
 pub const WAIT_FOR_POLL_MS: u64 = 10;
 
 const DATA_FILE: &str = "data.mdb";
@@ -1130,6 +1131,34 @@ fn sweep_sibling_scratch(dir: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod machine_constants {
+    use super::{HEARTBEAT_EVERY, WAIT_FOR_POLL_MS};
+
+    /// The shared-constants table: one value per fact, both machines
+    /// assert against it, so a unilateral edit is red here.
+    const TABLE: &str = include_str!("../conformance/v3/machine-constants.json");
+
+    fn pinned(name: &str) -> u64 {
+        let key = format!("\"{name}\": \"");
+        let start = TABLE
+            .find(&key)
+            .unwrap_or_else(|| panic!("{name} is absent from the machine-constants table"))
+            + key.len();
+        let rest = &TABLE[start..];
+        let end = rest.find('"').expect("a quoted decimal value");
+        rest[..end].parse().expect("a decimal u64")
+    }
+
+    #[test]
+    fn shared_constants_match_the_conformance_table() {
+        assert_eq!(WAIT_FOR_POLL_MS, pinned("wait_for_poll_ms"));
+        assert_eq!(HEARTBEAT_EVERY, pinned("heartbeat_every"));
+        assert_eq!(u64::from(crate::writer::LOSS_BOUND), pinned("loss_bound"));
+        assert_eq!(crate::lease::LEASE_WIDTH, pinned("lease_width"));
+    }
 }
 
 #[cfg(test)]

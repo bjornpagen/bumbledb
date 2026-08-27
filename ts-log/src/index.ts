@@ -5,7 +5,9 @@
  * byte-exactly against the Rust driver, the five-verb object store
  * with its tier-1 `fsStore`, in-process `memStore`, and the `s3Store` AWS S3 client, and `openReplica`/`openWriter`/
  * `openTenants` composed from the engine SDK's own verbs — the replica
- * hands out the SDK's `Db`, and no engine surface is duplicated.
+ * hands out the SDK's `Db`, and no engine surface is duplicated. Engine
+ * types (`FactValue`, `IntervalValue`, …) are the peer
+ * `@bjornpagen/bumbledb`'s own exports, never re-exported here.
  */
 
 export type { Braid } from "#braids.ts"
@@ -46,8 +48,7 @@ export type { Create, Etag, Fetched, ObjectStore, Poll, S3Config, S3Credentials,
 export { etag, fsStore, memStore, s3Store } from "#store.ts"
 export type { OpenTenantsOptions, Tenants } from "#tenants.ts"
 export { openTenants } from "#tenants.ts"
-export type { Interval, Value } from "#value.ts"
-export type { CheckpointOrder, VectorParse } from "#vector.ts"
+export type { CheckpointOrder } from "#vector.ts"
 export { Overflow, Vector } from "#vector.ts"
 export type { Batch, BraidOutcome, Commit, CommitSplit, Durability, Writer } from "#writer.ts"
 export { openWriter } from "#writer.ts"

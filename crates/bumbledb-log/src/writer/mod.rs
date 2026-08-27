@@ -12,7 +12,7 @@
 //! anything else discards the local directory, re-opens through the
 //! replica to the current tip, re-persists the carried pending, and
 //! re-judges the recorded ops in one `db.write` — publish on
-//! accepted-and-state-changing, `Accepted` at the current generation on
+//! accepted-and-state-changing, `Accepted` at the current slot on
 //! accepted-net-no-op, the serial `Rejected` otherwise. Each loop
 //! iteration re-opens to tip and races once, so a loss and a
 //! re-judgment are the same event, counted once.
@@ -41,7 +41,7 @@ use std::thread::JoinHandle;
 
 pub(crate) use bumbledb::Theory;
 use bumbledb::schema::{Schema, SchemaDescriptor, StatementId};
-use bumbledb::{Db, Value, Violations};
+use bumbledb::{Admission, Db, Value};
 
 use crate::braids::BraidId;
 use crate::codec::{Codec, EncodeError, Op};
@@ -83,32 +83,24 @@ pub enum Durability {
     LocalPending,
 }
 
-/// A commit's outcome. `generation` is the braid generation — the slot
-/// number, exactly what a `wait_for` session vector carries — never the
-/// store-wide sum.
-#[derive(Debug)]
-pub enum Commit<R> {
-    Accepted {
-        value: R,
-        braid: BraidId,
-        generation: u64,
-        durability: Durability,
-    },
-    Rejected(Violations),
+/// An accepted commit's payload inside the engine's [`Admission`].
+/// `slot` is the braid position — exactly what a `wait_for` session
+/// vector carries — never the store-wide generation sum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slotted<R> {
+    pub value: R,
+    pub braid: BraidId,
+    pub slot: u64,
+    pub durability: Durability,
 }
 
-/// One braid's outcome inside a `commit_split`.
+/// One braid's outcome inside a `commit_split`: the engine's admission
+/// carrying the slot payload, tagged with the braid on both arms. One
+/// constructor fills both braid fields from one binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BraidOutcome {
-    Accepted {
-        braid: BraidId,
-        generation: u64,
-        durability: Durability,
-    },
-    Rejected {
-        braid: BraidId,
-        violations: Violations,
-    },
+pub struct BraidOutcome {
+    pub braid: BraidId,
+    pub admission: Admission<Slotted<()>>,
 }
 
 /// The ack mode: `Published` acks after the slot exists; `Local` moves
@@ -241,12 +233,6 @@ pub enum Error {
         braid: BraidId,
     },
     Lease(LeaseRefusal),
-    /// The statement is not a capacity whose source relation has the
-    /// reservation shape: parent projection + weight field + one u64
-    /// expiry field covering the layout.
-    ReservationShape {
-        statement: StatementId,
-    },
     /// The step hook simulated a crash; reopen the directory to recover.
     InjectedCrash {
         step: WriterStep,
@@ -273,9 +259,6 @@ impl fmt::Display for Error {
             }
             Self::Wedged { braid } => write!(f, "braid {braid} is wedged"),
             Self::Lease(refusal) => write!(f, "id lease refused: {refusal:?}"),
-            Self::ReservationShape { statement } => {
-                write!(f, "statement {} has no reservation shape", statement.0)
-            }
             Self::InjectedCrash { step } => write!(f, "injected crash after {step:?}"),
             Self::Drain(error) => write!(f, "drain failed: {error}"),
         }
@@ -556,24 +539,19 @@ where
     pub fn commit<R>(
         &self,
         body: impl FnOnce(&mut Batch<'_, S>) -> Result<R>,
-    ) -> Result<Commit<R>> {
+    ) -> Result<Admission<Slotted<R>>> {
         let (value, ops) = self.record(body)?;
         if ops.is_empty() {
             return Err(Error::EmptyCommit);
         }
         let braid = self.single_braid(&ops)?;
         match self.submit(braid, ops)? {
-            Resolved::Accepted {
-                braid,
-                generation,
-                durability,
-            } => Ok(Commit::Accepted {
+            Resolved::Judged(admission) => Ok(admission.map(|slotted| Slotted {
                 value,
-                braid,
-                generation,
-                durability,
-            }),
-            Resolved::Rejected(violations) => Ok(Commit::Rejected(violations)),
+                braid: slotted.braid,
+                slot: slotted.slot,
+                durability: slotted.durability,
+            })),
             Resolved::Failed(shared) => Err(unwrap_shared(shared)),
         }
     }
@@ -604,18 +582,7 @@ where
         let mut outcomes = Vec::with_capacity(parts.len());
         for (braid, part) in parts {
             match self.submit(braid, part)? {
-                Resolved::Accepted {
-                    braid,
-                    generation,
-                    durability,
-                } => outcomes.push(BraidOutcome::Accepted {
-                    braid,
-                    generation,
-                    durability,
-                }),
-                Resolved::Rejected(violations) => {
-                    outcomes.push(BraidOutcome::Rejected { braid, violations });
-                }
+                Resolved::Judged(admission) => outcomes.push(BraidOutcome { braid, admission }),
                 Resolved::Failed(shared) => return Err(unwrap_shared(shared)),
             }
         }
@@ -709,7 +676,6 @@ where
             store: self.inner.store.as_ref(),
             prefix: &self.inner.prefix,
             leases: &self.inner.leases,
-            maps: &self.inner.maps,
         };
         let value = body(&mut batch)?;
         Ok((value, batch.ops))

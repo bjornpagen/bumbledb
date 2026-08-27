@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bumbledb::Admission;
 
-use crate::apply::{Applied, apply};
+use crate::apply::{Applied, PendingFold, apply, fold_pending};
 use crate::braids::BraidId;
 use crate::codec::{Op, OpKind};
 use crate::manifest::log_key;
@@ -24,51 +24,9 @@ pub(crate) enum PendingArm {
     Discard,
 }
 
-/// Classification of a pending batch against occupant, store
-/// generation, and the floor when one is present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingFold {
-    /// Occupant bytes are the pending bytes — the slot is ours.
-    Ours,
-    /// Occupant is someone else; the store sits at the vector sum.
-    TheirsUnapplied,
-    /// Occupant is someone else; the store already counts the pending.
-    TheirsApplied,
-    /// No occupant; the store sits at the vector sum.
-    AbsentUnapplied,
-    /// No occupant; the store already counts the pending.
-    AbsentApplied,
-    /// The slot sits at or below the published floor.
-    BelowFloor,
-    /// The store generation is neither the vector sum nor sum+1.
-    Phantom,
-}
-
 /// Leftover one-by-one work. A mid-fold refusal yields this value; the
 /// fold does not abort.
 struct Remaining<'a>(&'a [Vec<Op>]);
-
-/// Re-judges the pending bytes against the winner-current occupant and
-/// the generation the store shows. Remaining work is the arm.
-fn fold_pending(
-    sum: u64,
-    generation: u64,
-    occupant: Option<&[u8]>,
-    pending_bytes: &[u8],
-    below_floor: bool,
-) -> PendingFold {
-    if below_floor {
-        return PendingFold::BelowFloor;
-    }
-    match occupant {
-        Some(bytes) if bytes == pending_bytes => PendingFold::Ours,
-        Some(_) if generation == sum => PendingFold::TheirsUnapplied,
-        Some(_) => PendingFold::TheirsApplied,
-        None if generation == sum => PendingFold::AbsentUnapplied,
-        None if generation == sum.saturating_add(1) => PendingFold::AbsentApplied,
-        None => PendingFold::Phantom,
-    }
-}
 
 impl<T, S, H> Inner<T, S, H>
 where
@@ -277,7 +235,7 @@ where
         segments: Option<&[Vec<Op>]>,
     ) -> Result<()> {
         let settled = self.discipline(core, braid, ops, live, None)?;
-        if matches!(settled, Settled::Rejected(_))
+        if matches!(settled, Settled::Judged(Admission::Rejected(_)))
             && let Some(segments) = segments
             && segments.len() > 1
         {
@@ -335,50 +293,5 @@ where
         } else {
             Ok(PendingArm::Discard)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{PendingFold, fold_pending};
-
-    #[test]
-    fn fold_consults_floor_first() {
-        assert_eq!(
-            fold_pending(0, 0, None, b"ours", true),
-            PendingFold::BelowFloor
-        );
-        assert_eq!(
-            fold_pending(0, 0, Some(b"theirs"), b"ours", true),
-            PendingFold::BelowFloor
-        );
-    }
-
-    #[test]
-    fn fold_names_occupant_and_generation() {
-        assert_eq!(
-            fold_pending(3, 3, Some(b"ours"), b"ours", false),
-            PendingFold::Ours
-        );
-        assert_eq!(
-            fold_pending(3, 3, Some(b"theirs"), b"ours", false),
-            PendingFold::TheirsUnapplied
-        );
-        assert_eq!(
-            fold_pending(3, 4, Some(b"theirs"), b"ours", false),
-            PendingFold::TheirsApplied
-        );
-        assert_eq!(
-            fold_pending(3, 3, None, b"ours", false),
-            PendingFold::AbsentUnapplied
-        );
-        assert_eq!(
-            fold_pending(3, 4, None, b"ours", false),
-            PendingFold::AbsentApplied
-        );
-        assert_eq!(
-            fold_pending(3, 6, None, b"ours", false),
-            PendingFold::Phantom
-        );
     }
 }

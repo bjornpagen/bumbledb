@@ -17,10 +17,15 @@ import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import {
+	type Admission,
 	type Fact,
+	type FactValue,
 	type FreshKeys,
+	type FreshRange,
 	internalBlake3,
 	type MemberRelation,
+	type MutationReport,
+	rowOf,
 	type SchemaRelations,
 	type Violation
 } from "@bjornpagen/bumbledb"
@@ -68,8 +73,6 @@ import {
 	withGate
 } from "#replica.ts"
 import type { ObjectStore } from "#store.ts"
-import type { Value } from "#value.ts"
-import { checkAgainst } from "#value.ts"
 
 /** 10 owns the width: one CAS amortizes counter traffic 4096× below slot traffic. */
 const LEASE_WIDTH = 4096n
@@ -85,43 +88,55 @@ const BATCH_MAGIC = utf8Encoder.encode("BDBL")
 
 type Durability = "published" | "local-pending"
 
-type Commit<Rels extends SchemaRelations, R> =
-	| {
-			readonly tag: "accepted"
-			readonly value: R
-			readonly braid: Braid
-			readonly generation: Generation
-			readonly durability: Durability
-	  }
-	| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
-
-type BraidOutcome<Rels extends SchemaRelations> =
-	| {
-			readonly tag: "accepted"
-			readonly braid: Braid
-			readonly generation: Generation
-			readonly durability: Durability
-	  }
-	| { readonly tag: "rejected"; readonly braid: Braid; readonly violations: readonly Violation<Rels>[] }
-
-interface CommitSplit<Rels extends SchemaRelations, R> {
-	readonly value: R
-	readonly outcomes: readonly BraidOutcome<Rels>[]
+/** Where an accepted commit landed on its braid: the slot (the braid
+ *  position — never the store-wide sum) and how durable the batch is. */
+interface Landing {
+	readonly slot: Generation
+	readonly durability: Durability
 }
 
+/** The accepted payload of `commit`: the body's value plus the landing. */
+interface CommitReceipt<R> extends Landing {
+	readonly value: R
+	readonly braid: Braid
+}
+
+/** The empty commit is not a commit: a body that records no ops names no
+ *  braid, so the refusal is its own outcome — never a slot, never a
+ *  thrown surprise. The body's value rides out, the way an abandoned
+ *  write's payload does in the engine. */
+interface EmptyCommit<R> {
+	readonly tag: "empty"
+	readonly value: R
+}
+
+/** The engine's Admission sum carrying the log's receipt in its accepted
+ *  arm; the rejected arm is the engine's violations, shell and payload. */
+type Commit<Rels extends SchemaRelations, R> = Admission<Rels, CommitReceipt<R>> | EmptyCommit<R>
+
+/** One braid's verdict inside a split commit: the engine's Admission
+ *  carrying the landing, beside the braid it judged. */
+interface BraidOutcome<Rels extends SchemaRelations> {
+	readonly braid: Braid
+	readonly admission: Admission<Rels, Landing>
+}
+
+type CommitSplit<Rels extends SchemaRelations, R> =
+	| { readonly tag: "split"; readonly value: R; readonly outcomes: readonly BraidOutcome<Rels>[] }
+	| EmptyCommit<R>
+
 /**
- * The recorder: typed inserts and deletes as raw-valued ops, `reserve`
- * drawing on the id lease (10) — reservations never appear in the log;
- * the resulting inserts carry concrete values. Pure and synchronous.
+ * The recorder: the engine `WriteTx`'s write surface, verbatim — insert,
+ * delete, and reserve carry the engine's own signatures, so a write-only
+ * body typechecks against both dialects. `contains`/`get` are absent by
+ * law: the journaled dialect is a pure recorder, and change is judged at
+ * commit, so a report's `changed` is 0n at record time. Reservations
+ * never appear in the log; the resulting inserts carry concrete values.
  */
 interface Batch<Rels extends SchemaRelations> {
-	insert<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): void
-	delete<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): void
-	reserve<Rel extends MemberRelation<Rels>>(
-		relation: Rel,
-		field: FreshKeys<Rel> & string,
-		count: bigint
-	): readonly bigint[]
+	insert<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): MutationReport
+	delete<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): MutationReport
+	reserve<Rel extends MemberRelation<Rels>>(relation: Rel, field: FreshKeys<Rel> & string, count: bigint): FreshRange
 }
 
 /** Ownership of a slot, read from the winner's header. */
@@ -190,7 +205,83 @@ function remainingOf(state: WriterState, relation: number, field: number): bigin
 	return remaining
 }
 
-function drawIds(state: WriterState, relation: number, field: number, count: bigint): bigint[] {
+/** The zero draw is the absence of a range (the engine's ruling). */
+const EMPTY_RANGE: FreshRange = Object.freeze({
+	empty: true,
+	count: 0n,
+	at(_index: bigint) {
+		return undefined
+	},
+	*[Symbol.iterator](): IterableIterator<bigint> {}
+})
+
+/** A drawn range as the engine's FreshRange value: contiguous, frozen. */
+function drawnRange(start: bigint, endExclusive: bigint): FreshRange {
+	const count = endExclusive - start
+	return Object.freeze({
+		empty: false,
+		start,
+		endExclusive,
+		count,
+		at(index: bigint) {
+			if (index < 0n || index >= count) {
+				return undefined
+			}
+			return start + index
+		},
+		*[Symbol.iterator](): IterableIterator<bigint> {
+			for (let id = start; id < endExclusive; id++) {
+				yield id
+			}
+		}
+	})
+}
+
+/** The refill signal: a draw the cached pool cannot serve. Internal to
+ *  the record loop, which leases fresh blocks and runs the body again —
+ *  a refill is its own path, never an exhaustion. */
+const errRefill = errors.new("bumbledb-log lease refill: the cached pool cannot serve the draw")
+
+interface RefillNeed {
+	readonly relation: number
+	readonly field: number
+	/** Draws this attempt made on the key, the missed one included. */
+	readonly draws: number
+}
+
+const refillNeeds = new WeakMap<Error, RefillNeed>()
+
+function signalRefill(need: RefillNeed, detail: string): never {
+	const error = errors.wrap(errRefill, detail)
+	refillNeeds.set(error, need)
+	throw error
+}
+
+/** Untouched full-width blocks pooled for the key: the record loop's
+ *  guarantee unit — k full blocks serve any k draws, each at most one
+ *  width, whatever tails the draws abandon. */
+function fullBlocksOf(state: WriterState, relation: number, field: number): number {
+	const pool = state.pools.get(poolKey(relation, field)) ?? []
+	let full = 0
+	for (const range of pool) {
+		if (range.end - range.next >= LEASE_WIDTH) {
+			full += 1
+		}
+	}
+	return full
+}
+
+/** `Lease.draw(count)` = OverWidth | Exhausted | Drawn, the log-Rust
+ *  algebra: Exhausted names the u64 ceiling ONLY; a draw the pooled
+ *  tail cannot serve abandons the tail (unique, never dense) and falls
+ *  to the next block, and an empty pool signals a refill. */
+function drawIds(
+	state: WriterState,
+	draws: Map<string, number>,
+	relation: number,
+	field: number,
+	count: bigint
+): FreshRange {
 	if (count < 0n) {
 		throw errors.new(`id-lease count is unsigned: ${count}`)
 	}
@@ -198,31 +289,35 @@ function drawIds(state: WriterState, relation: number, field: number, count: big
 		refuseOverWidth({ requested: count }, `id-lease draw ${count} exceeds the lease width ${LEASE_WIDTH}`)
 	}
 	if (count === 0n) {
-		return []
+		return EMPTY_RANGE
 	}
-	const pool = state.pools.get(poolKey(relation, field)) ?? []
-	const range = pool[0]
-	if (range === undefined || range.end - range.next < count) {
-		refuseExhausted(
-			{ relation, field },
-			`id-lease relation ${relation} field ${field} cannot draw ${count} from the cached block`
-		)
-	}
-	if (checkedAddU64(range.next, count) === undefined) {
-		refuseExhausted({ relation, field }, `id-lease relation ${relation} field ${field} would leave u64`)
-	}
-	const ids: bigint[] = []
-	let remaining = count
-	while (remaining > 0n && range.next < range.end) {
-		ids.push(range.next)
-		range.next += 1n
-		remaining -= 1n
-	}
-	if (range.next >= range.end) {
+	const key = poolKey(relation, field)
+	const drawn = (draws.get(key) ?? 0) + 1
+	draws.set(key, drawn)
+	const pool = state.pools.get(key) ?? []
+	while (pool.length > 0) {
+		const range = pool[0]
+		if (range === undefined) {
+			break
+		}
+		const end = checkedAddU64(range.next, count)
+		if (end === undefined) {
+			refuseExhausted({ relation, field }, `id-lease relation ${relation} field ${field} would leave u64`)
+		}
+		if (end <= range.end) {
+			const start = range.next
+			range.next = end
+			if (range.next >= range.end) {
+				pool.shift()
+			}
+			return drawnRange(start, end)
+		}
 		pool.shift()
 	}
-	state.pools.set(poolKey(relation, field), pool)
-	return ids
+	signalRefill(
+		{ relation, field, draws: drawn },
+		`id-lease relation ${relation} field ${field} pool cannot serve ${count}`
+	)
 }
 
 /** `ids/{relation}/{field}`: birth claims [0, width); every later lease CAS-increments. */
@@ -283,46 +378,12 @@ interface Recording {
 	readonly ops: Op[]
 }
 
-function lowerFact<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	info: RelationInfo,
-	fact: Record<string, unknown>
-): Value[] {
-	return info.fields.map(function lowerCell(field) {
-		const raw = fact[field.name]
-		if (raw === undefined) {
-			throw errors.new(`relation ${info.name}: fact is missing field ${field.name}`)
-		}
-		let value: Value
-		if (field.closedRef !== undefined) {
-			if (typeof raw !== "string") {
-				throw errors.new(`relation ${info.name} field ${field.name}: expected a ${field.closedRef} handle name`)
-			}
-			const roster = core.descriptor.relationByName.get(field.closedRef)
-			const id = roster?.handles.indexOf(raw) ?? -1
-			if (id === -1) {
-				throw errors.new(`relation ${info.name} field ${field.name}: "${raw}" is not in the ${field.closedRef} roster`)
-			}
-			value = BigInt(id)
-		} else if (typeof raw === "object" && raw !== null && !(raw instanceof Uint8Array)) {
-			const interval = raw as { start?: unknown; end?: unknown }
-			if (typeof interval.start !== "bigint" || typeof interval.end !== "bigint") {
-				throw errors.new(`relation ${info.name} field ${field.name}: expected an interval of bigints`)
-			}
-			value = { start: interval.start, end: interval.end }
-		} else {
-			value = raw as Value
-		}
-		checkAgainst(`relation ${info.name} field ${field.name}`, field.type, value)
-		return value
-	})
-}
-
 function recorderOf<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState
 ): { batch: Batch<Rels>; recording: Recording } {
 	const recording: Recording = { ops: [] }
+	const draws = new Map<string, number>()
 	function infoOf(name: string): RelationInfo {
 		const info = core.descriptor.relationByName.get(name)
 		if (info === undefined) {
@@ -333,23 +394,28 @@ function recorderOf<Rels extends SchemaRelations>(
 		}
 		return info
 	}
-	function record(op: "insert" | "delete", relationName: string, facts: Iterable<unknown>): void {
-		const info = infoOf(relationName)
-		const rows: Value[][] = []
+	// The cell judge is the engine's `rowOf` — one marshal per language.
+	// The recorder applies nothing, so `changed` is 0n: change is judged
+	// at commit, when the recording meets the store.
+	function record<Rel extends MemberRelation<Rels>>(
+		op: "insert" | "delete",
+		relation: Rel,
+		facts: Iterable<Fact<Rel>>
+	): MutationReport {
+		const info = infoOf(relation.name)
+		const rows: FactValue[][] = []
 		for (const fact of facts) {
-			if (typeof fact !== "object" || fact === null) {
-				throw errors.new(`relation ${relationName}: a fact is not an object`)
-			}
-			rows.push(lowerFact(core, info, fact as Record<string, unknown>))
+			rows.push(rowOf(relation.data, fact))
 		}
-		recording.ops.push({ op, relation: relationName, rows })
+		recording.ops.push({ op, relation: info.name, rows })
+		return Object.freeze({ submitted: BigInt(rows.length), changed: 0n })
 	}
 	const batch: Batch<Rels> = {
 		insert(relation, facts) {
-			record("insert", relation.name, facts)
+			return record("insert", relation, facts)
 		},
 		delete(relation, facts) {
-			record("delete", relation.name, facts)
+			return record("delete", relation, facts)
 		},
 		reserve(relation, field, count) {
 			const info = infoOf(relation.name)
@@ -360,24 +426,48 @@ function recorderOf<Rels extends SchemaRelations>(
 			if (declared === undefined || !declared.fresh) {
 				throw errors.new(`relation ${relation.name}: field ${field} is not a fresh cell`)
 			}
-			return drawIds(state, info.id, ordinal, count)
+			return drawIds(state, draws, info.id, ordinal, count)
 		}
 	}
 	return { batch, recording }
 }
 
-/** Runs the recording body exactly once. The body is awaited to
- *  completion before the batch is sealed; reserve draws from the
- *  cached block (OverWidth | Exhausted | Drawn). */
+/** Runs the recording body against the cached pool. A draw the pool
+ *  cannot serve discards the attempt's recording, leases fresh blocks —
+ *  one full block per draw the attempt made on the starved key — and
+ *  runs the body again: the refill is a path, not an exhaustion
+ *  (Exhausted names the u64 ceiling only). Ids drawn by a discarded
+ *  attempt are abandoned — unique, never dense. Draw counts rise
+ *  strictly between refills of one key, so a body with finitely many
+ *  draws settles; a recurring signature screams. */
 async function recordWithLeases<Rels extends SchemaRelations, R>(
 	core: Core<Rels>,
 	state: WriterState,
 	body: (batch: Batch<Rels>) => R | Promise<R>
 ): Promise<{ value: R; ops: Op[] }> {
 	await ensureFreshLeases(core, state)
-	const { batch, recording } = recorderOf(core, state)
-	const value = await body(batch)
-	return { value, ops: recording.ops }
+	for (;;) {
+		const { batch, recording } = recorderOf(core, state)
+		const ran = await errors.try(
+			(async function runBody() {
+				return body(batch)
+			})()
+		)
+		if (!ran.error) {
+			return { value: ran.data, ops: recording.ops }
+		}
+		if (!errors.is(ran.error, errRefill)) {
+			throw ran.error
+		}
+		const need = refillNeeds.get(ran.error)
+		if (need === undefined) {
+			throw ran.error
+		}
+		state.scream.attempt(`id-lease refill relation ${need.relation} field ${need.field} draws ${need.draws}`)
+		while (fullBlocksOf(state, need.relation, need.field) < need.draws) {
+			await acquireLease(core, state, need.relation, need.field)
+		}
+	}
 }
 
 function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): Map<Braid, Op[]> {
@@ -484,7 +574,7 @@ async function publishPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState,
 	ops: readonly Op[]
-): Promise<Commit<Rels, undefined>> {
+): Promise<Admission<Rels, Landing>> {
 	let losses = 0
 	for (;;) {
 		const pending = pendingOf(core)
@@ -521,7 +611,7 @@ async function publishPending<Rels extends SchemaRelations>(
 				ts: timestamp
 			})
 			await clearPending(core)
-			return { tag: "accepted", value: undefined, braid, generation: pending.gen, durability: "published" }
+			return { tag: "accepted", value: { slot: pending.gen, durability: "published" } }
 		}
 
 		losses += 1
@@ -539,13 +629,7 @@ async function publishPending<Rels extends SchemaRelations>(
 		}
 		if (rejudged.value.generation === before) {
 			await clearPending(core)
-			return {
-				tag: "accepted",
-				value: undefined,
-				braid,
-				generation: chainEntry(core, braid).g,
-				durability: "published"
-			}
+			return { tag: "accepted", value: { slot: chainEntry(core, braid).g, durability: "published" } }
 		}
 		const tip = chainEntry(core, braid)
 		entriesOf(core).set(braid, { g: tip.g, prev: digestPrev(tip.prev), ts: tip.ts })
@@ -564,7 +648,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	state: WriterState,
 	braid: Braid,
 	ops: readonly Op[]
-): Promise<Commit<Rels, undefined>> {
+): Promise<Admission<Rels, Landing>> {
 	const entry = chainEntry(core, braid)
 	const timestamp = maxBigint(BigInt(Date.now()), entry.ts)
 	const bytes = encodeBatch(
@@ -591,7 +675,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	}
 	if (outcome.value.generation === before) {
 		await clearPending(core)
-		return { tag: "accepted", value: undefined, braid, generation: entry.g, durability: "published" }
+		return { tag: "accepted", value: { slot: entry.g, durability: "published" } }
 	}
 	return publishPending(core, state, ops)
 }
@@ -812,7 +896,7 @@ async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): P
 			return withGate(core, async function commitBody() {
 				const recorded = await recordWithLeases(core, state, body)
 				if (recorded.ops.length === 0) {
-					throw errors.new("commit recorded no ops — an empty transaction names no braid")
+					return { tag: "empty" as const, value: recorded.value }
 				}
 				const partitioned = braidsTouched(core, recorded.ops)
 				if (partitioned.size > 1) {
@@ -823,7 +907,10 @@ async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): P
 				if (outcome.tag === "rejected") {
 					return outcome
 				}
-				return { ...outcome, value: recorded.value }
+				return {
+					tag: "accepted" as const,
+					value: { value: recorded.value, braid, slot: outcome.value.slot, durability: outcome.value.durability }
+				}
 			})
 		},
 
@@ -831,24 +918,15 @@ async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): P
 			return withGate(core, async function splitBody() {
 				const recorded = await recordWithLeases(core, state, body)
 				if (recorded.ops.length === 0) {
-					throw errors.new("commitSplit recorded no ops — an empty transaction names no braid")
+					return { tag: "empty" as const, value: recorded.value }
 				}
 				const partitioned = braidsTouched(core, recorded.ops)
 				const outcomes: BraidOutcome<Rels>[] = []
 				for (const [braid, ops] of partitioned) {
-					const outcome = await disciplineCommit(core, state, braid, ops)
-					if (outcome.tag === "rejected") {
-						outcomes.push({ tag: "rejected", braid, violations: outcome.violations })
-					} else {
-						outcomes.push({
-							tag: "accepted",
-							braid: outcome.braid,
-							generation: outcome.generation,
-							durability: outcome.durability
-						})
-					}
+					const admission = await disciplineCommit(core, state, braid, ops)
+					outcomes.push({ braid, admission })
 				}
-				return { value: recorded.value, outcomes }
+				return { tag: "split" as const, value: recorded.value, outcomes }
 			})
 		}
 	}
@@ -866,5 +944,18 @@ async function openWriter<Rels extends SchemaRelations>(
 	return writerOn(await openReplica(source))
 }
 
-export type { Batch, BraidOutcome, Commit, CommitSplit, Deposition, Durability, Published, PublishRefusal, Writer }
+export type {
+	Batch,
+	BraidOutcome,
+	Commit,
+	CommitReceipt,
+	CommitSplit,
+	Deposition,
+	Durability,
+	EmptyCommit,
+	Landing,
+	Published,
+	PublishRefusal,
+	Writer
+}
 export { openWriter, publishCheckpoint }

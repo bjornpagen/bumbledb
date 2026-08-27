@@ -260,6 +260,40 @@ fn schema_value(
     }
 }
 
+/// One sealed field slot's spec-only attributes — `fresh` and the host
+/// newtype name, which the engine descriptor drops after resolution. The
+/// bridge carries them alongside the descriptor so the manifest wire
+/// speaks the spec's whole field vocabulary; nothing here is judged.
+#[derive(Clone)]
+pub struct FieldAttrs {
+    pub(crate) fresh: bool,
+    pub(crate) newtype: Option<Box<str>>,
+}
+
+/// Per-relation sealed-order attribute rows off the parsed spec: a closed
+/// relation's synthetic `id` slot leads (never fresh, carrying the handle
+/// newtype), then the declared fields in declaration order — the same
+/// order `sealed_fields()` walks, restated from the same spec datum.
+pub(crate) fn field_attrs(spec: &SchemaSpec) -> Vec<Vec<FieldAttrs>> {
+    spec.relations
+        .iter()
+        .map(|relation| {
+            relation
+                .closed
+                .iter()
+                .map(|closed| FieldAttrs {
+                    fresh: false,
+                    newtype: Some(closed.newtype.clone()),
+                })
+                .chain(relation.fields.iter().map(|field| FieldAttrs {
+                    fresh: field.fresh,
+                    newtype: field.newtype.clone(),
+                }))
+                .collect()
+        })
+        .collect()
+}
+
 pub(crate) struct SealedRoster {
     pub(crate) name: Box<str>,
     pub(crate) fields: Vec<FieldDescriptor>,
@@ -1327,18 +1361,31 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
     unsafe_code,
     reason = "napi's Unknown::from_raw_unchecked rewraps a value this helper just rendered"
 )]
-fn relation_objects(
+fn relation_objects<'env>(
     env: sys::napi_env,
-    env_handle: &Env,
+    env_handle: &'env Env,
     relations: Vec<RelationManifest>,
-) -> napi::Result<Vec<Object<'_>>> {
+    attrs: &[Vec<FieldAttrs>],
+) -> napi::Result<Vec<Object<'env>>> {
     let mut out = Vec::with_capacity(relations.len());
-    for relation in relations {
+    for (rel_index, relation) in relations.into_iter().enumerate() {
+        let rel_attrs = attrs.get(rel_index).ok_or_else(|| {
+            err(format!(
+                "bumbledb marshal: relation `{}` has no spec attribute rows",
+                relation.name
+            ))
+        })?;
         let mut rel_obj = Object::new(env_handle)?;
         rel_obj.set("name", relation.name.as_ref())?;
         rel_obj.set("id", relation.id.0)?;
         let mut fields = Vec::with_capacity(relation.fields.len());
-        for field in relation.fields {
+        for (field_index, field) in relation.fields.into_iter().enumerate() {
+            let attr = rel_attrs.get(field_index).ok_or_else(|| {
+                err(format!(
+                    "bumbledb marshal: relation `{}` field `{}` has no spec attribute row",
+                    relation.name, field.name
+                ))
+            })?;
             let mut field_obj = Object::new(env_handle)?;
             field_obj.set("name", field.name.as_ref())?;
             field_obj.set("id", u32::from(field.id.0))?;
@@ -1347,6 +1394,10 @@ fn relation_objects(
             // rendered against this same live `env`, one line up.
             let ty = unsafe { Unknown::from_raw_unchecked(env, ty) };
             field_obj.set("valueType", ty)?;
+            field_obj.set("fresh", attr.fresh)?;
+            if let Some(newtype) = &attr.newtype {
+                field_obj.set("newtype", newtype.as_ref())?;
+            }
             fields.push(field_obj);
         }
         rel_obj.set("fields", fields)?;
@@ -1479,7 +1530,10 @@ fn statement_object(
     Ok(obj)
 }
 
-pub struct ManifestWire(pub(crate) Manifest);
+pub struct ManifestWire {
+    pub(crate) manifest: Manifest,
+    pub(crate) attrs: Vec<Vec<FieldAttrs>>,
+}
 
 impl ToNapiValue for ManifestWire {
     #[expect(
@@ -1490,11 +1544,11 @@ impl ToNapiValue for ManifestWire {
     )]
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         let env_handle = Env::from_raw(env);
-        let manifest = val.0;
+        let manifest = val.manifest;
         let mut root = Object::new(&env_handle)?;
         root.set(
             "relations",
-            relation_objects(env, &env_handle, manifest.relations)?,
+            relation_objects(env, &env_handle, manifest.relations, &val.attrs)?,
         )?;
         let mut statements = Vec::with_capacity(manifest.statements.len());
         for statement in manifest.statements {
@@ -1515,6 +1569,7 @@ pub struct DescriptorWire {
     pub(crate) manifest: Manifest,
     pub(crate) statements: Vec<StatementDescriptor>,
     pub(crate) fingerprint: String,
+    pub(crate) attrs: Vec<Vec<FieldAttrs>>,
 }
 
 impl ToNapiValue for DescriptorWire {
@@ -1529,7 +1584,7 @@ impl ToNapiValue for DescriptorWire {
         let mut root = Object::new(&env_handle)?;
         root.set(
             "relations",
-            relation_objects(env, &env_handle, val.manifest.relations)?,
+            relation_objects(env, &env_handle, val.manifest.relations, &val.attrs)?,
         )?;
         let mut statements = Vec::with_capacity(val.statements.len());
         for (idx, statement) in val.statements.into_iter().enumerate() {

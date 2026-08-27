@@ -1,10 +1,9 @@
 /**
- * The driver's raw-value vocabulary and its two canonical encodings:
- * the command codec's tagged little-endian form (the tag table the
- * batch wire already declared), and the engine's big-endian
- * order-preserving literal form the fingerprint mirror reproduces.
- * Values here are always RAW — strings as UTF-8, never intern ids —
- * so a key hashed from a raw value cannot depend on a catalog.
+ * The driver's raw-value vocabulary and its one wire encoding: the
+ * command codec's tagged little-endian form (the tag table the batch
+ * wire already declared). Values here are always RAW — strings as
+ * UTF-8, never intern ids — so a key hashed from a raw value cannot
+ * depend on a catalog.
  */
 
 import type { ValueTypeSpec } from "@bjornpagen/bumbledb"
@@ -269,68 +268,5 @@ function valuesEqual(a: Value, b: Value): boolean {
 	return a.start === b.start && a.end === b.end
 }
 
-/**
- * The engine's canonical big-endian literal form (`encode_literal`) —
- * the fingerprint mirror's alphabet. Strings never reach this encoder:
- * the fingerprint's `put_literal` length-prefixes them separately, and
- * closed ground axioms with string columns are the mirror's recorded gap.
- */
-function writeCanonicalLiteral(out: ByteWriter, type: ValueTypeSpec, value: Value): void {
-	switch (type.kind) {
-		case "bool": {
-			out.u8(value === true ? 1 : 0)
-			return
-		}
-		case "u64": {
-			out.u64be(value as bigint)
-			return
-		}
-		case "i64": {
-			out.i64beFlipped(value as bigint)
-			return
-		}
-		case "string":
-			throw errors.new("canonical literal: strings are length-prefixed by the caller, never encoded here")
-		case "fixedBytes": {
-			const raw = value as Uint8Array
-			const padded = Math.ceil(type.len / 8) * 8
-			out.bytes(raw)
-			for (let i = raw.length; i < padded; i++) {
-				out.u8(0)
-			}
-			return
-		}
-		case "interval": {
-			const interval = value as Interval
-			if (type.width !== undefined) {
-				if (type.element === "u64") {
-					out.u64be(interval.start)
-				} else {
-					out.i64beFlipped(interval.start)
-				}
-				return
-			}
-			if (type.element === "u64") {
-				out.u64be(interval.start)
-				out.u64be(interval.end)
-			} else {
-				out.i64beFlipped(interval.start)
-				out.i64beFlipped(interval.end)
-			}
-			return
-		}
-	}
-}
-
 export type { Interval, TaggedRefusal, Value, WellFormedUtf8 }
-export {
-	checkAgainst,
-	isInterval,
-	readTagged,
-	TAG,
-	valuesEqual,
-	wellFormedUtf8,
-	wireTagOf,
-	writeCanonicalLiteral,
-	writeTagged
-}
+export { checkAgainst, isInterval, readTagged, TAG, valuesEqual, wellFormedUtf8, wireTagOf, writeTagged }

@@ -122,6 +122,7 @@ export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower } from "#lower.ts"
 export type { KeyFact } from "#marshal.ts"
+export { factOf, rowOf } from "#marshal.ts"
 export type {
 	FactValue,
 	ParsedQuery,

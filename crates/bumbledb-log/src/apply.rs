@@ -63,10 +63,10 @@ pub fn fold_pending(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainCause {
     /// The header's slot identity disagrees with the key the object was
-    /// fetched from (braid or generation).
+    /// fetched from (braid or slot).
     Slot {
         header_braid: BraidId,
-        header_gen: u64,
+        header_slot: u64,
     },
     /// The header's backlink disagrees with the chain's head hash.
     Prev {
@@ -157,7 +157,7 @@ pub fn apply<T>(
     if header.braid != braid || header.braid_gen != slot {
         return Ok(refuse(ChainCause::Slot {
             header_braid: header.braid,
-            header_gen: header.braid_gen,
+            header_slot: header.braid_gen,
         }));
     }
     let position = chain.position(braid);
@@ -216,5 +216,50 @@ pub fn apply<T>(
         Ok(Applied::Absorbed { generation })
     } else {
         Ok(Applied::Advanced { generation })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PendingFold, fold_pending};
+
+    #[test]
+    fn fold_consults_floor_first() {
+        assert_eq!(
+            fold_pending(0, 0, None, b"ours", true),
+            PendingFold::BelowFloor
+        );
+        assert_eq!(
+            fold_pending(0, 0, Some(b"theirs"), b"ours", true),
+            PendingFold::BelowFloor
+        );
+    }
+
+    #[test]
+    fn fold_names_occupant_and_generation() {
+        assert_eq!(
+            fold_pending(3, 3, Some(b"ours"), b"ours", false),
+            PendingFold::Ours
+        );
+        assert_eq!(
+            fold_pending(3, 3, Some(b"theirs"), b"ours", false),
+            PendingFold::TheirsUnapplied
+        );
+        assert_eq!(
+            fold_pending(3, 4, Some(b"theirs"), b"ours", false),
+            PendingFold::TheirsApplied
+        );
+        assert_eq!(
+            fold_pending(3, 3, None, b"ours", false),
+            PendingFold::AbsentUnapplied
+        );
+        assert_eq!(
+            fold_pending(3, 4, None, b"ours", false),
+            PendingFold::AbsentApplied
+        );
+        assert_eq!(
+            fold_pending(3, 6, None, b"ours", false),
+            PendingFold::Phantom
+        );
     }
 }

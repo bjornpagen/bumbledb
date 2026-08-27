@@ -135,6 +135,10 @@ interface ManifestField {
 	readonly name: string
 	readonly id: number
 	readonly valueType: ValueTypeSpec
+	/** The field's fresh attribute, straight off the declared spec; a closed relation's synthetic `id` slot is never fresh. */
+	readonly fresh: boolean
+	/** The field's host newtype name off the declared spec; a closed relation's synthetic `id` slot carries the handle newtype. Absent on a bare column. */
+	readonly newtype?: string
 }
 
 interface ManifestRow {
@@ -316,6 +320,13 @@ interface Native {
 	dbFingerprint(db: DbHandle): string
 
 	dbGeneration(db: DbHandle): bigint
+
+	/**
+	 * blake3 over the canonical catalog enumeration — the replication
+	 * equality oracle: equal digests imply identical judged content
+	 * regardless of page layout or allocation history.
+	 */
+	dbCatalogDigest(db: DbHandle): Uint8Array
 
 	dbFromInstance(path: string, instance: OwnedHandle): Promise<DbHandle>
 

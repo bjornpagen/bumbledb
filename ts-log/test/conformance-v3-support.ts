@@ -10,7 +10,8 @@ import type { LiteralSpec, SchemaSpec, StatementSpec, ValueSpec, ValueTypeSpec }
 import * as errors from "@superbuilders/errors"
 import { fromHex } from "#bytes.ts"
 import type { Descriptor } from "#descriptor.ts"
-import { assembleFromSpec, withFingerprint } from "#descriptor.ts"
+import { withFingerprint } from "#descriptor.ts"
+import { assembleFromSpec } from "#test/assemble.ts"
 
 const corpusRoot = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/v3")
 

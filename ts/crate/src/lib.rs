@@ -22,7 +22,11 @@ mod fingerprint_lock;
 mod marshal;
 mod tags;
 
-use marshal::{DescriptorWire, ManifestWire, OwnedParam, ValueOut, ViolationWire};
+use marshal::{DescriptorWire, FieldAttrs, ManifestWire, OwnedParam, ValueOut, ViolationWire};
+
+/// Per-relation, sealed-order spec attribute rows (`fresh` + newtype) —
+/// the spec-only half of the field vocabulary the descriptor drops.
+type FieldAttrsTable = Vec<Vec<FieldAttrs>>;
 
 #[napi]
 #[must_use]
@@ -55,8 +59,8 @@ pub fn blake3_hash(data: Buffer) -> Buffer {
 #[allow(clippy::needless_pass_by_value)]
 pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
     use bumbledb::schema::ValidateDescriptor as _;
-    let descriptor = match descriptor_of(&spec)? {
-        Ok(descriptor) => descriptor,
+    let (descriptor, attrs) = match descriptor_of(&spec)? {
+        Ok(parsed) => parsed,
         Err(OpenOutcome::SchemaError(message) | OpenOutcome::NewtypeMismatch(message)) => {
             return Err(marshal::throw_kind_message(
                 env,
@@ -66,7 +70,7 @@ pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
         }
         Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
     };
-    let sealed = seal(descriptor);
+    let sealed = seal(descriptor, attrs);
     let schema = sealed.descriptor.clone().validate().map_err(|error| {
         marshal::throw_kind_message(env, tags::error_family::SCHEMA, error.to_string())
     })?;
@@ -75,6 +79,7 @@ pub fn descriptor(env: Env, spec: Object) -> napi::Result<DescriptorWire> {
         manifest: sealed.descriptor.manifest(),
         statements: sealed.statements,
         fingerprint: hex_fingerprint(&fingerprint.0),
+        attrs: sealed.attrs,
     })
 }
 
@@ -85,15 +90,19 @@ struct Sealed {
     /// computed once here, borrowed by every fact-lane call; the bridge
     /// re-derives nothing.
     rosters: Vec<marshal::SealedRoster>,
+    /// The spec-only field attributes in the same sealed order — carried
+    /// so the manifest wire speaks the spec's whole field vocabulary.
+    attrs: FieldAttrsTable,
 }
 
-fn seal(descriptor: SchemaDescriptor) -> Sealed {
+fn seal(descriptor: SchemaDescriptor, attrs: FieldAttrsTable) -> Sealed {
     let statements = descriptor.materialized_statements();
     let rosters = marshal::sealed_rosters(&descriptor);
     Sealed {
         descriptor,
         statements,
         rosters,
+        attrs,
     }
 }
 
@@ -236,11 +245,11 @@ fn violations_wire(descriptor: &SchemaDescriptor, violations: &Violations) -> Ve
         .collect()
 }
 
-fn assemble(db: Engine, descriptor: SchemaDescriptor) -> DbHandle {
+fn assemble(db: Engine, descriptor: SchemaDescriptor, attrs: FieldAttrsTable) -> DbHandle {
     DbHandle {
         inner: RefCell::new(Some(DbInner {
             db: Arc::new(db),
-            sealed: Arc::new(seal(descriptor)),
+            sealed: Arc::new(seal(descriptor, attrs)),
             writing: AtomicBool::new(false),
         })),
     }
@@ -306,10 +315,11 @@ impl TypeName for OpenOutcome {
 
 fn descriptor_of(
     spec: &Object,
-) -> napi::Result<std::result::Result<SchemaDescriptor, OpenOutcome>> {
+) -> napi::Result<std::result::Result<(SchemaDescriptor, FieldAttrsTable), OpenOutcome>> {
     let spec = marshal::schema_spec(spec)?;
+    let attrs = marshal::field_attrs(&spec);
     match spec.descriptor() {
-        Ok(descriptor) => Ok(Ok(descriptor)),
+        Ok(descriptor) => Ok(Ok((descriptor, attrs))),
         Err(error) => {
             let mismatched = error
                 .issues()
@@ -325,7 +335,7 @@ fn descriptor_of(
 }
 
 enum CreatePrep {
-    Descriptor(SchemaDescriptor),
+    Descriptor(SchemaDescriptor, FieldAttrsTable),
     SchemaError(String),
     NewtypeMismatch(String),
 }
@@ -335,7 +345,7 @@ enum CreatePrep {
     reason = "the Task output owns the Engine handle until resolve; boxing adds a hop without shrinking the JS wire type"
 )]
 pub enum CreateOutput {
-    Accepted(Engine, SchemaDescriptor),
+    Accepted(Engine, SchemaDescriptor, FieldAttrsTable),
     Rejected(Vec<ViolationWire>),
     SchemaError(String),
     NewtypeMismatch(String),
@@ -356,15 +366,17 @@ impl Task for CreateTask {
             .prep
             .take()
             .ok_or_else(|| marshal::err("bumbledb: create already computed".into()))?;
-        let descriptor = match prep {
+        let (descriptor, attrs) = match prep {
             CreatePrep::SchemaError(message) => return Ok(CreateOutput::SchemaError(message)),
             CreatePrep::NewtypeMismatch(message) => {
                 return Ok(CreateOutput::NewtypeMismatch(message));
             }
-            CreatePrep::Descriptor(descriptor) => descriptor,
+            CreatePrep::Descriptor(descriptor, attrs) => (descriptor, attrs),
         };
         match Db::create(std::path::Path::new(&self.path), descriptor.clone()) {
-            Ok(bumbledb::Admission::Accepted(db)) => Ok(CreateOutput::Accepted(db, descriptor)),
+            Ok(bumbledb::Admission::Accepted(db)) => {
+                Ok(CreateOutput::Accepted(db, descriptor, attrs))
+            }
             Ok(bumbledb::Admission::Rejected(violations)) => Ok(CreateOutput::Rejected(
                 violations_wire(&descriptor, &violations),
             )),
@@ -378,9 +390,9 @@ impl Task for CreateTask {
 
     fn resolve(&mut self, _env: Env, output: CreateOutput) -> napi::Result<CreateOutcome> {
         match output {
-            CreateOutput::Accepted(db, descriptor) => Ok(CreateOutcome::Accepted(External::new(
-                assemble(db, descriptor),
-            ))),
+            CreateOutput::Accepted(db, descriptor, attrs) => Ok(CreateOutcome::Accepted(
+                External::new(assemble(db, descriptor, attrs)),
+            )),
             CreateOutput::Rejected(violations) => Ok(CreateOutcome::Rejected(violations)),
             CreateOutput::SchemaError(message) => Ok(CreateOutcome::SchemaError(message)),
             CreateOutput::NewtypeMismatch(message) => Ok(CreateOutcome::NewtypeMismatch(message)),
@@ -393,7 +405,7 @@ impl Task for CreateTask {
 #[allow(clippy::needless_pass_by_value)]
 pub fn db_create(path: String, spec: Object) -> napi::Result<AsyncTask<CreateTask>> {
     let prep = match descriptor_of(&spec)? {
-        Ok(descriptor) => CreatePrep::Descriptor(descriptor),
+        Ok((descriptor, attrs)) => CreatePrep::Descriptor(descriptor, attrs),
         Err(OpenOutcome::SchemaError(message)) => CreatePrep::SchemaError(message),
         Err(OpenOutcome::NewtypeMismatch(message)) => CreatePrep::NewtypeMismatch(message),
         Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
@@ -405,7 +417,7 @@ pub fn db_create(path: String, spec: Object) -> napi::Result<AsyncTask<CreateTas
 }
 
 enum OpenPrep {
-    Descriptor(SchemaDescriptor),
+    Descriptor(SchemaDescriptor, FieldAttrsTable),
     SchemaError(String),
     NewtypeMismatch(String),
 }
@@ -415,7 +427,7 @@ enum OpenPrep {
     reason = "the Task output owns the Engine handle until resolve; boxing adds a hop without shrinking the JS wire type"
 )]
 pub enum OpenOutput {
-    Ok(Engine, SchemaDescriptor),
+    Ok(Engine, SchemaDescriptor, FieldAttrsTable),
     SchemaError(String),
     NewtypeMismatch(String),
     FingerprintMismatch(String),
@@ -436,13 +448,13 @@ impl Task for OpenTask {
             .prep
             .take()
             .ok_or_else(|| marshal::err("bumbledb: open already computed".into()))?;
-        let descriptor = match prep {
+        let (descriptor, attrs) = match prep {
             OpenPrep::SchemaError(message) => return Ok(OpenOutput::SchemaError(message)),
             OpenPrep::NewtypeMismatch(message) => return Ok(OpenOutput::NewtypeMismatch(message)),
-            OpenPrep::Descriptor(descriptor) => descriptor,
+            OpenPrep::Descriptor(descriptor, attrs) => (descriptor, attrs),
         };
         match Db::open(std::path::Path::new(&self.path), descriptor.clone()) {
-            Ok(db) => Ok(OpenOutput::Ok(db, descriptor)),
+            Ok(db) => Ok(OpenOutput::Ok(db, descriptor, attrs)),
             Err(Error::Schema(error)) => Ok(OpenOutput::SchemaError(error.to_string())),
             Err(error @ Error::SchemaMismatch { .. }) => Ok(OpenOutput::FingerprintMismatch(
                 marshal::engine_message(&error),
@@ -456,9 +468,9 @@ impl Task for OpenTask {
 
     fn resolve(&mut self, _env: Env, output: OpenOutput) -> napi::Result<OpenOutcome> {
         match output {
-            OpenOutput::Ok(db, descriptor) => {
-                Ok(OpenOutcome::Ok(External::new(assemble(db, descriptor))))
-            }
+            OpenOutput::Ok(db, descriptor, attrs) => Ok(OpenOutcome::Ok(External::new(assemble(
+                db, descriptor, attrs,
+            )))),
             OpenOutput::SchemaError(message) => Ok(OpenOutcome::SchemaError(message)),
             OpenOutput::NewtypeMismatch(message) => Ok(OpenOutcome::NewtypeMismatch(message)),
             OpenOutput::FingerprintMismatch(message) => {
@@ -473,7 +485,7 @@ impl Task for OpenTask {
 #[allow(clippy::needless_pass_by_value)]
 pub fn db_open(path: String, spec: Object) -> napi::Result<AsyncTask<OpenTask>> {
     let prep = match descriptor_of(&spec)? {
-        Ok(descriptor) => OpenPrep::Descriptor(descriptor),
+        Ok((descriptor, attrs)) => OpenPrep::Descriptor(descriptor, attrs),
         Err(OpenOutcome::SchemaError(message)) => OpenPrep::SchemaError(message),
         Err(OpenOutcome::NewtypeMismatch(message)) => OpenPrep::NewtypeMismatch(message),
         Err(_) => unreachable!("descriptor_of only mints schema/newtype arms"),
@@ -493,7 +505,10 @@ pub fn db_close(db: &External<DbHandle>) -> napi::Result<()> {
 #[napi]
 pub fn db_manifest(db: &External<DbHandle>) -> napi::Result<ManifestWire> {
     let inner = live(&db.inner, "db")?;
-    Ok(ManifestWire(inner.sealed.descriptor.clone().manifest()))
+    Ok(ManifestWire {
+        manifest: inner.sealed.descriptor.clone().manifest(),
+        attrs: inner.sealed.attrs.clone(),
+    })
 }
 
 #[napi]
@@ -515,6 +530,18 @@ pub fn db_generation(env: Env, db: &External<DbHandle>) -> napi::Result<u64> {
     let inner = live(&db.inner, "db")?;
     match inner.db.generation() {
         Ok(generation) => Ok(generation.value()),
+        Err(error) => Err(throw_engine(env, &error)),
+    }
+}
+
+/// blake3 over the canonical catalog enumeration — the replication
+/// equality oracle: equal digests imply identical judged content
+/// regardless of page layout or allocation history.
+#[napi]
+pub fn db_catalog_digest(env: Env, db: &External<DbHandle>) -> napi::Result<Buffer> {
+    let inner = live(&db.inner, "db")?;
+    match inner.db.catalog_digest() {
+        Ok(digest) => Ok(Buffer::from(digest.to_vec())),
         Err(error) => Err(throw_engine(env, &error)),
     }
 }
@@ -576,6 +603,7 @@ impl Task for PublishTask {
             PublishOutput::Ok(db) => Ok(PublishedHandle(External::new(assemble(
                 db,
                 self.sealed.descriptor.clone(),
+                self.sealed.attrs.clone(),
             )))),
             PublishOutput::Failed { kind: _, message } => Err(napi::Error::from_reason(message)),
         }
@@ -1344,8 +1372,8 @@ fn owned_ops<R>(
 
 #[napi]
 pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<BuilderHandle>> {
-    let descriptor = match descriptor_of(&spec)? {
-        Ok(descriptor) => descriptor,
+    let (descriptor, attrs) = match descriptor_of(&spec)? {
+        Ok(parsed) => parsed,
         Err(OpenOutcome::SchemaError(message) | OpenOutcome::NewtypeMismatch(message)) => {
             return Err(marshal::throw_kind_message(
                 env,
@@ -1359,7 +1387,7 @@ pub fn instance_builder_new(env: Env, spec: Object) -> napi::Result<External<Bui
         InstanceBuilder::new(descriptor.clone()).map_err(|error| throw_engine(env, &error))?;
     Ok(External::new(BuilderHandle {
         inner: RefCell::new(Some(builder)),
-        sealed: Arc::new(seal(descriptor)),
+        sealed: Arc::new(seal(descriptor, attrs)),
     }))
 }
 

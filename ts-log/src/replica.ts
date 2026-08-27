@@ -10,8 +10,8 @@
 
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
-import type { Db, Fact, MemberRelation, Schema, SchemaRelations, WriteOutcome } from "@bjornpagen/bumbledb"
-import { internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
+import type { Db, MemberRelation, Schema, SchemaRelations, WriteOutcome } from "@bjornpagen/bumbledb"
+import { factOf, internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { parse } from "#braids.ts"
 import type { Digest32 } from "#bytes.ts"
@@ -20,7 +20,7 @@ import type { Chain, ChainEntry, Pending } from "#chain.ts"
 import { chainGeneration, chainSum, readSidecar, writeSidecar } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
-import type { Braid, Descriptor, RelationInfo } from "#descriptor.ts"
+import type { Braid, Descriptor } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
 import { ErrRefused, ErrReplayDiverged, refuse, refuseManifestMissing, wrapStore } from "#errors.ts"
 import type { Generation } from "#keys.ts"
@@ -38,7 +38,6 @@ import {
 import type { CheckpointFacts } from "#manifest.ts"
 import { auditCatalog, parseCheckpoint, parseManifest } from "#manifest.ts"
 import type { Etag, ObjectStore } from "#store.ts"
-import type { Value } from "#value.ts"
 import { Vector } from "#vector.ts"
 
 const ZERO_HASH = digest32(new Uint8Array(32))
@@ -66,6 +65,13 @@ type Step =
 	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
 	| { readonly tag: "reseed"; readonly cause: string }
 
+/** The full waitFor sum: a wedged braid the target needs is an
+ *  outcome, never an infinite poll. */
+type Waited =
+	| { readonly tag: "reached"; readonly vector: ReadonlyMap<Braid, Generation> }
+	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
+	| { readonly tag: "refused"; readonly detail: string }
+
 type ApplyPhase = "open" | "steady"
 
 type SlotApply = { readonly tag: "applied"; readonly generation: bigint } | { readonly tag: "discard" }
@@ -81,7 +87,7 @@ interface Replica<Rels extends SchemaRelations> extends AsyncDisposable {
 	readonly db: Db<Rels>
 	readonly vector: ReadonlyMap<Braid, Generation>
 	refresh(braid?: Braid): Promise<ReadonlyMap<Braid, Generation>>
-	waitFor(vector: ReadonlyMap<Braid, Generation>): Promise<void>
+	waitFor(vector: ReadonlyMap<Braid, Generation>): Promise<Waited>
 }
 
 interface Core<Rels extends SchemaRelations> {
@@ -194,27 +200,9 @@ function generationOf<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
 	})
 }
 
-function digestOfCatalog(raw: unknown): Digest32 {
-	if (raw instanceof Uint8Array) {
-		return digest32(raw)
-	}
-	throw errors.new(`catalogDigest is not a digest: ${typeof raw}`)
-}
-
-/** The opened store's catalog digest. The SDK may expose it on the
- *  handle or on the read instance; either spelling is the computed claim. */
+/** The opened store's catalog digest — the engine handle's computed claim. */
 function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): Digest32 {
-	const handle = core.db as unknown as { catalogDigest?: () => unknown }
-	if (typeof handle.catalogDigest === "function") {
-		return digestOfCatalog(handle.catalogDigest())
-	}
-	return core.db.read(function readCatalog(instance) {
-		const carrier = instance as { catalogDigest?: unknown }
-		if (typeof carrier.catalogDigest === "function") {
-			return digestOfCatalog(carrier.catalogDigest())
-		}
-		throw errors.new("the opened store does not expose catalogDigest")
-	})
+	return digest32(core.db.catalogDigest())
 }
 
 function chainOf<Rels extends SchemaRelations>(core: Core<Rels>): Chain {
@@ -322,47 +310,20 @@ function adoptChain<Rels extends SchemaRelations>(core: Core<Rels>, chain: Chain
 	}
 }
 
-/** Positional decoded row → the SDK's named fact, handles lifted for closed refs. */
-function factOf<Rels extends SchemaRelations>(
-	core: Core<Rels>,
-	relation: RelationInfo,
-	row: readonly Value[]
-): Record<string, unknown> {
-	const fact: Record<string, unknown> = {}
-	relation.fields.forEach(function liftCell(field, ordinal) {
-		const value = row[ordinal]
-		if (value === undefined) {
-			throw errors.new(`relation ${relation.name}: decoded row cell ${ordinal} absent`)
-		}
-		if (field.closedRef !== undefined && typeof value === "bigint") {
-			const roster = core.descriptor.relationByName.get(field.closedRef)
-			const handle = roster?.handles[Number(value)]
-			if (handle === undefined) {
-				throw errors.new(
-					`relation ${relation.name}.${field.name}: id ${value} is outside the ${field.closedRef} roster`
-				)
-			}
-			fact[field.name] = handle
-			return
-		}
-		fact[field.name] = value
-	})
-	return fact
-}
-
-/** One `db.write` applying ops in listed order, rows in listed order. */
+/** One `db.write` applying ops in listed order, rows in listed order.
+ *  The positional row → named fact lift is the engine's `factOf` —
+ *  closed-ref handles included. */
 function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): WriteOutcome<Rels, number> {
 	return core.db.write(function applyBatch(tx) {
 		for (const op of ops) {
-			const info = core.descriptor.relationByName.get(op.relation)
 			const member = core.theory.relations[op.relation]
-			if (info === undefined || member === undefined) {
+			if (member === undefined) {
 				throw errors.new(`batch op cites unknown relation ${op.relation}`)
 			}
 			const relation = member as MemberRelation<Rels>
 			const facts = op.rows.map(function liftRow(row) {
-				return factOf(core, info, row)
-			}) as unknown as Iterable<Fact<MemberRelation<Rels>>>
+				return factOf(relation, row)
+			})
 			if (op.op === "insert") {
 				tx.insert(relation, facts)
 			} else {
@@ -1024,19 +985,33 @@ async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid
 	return outcome
 }
 
-/** waitFor is refresh with a predicate: the same pass, then the check. */
-async function refreshUntil<Rels extends SchemaRelations>(core: Core<Rels>, predicate: () => boolean): Promise<void> {
+/** waitFor is refresh with a verdict: the same pass, then the full
+ *  Waited sum. A braid the target needs that is wedged below it returns
+ *  Wedged — no refresh will ever reach the target — and a heartbeat
+ *  refusal returns Refused. */
+async function waitForVector<Rels extends SchemaRelations>(
+	core: Core<Rels>,
+	target: ReadonlyMap<Braid, Generation>
+): Promise<Waited> {
 	for (;;) {
 		disposed(core)
-		if (predicate()) {
-			return
+		const have = vectorOf(core)
+		for (const [braid, wanted] of target) {
+			const cause = core.wedged.get(braid)
+			const at = have.get(braid)
+			if (cause !== undefined && at !== undefined && at < wanted) {
+				return { tag: "wedged", braid, cause }
+			}
 		}
-		await withGate(core, async function waitPass() {
+		if (Vector.from(have).dominates(Vector.from(target))) {
+			return { tag: "reached", vector: have }
+		}
+		const outcome = await withGate(core, async function waitPass() {
 			disposed(core)
-			await refreshPass(core)
+			return refreshPass(core)
 		})
-		if (predicate()) {
-			return
+		if (outcome.tag === "refused") {
+			return { tag: "refused", detail: outcome.detail }
 		}
 		await new Promise(function later(resolve) {
 			setTimeout(resolve, WAIT_FOR_POLL_MS)
@@ -1062,12 +1037,11 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 			})
 		},
 		async waitFor(vector) {
-			for (const braid of vector.keys()) {
-				chainEntry(core, braid)
+			const target = new Map<Braid, Generation>()
+			for (const [braid, wanted] of vector) {
+				target.set(braidOf(core.theory, braid), wanted)
 			}
-			await refreshUntil(core, function reached() {
-				return Vector.from(vectorOf(core)).dominates(Vector.from(vector))
-			})
+			return waitForVector(core, target)
 		},
 		async [Symbol.asyncDispose]() {
 			await withGate(core, async function disposeBody() {
@@ -1080,7 +1054,17 @@ async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOpt
 	return replica
 }
 
-export type { ApplyPhase, Core, OpenReplicaOptions, PendingFold, RefreshOutcome, Replica, ReplicaState, SlotApply }
+export type {
+	ApplyPhase,
+	Core,
+	OpenReplicaOptions,
+	PendingFold,
+	RefreshOutcome,
+	Replica,
+	ReplicaState,
+	SlotApply,
+	Waited
+}
 export {
 	applyOps,
 	applySlot,

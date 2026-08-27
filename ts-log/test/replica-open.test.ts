@@ -110,3 +110,54 @@ describe("adoptManifest is one transition", function suite() {
 		await replica[Symbol.asyncDispose]()
 	})
 })
+
+describe("waitFor surfaces the full Waited sum", function suite() {
+	test("a wedged braid the target needs returns Wedged promptly", async function wedged() {
+		const store = memStore()
+		const descriptor = descriptorOf(Ledger)
+		const created = await store.putCreate(
+			manifestKey("prod/main"),
+			renderManifest({ fingerprint: digest32(descriptor.fingerprintBytes), checkpoint: null })
+		)
+		assert.equal(created.tag, "created")
+		const replica = await openReplica({
+			store,
+			prefix: "prod/main",
+			dir: path.join(tmpRoot, "wedged-wait"),
+			theory: Ledger
+		})
+		const core = coreOf(replica)
+		const [home] = descriptor.braidMembers.keys()
+		assert.ok(home !== undefined)
+		core.wedged.set(home, "planted corruption")
+		const waited = await replica.waitFor(new Map([[home, generation(1n)]]))
+		assert.equal(waited.tag, "wedged")
+		assert.ok(waited.tag === "wedged")
+		assert.equal(waited.braid, home)
+		assert.equal(waited.cause, "planted corruption")
+		await replica[Symbol.asyncDispose]()
+	})
+
+	test("a dominated target returns Reached carrying the vector", async function reached() {
+		const store = memStore()
+		const descriptor = descriptorOf(Ledger)
+		const created = await store.putCreate(
+			manifestKey("prod/main"),
+			renderManifest({ fingerprint: digest32(descriptor.fingerprintBytes), checkpoint: null })
+		)
+		assert.equal(created.tag, "created")
+		const replica = await openReplica({
+			store,
+			prefix: "prod/main",
+			dir: path.join(tmpRoot, "reached-wait"),
+			theory: Ledger
+		})
+		const [home] = descriptor.braidMembers.keys()
+		assert.ok(home !== undefined)
+		const waited = await replica.waitFor(new Map([[home, generation(0n)]]))
+		assert.equal(waited.tag, "reached")
+		assert.ok(waited.tag === "reached")
+		assert.equal(waited.vector.get(home), 0n)
+		await replica[Symbol.asyncDispose]()
+	})
+})

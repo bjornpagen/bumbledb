@@ -368,6 +368,13 @@ interface Db<Rels extends SchemaRelations> {
 
 	writeFrom<R>(witness: Witness<Rels>, fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteFromOutcome<Rels, SyncResult<R>>
 	/**
+	 * blake3 over the canonical catalog enumeration — the replication
+	 * equality oracle: equal digests imply identical judged content
+	 * regardless of page layout or allocation history. Harness-tier
+	 * (bounded sequential passes over the store), off any hot path.
+	 */
+	catalogDigest(): Uint8Array
+	/**
 	 * Prepares a query value built against THIS schema (identity is the
 	 * membership rule): lowers it to the engine IR, pins the plan, and
 	 * returns the typed {@link Prepared} value. Every IR roster refusal —
@@ -1288,6 +1295,12 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		}, fn)
 	}
 
+	function catalogDigest(): Uint8Array {
+		return bridged("bumbledb catalog digest", function readCatalogDigest() {
+			return native.dbCatalogDigest(handle)
+		})
+	}
+
 	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
 		if (q.schema !== theory) {
 			throw errors.new(
@@ -1309,6 +1322,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		read,
 		write,
 		writeFrom,
+		catalogDigest,
 		prepare
 	})
 }

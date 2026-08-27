@@ -9,7 +9,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use bumbledb::{Admission, Violations};
+use bumbledb::Admission;
 
 use crate::braids::BraidId;
 use crate::codec::{BatchHeader, Op, OpKind};
@@ -20,14 +20,12 @@ use crate::store::{Create, CreateProbe, resolve_ambiguous_create, retry_read};
 
 use super::{
     AckMode, ContentionCause, Core, Durability, Error, Inner, LOSS_BOUND, Live, ObjectStore,
-    Resolved, Result, StepHook, Theory, Waiter, WriterStep,
+    Resolved, Result, Slotted, StepHook, Theory, Waiter, WriterStep,
 };
 
 pub(crate) enum Settled {
-    Accepted {
-        generation: u64,
-    },
-    Rejected(Violations),
+    /// The engine's verdict; the accepted payload is the braid slot.
+    Judged(Admission<u64>),
     /// Waiters were acked `LocalPending`; publication continues on the
     /// detached publisher, keyed by the pending bytes.
     Detached {
@@ -133,14 +131,14 @@ where
                             cause: self.hot_key(&violations),
                         });
                     }
-                    return Ok(Settled::Rejected(violations));
+                    return Ok(Settled::Judged(Admission::Rejected(violations)));
                 }
                 Admission::Accepted(committed) => {
                     if committed.generation.value() == before {
                         // The publish law: the empty commit is not a
                         // commit, and the log never gains a no-op slot.
                         self.clear_pending(core)?;
-                        return Ok(Settled::Accepted { generation: head.g });
+                        return Ok(Settled::Judged(Admission::Accepted(head.g)));
                     }
                 }
             }
@@ -160,11 +158,12 @@ where
                 && core.ack == AckMode::Local
             {
                 for waiter in acked {
-                    waiter.resolve(Resolved::Accepted {
+                    waiter.resolve(Resolved::Judged(Admission::Accepted(Slotted {
+                        value: (),
                         braid,
-                        generation: slot,
+                        slot,
                         durability: Durability::LocalPending,
-                    });
+                    })));
                 }
                 self.step(WriterStep::AckLocal)?;
                 return Ok(Settled::Detached { bytes });
@@ -246,7 +245,7 @@ where
         match created {
             Create::Created(_) => {
                 self.advance_and_clear(core, braid, slot, ts, bytes)?;
-                Ok(PublishEnd::Done(Settled::Accepted { generation: slot }))
+                Ok(PublishEnd::Done(Settled::Judged(Admission::Accepted(slot))))
             }
             Create::Ambiguous => {
                 let Some(winner) = retry_read(|| self.store.get(&key))
@@ -263,7 +262,7 @@ where
                 };
                 if winner.bytes == bytes {
                     self.advance_and_clear(core, braid, slot, ts, bytes)?;
-                    return Ok(PublishEnd::Done(Settled::Accepted { generation: slot }));
+                    return Ok(PublishEnd::Done(Settled::Judged(Admission::Accepted(slot))));
                 }
                 Ok(PublishEnd::Lost {
                     winner: winner.bytes,
@@ -280,7 +279,7 @@ where
                 };
                 if winner.bytes == bytes {
                     self.advance_and_clear(core, braid, slot, ts, bytes)?;
-                    return Ok(PublishEnd::Done(Settled::Accepted { generation: slot }));
+                    return Ok(PublishEnd::Done(Settled::Judged(Admission::Accepted(slot))));
                 }
                 Ok(PublishEnd::Lost {
                     winner: winner.bytes,

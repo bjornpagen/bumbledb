@@ -5,9 +5,11 @@
  * never by message-string matching. There is deliberately no
  * `ErrAlreadyApplied`: the state it would name is absorbed by idempotent
  * replay (L10) and never surfaces. ManifestMissing, Ambiguous, OverWidth,
- * Exhausted, and SlotRetired are named sums of their own: a replica
- * without a manifest, an unproved conditional write, a draw past the
- * lease width or the u64 ceiling, and a below-floor create.
+ * RefillNeeded, Exhausted, and SlotRetired are named sums of their own: a
+ * replica without a manifest, an unproved conditional write, a draw past
+ * the lease width, a cached id block too short for the draw, the u64
+ * ceiling, and a below-floor create. Exhaustion means the id space is
+ * spent — a refill is never an exhaustion.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -52,6 +54,13 @@ const ErrAmbiguous = errors.new("bumbledb-log ambiguous: the conditional write i
 
 /** A single id draw larger than one lease width; the width is the one block size. */
 const ErrOverWidth = errors.new("bumbledb-log overWidth: the draw exceeds the lease width")
+
+/**
+ * The cached id block is too short for the draw — the writer's signal
+ * to lease a fresh block. A refill is not an exhaustion: the id space
+ * still has room; only the cache is short.
+ */
+const ErrRefillNeeded = errors.new("bumbledb-log refillNeeded: the cached id block cannot cover the draw")
 
 /** The next lease would leave u64 — the id space is spent. */
 const ErrExhausted = errors.new("bumbledb-log exhausted: the id space is spent")
@@ -127,6 +136,12 @@ interface OverWidthData {
 	readonly requested: bigint
 }
 
+interface RefillNeededData {
+	readonly relation: number
+	readonly field: number
+	readonly requested: bigint
+}
+
 interface ExhaustedData {
 	readonly relation: number
 	readonly field: number
@@ -147,6 +162,7 @@ const chainData = new WeakMap<Error, ChainMismatchData>()
 const contentionData = new WeakMap<Error, ContentionData>()
 const ambiguousData = new WeakMap<Error, AmbiguousData>()
 const overWidthData = new WeakMap<Error, OverWidthData>()
+const refillNeededData = new WeakMap<Error, RefillNeededData>()
 const exhaustedData = new WeakMap<Error, ExhaustedData>()
 const slotRetiredData = new WeakMap<Error, SlotRetiredData>()
 
@@ -188,6 +204,12 @@ function refuseOverWidth(data: OverWidthData, detail: string): never {
 	throw error
 }
 
+function throwRefillNeeded(data: RefillNeededData, detail: string): never {
+	const error = errors.wrap(ErrRefillNeeded, detail)
+	refillNeededData.set(error, data)
+	throw error
+}
+
 function refuseExhausted(data: ExhaustedData, detail: string): never {
 	const error = errors.wrap(ErrExhausted, detail)
 	exhaustedData.set(error, data)
@@ -220,6 +242,10 @@ function overWidthOf(error: Error): OverWidthData | undefined {
 	return overWidthData.get(error)
 }
 
+function refillNeededOf(error: Error): RefillNeededData | undefined {
+	return refillNeededData.get(error)
+}
+
 function exhaustedOf(error: Error): ExhaustedData | undefined {
 	return exhaustedData.get(error)
 }
@@ -245,6 +271,7 @@ export type {
 	ExhaustedData,
 	LeaseRefusal,
 	OverWidthData,
+	RefillNeededData,
 	RefusalCause,
 	SlotRetiredData
 }
@@ -258,6 +285,7 @@ export {
 	ErrExhausted,
 	ErrGapDetected,
 	ErrOverWidth,
+	ErrRefillNeeded,
 	ErrRefused,
 	ErrReplayDiverged,
 	ErrSlotRetired,
@@ -266,6 +294,7 @@ export {
 	exhaustedOf,
 	isManifestMissing,
 	overWidthOf,
+	refillNeededOf,
 	refusalOf,
 	refuse,
 	refuseChain,
@@ -276,5 +305,6 @@ export {
 	slotRetiredOf,
 	throwAmbiguous,
 	throwContention,
+	throwRefillNeeded,
 	wrapStore
 }
