@@ -7,17 +7,17 @@ mod lane_e_support;
 use std::path::Path;
 use std::process::Command;
 
-use bumbledb::SchemaDescriptor;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor as Desc,
     StatementDescriptor, ValueType,
 };
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
 use bumbledb_log::gc::Gc;
 use bumbledb_log::manifest::{Manifest, manifest_key};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{CHECKPOINT_EVERY_BYTES, Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{CHECKPOINT_EVERY_BYTES, Options, Writer, WriterOpened};
 use lane_e_support::{NOTE, note_row, temp_dir, theory};
 
 fn open_writer(root: &std::path::Path, dir: &std::path::Path) -> Writer<SchemaDescriptor, FsStore> {
@@ -56,7 +56,7 @@ fn commit_notes(writer: &Writer<SchemaDescriptor, FsStore>, count: u64) {
                     Ok(())
                 })
                 .expect("commit"),
-            Commit::Accepted { .. }
+            Admission::Accepted(_)
         ));
     }
     writer.quiesce();
@@ -195,7 +195,7 @@ fn cross_the_byte_cadence(writer: &Writer<Desc, FsStore>) {
                 Ok(())
             })
             .expect("commit"),
-        Commit::Accepted { .. }
+        Admission::Accepted(_)
     ));
     writer.quiesce();
 }
@@ -252,7 +252,7 @@ fn the_once_binary_is_quiet_under_cadence() {
                 Ok(())
             })
             .expect("commit"),
-        Commit::Accepted { .. }
+        Admission::Accepted(_)
     ));
     writer.quiesce();
     drop(writer);

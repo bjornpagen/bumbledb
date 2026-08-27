@@ -1,19 +1,21 @@
 /**
- * The chain sidecar in `dir/chain`: a floor cache of chain
- * position, written atomically (temp + rename, fsync). The chain is
- * Settled or Pending — generation is the vector sum, plus one exactly
- * when the value is Pending. The document is a binary v:3 record:
- * version byte 3, counted roster of braid / g / prev / ts, pending
- * tag. Wire pending is the batch bytes. The content address is blake3
- * of those bytes. Every integer is little-endian.
+ * The chain sidecar in `dir/chain`: a floor cache of chain position,
+ * written atomically (temp + rename, fsync). The chain is Settled or
+ * Pending — generation is the vector sum, plus one exactly when the
+ * value is Pending. The byte grammar has one implementation —
+ * `crates/bumbledb-log` behind the napi bridge — so parse and render
+ * are marshal walks over the sealed codec handle; the file IO half
+ * lives here. The content address is blake3 of the rendered bytes.
  */
 
 import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
+import type { LogChain, LogCodecHandle, LogSidecarKind } from "@bjornpagen/bumbledb"
+import { internalLogParseSidecar, internalLogRenderSidecar } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
-import { ByteReader, ByteWriter, saturatingAddU64, U64_MAX } from "#bytes.ts"
-import type { ChainEntry } from "#codec.ts"
+import type { Digest32 } from "#bytes.ts"
+import { digest32, saturatingAddU64, U64_MAX } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
 import { refuse } from "#errors.ts"
@@ -24,15 +26,17 @@ import { Vector } from "#vector.ts"
 /** The sidecar's file name inside a replica directory. */
 const CHAIN_FILE = "chain"
 
-const VERSION = 3
-const SETTLED = 0
-const PENDING = 1
-/** u32 braid + u64 g + 32 prev + u64 ts. */
-const ENTRY_BYTES = 52n
+/** One braid's chain coordinate: the applied count, the applied
+ *  batch's content address, its timestamp. */
+interface ChainEntry {
+	readonly g: Generation
+	readonly prev: Digest32
+	readonly ts: bigint
+}
 
 interface Pending {
 	readonly braid: Braid
-	readonly gen: Generation
+	readonly slot: Generation
 	readonly bytes: Uint8Array
 }
 
@@ -72,114 +76,66 @@ function chainGeneration(chain: Chain): bigint {
 	return chain.tag === "settled" ? sum : saturatingAddU64(sum, 1n)
 }
 
-/** A declared count the remaining bytes cannot open is Malformed
- *  before the loop. */
-function refuseUnbacked(count: bigint, remaining: number, minItem: bigint, at: string): void {
-	if (count === 0n) {
-		return
-	}
-	if (minItem === 0n || BigInt(remaining) / minItem < count) {
-		refuse({ kind: "Malformed", at: remaining }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
+/**
+ * Remints a bridge refusal row as the driver's typed refusal. The
+ * boundary carries `{ kind, message }` only: the kind is the log
+ * core's own identity string, so the cause payload holds the data this
+ * side owns — the document's length, its version byte (byte 0 of every
+ * v:3 document). The raw braid id of an `UnknownBraid` rides the
+ * message; `NaN` marks the uncrossed slot.
+ */
+function refuseBridged(kind: LogSidecarKind, message: string, bytes: Uint8Array): never {
+	switch (kind) {
+		case "Version":
+			return refuse({ kind: "Version", version: bytes[0] ?? 0 }, message)
+		case "Overflow":
+			return refuse({ kind: "Overflow" }, message)
+		case "UnknownBraid":
+			return refuse({ kind: "UnknownBraid", braid: Number.NaN }, message)
+		case "Malformed":
+			return refuse({ kind: "Malformed", at: bytes.length }, message)
 	}
 }
 
-function renderSidecar(chain: Chain): Uint8Array {
-	const out = new ByteWriter(64)
-	out.u8(VERSION)
-	const braids = [...chain.entries.keys()].sort()
-	if (braids.length > 0xffffffff) {
-		throw errors.new("sidecar chain count exceeds u32")
-	}
-	out.u32le(braids.length)
-	for (const id of braids) {
-		const entry = chain.entries.get(id)
-		if (entry === undefined) {
-			throw errors.new(`sidecar chain lost braid ${id}`)
-		}
-		out.u32le(braidIdOf(id))
-		out.u64le(entry.g)
-		out.bytes(entry.prev)
-		out.u64le(entry.ts)
-	}
-	if (chain.tag === "settled") {
-		out.u8(SETTLED)
-		return out.finish()
-	}
-	out.u8(PENDING)
-	out.u32le(braidIdOf(chain.batch.braid))
-	out.u64le(chain.batch.gen)
-	if (chain.batch.bytes.length > 0xffffffff) {
-		throw errors.new("sidecar pending exceeds u32 length")
-	}
-	out.u32le(chain.batch.bytes.length)
-	out.bytes(chain.batch.bytes)
-	return out.finish()
+function renderSidecar(codec: LogCodecHandle, chain: Chain): Uint8Array {
+	const entries = [...chain.entries.entries()]
+		.sort(function ascending(a, b) {
+			return braidIdOf(a[0]) - braidIdOf(b[0])
+		})
+		.map(function entryOf([id, entry]) {
+			return { braid: braidIdOf(id), g: entry.g, prev: entry.prev, ts: entry.ts }
+		})
+	const doc: LogChain =
+		chain.tag === "settled"
+			? { entries }
+			: {
+					entries,
+					pending: { braid: braidIdOf(chain.batch.braid), slot: chain.batch.slot, bytes: chain.batch.bytes }
+				}
+	return internalLogRenderSidecar(codec, doc)
 }
 
-function parseSidecar(bytes: Uint8Array, known?: ReadonlySet<Braid>): Chain {
-	const reader = new ByteReader(bytes, {
-		fail(what: string): never {
-			refuse({ kind: "Malformed", at: bytes.length }, `sidecar truncated at ${what}`)
-		}
-	})
-	const at = function offset(): number {
-		return bytes.length - reader.remaining()
+function parseSidecar(codec: LogCodecHandle, bytes: Uint8Array): Chain {
+	const parsed = internalLogParseSidecar(codec, bytes)
+	if (!parsed.ok) {
+		refuseBridged(parsed.kind, parsed.message, bytes)
 	}
-	const version = reader.u8("version")
-	if (version !== VERSION) {
-		refuse({ kind: "Version", version }, `sidecar version ${version}, consumers refuse ≠ ${VERSION}`)
-	}
-	const count = BigInt(reader.u32le("chain count"))
-	refuseUnbacked(count, reader.remaining(), ENTRY_BYTES, "chain count")
 	const entries = new Map<Braid, ChainEntry>()
-	let last: Braid | undefined
-	for (let i = 0n; i < count; i++) {
-		const raw = reader.u32le("braid")
-		const name = braidHex(raw)
-		if (known !== undefined && !known.has(name)) {
-			refuse({ kind: "UnknownBraid", braid: raw }, `sidecar cites unknown braid ${name}`)
-		}
-		const g = reader.u64le("g")
-		const prev = reader.array32("prev")
-		const ts = reader.u64le("ts")
-		if (last !== undefined && last >= name) {
-			refuse({ kind: "Malformed", at: at() }, "sidecar chain is not strictly ascending")
-		}
-		entries.set(name, { g: generation(g), prev, ts })
-		last = name
+	for (const entry of parsed.value.entries) {
+		entries.set(braidHex(entry.braid), { g: generation(entry.g), prev: digest32(entry.prev), ts: entry.ts })
 	}
-	if (typeof vectorOf(entries).sum() !== "bigint") {
-		refuse({ kind: "Overflow" }, "sidecar chain sum overflows u64")
-	}
-	const tag = reader.u8("pending")
-	if (tag === SETTLED) {
-		if (reader.remaining() !== 0) {
-			refuse({ kind: "Malformed", at: reader.remaining() }, `${reader.remaining()} trailing bytes after the sidecar`)
-		}
+	const pending = parsed.value.pending
+	if (pending === undefined) {
 		return { tag: "settled", entries }
-	}
-	if (tag !== PENDING) {
-		refuse({ kind: "Malformed", at: at() - 1 }, `sidecar pending tag ${tag}`)
-	}
-	const raw = reader.u32le("pending braid")
-	const name = braidHex(raw)
-	if (known !== undefined && !known.has(name)) {
-		refuse({ kind: "UnknownBraid", braid: raw }, `sidecar pending cites unknown braid ${name}`)
-	}
-	const slot = reader.u64le("pending generation")
-	const length = reader.u32le("pending length")
-	const body = reader.bytes(length, "pending bytes")
-	if (reader.remaining() !== 0) {
-		refuse({ kind: "Malformed", at: reader.remaining() }, `${reader.remaining()} trailing bytes after the sidecar`)
 	}
 	return {
 		tag: "pending",
 		entries,
-		batch: { braid: name, gen: generation(slot), bytes: body }
+		batch: { braid: braidHex(pending.braid), slot: generation(pending.slot), bytes: pending.bytes }
 	}
 }
 
-async function readSidecar(file: string, known?: ReadonlySet<Braid>): Promise<SidecarRead> {
+async function readSidecar(codec: LogCodecHandle, file: string): Promise<SidecarRead> {
 	const read = await errors.try(fs.readFile(file))
 	if (read.error) {
 		if (codeOf(read.error) === "ENOENT") {
@@ -188,7 +144,7 @@ async function readSidecar(file: string, known?: ReadonlySet<Braid>): Promise<Si
 		return { tag: "fault", io: read.error }
 	}
 	const parsed = errors.trySync(function parse() {
-		return parseSidecar(read.data, known)
+		return parseSidecar(codec, read.data)
 	})
 	if (parsed.error) {
 		return { tag: "corrupt", parse: parsed.error }
@@ -196,14 +152,14 @@ async function readSidecar(file: string, known?: ReadonlySet<Braid>): Promise<Si
 	return { tag: "read", chain: parsed.data }
 }
 
-async function writeSidecar(file: string, chain: Chain): Promise<void> {
+async function writeSidecar(codec: LogCodecHandle, file: string, chain: Chain): Promise<void> {
 	const dir = path.dirname(file)
 	await fs.mkdir(dir, { recursive: true })
 	const temp = path.join(dir, `.chain-${process.pid}-${crypto.randomBytes(4).toString("hex")}`)
 	const handle = await fs.open(temp, "wx")
 	const written = await errors.try(
 		(async function writeAll() {
-			await handle.writeFile(renderSidecar(chain))
+			await handle.writeFile(renderSidecar(codec, chain))
 			await handle.sync()
 		})()
 	)

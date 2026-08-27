@@ -169,7 +169,9 @@ pub fn lease_block<S: ObjectStore>(
 /// batch, manifest, checkpoint, sidecar — so this walk is digits, not
 /// the document `Text` grammar that dies with JSON. Overflow is a
 /// refusal (00 §6): a number the digits cannot name is unconstructible.
-fn parse_counter(bytes: &[u8]) -> Option<u64> {
+/// The conformance walk drives this parse over `counter/*.bin`.
+#[must_use]
+pub fn parse_counter(bytes: &[u8]) -> Option<u64> {
     let mut value: u64 = 0;
     let mut len = 0usize;
     for &byte in bytes {

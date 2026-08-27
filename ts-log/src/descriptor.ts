@@ -2,18 +2,22 @@
  * The parsed protocol descriptor: one thin parse of the engine's sealed
  * truth — relation ids, sealed field order, resolved closed rows,
  * materialized statements, and the real fingerprint — plus the braid
- * map the protocol derives from that truth. Cached per theory value.
+ * map and serial-at roster read off the log core's braids seat
+ * (`internalLogBraidsOf`): one derivation of the braid partition,
+ * projected here into the driver's branded shapes. Cached per theory
+ * value.
  */
 
 import type {
 	AnySchema,
 	FactValue,
+	LogCodecHandle,
 	SchemaSpec,
 	SealedDescriptor,
 	SealedStatement,
 	ValueTypeSpec
 } from "@bjornpagen/bumbledb"
-import { internalDescriptor, lower } from "@bjornpagen/bumbledb"
+import { internalDescriptor, internalLogBraidsOf, internalLogCodec, lower } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import { fromHex } from "#bytes.ts"
@@ -53,58 +57,37 @@ function refuseShape(why: string): never {
 	throw errors.new(`theory: ${why}`)
 }
 
-function indexRelations(relations: readonly RelationInfo[]): Map<number, RelationInfo> {
-	const byId = new Map<number, RelationInfo>()
-	for (const relation of relations) {
-		if (byId.has(relation.id)) {
-			refuseShape(`duplicate relation id ${relation.id}`)
-		}
-		byId.set(relation.id, relation)
-	}
-	return byId
-}
-
-function relationOfId(byId: ReadonlyMap<number, RelationInfo>, id: number): RelationInfo {
-	const relation = byId.get(id)
-	if (relation === undefined) {
-		refuseShape(`unknown relation id ${id}`)
-	}
-	return relation
-}
-
 interface SerialStatement {
 	readonly statement: number
 	readonly braid: Braid
 }
 
-function serialAtOf(
-	byId: ReadonlyMap<number, RelationInfo>,
+/** The braids seat names serial-at statements by id; the braid tag is a
+ *  projection join through the statement's own relation. */
+function serialAtFrom(
+	ids: readonly number[],
 	statements: readonly SealedStatement[],
 	braidOfRelation: ReadonlyMap<number, Braid>
 ): SerialStatement[] {
-	const serialAt: SerialStatement[] = []
+	const statementById = new Map<number, SealedStatement>()
 	for (const statement of statements) {
-		if (statement.kind === "functionality" && statement.projection.length === 0) {
-			const relation = relationOfId(byId, statement.relation)
-			if (relation.fields.length > 0) {
-				const braid = braidOfRelation.get(statement.relation)
-				if (braid !== undefined) {
-					serialAt.push({ statement: statement.id, braid })
-				}
-			}
-		}
-		if (statement.kind === "capacity" && statement.target.projection.length === 0) {
-			const targetRelation = relationOfId(byId, statement.target.relation)
-			if (!targetRelation.closed) {
-				const braid = braidOfRelation.get(statement.target.relation)
-				if (braid === undefined) {
-					refuseShape(`capacity ${statement.id} target ${targetRelation.name} is not in the derived braid set`)
-				}
-				serialAt.push({ statement: statement.id, braid })
-			}
-		}
+		statementById.set(statement.id, statement)
 	}
-	return serialAt
+	return ids.map(function joinBraid(id) {
+		const statement = statementById.get(id)
+		if (statement === undefined) {
+			refuseShape(`serial-at statement ${id} is not in the sealed statements`)
+		}
+		if (statement.kind === "containment") {
+			refuseShape(`serial-at statement ${id} is a containment`)
+		}
+		const relation = statement.kind === "functionality" ? statement.relation : statement.target.relation
+		const braid = braidOfRelation.get(relation)
+		if (braid === undefined) {
+			refuseShape(`serial-at statement ${id} relation ${relation} is in no braid`)
+		}
+		return { statement: id, braid }
+	})
 }
 
 interface Descriptor {
@@ -116,6 +99,9 @@ interface Descriptor {
 	/** Braid id → member relation ids, ascending. */
 	readonly braidMembers: ReadonlyMap<Braid, readonly number[]>
 	readonly serialAtStatements: readonly SerialStatement[]
+	/** The sealed per-theory codec handle — the grammar's one reader,
+	 *  minted once and cached with the parse. */
+	readonly codec: LogCodecHandle
 	readonly fingerprint: string
 	readonly fingerprintBytes: Uint8Array
 }
@@ -224,9 +210,17 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 	}
 
 	const statements = sealed.statements
-	const byId = indexRelations(relations)
-	const { braidOfRelation, braidMembers } = deriveBraids(byId, statements)
-	const serialAtStatements = serialAtOf(byId, statements, braidOfRelation)
+	const braids = internalLogBraidsOf(sealed)
+	const braidOfRelation = new Map<number, Braid>()
+	const braidMembers = new Map<Braid, readonly number[]>()
+	for (const component of braids.components) {
+		const id = braidHex(component.braid)
+		braidMembers.set(id, component.relations)
+		for (const member of component.relations) {
+			braidOfRelation.set(member, id)
+		}
+	}
+	const serialAtStatements = serialAtFrom(braids.serialAt, statements, braidOfRelation)
 
 	const fingerprint = sealed.fingerprint
 	return {
@@ -236,6 +230,7 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 		braidOfRelation,
 		braidMembers,
 		serialAtStatements,
+		codec: internalLogCodec(sealed),
 		fingerprint,
 		fingerprintBytes: fromHex(fingerprint)
 	}
@@ -254,75 +249,11 @@ function withFingerprint(descriptor: Descriptor, fingerprint: string): Descripto
 		braidOfRelation: descriptor.braidOfRelation,
 		braidMembers: descriptor.braidMembers,
 		serialAtStatements: descriptor.serialAtStatements,
+		codec: descriptor.codec,
 		fingerprint,
 		fingerprintBytes: fromHex(fingerprint)
 	}
 }
 
-function deriveBraids(
-	byId: ReadonlyMap<number, RelationInfo>,
-	statements: readonly SealedStatement[]
-): { braidOfRelation: Map<number, Braid>; braidMembers: Map<Braid, readonly number[]> } {
-	const parent = new Map<number, number>()
-	for (const relation of byId.values()) {
-		if (!relation.closed) {
-			parent.set(relation.id, relation.id)
-		}
-	}
-	function rootOf(id: number): number {
-		let cursor = id
-		for (;;) {
-			const up = parent.get(cursor)
-			if (up === undefined || up === cursor) {
-				return cursor
-			}
-			cursor = up
-		}
-	}
-	function union(a: number, b: number): void {
-		const ra = rootOf(a)
-		const rb = rootOf(b)
-		if (ra !== rb) {
-			parent.set(Math.max(ra, rb), Math.min(ra, rb))
-		}
-	}
-	for (const statement of statements) {
-		if (statement.kind === "functionality") {
-			continue
-		}
-		const source = relationOfId(byId, statement.source.relation)
-		const target = relationOfId(byId, statement.target.relation)
-		if (source.closed || target.closed) {
-			continue
-		}
-		union(source.id, target.id)
-	}
-	const members = new Map<number, number[]>()
-	for (const id of parent.keys()) {
-		const root = rootOf(id)
-		const list = members.get(root)
-		if (list === undefined) {
-			members.set(root, [id])
-		} else {
-			list.push(id)
-		}
-	}
-	const braidOfRelation = new Map<number, Braid>()
-	const braidMembers = new Map<Braid, readonly number[]>()
-	for (const [root, ids] of [...members.entries()].sort(function byRoot(a, b) {
-		return a[0] - b[0]
-	})) {
-		const braid = braidHex(root)
-		ids.sort(function ascending(a, b) {
-			return a - b
-		})
-		braidMembers.set(braid, ids)
-		for (const id of ids) {
-			braidOfRelation.set(id, braid)
-		}
-	}
-	return { braidOfRelation, braidMembers }
-}
-
 export type { Braid, Descriptor, FieldInfo, RelationInfo, SerialStatement, Theory }
-export { braid, braidHex, deriveBraids, descriptorOf, serialAtOf, withFingerprint }
+export { braid, braidHex, descriptorOf, withFingerprint }

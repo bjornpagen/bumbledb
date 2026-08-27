@@ -7,9 +7,11 @@
 pub mod fence;
 pub mod fs;
 pub mod mem;
+#[cfg(feature = "store")]
 pub mod s3;
 
 use std::fmt;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -23,10 +25,10 @@ pub const TEMP_NAMESPACE: &str = "~tmp";
 pub const LEASE_NAMESPACE: &str = "~lease";
 
 /// A slash-path object key, parsed once. Empty segments, dot segments,
-/// a leading or trailing slash, a reserved tilde (ASCII or lookalike)
-/// segment, a control or line/para separator, and a lock-suffix after
-/// format characters are stripped are unrepresentable — the verbs take
-/// the proof and never re-check.
+/// a leading or trailing slash, a segment whose first code point is in
+/// the reserved tilde family, any control, format, or separator code
+/// point (Cc, Cf, Zl, Zp, Zs), and a `.lock` suffix are unrepresentable
+/// — the verbs take the proof and never re-check.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StoreKey(String);
 
@@ -77,7 +79,10 @@ impl StoreKey {
     }
 }
 
-/// One path segment of a key or a tenant id: the same grammar.
+/// One path segment of a key or a tenant id: the same grammar. A
+/// control, format, or separator code point (Cc, Cf, Zl, Zp, Zs)
+/// refuses outright: `is_control` is Cc, [`is_cf`] is Cf, and
+/// `char::is_whitespace` outside Cc is exactly Zl ∪ Zp ∪ Zs.
 #[must_use]
 pub fn segment_ok(seg: &str) -> bool {
     if seg.is_empty() || seg.contains('/') || seg == "." || seg == ".." {
@@ -85,38 +90,40 @@ pub fn segment_ok(seg: &str) -> bool {
     }
     if seg
         .chars()
-        .any(|c| c.is_control() || is_line_or_para_sep(c))
+        .any(|c| c.is_control() || is_cf(c) || c.is_whitespace())
     {
         return false;
     }
-    let stripped: String = seg.chars().filter(|c| !is_cf(*c)).collect();
-    let Some(first) = stripped.chars().next() else {
+    let Some(first) = seg.chars().next() else {
         return false;
     };
-    !is_tilde_lookalike(first) && !stripped.ends_with(LOCK_SUFFIX)
+    !is_tilde_lookalike(first) && !seg.ends_with(LOCK_SUFFIX)
 }
+
+/// The reserved tilde family — ASCII `~`, its lookalikes, and the NFKC
+/// preimage of U+007E — read from the conformance table, the one fact
+/// both drivers consume.
+static TILDE_FAMILY: LazyLock<Vec<char>> = LazyLock::new(|| {
+    const TABLE: &str = include_str!("../conformance/v3/keys/tilde-family.json");
+    let list = &TABLE[TABLE.find("\"codePoints\"").expect("a codePoints array")..];
+    let family: Vec<char> = list
+        .split('"')
+        .filter_map(|token| token.strip_prefix("U+"))
+        .map(|hex| {
+            char::from_u32(u32::from_str_radix(hex, 16).expect("a hex code point"))
+                .expect("a scalar value")
+        })
+        .collect();
+    assert!(!family.is_empty(), "the tilde table names its code points");
+    family
+});
 
 fn is_tilde_lookalike(c: char) -> bool {
-    matches!(
-        c,
-        '~' | '\u{02DC}'
-            | '\u{02F7}'
-            | '\u{1FC0}'
-            | '\u{2053}'
-            | '\u{223C}'
-            | '\u{223D}'
-            | '\u{301C}'
-            | '\u{3030}'
-            | '\u{FF5E}'
-    )
+    TILDE_FAMILY.contains(&c)
 }
 
-fn is_line_or_para_sep(c: char) -> bool {
-    matches!(c, '\u{2028}' | '\u{2029}')
-}
-
-/// Unicode category Cf. Stripped before the lock-suffix and tilde
-/// checks so a ZWSP cannot hide `.lock` or a reserved prefix.
+/// Unicode category Cf. A format character refuses the segment
+/// outright, so it can hide neither `.lock` nor a reserved prefix.
 fn is_cf(c: char) -> bool {
     matches!(
         c as u32,
@@ -574,8 +581,16 @@ mod tests {
             "fullwidth tilde is a reserved-prefix lookalike"
         );
         assert!(
+            StoreKey::parse("\u{2E1E}x").is_err(),
+            "the tilde family is the conformance table's fifteen"
+        );
+        assert!(
+            StoreKey::parse("x\u{2E1E}").is_ok(),
+            "the family elsewhere in a segment is ordinary text"
+        );
+        assert!(
             StoreKey::parse("manifest.lock\u{200B}").is_err(),
-            "ZWSP after .lock is still the lock suffix"
+            "a format character refuses the segment"
         );
         assert!(
             StoreKey::parse("log/\u{2028}/1").is_err(),
@@ -583,6 +598,11 @@ mod tests {
         );
         assert!(StoreKey::parse("log/\u{2029}/1").is_err());
         assert!(StoreKey::parse("\u{200B}~tmp/x").is_err());
+        assert!(StoreKey::parse("a b").is_err(), "Zs refuses");
+        assert!(
+            StoreKey::parse("a\u{00A0}b").is_err(),
+            "no-break space is Zs"
+        );
     }
 
     #[test]

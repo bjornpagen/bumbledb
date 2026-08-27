@@ -5,12 +5,12 @@
 
 mod lane_e_support;
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{
-    AckMode, Commit, Durability, Error, Options, Writer, WriterOpened, WriterStep,
+    AckMode, Durability, Error, Options, Slotted, Writer, WriterOpened, WriterStep,
 };
 use lane_e_support::{CrashOnce, NOTE, codec, note_braid, note_row, temp_dir, theory};
 
@@ -56,11 +56,11 @@ fn local_ack_returns_local_pending_and_publishes_behind() {
     assert!(
         matches!(
             outcome,
-            Commit::Accepted {
-                generation: 1,
+            Admission::Accepted(Slotted {
+                slot: 1,
                 durability: Durability::LocalPending,
                 ..
-            }
+            })
         ),
         "the ack moved to the end of the local apply"
     );
@@ -99,10 +99,10 @@ fn crashed_publisher_retains_pending_and_the_next_commit_publishes() {
         .expect("commit acks before the publisher runs");
     assert!(matches!(
         outcome,
-        Commit::Accepted {
+        Admission::Accepted(Slotted {
             durability: Durability::LocalPending,
             ..
-        }
+        })
     ));
     writer.quiesce();
     let codec = codec();
@@ -121,7 +121,10 @@ fn crashed_publisher_retains_pending_and_the_next_commit_publishes() {
             Ok(())
         })
         .expect("the next commit publishes the backlog first");
-    assert!(matches!(second, Commit::Accepted { generation: 2, .. }));
+    assert!(matches!(
+        second,
+        Admission::Accepted(Slotted { slot: 2, .. })
+    ));
     writer.quiesce();
     assert_eq!(writer.backlog(), None);
     assert_eq!(writer.vector().at(braid), 2);

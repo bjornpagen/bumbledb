@@ -1,13 +1,10 @@
 //! The per-braid generation map. Sum, domination, checkpoint order,
-//! apply's increment, and the coordinate's one binary encoding live
-//! here. Overflow is a refusal of [`Vector::sum`] and of nowhere else.
+//! and apply's increment live here. Overflow is a refusal of
+//! [`Vector::sum`] and of nowhere else.
 
 use std::collections::BTreeMap;
 
 use crate::braids::BraidId;
-
-/// One braid id and its applied count on the wire: `u32le` + `u64le`.
-const PAIR_BYTES: usize = 4 + 8;
 
 /// The vector sum overflowed `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,27 +17,6 @@ pub enum CheckpointOrder {
     Before,
     Equal,
     After,
-}
-
-/// Why a vector payload refused to parse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VectorError {
-    Truncated { offset: usize },
-    TrailingBytes { at: usize },
-    Malformed { at: usize },
-    Overflow,
-}
-
-impl VectorError {
-    #[must_use]
-    pub const fn identity(&self) -> &'static str {
-        match self {
-            Self::Truncated { .. } => "Truncated",
-            Self::TrailingBytes { .. } => "TrailingBytes",
-            Self::Malformed { .. } => "Malformed",
-            Self::Overflow => "Overflow",
-        }
-    }
 }
 
 /// Applied counts keyed by braid. Any vector is a legal restore point;
@@ -108,58 +84,6 @@ impl Vector {
     pub fn iter(&self) -> impl Iterator<Item = (BraidId, u64)> + '_ {
         self.counts.iter().map(|(&braid, &g)| (braid, g))
     }
-
-    /// `u32le` count, then `(u32le braid, u64le g)` pairs in braid order,
-    /// bounded by the bytes behind the count.
-    ///
-    /// # Panics
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
-        let count = u32::try_from(self.counts.len()).expect("braid count fits u32");
-        let mut out = Vec::with_capacity(4 + self.counts.len() * PAIR_BYTES);
-        out.extend_from_slice(&count.to_le_bytes());
-        for (braid, g) in &self.counts {
-            out.extend_from_slice(&braid.raw().to_le_bytes());
-            out.extend_from_slice(&g.to_le_bytes());
-        }
-        out
-    }
-
-    /// Inverse of [`Self::encode`]. A count the remaining bytes cannot
-    /// open is truncated; entries must ascend; overflow is [`Self::sum`].
-    ///
-    /// # Errors
-    pub fn parse(bytes: &[u8]) -> Result<Self, VectorError> {
-        let mut cur = Cursor::new(bytes);
-        let count = cur.u32()?;
-        let need = usize::try_from(count)
-            .ok()
-            .and_then(|n| n.checked_mul(PAIR_BYTES))
-            .ok_or(VectorError::Truncated { offset: cur.at })?;
-        if cur.remaining() < need {
-            return Err(VectorError::Truncated { offset: cur.at });
-        }
-        let mut vector = Self::new();
-        for _ in 0..count {
-            let braid = BraidId::from_raw(cur.u32()?);
-            let g = cur.u64()?;
-            if vector
-                .counts
-                .last_key_value()
-                .is_some_and(|(last, _)| *last >= braid)
-            {
-                return Err(VectorError::Malformed { at: cur.at });
-            }
-            vector.set(braid, g);
-        }
-        if vector.sum().is_err() {
-            return Err(VectorError::Overflow);
-        }
-        if cur.remaining() != 0 {
-            return Err(VectorError::TrailingBytes { at: cur.at });
-        }
-        Ok(vector)
-    }
 }
 
 impl From<BTreeMap<BraidId, u64>> for Vector {
@@ -176,47 +100,9 @@ impl FromIterator<(BraidId, u64)> for Vector {
     }
 }
 
-struct Cursor<'b> {
-    bytes: &'b [u8],
-    at: usize,
-}
-
-impl<'b> Cursor<'b> {
-    const fn new(bytes: &'b [u8]) -> Self {
-        Self { bytes, at: 0 }
-    }
-
-    const fn remaining(&self) -> usize {
-        self.bytes.len().saturating_sub(self.at)
-    }
-
-    fn take(&mut self, len: usize) -> Result<&'b [u8], VectorError> {
-        let end = self
-            .at
-            .checked_add(len)
-            .filter(|&end| end <= self.bytes.len())
-            .ok_or(VectorError::Truncated { offset: self.at })?;
-        let slice = &self.bytes[self.at..end];
-        self.at = end;
-        Ok(slice)
-    }
-
-    fn u32(&mut self) -> Result<u32, VectorError> {
-        let bytes = self.take(4)?;
-        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-    }
-
-    fn u64(&mut self) -> Result<u64, VectorError> {
-        let bytes = self.take(8)?;
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(bytes);
-        Ok(u64::from_le_bytes(raw))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{CheckpointOrder, Overflow, Vector, VectorError};
+    use super::{CheckpointOrder, Overflow, Vector};
     use crate::braids::BraidId;
 
     fn braid(raw: u32) -> BraidId {
@@ -248,25 +134,6 @@ mod tests {
         assert_eq!(low.order(&high), CheckpointOrder::Before);
         assert_eq!(high.order(&low), CheckpointOrder::After);
         assert_eq!(low.order(&low), CheckpointOrder::Equal);
-    }
-
-    #[test]
-    fn encode_is_count_then_pairs_and_parse_is_the_inverse() {
-        let vector: Vector = [(braid(1), 4), (braid(3), 9)].into_iter().collect();
-        let bytes = vector.encode();
-        assert_eq!(&bytes[..4], 2u32.to_le_bytes());
-        assert_eq!(Vector::parse(&bytes), Ok(vector));
-    }
-
-    #[test]
-    fn parse_refuses_a_sum_that_overflows() {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&2u32.to_le_bytes());
-        bytes.extend_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
-        bytes.extend_from_slice(&2u32.to_le_bytes());
-        bytes.extend_from_slice(&1u64.to_le_bytes());
-        assert_eq!(Vector::parse(&bytes), Err(VectorError::Overflow));
     }
 
     #[test]

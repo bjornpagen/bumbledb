@@ -10,6 +10,7 @@ import type {
 	LiteralSetSpec,
 	LiteralSpec,
 	SchemaSpec,
+	SealedDescriptor,
 	SealedHi,
 	SealedSide,
 	SealedStatement,
@@ -18,11 +19,12 @@ import type {
 	StatementSpec,
 	ValueSpec
 } from "@bjornpagen/bumbledb"
+import { internalLogBraidsOf, internalLogCodec } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import { fromHex } from "#bytes.ts"
-import type { Descriptor, FieldInfo, RelationInfo } from "#descriptor.ts"
-import { deriveBraids, serialAtOf } from "#descriptor.ts"
+import type { Braid, Descriptor, FieldInfo, RelationInfo } from "#descriptor.ts"
+import { braidHex } from "#descriptor.ts"
 
 const ID_CLASS = regex("^(.*)\\.id$")
 
@@ -351,10 +353,51 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 		}
 	}
 
-	const { braidOfRelation, braidMembers } = deriveBraids(byId, statements)
-	const serialAtStatements = serialAtOf(byId, statements, braidOfRelation)
-
 	const fingerprint = "00".repeat(32)
+	// The shadow wire: exactly what the bridge's descriptor walker reads
+	// — names, layouts, fresh flags, extension PRESENCE, the assembled
+	// statements verbatim — so the one derivation and the one codec judge
+	// the corpus shapes too.
+	const wire: SealedDescriptor = {
+		relations: relations.map(function relationWire(relation) {
+			const fields = relation.fields.map(function fieldWire(field, ordinal) {
+				return { name: field.name, id: ordinal, valueType: field.type, fresh: field.fresh }
+			})
+			return relation.closed
+				? { name: relation.name, id: relation.id, fields, extension: [] }
+				: { name: relation.name, id: relation.id, fields }
+		}),
+		statements,
+		fingerprint
+	}
+	const braids = internalLogBraidsOf(wire)
+	const braidOfRelation = new Map<number, Braid>()
+	const braidMembers = new Map<Braid, readonly number[]>()
+	for (const component of braids.components) {
+		const id = braidHex(component.braid)
+		braidMembers.set(id, component.relations)
+		for (const member of component.relations) {
+			braidOfRelation.set(member, id)
+		}
+	}
+	const serialAtStatements = braids.serialAt.map(function joinBraid(id) {
+		const statement = statements.find(function byId(candidate) {
+			return candidate.id === id
+		})
+		if (statement === undefined) {
+			refuseShape(`serial-at statement ${id} is not in the assembled statements`)
+		}
+		if (statement.kind === "containment") {
+			refuseShape(`serial-at statement ${id} is a containment`)
+		}
+		const relation = statement.kind === "functionality" ? statement.relation : statement.target.relation
+		const braid = braidOfRelation.get(relation)
+		if (braid === undefined) {
+			refuseShape(`serial-at statement ${id} relation ${relation} is in no braid`)
+		}
+		return { statement: id, braid }
+	})
+
 	return {
 		relations,
 		relationByName: byName,
@@ -362,6 +405,7 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 		braidOfRelation,
 		braidMembers,
 		serialAtStatements,
+		codec: internalLogCodec(wire),
 		fingerprint,
 		fingerprintBytes: fromHex(fingerprint)
 	}

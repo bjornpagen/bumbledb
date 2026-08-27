@@ -13,18 +13,6 @@ import { Ledger } from "#test/fixtures.ts"
 const ZERO_DIGEST = digest32(new Uint8Array(32))
 const ONES_DIGEST = digest32(new Uint8Array(32).fill(1))
 
-/** Header layout offsets (20): magic 0, version 4, flags 6, fingerprint 8, braid 40, gen 44, prev 52, writer 84, ts 92, ops 100. */
-const OFFSET = {
-	magic: 0,
-	version: 4,
-	flags: 6,
-	fingerprint: 8,
-	braid: 40,
-	opCount: 100,
-	firstOpKind: 104,
-	firstCellTag: 113
-}
-
 function headerOf(): BatchHeader {
 	return {
 		fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes),
@@ -60,7 +48,7 @@ function refusalKindOf(run: () => unknown): string {
 	return cause.kind
 }
 
-describe("the command codec", function suite() {
+describe("the command codec seat", function suite() {
 	test("decode(encode) roundtrips header and ops; re-encode is byte-identical", function roundtrip() {
 		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
 		const decoded = decodeBatch(Ledger, bytes)
@@ -70,7 +58,7 @@ describe("the command codec", function suite() {
 		assert.equal(toHex(again), toHex(bytes))
 	})
 
-	test("every value tag rides the wire: bool, u64, i64, string, fixedBytes, interval, fixedInterval", function allTags() {
+	test("every value tag rides the bridge: bool, u64, i64, string, fixedBytes, interval, fixedInterval", function allTags() {
 		const Wide = relation("Wide", {
 			flag: bool,
 			count: u64,
@@ -98,39 +86,6 @@ describe("the command codec", function suite() {
 		assert.deepEqual(decoded.ops[0]?.rows[0], row)
 	})
 
-	test("bad magic refuses", function magic() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		bytes[OFFSET.magic] = 0x58
-		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
-			}),
-			"BadMagic"
-		)
-	})
-
-	test("version 1 refuses", function version() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		bytes[OFFSET.version] = 1
-		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
-			}),
-			"Version"
-		)
-	})
-
-	test("version 2 refuses", function versionTwo() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		bytes[OFFSET.version] = 2
-		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
-			}),
-			"Version"
-		)
-	})
-
 	test("a short prev cannot encode", function shortPrev() {
 		assert.equal(
 			refusalKindOf(function encodeIt() {
@@ -143,6 +98,12 @@ describe("the command codec", function suite() {
 	test("a lone surrogate cannot encode", function loneSurrogate() {
 		assert.throws(function encodeIt() {
 			return encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Holder", rows: [[1n, "\uD800"]] }])
+		})
+	})
+
+	test("an op citing a relation name outside the theory cannot encode", function unknownName() {
+		assert.throws(function encodeIt() {
+			return encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Ghost", rows: [] }])
 		})
 	})
 
@@ -165,65 +126,51 @@ describe("the command codec", function suite() {
 		})
 	})
 
-	test("nonzero flags refuse", function flags() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		bytes[OFFSET.flags] = 1
+	test("a fixed interval of the wrong width refuses with the core's Value identity", function wrongWidth() {
+		const Wide = relation("Wide", { lease: interval(u64, 1n) })
+		const WideTheory = schema("WideTheory", { Wide }, [])
 		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
+			refusalKindOf(function encodeIt() {
+				return encodeBatch(
+					WideTheory,
+					{
+						fingerprint: digest32(descriptorOf(WideTheory).fingerprintBytes),
+						braid: braid("c00000000"),
+						braidGen: generation(1n),
+						prev: ZERO_DIGEST,
+						writer: 1n,
+						timestamp: 0n
+					},
+					[{ op: "insert", relation: "Wide", rows: [[{ start: 1n, end: 3n }]] }]
+				)
 			}),
-			"Flags"
+			"Value"
 		)
 	})
 
-	test("a wrong fingerprint refuses", function fingerprint() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		bytes[OFFSET.fingerprint] = (bytes[OFFSET.fingerprint] ?? 0) ^ 0xff
+	test("a spanning batch refuses with the core's OpRelationOutsideBraid identity", function spanning() {
+		const ops: Op[] = [
+			{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] },
+			{ op: "insert", relation: "Note", rows: [[1n, "memo"]] }
+		]
 		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
-			}),
-			"FingerprintMismatch"
-		)
-	})
-
-	test("an op relation outside the header braid refuses", function braidMembership() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		bytes[OFFSET.braid] = 2
-		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
+			refusalKindOf(function encodeIt() {
+				return encodeBatch(Ledger, headerOf(), ops)
 			}),
 			"OpRelationOutsideBraid"
 		)
 	})
 
-	test("op kind 3 refuses like any unknown kind — FloorBump stays deleted", function floorBumpDeleted() {
-		const bytes = encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] }])
-		bytes[OFFSET.firstOpKind] = 3
+	test("a cell past the layout's width refuses Arity at the seat", function wideRow() {
 		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes)
+			refusalKindOf(function encodeIt() {
+				return encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Holder", rows: [[1n, "ada", 2n]] }])
 			}),
-			"UnknownOpKind"
+			"Arity"
 		)
 	})
 
-	test("a row tag that disagrees with the layout refuses naming relation, row, and field", function rowShape() {
-		const bytes = encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] }])
-		bytes[OFFSET.firstCellTag] = 3
-		const caught = errors.trySync(function decodeIt() {
-			return decodeBatch(Ledger, bytes)
-		})
-		assert.ok(caught.error && errors.is(caught.error, ErrRefused))
-		const cause = refusalOf(caught.error)
-		assert.ok(cause !== undefined && cause.kind === "TagMismatch")
-		assert.equal(cause.relation, "Holder")
-		assert.equal(cause.row, 0)
-		assert.equal(cause.field, "id")
-	})
-
-	test("trailing bytes refuse", function trailing() {
+	test("a decode refusal crosses with the core's identity kind", function trailing() {
 		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
 		const padded = new Uint8Array(bytes.length + 1)
 		padded.set(bytes)
@@ -233,26 +180,6 @@ describe("the command codec", function suite() {
 			}),
 			"TrailingBytes"
 		)
-	})
-
-	test("truncation refuses", function truncated() {
-		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
-		assert.equal(
-			refusalKindOf(function decodeIt() {
-				return decodeBatch(Ledger, bytes.slice(0, 50))
-			}),
-			"Truncated"
-		)
-	})
-
-	test("a spanning batch is unencodable", function spanning() {
-		const ops: Op[] = [
-			{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] },
-			{ op: "insert", relation: "Note", rows: [[1n, "memo"]] }
-		]
-		assert.throws(function encodeIt() {
-			return encodeBatch(Ledger, headerOf(), ops)
-		})
 	})
 
 	test("the chain discipline: slot, prev, and timestamp causes", function chain() {

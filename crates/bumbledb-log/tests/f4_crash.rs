@@ -24,7 +24,7 @@ use bumbledb_log::sidecar::{Chain, ChainEntry, SidecarRead};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{
-    AckMode, Commit, Durability, Error, Options, StepControl, StepHook, Writer, WriterOpened,
+    AckMode, Durability, Error, Options, Slotted, StepControl, StepHook, Writer, WriterOpened,
     WriterStep,
 };
 use lane_e_support::{
@@ -171,19 +171,17 @@ fn crash_case(mode: Mode, step: WriterStep) {
     });
     if acked(mode, step) {
         match result.expect("acked commit resolves") {
-            Commit::Accepted {
-                generation,
-                durability,
-                ..
-            } => {
-                assert_eq!(generation, 1, "{mode:?}/{step:?}");
+            Admission::Accepted(Slotted {
+                slot, durability, ..
+            }) => {
+                assert_eq!(slot, 1, "{mode:?}/{step:?}");
                 let expected = match mode {
                     Mode::Published => Durability::Published,
                     Mode::Local => Durability::LocalPending,
                 };
                 assert_eq!(durability, expected, "{mode:?}/{step:?}");
             }
-            Commit::Rejected(violations) => panic!("{mode:?}/{step:?} rejected: {violations:?}"),
+            Admission::Rejected(violations) => panic!("{mode:?}/{step:?} rejected: {violations:?}"),
         }
     } else {
         let err = result.expect_err("the crash surfaces to the caller");
@@ -467,7 +465,7 @@ fn born_noop_batch_clears_at_the_exact_vector_sum_and_never_reaches_the_log() {
             })
             .expect("base commit")
         {
-            Commit::Accepted { generation: 1, .. } => {}
+            Admission::Accepted(Slotted { slot: 1, .. }) => {}
             other => panic!("{mode:?}/{step:?}: base commit went {other:?}"),
         }
         writer.quiesce();
@@ -524,7 +522,7 @@ fn a_phantom_writer_commit_discards_with_the_directory_never_silently_divergent(
         })
         .expect("commit")
     {
-        Commit::Accepted { generation: 1, .. } => {}
+        Admission::Accepted(Slotted { slot: 1, .. }) => {}
         other => panic!("commit went {other:?}"),
     }
     writer.quiesce();

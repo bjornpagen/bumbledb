@@ -13,8 +13,14 @@ Root: `crates/bumbledb-log/conformance/v3/`.
 | `batch/*.json` + `*.bin` | Wire batches. Sidecar names schema, fingerprint, expect, and the decoded value (or refusal). |
 | `chain/` | `verifyChain` goldens over v:3 batch bytes. |
 | `documents/{manifest,checkpoint,sidecar}/` | Canonical single-line document bytes (`.bin`) plus the decoded value (`.json`). |
+| `lease/` | `LEASE/1` lease-body goldens, plus `placement.json` — the fs-lock placement table (`~lease/{key}/{n}` tokens, `~head` pointer, TTL constants). |
+| `counter/` | id-lease counter body goldens: canonical decimal ASCII u64 in, typed `Counter` refusal otherwise. |
+| `scratch/` | ckpt-scratch body goldens: version byte `3` + 32-byte digest; any other body parses to nothing on both drivers. |
+| `keys/` | Key-grammar tables: `grammar.json` (named accept/refuse spellings) and `tilde-family.json` (the 15-point reserved tilde set, NFKC-closed). |
+| `machine-constants.json` | Protocol constants both machines assert, one value per fact (`wait_for_poll_ms`, `heartbeat_every`, `loss_bound`, `lease_width`). |
 | `fuzz/` | Materialised truncations and hostile splices, plus `storm.json` — the Rust mutation lane (`f9_fuzz.rs`) as a recipe the TS codec replays. |
 | `inventory.json` | The case roster. |
+| `surfaces.json` | The surface roster: every protocol surface names its golden pins (the census pin lane holds the two-way match). |
 
 `r_encode_short_prev.json` is encode-only (no `.bin`): a 2-byte `prev` is unconstructible as `[u8; 32]`.
 

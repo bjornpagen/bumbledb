@@ -6,9 +6,9 @@
 
 mod lane_e_support;
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{AckMode, Commit, Durability, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{AckMode, Durability, Options, Slotted, Writer, WriterOpened};
 use lane_e_support::{NOTE, codec, note_braid, note_row, temp_dir, theory};
 
 fn ready(opened: WriterOpened<SchemaDescriptor, FsStore>) -> Writer<SchemaDescriptor, FsStore> {
@@ -55,7 +55,7 @@ fn a_deposed_resident_finishes_the_loss_and_drops_to_published_acks() {
                 Ok(())
             })
             .expect("usurper commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
 
     // The resident's next commit acks LocalPending, then its publisher
@@ -68,10 +68,10 @@ fn a_deposed_resident_finishes_the_loss_and_drops_to_published_acks() {
         .expect("resident commit");
     assert!(matches!(
         outcome,
-        Commit::Accepted {
+        Admission::Accepted(Slotted {
             durability: Durability::LocalPending,
             ..
-        }
+        })
     ));
     resident.quiesce();
 
@@ -113,10 +113,10 @@ fn a_deposed_resident_finishes_the_loss_and_drops_to_published_acks() {
         .expect("commit after deposition");
     assert!(matches!(
         after,
-        Commit::Accepted {
-            generation: 3,
+        Admission::Accepted(Slotted {
+            slot: 3,
             durability: Durability::Published,
             ..
-        }
+        })
     ));
 }

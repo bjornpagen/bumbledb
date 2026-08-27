@@ -7,7 +7,7 @@
 //! `generation ≡ generation(chain)` asserted on every store — the
 //! invariant the loss path must never bend. A loss whose effects the
 //! winner already performed re-judges to the engine's net no-op and
-//! lands `Accepted` at the current generation with nothing published;
+//! lands `Accepted` at the current tip with nothing published;
 //! a disjoint-shaped loss re-judges and publishes with a fresh
 //! header at tip+1; a conflicting loss produces the serial verdict;
 //! the ambiguous-outcome GET-verify law resolves injected response
@@ -25,7 +25,7 @@ use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
     Side, StatementDescriptor, StatementId, ValidateDescriptor as _, ValueType, Weight,
 };
-use bumbledb::{Value, Violation};
+use bumbledb::{Admission, Value, Violation};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{Batch, BatchHeader, Codec, Op, OpKind};
 use bumbledb_log::manifest::{Head, log_key};
@@ -36,7 +36,7 @@ use bumbledb_log::store::{
     Swap,
 };
 use bumbledb_log::writer::{
-    Commit, ContentionCause, Durability, Error, Options, StepControl, StepHook, Writer,
+    ContentionCause, Durability, Error, Options, Slotted, StepControl, StepHook, Writer,
     WriterOpened, WriterStep,
 };
 
@@ -673,7 +673,7 @@ fn disjoint_loss_rejudges_once_and_publishes_at_tip_plus_one() {
                 Ok(())
             })
             .expect("winner commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     let outcome = writer_b
         .commit(|batch| {
@@ -681,15 +681,13 @@ fn disjoint_loss_rejudges_once_and_publishes_at_tip_plus_one() {
             Ok(())
         })
         .expect("loser commit");
-    let Commit::Accepted {
-        generation,
-        durability,
-        ..
-    } = outcome
+    let Admission::Accepted(Slotted {
+        slot, durability, ..
+    }) = outcome
     else {
         panic!("a disjoint loss lands");
     };
-    assert_eq!(generation, 2, "the re-judged publish lands at tip+1");
+    assert_eq!(slot, 2, "the re-judged publish lands at tip+1");
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
@@ -738,7 +736,7 @@ fn identical_effects_race_lands_accepted_at_the_winners_generation() {
                 Ok(())
             })
             .expect("winner commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     let outcome = writer_b
         .commit(|batch| {
@@ -746,15 +744,13 @@ fn identical_effects_race_lands_accepted_at_the_winners_generation() {
             Ok(())
         })
         .expect("loser commit");
-    let Commit::Accepted {
-        generation,
-        durability,
-        ..
-    } = outcome
+    let Admission::Accepted(Slotted {
+        slot, durability, ..
+    }) = outcome
     else {
         panic!("a loss whose effects the winner performed reports Accepted");
     };
-    assert_eq!(generation, 1, "the winner's generation, not a new slot");
+    assert_eq!(slot, 1, "the winner's slot, not a new one");
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer_b.losses(), 1, "one loss, one re-judged net no-op");
 
@@ -782,7 +778,7 @@ fn strict_superset_race_lands_accepted_with_the_residue_present() {
                 Ok(())
             })
             .expect("winner commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     let outcome = writer_b
         .commit(|batch| {
@@ -790,10 +786,10 @@ fn strict_superset_race_lands_accepted_with_the_residue_present() {
             Ok(())
         })
         .expect("loser commit");
-    let Commit::Accepted { generation, .. } = outcome else {
+    let Admission::Accepted(Slotted { slot, .. }) = outcome else {
         panic!("a strictly contained loss reports the winner's outcome");
     };
-    assert_eq!(generation, 1, "accepted at the current generation");
+    assert_eq!(slot, 1, "accepted at the current tip");
     assert_eq!(writer_b.losses(), 1);
 
     writer_b
@@ -830,7 +826,7 @@ fn conflicting_loss_produces_the_serial_verdict() {
                 Ok(())
             })
             .expect("winner commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     let outcome = writer_b
         .commit(|batch| {
@@ -838,7 +834,7 @@ fn conflicting_loss_produces_the_serial_verdict() {
             Ok(())
         })
         .expect("loser commit");
-    let Commit::Rejected(violations) = outcome else {
+    let Admission::Rejected(violations) = outcome else {
         panic!("exactly the verdict serial execution would have produced");
     };
     assert!(
@@ -881,7 +877,7 @@ fn evaporating_loss_rejudges_to_the_net_noop_and_publishes_nothing() {
                 Ok(())
             })
             .expect("base commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     let writer_b = open_at(root.clone(), &root.join("wb"), 2);
     assert_eq!(writer_b.vector().at(braid), 1);
@@ -894,27 +890,25 @@ fn evaporating_loss_rejudges_to_the_net_noop_and_publishes_nothing() {
                 Ok(())
             })
             .expect("winner commit"),
-        Commit::Accepted { generation: 2, .. }
+        Admission::Accepted(Slotted { slot: 2, .. })
     ));
 
     // The loser shares one row with the winner and its other op is
     // base-redundant: the re-judgment lands the engine's no-op —
-    // nothing published, `Accepted` at the current generation.
+    // nothing published, `Accepted` at the current tip.
     let outcome = writer_b
         .commit(|batch| {
             batch.insert(NOTE, [note_row(1, "shared"), note_row(3, "base")]);
             Ok(())
         })
         .expect("loser commit");
-    let Commit::Accepted {
-        generation,
-        durability,
-        ..
-    } = outcome
+    let Admission::Accepted(Slotted {
+        slot, durability, ..
+    }) = outcome
     else {
         panic!("the evaporated loser reports Accepted");
     };
-    assert_eq!(generation, 2, "the current generation, not a new slot");
+    assert_eq!(slot, 2, "the current tip, not a new slot");
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer_b.losses(), 1, "one loss, one re-judgment");
 
@@ -1031,7 +1025,10 @@ fn slot_race_livelock_surfaces_contention_with_pending_kept() {
             Ok(())
         })
         .expect("commit after the race");
-    assert!(matches!(outcome, Commit::Accepted { generation: 18, .. }));
+    assert!(matches!(
+        outcome,
+        Admission::Accepted(Slotted { slot: 18, .. })
+    ));
     assert_eq!(writer.backlog(), None);
     assert_whole(&writer, "the drained writer");
     let batches = verify_log(&root);
@@ -1083,7 +1080,7 @@ fn hot_key_livelock_surfaces_contention_with_the_violation_payload() {
                 Ok(())
             })
             .expect("venue setup"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     planter.seed_from(root.clone());
     planter.arm(16);
@@ -1131,11 +1128,11 @@ fn dropped_response_after_landed_create_resolves_by_get_verify() {
         .expect("the GET-verify law absorbs the drop");
     assert!(matches!(
         outcome,
-        Commit::Accepted {
-            generation: 1,
+        Admission::Accepted(Slotted {
+            slot: 1,
             durability: Durability::Published,
             ..
-        }
+        })
     ));
     assert_eq!(writer.backlog(), None);
     assert_eq!(
@@ -1171,7 +1168,10 @@ fn dropped_response_on_a_lost_slot_takes_the_one_path() {
             Ok(())
         })
         .expect("the probe proves the loss and the one path runs");
-    assert!(matches!(outcome, Commit::Accepted { generation: 2, .. }));
+    assert!(matches!(
+        outcome,
+        Admission::Accepted(Slotted { slot: 2, .. })
+    ));
     assert_eq!(
         writer.losses(),
         1,
@@ -1263,7 +1263,7 @@ fn packed_drain_delete_cures_the_solo_violation() {
                 Ok(())
             })
             .expect("venue setup"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     assert!(matches!(
         writer
@@ -1272,7 +1272,7 @@ fn packed_drain_delete_cures_the_solo_violation() {
                 Ok(())
             })
             .expect("fill the ceiling"),
-        Commit::Accepted { generation: 2, .. }
+        Admission::Accepted(Slotted { slot: 2, .. })
     ));
 
     let start = std::sync::Barrier::new(2);
@@ -1304,20 +1304,20 @@ fn packed_drain_delete_cures_the_solo_violation() {
         std::thread::sleep(Duration::from_millis(150));
         gate.store(true, Ordering::SeqCst);
         let hold = holder.join().expect("join holder").expect("holder commit");
-        assert!(matches!(hold, Commit::Accepted { .. }));
+        assert!(matches!(hold, Admission::Accepted(_)));
         (
             cure_task.join().expect("join").expect("commit"),
             insert_task.join().expect("join").expect("commit"),
         )
     });
-    let Commit::Accepted { generation: g1, .. } = cure else {
+    let Admission::Accepted(Slotted { slot: s1, .. }) = cure else {
         panic!("the composite accepts");
     };
-    let Commit::Accepted { generation: g2, .. } = insert_outcome else {
+    let Admission::Accepted(Slotted { slot: s2, .. }) = insert_outcome else {
         panic!("the composite accepts what a solo run would reject");
     };
-    assert_eq!(g1, 3);
-    assert_eq!(g2, 3, "one batch, one generation, one object");
+    assert_eq!(s1, 3);
+    assert_eq!(s2, 3, "one batch, one slot, one object");
 
     let codec = codec();
     let braid = venue_braid(&codec);
@@ -1343,7 +1343,7 @@ fn packed_drain_delete_cures_the_solo_violation() {
             Ok(())
         })
         .expect("venue setup"),
-        Commit::Accepted { .. }
+        Admission::Accepted(_)
     ));
     assert!(matches!(
         solo.commit(|batch| {
@@ -1351,7 +1351,7 @@ fn packed_drain_delete_cures_the_solo_violation() {
             Ok(())
         })
         .expect("fill the ceiling"),
-        Commit::Accepted { .. }
+        Admission::Accepted(_)
     ));
     let solo_outcome = solo
         .commit(|batch| {
@@ -1359,7 +1359,7 @@ fn packed_drain_delete_cures_the_solo_violation() {
             Ok(())
         })
         .expect("solo verdict");
-    let Commit::Rejected(violations) = solo_outcome else {
+    let Admission::Rejected(violations) = solo_outcome else {
         panic!("solo rejects where the composite accepted");
     };
     assert!(

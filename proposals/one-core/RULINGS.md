@@ -70,6 +70,56 @@ binding.
   `.json` store-key line in the two driver scopes: corpus tables read
   by drivers are data references, not key spellings.
 
+## S2 — the bridge and the cutover
+
+- **The handle is the fingerprint authority.** The batch-header wire
+  carries no fingerprint in either direction: encode fills it from the
+  sealed handle, decode already refused any mismatch.
+  `EncodeError::FingerprintMismatch` is unconstructible from TS and
+  stays a mint-table row. Consequence ruled for S3: the TS
+  `EncodeHeader.fingerprint` field is dead data and dies.
+- **Tagged in, plain out.** Encode ops cross as tagged values; decode
+  rows cross as the engine's `ValueOut` walk (`FactValue`-shaped) — the
+  engine's own query-literal/answers asymmetry, keeping the bridge
+  layout-blind so the core is the one judge.
+- **Grammar outcomes cross as one sum** —
+  `{ok:true,value} | {ok:false,kind,message}` — never throws; a refusal
+  of hostile bytes is a domain outcome. Bridge refusals mint bare
+  `{kind}` causes: per-site fields have no honest source one
+  implementation away; the detail rides the message.
+- **The mint table is the marshal's gate** (`ts/crate/log-identities.json`,
+  include_str!-locked to the Rust rosters): an unknown identity is a
+  loud bridge error, never a silent new wire string. `EncodeError` has
+  no core `identity()` — spelled by an exhaustive `wire_tags!` table;
+  S3's generator unifies to one speller.
+- **`verifyChain` stays host-side** — pure slot algebra over decoded
+  headers, not grammar. `DigestWidth` and the lone-surrogate gate stay
+  seat-side: they refuse before a value can cross corrupted.
+- **The `known: ReadonlySet<Braid>` parameters died** — the sealed
+  handle is the one braid authority; callers pass the codec, not a
+  roster. The handle's cache home is `Descriptor.codec`, minted once
+  per theory; no seat mints a lifecycle twin.
+- **The tenant dir-lease lives at `{parent}/~lease/{tenant}`**,
+  outside the swept replica dir (fence.rs `acquire_named` as law);
+  tenants carries no lease codec of its own.
+- **The tilde table is consumed at runtime in Rust too**
+  (include_str! + LazyLock); Zl/Zp/Zs spelled as
+  `char::is_whitespace` minus Cc — the subsumed special case died.
+- **f3's reservation fixtures were rewritten, not deleted**: the race
+  shapes test loss re-judgment against the surviving weighted Capacity
+  statement; only the verb was reservation-shaped.
+- **`headerWriter`'s fixed-offset usurper sniff stays** — Rust's writer
+  machine reads the same offset by design (an undecodable occupant
+  still names the slot's owner); `headerTimestamp` had no Rust twin and
+  died — the timestamp rides the held pending arm.
+- **The scratch grammar and lease namespace left the public surface**;
+  the seat-backed `encodeBatch`/`decodeBatch`/`verifyChain` stay public
+  (the grammar is log-owned; the seat is its one reader).
+- **Inventory registration styles**: case families register
+  chain-style (mixed `ok_`/`r_` stems); table goldens register as
+  single paths; `surfaces.json` stays out of `inventory.json` — two
+  rosters, two jobs.
+
 ## S1 — engine-side
 
 - **`catalogDigest` required a new napi binding**, not a type export:

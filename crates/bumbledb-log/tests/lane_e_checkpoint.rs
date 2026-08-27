@@ -7,14 +7,14 @@ mod lane_e_support;
 
 use std::collections::BTreeMap;
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::manifest::{
     Checkpoint, Head, Manifest, ckpt_doc_key, ckpt_mdb_key, manifest_key, publish_checkpoint,
 };
 use bumbledb_log::replica::{Opened, Provenance, Replica};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Options, Writer, WriterOpened};
 use lane_e_support::{NOTE, codec, note_braid, note_row, temp_dir, theory};
 
 fn open_at(root: std::path::PathBuf, dir: &std::path::Path) -> Writer<SchemaDescriptor, FsStore> {
@@ -41,7 +41,7 @@ fn crossing_the_sum_cadence_publishes_a_checkpoint() {
                     Ok(())
                 })
                 .expect("commit"),
-            Commit::Accepted { .. }
+            Admission::Accepted(_)
         ));
     }
     writer.quiesce();
@@ -106,12 +106,15 @@ fn crossing_the_byte_cadence_publishes_too() {
     let writer = open_at(root.clone(), &dir);
     writer.set_checkpoint_cadence(u64::MAX, 1);
 
-    writer
-        .commit(|batch| {
-            batch.insert(NOTE, [note_row(1, "bytes")]);
-            Ok(())
-        })
-        .expect("commit");
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(NOTE, [note_row(1, "bytes")]);
+                Ok(())
+            })
+            .expect("commit"),
+        Admission::Accepted(_)
+    ));
     writer.quiesce();
     let store = FsStore::new(root);
     let manifest = Manifest::parse(
@@ -131,12 +134,15 @@ fn the_checkpoint_order_keeps_a_greater_incumbent() {
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir);
 
-    writer
-        .commit(|batch| {
-            batch.insert(NOTE, [note_row(1, "first")]);
-            Ok(())
-        })
-        .expect("commit");
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(NOTE, [note_row(1, "first")]);
+                Ok(())
+            })
+            .expect("commit"),
+        Admission::Accepted(_)
+    ));
 
     // Plant an incumbent whose vector sum outranks anything the writer
     // can produce here; the writer's duty must lose the CAS race and
@@ -175,12 +181,15 @@ fn the_checkpoint_order_keeps_a_greater_incumbent() {
     ));
 
     writer.set_checkpoint_cadence(1, u64::MAX);
-    writer
-        .commit(|batch| {
-            batch.insert(NOTE, [note_row(2, "second")]);
-            Ok(())
-        })
-        .expect("commit");
+    assert!(matches!(
+        writer
+            .commit(|batch| {
+                batch.insert(NOTE, [note_row(2, "second")]);
+                Ok(())
+            })
+            .expect("commit"),
+        Admission::Accepted(_)
+    ));
     writer.quiesce();
 
     let manifest = Manifest::parse(

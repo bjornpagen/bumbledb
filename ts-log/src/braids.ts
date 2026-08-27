@@ -1,8 +1,10 @@
 /**
- * Braid derivation as data (10): connected components of the statement
- * graph over ordinary relations, the braid id the smallest RelationId in
- * the component rendered `c{id:08x}`. Assignment is a pure function of
- * the descriptor, pinned cross-language by the codec goldens.
+ * Braid derivation as data (10/20): connected components of the
+ * statement graph over ordinary relations, the braid id the smallest
+ * RelationId in the component rendered `c{id:08x}`. The one derivation
+ * lives in `crates/bumbledb-log` and reaches the descriptor parse
+ * through the engine bridge (`internalLogBraidsOf`); this façade names
+ * that derivation in the driver's vocabulary.
  */
 
 import type { Braid, SerialStatement, Theory } from "#descriptor.ts"
@@ -26,8 +28,8 @@ function braidsOf(theory: Theory): ReadonlyMap<string, Braid> {
 /**
  * The degenerate-serial roster (15): key or capacity statements whose
  * determinant projection is empty name one global group, so their braid
- * serializes at that statement. Typed data beside the braid map, one
- * question per verb.
+ * serializes at that statement. The statement ids are the log core's
+ * own roster, read off the descriptor's derivation.
  */
 function serialAtStatementsOf(theory: Theory): readonly SerialStatement[] {
 	return descriptorOf(theory).serialAtStatements

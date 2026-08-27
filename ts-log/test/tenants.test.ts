@@ -5,9 +5,9 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { digest32 } from "#bytes.ts"
 import { descriptorOf } from "#descriptor.ts"
-import { manifestKey, tenantPrefix } from "#keys.ts"
+import { LEASE_NAMESPACE, manifestKey, tenantPrefix } from "#keys.ts"
 import { renderManifest } from "#manifest.ts"
-import { acquireFsLease, memStore, releaseFsLease } from "#store.ts"
+import { acquireFsLease, memStore, parseLease, releaseFsLease } from "#store.ts"
 import { openTenants } from "#tenants.ts"
 import { Holder, Ledger } from "#test/fixtures.ts"
 
@@ -138,19 +138,56 @@ describe("per-tenant replicas", function suite() {
 
 		try {
 			const acme = await tenants.get("acme")
-			const acmeDir = path.join(replicaDir, "acme")
 			await new Promise(function later(resolve) {
 				setTimeout(resolve, 200)
 			})
 			await assert.rejects(function secondOwner() {
-				return acquireFsLease(acmeDir, "dir", 90, "refuse")
+				return acquireFsLease(replicaDir, "acme", 90, "refuse")
 			})
 
 			acme.release()
 			const gone = await tenants.evict("acme")
 			assert.ok(gone)
-			const stolen = await acquireFsLease(acmeDir, "dir", 90, "refuse")
+			const stolen = await acquireFsLease(replicaDir, "acme", 90, "refuse")
 			await releaseFsLease(stolen)
+		} finally {
+			await tenants[Symbol.asyncDispose]()
+		}
+	})
+
+	test("a replica open does not delete its tenant's held dir lease", async function leaseSurvivesOpen() {
+		const store = memStore()
+		await birthTenant(store, "prod", "acme")
+		const replicaDir = path.join(tmpRoot, "replicas-lease-survives")
+		const tenants = openTenants({
+			store,
+			root: "prod",
+			dir: replicaDir,
+			theory: Ledger,
+			dirLeaseMs: 300_000
+		})
+
+		try {
+			const acme = await tenants.get("acme")
+			const leaseDir = path.join(replicaDir, LEASE_NAMESPACE, "acme")
+			const tokens = fs
+				.readdirSync(leaseDir)
+				.filter(function decimal(name) {
+					return /^\d+$/.test(name)
+				})
+				.map(BigInt)
+			assert.ok(tokens.length >= 1)
+			const top = tokens.reduce(function max(a, b) {
+				return a > b ? a : b
+			})
+			const body = parseLease(fs.readFileSync(path.join(leaseDir, String(top)), "utf8"))
+			assert.ok(body)
+			assert.equal(body.holder, BigInt(process.pid))
+			assert.ok(body.expires > BigInt(Date.now()))
+			await assert.rejects(function secondOwner() {
+				return acquireFsLease(replicaDir, "acme", 90, "refuse")
+			})
+			acme.release()
 		} finally {
 			await tenants[Symbol.asyncDispose]()
 		}

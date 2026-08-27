@@ -28,9 +28,7 @@ pub(crate) enum Settled {
     Judged(Admission<u64>),
     /// Waiters were acked `LocalPending`; publication continues on the
     /// detached publisher, keyed by the pending bytes.
-    Detached {
-        bytes: Vec<u8>,
-    },
+    Detached { bytes: Vec<u8> },
 }
 
 pub(crate) enum PublishEnd {

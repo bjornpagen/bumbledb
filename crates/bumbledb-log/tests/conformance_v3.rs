@@ -11,10 +11,13 @@ use std::path::{Path, PathBuf};
 
 use bumbledb_log::apply::{Applied, ApplyRefusal, ChainCause, apply};
 use bumbledb_log::codec::{Codec, DecodeError, MAGIC, VERSION};
+use bumbledb_log::lease::parse_counter;
 use bumbledb_log::manifest::{
     Checkpoint, CheckpointError, DOC_VERSION, Head, Manifest, ManifestError,
 };
+use bumbledb_log::replica::{encode_ckpt_scratch, parse_ckpt_scratch};
 use bumbledb_log::sidecar::{Chain, ChainEntry, Pending, SidecarError};
+use bumbledb_log::store::{LEASE_NAMESPACE, Lease, StoreKey, WriterId};
 use serde_json::Value as Json;
 
 fn v3() -> PathBuf {
@@ -617,6 +620,187 @@ fn inventory_chain_goldens_decode_and_verify() {
                 );
             }
             other => panic!("{stem}: unknown expect {other}"),
+        }
+    }
+}
+
+#[test]
+fn keys_grammar_walk_accepts_and_refuses_by_name() {
+    let grammar = read_json(&v3().join("keys/grammar.json"));
+    assert_eq!(grammar["surface"], "key-grammar");
+    let accept = grammar["accept"].as_array().expect("accept");
+    let refuse = grammar["refuse"].as_array().expect("refuse");
+    assert!(!accept.is_empty() && !refuse.is_empty(), "both sets named");
+    for entry in accept {
+        let name = entry["name"].as_str().expect("name");
+        let key = entry["key"].as_str().expect("key");
+        assert!(StoreKey::parse(key).is_ok(), "{name}: {key:?} parses");
+    }
+    for entry in refuse {
+        let name = entry["name"].as_str().expect("name");
+        let key = entry["key"].as_str().expect("key");
+        entry["why"].as_str().expect("why names the refusing rule");
+        assert!(StoreKey::parse(key).is_err(), "{name}: {key:?} refuses");
+    }
+}
+
+#[test]
+fn keys_tilde_walk_derives_from_the_family_table() {
+    let family = read_json(&v3().join("keys/tilde-family.json"));
+    assert_eq!(family["surface"], "key-grammar/tilde-family");
+    let points = family["codePoints"].as_array().expect("codePoints");
+    assert_eq!(points.len(), 15, "the closed table");
+    for point in points {
+        let text = point.as_str().expect("a U+ spelling");
+        let hex = text.strip_prefix("U+").expect("U+ prefix");
+        let c = char::from_u32(u32::from_str_radix(hex, 16).expect("hex")).expect("scalar");
+        assert!(
+            StoreKey::parse(&format!("{c}x")).is_err(),
+            "{text}: a first code point in the family reserves the segment"
+        );
+        assert!(
+            StoreKey::parse(&format!("a/{c}x")).is_err(),
+            "{text}: the family reserves in every segment position"
+        );
+        assert!(
+            StoreKey::parse(&format!("x{c}")).is_ok(),
+            "{text}: elsewhere in a segment the family is ordinary text"
+        );
+    }
+}
+
+#[test]
+fn counter_goldens_parse_and_rerender_canonically() {
+    let stems = stems_under("counter", "bin");
+    assert!(!stems.is_empty(), "counter goldens");
+    assert_eq!(
+        stems,
+        json_stems_under("counter"),
+        "every counter golden is two-sided"
+    );
+    for rel in stems {
+        let sidecar = read_json(&v3().join(format!("{rel}.json")));
+        let bytes = std::fs::read(v3().join(format!("{rel}.bin"))).expect("counter bytes");
+        assert_eq!(sidecar["kind"], "counter", "{rel}: kind");
+        assert_eq!(
+            support::unhex(sidecar["hex"].as_str().expect("hex")),
+            bytes,
+            "{rel}: sidecar hex is the golden"
+        );
+        match sidecar["expect"].as_str().expect("expect") {
+            "ok" => {
+                let value = decimal_u64(&rel, &sidecar["value"]);
+                assert_eq!(
+                    parse_counter(&bytes),
+                    Some(value),
+                    "{rel}: canonical decimal"
+                );
+                assert_eq!(
+                    value.to_string().as_bytes(),
+                    bytes,
+                    "{rel}: the canonical render is the body"
+                );
+            }
+            "refusal" => {
+                assert_eq!(sidecar["refusal"], "Counter", "{rel}: the typed identity");
+                assert_eq!(parse_counter(&bytes), None, "{rel}: refuses");
+            }
+            other => panic!("{rel}: unknown expect {other}"),
+        }
+    }
+}
+
+#[test]
+fn scratch_goldens_parse_and_reencode() {
+    let stems = stems_under("scratch", "bin");
+    assert!(!stems.is_empty(), "scratch goldens");
+    assert_eq!(
+        stems,
+        json_stems_under("scratch"),
+        "every scratch golden is two-sided"
+    );
+    for rel in stems {
+        let sidecar = read_json(&v3().join(format!("{rel}.json")));
+        let bytes = std::fs::read(v3().join(format!("{rel}.bin"))).expect("scratch bytes");
+        assert_eq!(sidecar["kind"], "scratch", "{rel}: kind");
+        assert_eq!(
+            support::unhex(sidecar["hex"].as_str().expect("hex")),
+            bytes,
+            "{rel}: sidecar hex is the golden"
+        );
+        match sidecar["expect"].as_str().expect("expect") {
+            "ok" => {
+                let digest = digest32(sidecar["value"].as_str().expect("digest"));
+                assert_eq!(
+                    parse_ckpt_scratch(&bytes),
+                    Some(digest),
+                    "{rel}: names the digest"
+                );
+                assert_eq!(
+                    encode_ckpt_scratch(&digest).as_slice(),
+                    bytes,
+                    "{rel}: byte-exact re-encode"
+                );
+            }
+            "refusal" => {
+                assert!(
+                    sidecar.get("refusal").is_none(),
+                    "{rel}: an unreadable hint carries no name"
+                );
+                assert_eq!(parse_ckpt_scratch(&bytes), None, "{rel}: silence");
+            }
+            other => panic!("{rel}: unknown expect {other}"),
+        }
+    }
+}
+
+#[test]
+fn lease_goldens_parse_and_reencode() {
+    let placement = read_json(&v3().join("lease/placement.json"));
+    assert_eq!(placement["kind"], "lease-placement");
+    assert_eq!(placement["body_magic"], "LEASE/1");
+    assert_eq!(
+        placement["namespace"].as_str().expect("namespace"),
+        LEASE_NAMESPACE
+    );
+
+    let stems = stems_under("lease", "bin");
+    assert!(!stems.is_empty(), "lease goldens");
+    let mut two_sided = json_stems_under("lease");
+    assert!(two_sided.remove("lease/placement"), "placement is pinned");
+    assert_eq!(stems, two_sided, "every lease golden is two-sided");
+    for rel in stems {
+        let sidecar = read_json(&v3().join(format!("{rel}.json")));
+        let bytes = std::fs::read(v3().join(format!("{rel}.bin"))).expect("lease bytes");
+        assert_eq!(sidecar["kind"], "lease", "{rel}: kind");
+        assert_eq!(
+            support::unhex(sidecar["hex"].as_str().expect("hex")),
+            bytes,
+            "{rel}: sidecar hex is the golden"
+        );
+        match sidecar["expect"].as_str().expect("expect") {
+            "ok" => {
+                let value = &sidecar["value"];
+                let lease = Lease {
+                    holder: WriterId(decimal_u64(&format!("{rel}.holder"), &value["holder"])),
+                    token: decimal_u64(&format!("{rel}.token"), &value["token"]),
+                    expires: decimal_u64(&format!("{rel}.expires"), &value["expires"]),
+                };
+                assert_eq!(
+                    Lease::parse(&bytes),
+                    Some(lease.clone()),
+                    "{rel}: the LEASE/1 body parses"
+                );
+                assert_eq!(lease.encode(), bytes, "{rel}: byte-exact re-encode");
+            }
+            "refusal" => {
+                assert!(
+                    sidecar.get("refusal").is_none(),
+                    "{rel}: a lease refusal carries no name"
+                );
+                assert_eq!(Lease::parse(&bytes), None, "{rel}: refuses");
+            }
+            other => panic!("{rel}: unknown expect {other}"),
         }
     }
 }

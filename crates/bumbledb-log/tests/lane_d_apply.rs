@@ -91,12 +91,12 @@ fn slot_cause_convicts_header_key_disagreement() {
         .expect("encode");
     match apply(&db, &mut chain, &codec, braid, 1, &bytes).expect("apply") {
         Applied::Refused(ApplyRefusal::ChainMismatch {
-            cause: ChainCause::Slot { header_gen, .. },
+            cause: ChainCause::Slot { header_slot, .. },
             slot,
             writer,
             ..
         }) => {
-            assert_eq!(header_gen, 2);
+            assert_eq!(header_slot, 2);
             assert_eq!(slot, 1);
             assert_eq!(writer, 42);
         }

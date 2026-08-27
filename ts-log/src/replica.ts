@@ -45,8 +45,9 @@ const ZERO_HASH = digest32(new Uint8Array(32))
 /** The gc-safety heartbeat cadence: every N-th pass re-reads the manifest. */
 const HEARTBEAT_PASSES = 16
 
-/** The re-poll cadence of waitFor, its one consumer. */
-const WAIT_FOR_POLL_MS = 20
+/** The re-poll cadence of waitFor, its one consumer — the
+ *  machine-constants table's `wait_for_poll_ms` fact. */
+const WAIT_FOR_POLL_MS = 10
 
 type ReplicaState =
 	| { readonly tag: "bootstrapped" }
@@ -209,13 +210,20 @@ function chainOf<Rels extends SchemaRelations>(core: Core<Rels>): Chain {
 	return core.chain
 }
 
-/** Pending-arm payload: recorded ops ride on the batch, not a third
- *  Option beside the vector. Wire Pending is {braid,gen,bytes}; ops is
- *  the in-memory field of that arm (§30). */
-type HeldBatch = Pending & { readonly ops: readonly Op[] | null }
+/** Pending-arm payload: recorded ops and the batch header's timestamp
+ *  ride on the batch, not a third Option beside the vector. Wire
+ *  Pending is {braid,gen,bytes}; ops/ts are the in-memory fields of
+ *  that arm (§30) — null on a batch adopted as bytes the seat has not
+ *  decoded. */
+type HeldBatch = Pending & { readonly ops: readonly Op[] | null; readonly ts: bigint | null }
 
-function holdPending<Rels extends SchemaRelations>(core: Core<Rels>, batch: Pending, ops: readonly Op[] | null): void {
-	const held: HeldBatch = { braid: batch.braid, gen: batch.gen, bytes: batch.bytes, ops }
+function holdPending<Rels extends SchemaRelations>(
+	core: Core<Rels>,
+	batch: Pending,
+	ops: readonly Op[] | null,
+	ts: bigint | null
+): void {
+	const held: HeldBatch = { braid: batch.braid, slot: batch.slot, bytes: batch.bytes, ops, ts }
 	core.chain = { tag: "pending", entries: entriesOf(core), batch: held }
 }
 
@@ -246,7 +254,7 @@ function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): bool
 }
 
 async function persistSidecar<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	await writeSidecar(sidecarPath(core), chainOf(core))
+	await writeSidecar(core.descriptor.codec, sidecarPath(core), chainOf(core))
 }
 
 /** Writes the checkpoint store file and fsyncs the file and its parent
@@ -300,9 +308,10 @@ function adoptChain<Rels extends SchemaRelations>(core: Core<Rels>, chain: Chain
 	if (chain.tag === "pending") {
 		const held: HeldBatch = {
 			braid: braidOf(core.theory, chain.batch.braid),
-			gen: chain.batch.gen,
+			slot: chain.batch.slot,
 			bytes: chain.batch.bytes,
-			ops: null
+			ops: null,
+			ts: null
 		}
 		core.chain = { tag: "pending", entries, batch: held }
 	} else {
@@ -464,7 +473,7 @@ async function stepBraid<Rels extends SchemaRelations>(
 		return { tag: "tip" }
 	}
 	const chain = core.chain
-	if (chain.tag === "pending" && id === chain.batch.braid && next === chain.batch.gen) {
+	if (chain.tag === "pending" && id === chain.batch.braid && next === chain.batch.slot) {
 		if (!bytesEqual(fetched.bytes, chain.batch.bytes)) {
 			return { tag: "reseed", cause: "lost-pending-fork" }
 		}
@@ -560,7 +569,7 @@ async function adoptManifest<Rels extends SchemaRelations>(
 		if (facts === null) {
 			throw errors.new(`manifest points at absent checkpoint ${hex32(manifest.checkpoint)}`)
 		}
-		const checkpoint = parseCheckpoint(facts.bytes)
+		const checkpoint = parseCheckpoint(core.descriptor.codec, facts.bytes)
 		for (const id of checkpoint.braids.keys()) {
 			braidOf(core.theory, id)
 		}
@@ -759,7 +768,7 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 			generationOf(core),
 			null,
 			chain.batch.bytes,
-			belowFloor(core, chain.batch.braid, chain.batch.gen)
+			belowFloor(core, chain.batch.braid, chain.batch.slot)
 		).tag === "below-floor"
 	) {
 		await settle(core)
@@ -784,7 +793,7 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 		await settle(core)
 		return
 	}
-	holdPending(core, chain.batch, decoded.data.ops)
+	holdPending(core, chain.batch, decoded.data.ops, decoded.data.header.timestamp)
 }
 
 /**
@@ -798,7 +807,7 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>, pending: Pending): Promise<void> {
 	const braid = braidOf(core.theory, pending.braid)
 	if (
-		foldPending(chainSum(core.chain), generationOf(core), null, pending.bytes, belowFloor(core, braid, pending.gen))
+		foldPending(chainSum(core.chain), generationOf(core), null, pending.bytes, belowFloor(core, braid, pending.slot))
 			.tag === "below-floor"
 	) {
 		await settle(core)
@@ -820,7 +829,7 @@ async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>
 	const before = generationOf(core)
 	const outcome = applyOps(core, decoded.data.ops)
 	if (outcome.tag === "accepted" && outcome.value.generation > before) {
-		holdPending(core, { ...pending, braid }, decoded.data.ops)
+		holdPending(core, { ...pending, braid }, decoded.data.ops, decoded.data.header.timestamp)
 		await readdressPending(core, decoded.data.ops, decoded.data.header.writer)
 	}
 }
@@ -853,7 +862,7 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	await adoptManifest(core, fetched.bytes, fetched.etag)
 
 	const existing = await newestStoreDir(core.dir)
-	const sidecar = await readSidecar(sidecarPath(core))
+	const sidecar = await readSidecar(descriptor.codec, sidecarPath(core))
 	let opened = false
 	let coldPending: Pending | null = null
 	if (sidecar.tag === "fault") {
@@ -959,7 +968,7 @@ async function readdressPending<Rels extends SchemaRelations>(
 		},
 		ops
 	)
-	holdPending(core, { braid, gen: generation(entry.g + 1n), bytes }, ops)
+	holdPending(core, { braid, slot: generation(entry.g + 1n), bytes }, ops, timestamp)
 	await persistSidecar(core)
 }
 

@@ -25,6 +25,19 @@ scripts/lean.sh
 echo "==> scripts/spec-census.sh"
 scripts/spec-census.sh
 
+# ts/crate is workspace-excluded (its own build system), so the workspace
+# fmt/clippy lanes never see it; the bridge lane is its gate. The build
+# lands a fresh dist ahead of the TS lanes, so a stale gitignored ts/dist
+# is unrepresentable as their input.
+echo "==> bridge: cargo fmt --check (ts/crate)"
+cargo fmt --manifest-path ts/crate/Cargo.toml --check
+
+echo "==> bridge: cargo clippy --all-targets -- -D warnings (ts/crate)"
+cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
+
+echo "==> bridge: .node build (ts/scripts/build.ts)"
+(cd ts && pnpm run build)
+
 echo "==> ts/ (test, typecheck, lint)"
 (cd ts && pnpm test && pnpm typecheck && pnpm lint)
 

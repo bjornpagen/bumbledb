@@ -42,6 +42,17 @@
     "r_chain_slot_gen",
     "r_chain_timestamp"
   ],
+  "counter": [
+    "ok_birth",
+    "ok_cas",
+    "ok_u64_max",
+    "ok_zero",
+    "r_empty",
+    "r_leading_zero",
+    "r_minus",
+    "r_overflow",
+    "r_trailing_newline"
+  ],
   "documents": [
     "documents/checkpoint/ok_booking",
     "documents/checkpoint/ok_exact_u64",
@@ -102,5 +113,30 @@
     "fuzz/documents/sidecar_prefix_057",
     "fuzz/documents/sidecar_prefix_177"
   ],
-  "fuzz_storm": "fuzz/storm.json"
+  "fuzz_storm": "fuzz/storm.json",
+  "key_grammar": "keys/grammar.json",
+  "key_tilde_family": "keys/tilde-family.json",
+  "lease": [
+    "ok_expired",
+    "ok_generation_sidecar",
+    "ok_mutation",
+    "ok_released",
+    "ok_unexpired",
+    "r_expires_overflow",
+    "r_fifth_line",
+    "r_missing_expires",
+    "r_negative_holder",
+    "r_no_magic",
+    "r_version_2"
+  ],
+  "lease_placement": "lease/placement.json",
+  "machine_constants": "machine-constants.json",
+  "scratch": [
+    "ok_digest",
+    "ok_zero_digest",
+    "r_empty",
+    "r_trailing_byte",
+    "r_truncated",
+    "r_version_2"
+  ]
 }

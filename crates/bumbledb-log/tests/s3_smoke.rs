@@ -12,12 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
 use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
 use bumbledb_log::store::{Create, ObjectStore, Poll, StoreKey, Swap};
-use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Options, Slotted, Writer, WriterOpened};
 use lane_e_support::{NOTE, note_row, temp_dir, theory};
 
 const REQUIRED: [&str; 3] = [
@@ -231,10 +231,10 @@ fn s3_smoke_replica_writer_round_trip() {
             Ok(())
         })
         .expect("commit");
-    let Commit::Accepted { generation, .. } = outcome else {
+    let Admission::Accepted(Slotted { slot, .. }) = outcome else {
         panic!("accepted expected");
     };
-    assert_eq!(generation, 1);
+    assert_eq!(slot, 1);
     drop(writer);
 
     let replica = open_replica(store, &root.join("r"));
@@ -309,7 +309,7 @@ fn s3_smoke_duty_once() {
                 Ok(())
             })
             .expect("commit"),
-        Commit::Accepted { .. }
+        Admission::Accepted(_)
     ));
     assert!(matches!(
         writer
@@ -318,7 +318,7 @@ fn s3_smoke_duty_once() {
                 Ok(())
             })
             .expect("commit"),
-        Commit::Accepted { .. }
+        Admission::Accepted(_)
     ));
     writer.quiesce();
     drop(writer);

@@ -21,11 +21,9 @@ import { tenantPrefix } from "#keys.ts"
 import type { Replica } from "#replica.ts"
 import { openReplica } from "#replica.ts"
 import type { FsLease, ObjectStore } from "#store.ts"
-import { acquireFsLease, releaseFsLease } from "#store.ts"
+import { acquireFsLease, encodeLease, parseLease, releaseFsLease } from "#store.ts"
 
 const PINNED_TENANT = "_shared"
-const SIGNED_DECIMAL = regex("^-?\\d+$")
-const UNSIGNED_DECIMAL = regex("^\\d+$")
 const TENANT_ID = regex("^[A-Za-z0-9._-]+$")
 
 /** Directory-lease lifetime: one owner per replica directory. The pool
@@ -88,25 +86,6 @@ function codeOf(error: Error): string | undefined {
 	return (error as NodeJS.ErrnoException).code
 }
 
-function encodeLease(holder: bigint, token: bigint, expires: bigint): Uint8Array {
-	return new TextEncoder().encode(`${holder}\n${token}\n${expires}\n`)
-}
-
-function parseLease(raw: string): { holder: bigint; token: bigint; expires: bigint } | null {
-	const lines = raw.trim().split("\n")
-	if (lines.length !== 3) {
-		return null
-	}
-	const [holderLine, tokenLine, expiresLine] = lines
-	if (holderLine === undefined || tokenLine === undefined || expiresLine === undefined) {
-		return null
-	}
-	if (!SIGNED_DECIMAL.test(holderLine) || !UNSIGNED_DECIMAL.test(tokenLine) || !SIGNED_DECIMAL.test(expiresLine)) {
-		return null
-	}
-	return { holder: BigInt(holderLine), token: BigInt(tokenLine), expires: BigInt(expiresLine) }
-}
-
 async function fsyncDir(dir: string): Promise<void> {
 	const handle = await fs.open(dir, "r")
 	const synced = await errors.try(handle.sync())
@@ -131,7 +110,7 @@ async function renewDirLease(held: FsLease, ttlMs: number): Promise<void> {
 	if (lease === null || lease.holder !== held.holder || lease.token !== held.token) {
 		throw errors.new("directory lease is no longer ours")
 	}
-	const body = encodeLease(held.holder, held.token, BigInt(Date.now() + ttlMs))
+	const body = encodeLease({ holder: held.holder, token: held.token, expires: BigInt(Date.now() + ttlMs) })
 	const tmp = `${held.path}.renew.${process.pid}`
 	const file = await fs.open(tmp, "w")
 	const written = await errors.try(
@@ -329,7 +308,12 @@ function openTenants<Rels extends SchemaRelations>(options: OpenTenantsOptions<R
 
 	async function openOne(tenant: string): Promise<LiveHandle<Rels>> {
 		const dir = path.join(options.dir, tenant)
-		const lease = await acquireFsLease(dir, "dir", dirLeaseMs, "refuse")
+		/** The dir-lease mirrors Rust `acquire_named`: tokens live at
+		 *  `{options.dir}/~lease/{tenant}`, outside the disposable replica
+		 *  directory `{options.dir}/{tenant}` — the replica-open sweep
+		 *  rm-rfs the replica dir's own `~lease` and must not touch the
+		 *  held tenant lease. */
+		const lease = await acquireFsLease(options.dir, tenant, dirLeaseMs, "refuse")
 		let replica: LiveHandle<Rels>
 		try {
 			replica = brandLive(

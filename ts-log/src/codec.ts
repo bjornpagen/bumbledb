@@ -1,32 +1,38 @@
 /**
- * The command codec (20): one binary batch format, implemented twice
- * (Rust in `bumbledb-log`, TS here), pinned equal by cross-goldens. A
- * batch is header + ops; commands carry raw values, never intern ids.
- * Decode is a full parse before any apply: every illegal byte is a
- * typed refusal, and bytes after the last op refuse as trailing
- * garbage.
+ * The command codec seat (20): one implementation reads and writes the
+ * batch wire — `crates/bumbledb-log`, reached through the sealed
+ * per-theory `LogCodec` handle the descriptor parse mints
+ * (`descriptor.codec`). This module is typed payload construction only:
+ * raw rows tag by the descriptor's layout on the way in, decoded rows
+ * cross exactly as the engine's `ValueOut` walk, and every grammar
+ * refusal carries the log core's own identity kind, minted through the
+ * bridge's `log-identities.json` table. The chain discipline
+ * (`verifyChain`) is pure slot algebra over decoded headers and stays
+ * host-side; no byte grammar lives here.
  */
 
+import type {
+	FactValue,
+	LogBatchDecodeKind,
+	LogBatchEncodeKind,
+	LogOpIn,
+	ValueSpec,
+	ValueTypeSpec
+} from "@bjornpagen/bumbledb"
+import { internalLogDecodeBatch, internalLogEncodeBatch } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
-import { ByteReader, ByteWriter, bytesEqual, digest32, hex32, utf8Encoder } from "#bytes.ts"
-import type { Braid, Theory } from "#descriptor.ts"
+import { bytesEqual, digest32, hex32 } from "#bytes.ts"
+import type { Braid, Descriptor, Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
 import { refuse, refuseChain } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
-import type { TaggedRefusal, Value } from "#value.ts"
-import { checkAgainst, readTagged, writeTagged } from "#value.ts"
-
-const MAGIC = utf8Encoder.encode("BDBL")
-const VERSION = 3
-const OP_KIND = { insert: 1, delete: 2 } as const
-const U32_MAX = 0xffffffffn
 
 interface Op {
 	readonly op: "insert" | "delete"
 	readonly relation: string
-	readonly rows: ReadonlyArray<readonly Value[]>
+	readonly rows: ReadonlyArray<readonly FactValue[]>
 }
 
 interface BatchHeader {
@@ -62,12 +68,105 @@ function braidIdOf(id: Braid): number {
 	return Number.parseInt(id.slice(1), 16)
 }
 
+function asDigest(bytes: Uint8Array, at: string): Digest32 {
+	if (bytes.length !== 32) {
+		refuse({ kind: "DigestWidth" }, `${at} is not 32 bytes`)
+	}
+	return digest32(bytes)
+}
+
+/** A bridge refusal row surfaces as `ErrRefused` carrying the core's identity kind. */
+function refuseBridge(kind: LogBatchDecodeKind | LogBatchEncodeKind, message: string): never {
+	refuse({ kind }, message)
+}
+
 /**
- * Encodes one batch. Digests are branded here: a `prev` or fingerprint
- * that is not 32 bytes is `DigestWidth`. The header's `braid_gen` must
- * equal the slot number the object is published under; every op
- * relation must belong to the header's braid — a spanning batch is
- * unencodable.
+ * Tags one raw cell by the field's declared layout — the bridge's
+ * inbound spelling. Only the JS shape is judged here (the tag must be
+ * constructible); range, width, and interval emptiness are the core's
+ * own `Value` refusal.
+ */
+function taggedCell(where: string, type: ValueTypeSpec, value: FactValue): ValueSpec {
+	switch (type.kind) {
+		case "bool": {
+			if (typeof value !== "boolean") {
+				throw errors.new(`${where}: expected boolean`)
+			}
+			return { kind: "bool", value }
+		}
+		case "u64": {
+			if (typeof value !== "bigint") {
+				throw errors.new(`${where}: expected u64 bigint`)
+			}
+			return { kind: "u64", value }
+		}
+		case "i64": {
+			if (typeof value !== "bigint") {
+				throw errors.new(`${where}: expected i64 bigint`)
+			}
+			return { kind: "i64", value }
+		}
+		case "string": {
+			if (typeof value !== "string") {
+				throw errors.new(`${where}: expected well-formed string`)
+			}
+			if (!value.isWellFormed()) {
+				throw errors.new(`${where}: string cell is not well-formed UTF-8`)
+			}
+			return { kind: "string", value }
+		}
+		case "fixedBytes": {
+			if (!(value instanceof Uint8Array)) {
+				throw errors.new(`${where}: expected ${type.len}-byte Uint8Array`)
+			}
+			return { kind: "fixedBytes", value }
+		}
+		case "interval": {
+			if (typeof value !== "object" || value instanceof Uint8Array) {
+				throw errors.new(`${where}: expected interval value`)
+			}
+			return type.element === "u64"
+				? { kind: "intervalU64", start: value.start, end: value.end }
+				: { kind: "intervalI64", start: value.start, end: value.end }
+		}
+	}
+}
+
+/**
+ * Ops to the bridge's spelling: relation names resolve through the
+ * descriptor's vocabulary (the core never sees a name), cells tag by
+ * the layout. A cell past the layout's width has no type to tag by and
+ * refuses `Arity` here; every other judgment is the core's.
+ */
+function opsIn(descriptor: Descriptor, ops: readonly Op[]): LogOpIn[] {
+	return ops.map(function opIn(op, opIndex) {
+		const relation = descriptor.relationByName.get(op.relation)
+		if (relation === undefined) {
+			throw errors.new(`op cites unknown relation ${op.relation}`)
+		}
+		const rows = op.rows.map(function rowIn(row, rowIndex) {
+			return row.map(function cellIn(value, ordinal) {
+				const field = relation.fields[ordinal]
+				if (field === undefined) {
+					refuse(
+						{ kind: "Arity", op: opIndex, relation: relation.name, row: rowIndex },
+						`op ${opIndex} relation ${relation.name} row ${rowIndex} cell ${ordinal} is outside the ${relation.fields.length}-field layout`
+					)
+				}
+				return taggedCell(`relation ${relation.name} field ${field.name}`, field.type, value)
+			})
+		})
+		return { kind: op.op, relation: relation.id, rows }
+	})
+}
+
+/**
+ * Encodes one batch through the sealed codec. The handle is the
+ * fingerprint authority: the header's carried fingerprint must be the
+ * descriptor's own (a short digest is `DigestWidth` at this gate) and
+ * never rides the bridge. Braid membership, closedness, arity, and
+ * value validity are the core's refusals, crossing with their identity
+ * kinds.
  */
 function encodeBatch(theory: Theory, header: EncodeHeader, ops: readonly Op[]): Uint8Array {
 	const descriptor = descriptorOf(theory)
@@ -76,222 +175,49 @@ function encodeBatch(theory: Theory, header: EncodeHeader, ops: readonly Op[]): 
 	if (!bytesEqual(fingerprint, descriptor.fingerprintBytes)) {
 		throw errors.new(`encode fingerprint ${hex32(fingerprint)} is not the descriptor's ${descriptor.fingerprint}`)
 	}
-	const braidId = braidIdOf(header.braid)
-	const members = descriptor.braidMembers.get(header.braid)
-	if (members === undefined) {
-		throw errors.new(`braid ${header.braid} is not derived from this descriptor`)
+	const outcome = internalLogEncodeBatch(
+		descriptor.codec,
+		{
+			braid: braidIdOf(header.braid),
+			braidGen: header.braidGen,
+			prev,
+			writer: header.writer,
+			timestamp: header.timestamp
+		},
+		opsIn(descriptor, ops)
+	)
+	if (!outcome.ok) {
+		refuseBridge(outcome.kind, outcome.message)
 	}
-	for (const [opIndex, op] of ops.entries()) {
-		const relation = descriptor.relationByName.get(op.relation)
-		if (relation === undefined) {
-			throw errors.new(`op cites unknown relation ${op.relation}`)
-		}
-		if (relation.closed) {
-			refuse(
-				{ kind: "ClosedRelation", op: opIndex, relation: relation.id },
-				`op ${opIndex} writes closed relation ${relation.name}`
-			)
-		}
-		if (!members.includes(relation.id)) {
-			throw errors.new(`op relation ${op.relation} is outside braid ${header.braid} — a spanning batch is unencodable`)
-		}
-		for (const [rowIndex, row] of op.rows.entries()) {
-			if (row.length !== relation.fields.length) {
-				refuse(
-					{ kind: "Arity", op: opIndex, relation: relation.name, row: rowIndex },
-					`op ${opIndex} relation ${relation.name} row ${rowIndex} arity ${row.length} ≠ ${relation.fields.length}`
-				)
-			}
-			relation.fields.forEach(function gateCell(field, ordinal) {
-				const value = row[ordinal]
-				if (value === undefined) {
-					refuse(
-						{ kind: "Arity", op: opIndex, relation: relation.name, row: rowIndex },
-						`op ${opIndex} relation ${relation.name} row ${rowIndex} cell ${ordinal} absent`
-					)
-				}
-				checkAgainst(`relation ${relation.name} field ${field.name}`, field.type, value)
-			})
-		}
-	}
-
-	const opCount = BigInt(ops.length)
-	if (opCount > U32_MAX) {
-		throw errors.new(`encode op count ${opCount} exceeds u32`)
-	}
-
-	const out = new ByteWriter(4096)
-	out.bytes(MAGIC)
-	out.u16le(VERSION)
-	out.u16le(0)
-	out.bytes(fingerprint)
-	out.u32le(braidId)
-	out.u64le(header.braidGen)
-	out.bytes(prev)
-	out.u64le(header.writer)
-	out.u64le(header.timestamp)
-	out.u32le(Number(opCount))
-	for (const op of ops) {
-		const relation = descriptor.relationByName.get(op.relation)
-		if (relation === undefined) {
-			throw errors.new(`op cites unknown relation ${op.relation}`)
-		}
-		const rowCount = BigInt(op.rows.length)
-		if (rowCount > U32_MAX) {
-			throw errors.new(`encode row count ${rowCount} exceeds u32`)
-		}
-		out.u8(OP_KIND[op.op])
-		out.u32le(relation.id)
-		out.u32le(Number(rowCount))
-		for (const row of op.rows) {
-			relation.fields.forEach(function writeCell(field, ordinal) {
-				const value = row[ordinal]
-				if (value === undefined) {
-					throw errors.new(`relation ${relation.name}: row cell ${ordinal} absent`)
-				}
-				writeTagged(out, field.type, value)
-			})
-		}
-	}
-	return out.finish()
+	return outcome.value
 }
 
-function asDigest(bytes: Uint8Array, at: string): Digest32 {
-	if (bytes.length !== 32) {
-		refuse({ kind: "DigestWidth" }, `${at} is not 32 bytes`)
-	}
-	return digest32(bytes)
-}
-
-function readU32(reader: ByteReader, what: string): bigint {
-	return BigInt(reader.u32le(what))
-}
-
-/** Kind + relation id + row count: the shortest op the grammar admits. */
-const MIN_OP_BYTES = 9n
-
-/** A declared count the remaining bytes cannot open is Truncated
- *  before the loop. Counts are exact bigint so a u32::MAX row vector
- *  cannot wrap a JavaScript number. A zero-field relation has no row
- *  bytes. A nonempty layout uses one tag byte so a first-cell typed
- *  refusal is not swallowed. */
-function refuseUnbacked(count: bigint, remaining: number, minItem: bigint, at: string): void {
-	if (count === 0n) {
-		return
-	}
-	if (minItem === 0n || BigInt(remaining) / minItem < count) {
-		refuse({ kind: "Truncated", at }, `declared ${at} ${count} outruns the remaining ${remaining} bytes`)
-	}
-}
-
-/** Full parse of a batch object; refusals are typed, never partial reads. */
+/** Full parse of a batch object by the one grammar; refusals cross typed, never partial reads. */
 function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	const descriptor = descriptorOf(theory)
-	const reader = new ByteReader(bytes, {
-		fail(what: string): never {
-			refuse({ kind: "Truncated", at: what }, `batch truncated at ${what}`)
-		}
-	})
-
-	const magic = reader.bytes(4, "magic")
-	if (!bytesEqual(magic, MAGIC)) {
-		refuse({ kind: "BadMagic" }, "batch magic is not BDBL")
+	const outcome = internalLogDecodeBatch(descriptor.codec, bytes)
+	if (!outcome.ok) {
+		refuseBridge(outcome.kind, outcome.message)
 	}
-	const version = reader.u16le("version")
-	if (version !== VERSION) {
-		refuse({ kind: "Version", version }, `batch version ${version}, consumers refuse ≠ ${VERSION}`)
-	}
-	const flags = reader.u16le("flags")
-	if (flags !== 0) {
-		refuse({ kind: "Flags", flags }, `batch flags ${flags} must be 0`)
-	}
-	const fingerprint = digest32(reader.bytes(32, "fingerprint"))
-	if (!bytesEqual(fingerprint, descriptor.fingerprintBytes)) {
-		refuse(
-			{ kind: "FingerprintMismatch", carried: hex32(fingerprint), expected: descriptor.fingerprint },
-			"batch fingerprint does not match the descriptor"
-		)
-	}
-	const braidId = reader.u32le("braid")
-	const braid = braidHex(braidId)
-	const members = descriptor.braidMembers.get(braid)
-	if (members === undefined) {
-		refuse({ kind: "UnknownBraid", braid: braidId }, `batch braid ${braid} is not derived from this descriptor`)
-	}
-	const braidGen = generation(reader.u64le("braid generation"))
-	const prev = digest32(reader.bytes(32, "prev"))
-	const writer = reader.u64le("writer")
-	const timestamp = reader.u64le("timestamp")
-
-	const opCount = readU32(reader, "op count")
-	refuseUnbacked(opCount, reader.remaining(), MIN_OP_BYTES, "op count")
-	const ops: Op[] = []
-	for (let opIndex = 0n; opIndex < opCount; opIndex++) {
-		const op = Number(opIndex)
-		const kind = reader.u8("op kind")
-		if (kind !== OP_KIND.insert && kind !== OP_KIND.delete) {
-			refuse(
-				{ kind: "UnknownOpKind", op, opKind: kind },
-				`op ${op} kind ${kind} is unknown (3 was deleted with floor bumps)`
-			)
-		}
-		const relationId = reader.u32le("op relation")
-		const relation = descriptor.relations[relationId]
+	const batch = outcome.value
+	const ops = batch.ops.map(function opOut(op) {
+		const relation = descriptor.relations[op.relation]
 		if (relation === undefined) {
-			refuse({ kind: "UnknownRelation", op, relation: relationId }, `op ${op} cites unknown relation ${relationId}`)
+			throw errors.new(`decoded op cites relation ${op.relation} outside the descriptor`)
 		}
-		if (relation.closed) {
-			refuse({ kind: "ClosedRelation", op, relation: relationId }, `op ${op} writes closed relation ${relation.name}`)
-		}
-		if (!members.includes(relationId)) {
-			refuse(
-				{ kind: "OpRelationOutsideBraid", op, relation: relationId, braid },
-				`op ${op} relation ${relation.name} is outside braid ${braid}`
-			)
-		}
-		const rowCount = readU32(reader, "row count")
-		const minRow = relation.fields.length === 0 ? 0n : 1n
-		refuseUnbacked(rowCount, reader.remaining(), minRow, "row count")
-		const rows: Value[][] = []
-		for (let rowIndex = 0n; rowIndex < rowCount; rowIndex++) {
-			const rowAt = Number(rowIndex)
-			const row: Value[] = []
-			relation.fields.forEach(function readCell(field) {
-				const at = { relation: relation.name, row: rowAt, field: field.name }
-				const where = `relation ${relation.name} row ${rowAt} field ${field.name}`
-				const refusal: TaggedRefusal = {
-					badTag(): never {
-						refuse({ kind: "TagMismatch", ...at }, `${where}: tag does not match the layout`)
-					},
-					boolByte(byte: number): never {
-						refuse({ kind: "BoolByte", ...at }, `${where}: bool byte ${byte}`)
-					},
-					invalidUtf8(): never {
-						refuse({ kind: "InvalidUtf8", ...at }, `${where}: string payload is not UTF-8`)
-					},
-					emptyInterval(): never {
-						refuse({ kind: "EmptyInterval", ...at }, `${where}: interval start does not precede its end`)
-					},
-					intervalOverflow(): never {
-						refuse({ kind: "IntervalOverflow", ...at }, `${where}: fixed interval end leaves the element domain`)
-					}
-				}
-				row.push(readTagged(reader, field.type, refusal))
-			})
-			rows.push(row)
-		}
-		ops.push({ op: kind === OP_KIND.insert ? "insert" : "delete", relation: relation.name, rows })
-	}
-
-	if (reader.remaining() !== 0) {
-		refuse(
-			{ kind: "TrailingBytes", bytes: reader.remaining() },
-			`${reader.remaining()} trailing bytes after the last op`
-		)
-	}
-
+		return { op: op.kind, relation: relation.name, rows: op.rows }
+	})
 	return {
-		header: { fingerprint, braid, braidGen, prev, writer, timestamp },
+		header: {
+			// Decode already refused any batch whose fingerprint is not
+			// the handle's own, so the descriptor's is the batch's.
+			fingerprint: digest32(descriptor.fingerprintBytes),
+			braid: braidHex(batch.header.braid),
+			braidGen: generation(batch.header.braidGen),
+			prev: digest32(batch.header.prev),
+			writer: batch.header.writer,
+			timestamp: batch.header.timestamp
+		},
 		ops
 	}
 }

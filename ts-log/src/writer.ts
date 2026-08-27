@@ -23,6 +23,7 @@ import {
 	type FreshKeys,
 	type FreshRange,
 	internalBlake3,
+	type LogCodecHandle,
 	type MemberRelation,
 	type MutationReport,
 	rowOf,
@@ -36,10 +37,20 @@ import { bytesEqual, checkedAddU64, digest32, utf8Encoder, utf8StrictDecoder } f
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
-import type { Braid, RelationInfo } from "#descriptor.ts"
+import type { Braid, RelationInfo, Theory } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
-import { ErrSpanningCommit, refuseExhausted, refuseOverWidth, refuseSlotRetired, throwContention } from "#errors.ts"
-import type { Generation } from "#keys.ts"
+import {
+	ErrRefillNeeded,
+	ErrSpanningCommit,
+	refillNeededOf,
+	refuse,
+	refuseExhausted,
+	refuseOverWidth,
+	refuseSlotRetired,
+	throwContention,
+	throwRefillNeeded
+} from "#errors.ts"
+import type { Generation, StoreKey } from "#keys.ts"
 import {
 	CKPT_SCRATCH_LEASE,
 	checkpointMdbKey,
@@ -76,7 +87,11 @@ import type { ObjectStore } from "#store.ts"
 
 /** 10 owns the width: one CAS amortizes counter traffic 4096× below slot traffic. */
 const LEASE_WIDTH = 4096n
-const ID_LEASE_COUNTER = regex("^\\d+$")
+
+/** The counter body's one grammar (`conformance/v3/counter/`): a
+ *  canonical u64 decimal — no sign, no leading zero, no trailing bytes. */
+const ID_LEASE_COUNTER = regex("^(?:0|[1-9][0-9]*)$")
+const U64_MAX = 0xffffffffffffffffn
 
 /** The live-loss bound (60): consecutive losses at the live tip, history never counts. */
 const LOSS_BOUND = 16
@@ -237,26 +252,6 @@ function drawnRange(start: bigint, endExclusive: bigint): FreshRange {
 	})
 }
 
-/** The refill signal: a draw the cached pool cannot serve. Internal to
- *  the record loop, which leases fresh blocks and runs the body again —
- *  a refill is its own path, never an exhaustion. */
-const errRefill = errors.new("bumbledb-log lease refill: the cached pool cannot serve the draw")
-
-interface RefillNeed {
-	readonly relation: number
-	readonly field: number
-	/** Draws this attempt made on the key, the missed one included. */
-	readonly draws: number
-}
-
-const refillNeeds = new WeakMap<Error, RefillNeed>()
-
-function signalRefill(need: RefillNeed, detail: string): never {
-	const error = errors.wrap(errRefill, detail)
-	refillNeeds.set(error, need)
-	throw error
-}
-
 /** Untouched full-width blocks pooled for the key: the record loop's
  *  guarantee unit — k full blocks serve any k draws, each at most one
  *  width, whatever tails the draws abandon. */
@@ -314,10 +309,30 @@ function drawIds(
 		}
 		pool.shift()
 	}
-	signalRefill(
-		{ relation, field, draws: drawn },
+	throwRefillNeeded(
+		{ relation, field, requested: count },
 		`id-lease relation ${relation} field ${field} pool cannot serve ${count}`
 	)
+}
+
+/** The counter parse: canonical decimal within u64 or a typed Counter
+ *  refusal — leading zeros, signs, trailing bytes, non-UTF-8, and
+ *  values past u64 all refuse under the one pinned identity. */
+function parseCounter(key: StoreKey, bytes: Uint8Array): bigint {
+	const decoded = errors.trySync(function decodeCounter() {
+		return utf8StrictDecoder.decode(bytes)
+	})
+	if (decoded.error) {
+		refuse({ kind: "Counter", key }, `id-lease counter ${key} body is not UTF-8`)
+	}
+	if (!ID_LEASE_COUNTER.test(decoded.data)) {
+		refuse({ kind: "Counter", key }, `id-lease counter ${key} body is not a canonical decimal`)
+	}
+	const value = BigInt(decoded.data)
+	if (value > U64_MAX) {
+		refuse({ kind: "Counter", key }, `id-lease counter ${key} value leaves u64`)
+	}
+	return value
 }
 
 /** `ids/{relation}/{field}`: birth claims [0, width); every later lease CAS-increments. */
@@ -338,11 +353,7 @@ async function acquireLease<Rels extends SchemaRelations>(
 			}
 			continue
 		}
-		const body = utf8StrictDecoder.decode(fetched.bytes)
-		if (!ID_LEASE_COUNTER.test(body)) {
-			throw errors.new(`id-lease counter ${key} is not a canonical decimal: ${body}`)
-		}
-		const next = BigInt(body)
+		const next = parseCounter(key, fetched.bytes)
 		const end = checkedAddU64(next, LEASE_WIDTH)
 		if (end === undefined) {
 			refuseExhausted({ relation, field }, `id-lease relation ${relation} field ${field} would leave u64`)
@@ -380,10 +391,10 @@ interface Recording {
 
 function recorderOf<Rels extends SchemaRelations>(
 	core: Core<Rels>,
-	state: WriterState
+	state: WriterState,
+	draws: Map<string, number>
 ): { batch: Batch<Rels>; recording: Recording } {
 	const recording: Recording = { ops: [] }
-	const draws = new Map<string, number>()
 	function infoOf(name: string): RelationInfo {
 		const info = core.descriptor.relationByName.get(name)
 		if (info === undefined) {
@@ -447,7 +458,8 @@ async function recordWithLeases<Rels extends SchemaRelations, R>(
 ): Promise<{ value: R; ops: Op[] }> {
 	await ensureFreshLeases(core, state)
 	for (;;) {
-		const { batch, recording } = recorderOf(core, state)
+		const draws = new Map<string, number>()
+		const { batch, recording } = recorderOf(core, state, draws)
 		const ran = await errors.try(
 			(async function runBody() {
 				return body(batch)
@@ -456,15 +468,17 @@ async function recordWithLeases<Rels extends SchemaRelations, R>(
 		if (!ran.error) {
 			return { value: ran.data, ops: recording.ops }
 		}
-		if (!errors.is(ran.error, errRefill)) {
+		if (!errors.is(ran.error, ErrRefillNeeded)) {
 			throw ran.error
 		}
-		const need = refillNeeds.get(ran.error)
+		const need = refillNeededOf(ran.error)
 		if (need === undefined) {
 			throw ran.error
 		}
-		state.scream.attempt(`id-lease refill relation ${need.relation} field ${need.field} draws ${need.draws}`)
-		while (fullBlocksOf(state, need.relation, need.field) < need.draws) {
+		// Draws this attempt made on the starved key, the missed one included.
+		const drawn = draws.get(poolKey(need.relation, need.field)) ?? 0
+		state.scream.attempt(`id-lease refill relation ${need.relation} field ${need.field} draws ${drawn}`)
+		while (fullBlocksOf(state, need.relation, need.field) < drawn) {
 			await acquireLease(core, state, need.relation, need.field)
 		}
 	}
@@ -497,16 +511,14 @@ function u64leAt(bytes: Uint8Array, at: number): bigint | undefined {
 }
 
 /** The usurper is a fact in the header. A body that refuses to decode
- *  does not hide the slot's owner. */
+ *  does not hide the slot's owner. The Rust writer machine sniffs the
+ *  same fixed offset (`writer/loss.rs`); the batch grammar itself has
+ *  one reader — the codec seat. */
 function headerWriter(bytes: Uint8Array): bigint | undefined {
 	if (bytes.length < BATCH_MAGIC.length || !bytesEqual(bytes.subarray(0, BATCH_MAGIC.length), BATCH_MAGIC)) {
 		return undefined
 	}
 	return u64leAt(bytes, WRITER_AT)
-}
-
-function headerTimestamp(bytes: Uint8Array): bigint | undefined {
-	return u64leAt(bytes, WRITER_AT + 8)
 }
 
 /** Header prev is 32 branded bytes. */
@@ -584,39 +596,38 @@ async function publishPending<Rels extends SchemaRelations>(
 		const braid = pending.braid
 		// The floor is a write precondition: a slot at or below it is
 		// retired. A create must not touch the store (70/116/127).
-		if (belowFloor(core, braid, pending.gen)) {
-			refuseSlotRetired({ braid, slot: pending.gen }, "the slot is retired")
+		if (belowFloor(core, braid, pending.slot)) {
+			refuseSlotRetired({ braid, slot: pending.slot }, "the slot is retired")
 		}
-		const created = await core.store.putCreate(logKey(core.prefix, braid, pending.gen), pending.bytes)
+		const created = await core.store.putCreate(logKey(core.prefix, braid, pending.slot), pending.bytes)
 		let winnerBytes: Uint8Array | null = null
 		if (created.tag !== "created") {
-			const fetched = await core.store.get(logKey(core.prefix, braid, pending.gen))
+			const fetched = await core.store.get(logKey(core.prefix, braid, pending.slot))
 			if (fetched === null) {
 				// Exists then null: the occupant was swept. Refuse
 				// rather than loop back into putCreate.
-				refuseSlotRetired({ braid, slot: pending.gen }, "the slot is retired")
+				refuseSlotRetired({ braid, slot: pending.slot }, "the slot is retired")
 			}
 			if (!bytesEqual(fetched.bytes, pending.bytes)) {
 				winnerBytes = fetched.bytes
 			}
 		}
 		if (winnerBytes === null) {
-			const timestamp = headerTimestamp(pending.bytes)
-			if (timestamp === undefined) {
-				throw errors.new("pending batch header is shorter than the fixed layout")
+			if (pending.ts === null) {
+				throw errors.new("publish reached with an undecoded pending timestamp")
 			}
 			entriesOf(core).set(braid, {
-				g: pending.gen,
+				g: pending.slot,
 				prev: digest32(new Uint8Array(internalBlake3(pending.bytes))),
-				ts: timestamp
+				ts: pending.ts
 			})
 			await clearPending(core)
-			return { tag: "accepted", value: { slot: pending.gen, durability: "published" } }
+			return { tag: "accepted", value: { slot: pending.slot, durability: "published" } }
 		}
 
 		losses += 1
 		state.scream.attempt("slot occupant is not ours")
-		noteDeposition(state, braid, pending.gen, winnerBytes)
+		noteDeposition(state, braid, pending.slot, winnerBytes)
 		await discardAndReopen(core)
 		const before = generationOf(core)
 		const rejudged = applyOps(core, ops)
@@ -664,7 +675,7 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 		ops
 	)
 	// Pending → durable, before any apply.
-	holdPending(core, { braid, gen: generation(entry.g + 1n), bytes }, ops)
+	holdPending(core, { braid, slot: generation(entry.g + 1n), bytes }, ops, timestamp)
 	await persistSidecar(core)
 
 	const before = generationOf(core)
@@ -696,7 +707,7 @@ async function settleInheritedPending<Rels extends SchemaRelations>(
 			generationOf(core),
 			null,
 			pending.bytes,
-			belowFloor(core, pending.braid, pending.gen)
+			belowFloor(core, pending.braid, pending.slot)
 		).tag === "below-floor"
 	) {
 		await clearPending(core)
@@ -712,6 +723,13 @@ async function settleInheritedPending<Rels extends SchemaRelations>(
 			return
 		}
 		ops = decoded.data.ops
+		// The decoded arm re-holds so publish reads the header facts once.
+		holdPending(
+			core,
+			{ braid: pending.braid, slot: pending.slot, bytes: pending.bytes },
+			ops,
+			decoded.data.header.timestamp
+		)
 	}
 	const published = await publishPending(core, state, ops)
 	if (published.tag === "rejected") {
@@ -773,7 +791,7 @@ async function releaseScratch(dir: string): Promise<void> {
 async function casPublish(
 	store: ObjectStore,
 	prefix: string,
-	known: ReadonlySet<Braid>,
+	codec: LogCodecHandle,
 	candidate: CheckpointFacts,
 	digest: Digest32,
 	bytes: Uint8Array
@@ -800,7 +818,7 @@ async function casPublish(
 				return { tag: "refused", reason: "checkpoint-doc-missing" }
 			}
 			const incumbentDoc = errors.trySync(function parseIncumbent() {
-				return parseCheckpoint(doc.bytes, known)
+				return parseCheckpoint(codec, doc.bytes)
 			})
 			if (incumbentDoc.error) {
 				return { tag: "refused", reason: "checkpoint" }
@@ -829,17 +847,18 @@ async function publishCheckpoint(
 	store: ObjectStore,
 	prefix: string,
 	dir: string,
-	known: ReadonlySet<Braid>,
+	theory: Theory,
 	candidate: CheckpointFacts,
 	mdb: Uint8Array
 ): Promise<Published> {
-	const bytes = renderCheckpoint(candidate)
+	const codec = descriptorOf(theory).codec
+	const bytes = renderCheckpoint(codec, candidate)
 	const digest = digest32(new Uint8Array(internalBlake3(bytes)))
 	await claimScratch(dir, digest)
 	const ran = await errors.try(
 		(async function publish() {
 			await putCreateOnce(store, checkpointMdbKey(prefix, digest), mdb)
-			return await casPublish(store, prefix, known, candidate, digest, bytes)
+			return await casPublish(store, prefix, codec, candidate, digest, bytes)
 		})()
 	)
 	if (ran.error) {

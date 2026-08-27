@@ -2,7 +2,7 @@
 //! fixture races a pair on a shared base, and the loser's re-judgment
 //! must produce exactly the serial verdict: the double-booking FD
 //! rejection, the dangling-reference verdict per order, the capacity
-//! ceiling and floor rejections, the reservation spend and reclaim
+//! ceiling and floor rejections, the weighted-hold spend and reclaim
 //! races, and the byte-equal absorption of an ambiguous PUT. Every
 //! fixture cross-checks the racing outcome against a plain serial
 //! execution of the same two batches on a fresh store — the verdict IS
@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bumbledb::schema::fingerprint::fingerprint as schema_fingerprint;
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-    Side, StatementDescriptor, StatementId, ValidateDescriptor as _, ValueType, Weight,
+    Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::{Admission, Db, Value, Violation, Violations};
 use bumbledb_log::braids::BraidId;
@@ -24,7 +24,7 @@ use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
     Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
 };
-use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Options, Slotted, Writer, WriterOpened};
 
 const SLOT: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
@@ -34,8 +34,6 @@ const RES: RelationId = RelationId(4);
 const UNIT_CHILD: RelationId = RelationId(5);
 const VAULT: RelationId = RelationId(6);
 const COIN: RelationId = RelationId(7);
-
-const RES_CAPACITY: StatementId = StatementId(5);
 
 const UNIT_CEILING: u64 = 6;
 const RES_CEILING: u64 = 10;
@@ -59,7 +57,7 @@ fn temp_dir(tag: &str) -> PathBuf {
 
 /// One relation per family: `slot` carries the key statement; `entry`
 /// in `account` carries the containment; `pool` parents a unit-weight
-/// child and the weighted reservation relation; the `vault`/`coin`
+/// child and the weighted `res` relation; the `vault`/`coin`
 /// capacity has a floor above zero so the lower bound is reachable by
 /// the engine, not only imagined.
 #[allow(clippy::too_many_lines)]
@@ -402,17 +400,17 @@ fn race(tag: &str) -> Race {
     Race { writer, planter }
 }
 
-fn accepted_generation<R>(outcome: &Commit<R>) -> u64 {
+fn accepted_slot<R>(outcome: &Admission<Slotted<R>>) -> u64 {
     match outcome {
-        Commit::Accepted { generation, .. } => *generation,
-        Commit::Rejected(violations) => panic!("accepted expected, rejected: {violations:?}"),
+        Admission::Accepted(slotted) => slotted.slot,
+        Admission::Rejected(violations) => panic!("accepted expected, rejected: {violations:?}"),
     }
 }
 
-fn rejected_law<R>(outcome: &Commit<R>) -> Law {
+fn rejected_law<R>(outcome: &Admission<Slotted<R>>) -> Law {
     match outcome {
-        Commit::Rejected(violations) => cited(violations),
-        Commit::Accepted { .. } => panic!("rejected expected"),
+        Admission::Rejected(violations) => cited(violations),
+        Admission::Accepted(_) => panic!("rejected expected"),
     }
 }
 
@@ -475,7 +473,7 @@ fn dangling_reference_source_loser_gets_the_containment_rejection() {
             Ok(())
         })
         .expect("base commit");
-    assert_eq!(accepted_generation(&outcome), 1);
+    assert_eq!(accepted_slot(&outcome), 1);
     fixture.planter.plant(account_braid, &remove);
     let outcome = fixture
         .writer
@@ -505,7 +503,7 @@ fn dangling_reference_target_loser_gets_the_containment_rejection() {
             Ok(())
         })
         .expect("base commit");
-    assert_eq!(accepted_generation(&outcome), 1);
+    assert_eq!(accepted_slot(&outcome), 1);
     fixture.planter.plant(account_braid, &need);
     let outcome = fixture
         .writer
@@ -549,7 +547,7 @@ fn capacity_ceiling_loser_rejudges_to_the_serial_rejection() {
             Ok(())
         })
         .expect("base commit");
-    assert_eq!(accepted_generation(&outcome), 1);
+    assert_eq!(accepted_slot(&outcome), 1);
     fixture.planter.plant(pool_braid, &winner);
     let outcome = fixture
         .writer
@@ -586,7 +584,7 @@ fn capacity_floor_loser_rejudges_to_the_serial_rejection() {
             Ok(())
         })
         .expect("base commit");
-    assert_eq!(accepted_generation(&outcome), 1);
+    assert_eq!(accepted_slot(&outcome), 1);
     fixture.planter.plant(vault_braid, &winner);
     let outcome = fixture
         .writer
@@ -603,10 +601,10 @@ fn capacity_floor_loser_rejudges_to_the_serial_rejection() {
     assert!(fixture.planter.slot_absent(vault_braid, 3));
 }
 
-// --- the reservation family: spend and reclaim races ---
+// --- the weighted-hold family: spend and reclaim races ---
 
 #[test]
-fn reservation_spend_outraced_by_a_fill_publishes_at_the_tip() {
+fn weighted_hold_spend_outraced_by_a_fill_publishes_at_the_tip() {
     // The winner books unrelated units with headroom to spare; the
     // spend re-judges clean at the moved base and publishes.
     let fixture = race("spend_publish");
@@ -618,15 +616,15 @@ fn reservation_spend_outraced_by_a_fill_publishes_at_the_tip() {
             Ok(())
         })
         .expect("pool commit");
-    assert_eq!(accepted_generation(&outcome), 1);
+    assert_eq!(accepted_slot(&outcome), 1);
     let outcome = fixture
         .writer
         .commit(|batch| {
-            batch.reserve_capacity(RES_CAPACITY, &[Value::U64(9)], 3, 99)?;
+            batch.insert(RES, [res_row(9, 3, 99)]);
             Ok(())
         })
-        .expect("mint commit");
-    assert_eq!(accepted_generation(&outcome), 2);
+        .expect("hold commit");
+    assert_eq!(accepted_slot(&outcome), 2);
     fixture
         .planter
         .plant(pool_braid, &[ins(RES, vec![res_row(9, 2, 50)])]);
@@ -639,7 +637,7 @@ fn reservation_spend_outraced_by_a_fill_publishes_at_the_tip() {
         })
         .expect("spend commit");
     assert_eq!(
-        accepted_generation(&outcome),
+        accepted_slot(&outcome),
         4,
         "the spend re-judges clean and publishes behind the winner"
     );
@@ -659,8 +657,8 @@ fn reservation_spend_outraced_by_a_fill_publishes_at_the_tip() {
 }
 
 #[test]
-fn reservation_spend_outraced_by_a_reclaim_rejudges_to_the_serial_rejection() {
-    // The winner reclaims the hold and re-mints it elsewhere; the
+fn weighted_hold_spend_outraced_by_a_reclaim_rejudges_to_the_serial_rejection() {
+    // The winner reclaims the hold and re-books it elsewhere; the
     // loser's spend re-judges with its delete evaporated and its
     // children priced against the real slack — the serial rejection.
     let fixture = race("spend_reclaim");
@@ -672,15 +670,15 @@ fn reservation_spend_outraced_by_a_reclaim_rejudges_to_the_serial_rejection() {
             Ok(())
         })
         .expect("pool commit");
-    assert_eq!(accepted_generation(&outcome), 1);
+    assert_eq!(accepted_slot(&outcome), 1);
     let outcome = fixture
         .writer
         .commit(|batch| {
-            batch.reserve_capacity(RES_CAPACITY, &[Value::U64(9)], 3, 99)?;
+            batch.insert(RES, [res_row(9, 3, 99)]);
             Ok(())
         })
-        .expect("mint commit");
-    assert_eq!(accepted_generation(&outcome), 2);
+        .expect("hold commit");
+    assert_eq!(accepted_slot(&outcome), 2);
     let outcome = fixture
         .writer
         .commit(|batch| {
@@ -688,7 +686,7 @@ fn reservation_spend_outraced_by_a_reclaim_rejudges_to_the_serial_rejection() {
             Ok(())
         })
         .expect("fill commit");
-    assert_eq!(accepted_generation(&outcome), 3);
+    assert_eq!(accepted_slot(&outcome), 3);
     fixture.planter.plant(
         pool_braid,
         &[
@@ -775,7 +773,7 @@ fn byte_equal_exists_is_ours_and_absorbs_without_a_loss() {
         })
         .expect("commit");
     assert!(
-        matches!(outcome, Commit::Accepted { generation: 1, .. }),
+        matches!(outcome, Admission::Accepted(Slotted { slot: 1, .. })),
         "byte-equal Exists is our own earlier PUT, absorbed"
     );
     assert_eq!(writer.losses(), 0, "absorption is not a loss");
