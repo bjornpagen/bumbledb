@@ -3,17 +3,19 @@
  * infrastructure failures on the ErrStore channel. `fsStore` is tier-1,
  * not a dev double — deployment case 5's production backend.
  *
- * The one on-disk protocol, shared with the Rust driver: create-only
- * publishes an exclusive synced temp with link(2), where EEXIST is the
- * honest exists; the etag is the blake3 of the content, lowercase hex,
- * computed on every read and never stored. The mutation lock is a
- * fenced CAS lease `{holder, token, expires}` in the reserved
- * namespace, acquired and broken only through the store's own CAS;
- * a contender breaks a lease iff it is expired. Liveness is
- * Alive | Dead | Unknown; Unknown never breaks a lease. `created` and
- * `swapped` resolve only after fsync of the object file and its parent
- * directory, including newly created ancestors. Temps and leftover
- * expired leases are swept at open.
+ * The one on-disk protocol, shared with the Rust driver and pinned by
+ * the `lease/` corpus goldens: create-only publishes an exclusive
+ * synced temp (under the reserved `~tmp` namespace) with link(2), where
+ * EEXIST is the honest exists; the etag is the blake3 of the content,
+ * lowercase hex, computed on every read and never stored. The mutation
+ * lock is a fenced CAS lease: a versioned `LEASE/1` body whose identity
+ * is a monotonic token file `{root}/~lease/{key}/{n}`, with `~head`
+ * naming the current token. A contender mints the next token iff the
+ * current lease's own bytes are expired — expiry is the only break.
+ * Release rewrites the held token with an already-expired body so the
+ * next acquirer does not wait us out. `created` and `swapped` resolve
+ * only after fsync of the object file and its parent directory,
+ * including newly created ancestors. Stale temps are swept at open.
  */
 
 import * as fs from "node:fs/promises"
@@ -21,21 +23,10 @@ import * as path from "node:path"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
-import { bytesEqual, toHex } from "#bytes.ts"
+import { bytesEqual, toHex, U64_MAX } from "#bytes.ts"
 import { wrapStore } from "#errors.ts"
 import type { StoreKey } from "#keys.ts"
-
-function reservedTemp(basename: string, pid: number, seq: number): string {
-	return `.${basename}.tmp.${pid}.${seq}`
-}
-
-function reservedLease(basename: string, token: bigint): string {
-	return `.${basename}.lease.${token}`
-}
-
-function isReservedName(name: string): boolean {
-	return name.startsWith(".")
-}
+import { LEASE_NAMESPACE, reservedLease, reservedTemp, TEMP_NAMESPACE } from "#keys.ts"
 
 declare const etagBrand: unique symbol
 type Etag = string & { readonly [etagBrand]: typeof etagBrand }
@@ -57,8 +48,6 @@ type Create =
 	| { readonly tag: "ambiguous" }
 
 type Swap = { readonly tag: "swapped"; readonly etag: Etag } | { readonly tag: "moved" } | { readonly tag: "ambiguous" }
-
-type Liveness = { readonly tag: "alive" } | { readonly tag: "dead" } | { readonly tag: "unknown" }
 
 interface Lease {
 	readonly holder: bigint
@@ -89,26 +78,28 @@ interface ObjectStore {
 	delete(key: StoreKey): Promise<void>
 }
 
+/** A held fenced lease: identity is the token file `{dir}/{token}`. */
 interface FsLease {
+	readonly root: string
 	readonly dir: string
-	readonly name: string
 	readonly holder: bigint
 	readonly token: bigint
 	readonly path: string
 }
 
-interface LeaseFile {
-	readonly path: string
-	readonly token: bigint
-	readonly lease: Lease | null
-	readonly readable: boolean
-}
-
 /** Ceiling of the jittered wait between probes of an unexpired lease. */
 const LOCK_RETRY_MS = 10
 
-/** Mutation-lease lifetime: long enough for one verb, short enough to expire after a crash. */
-const MUTATION_LEASE_MS = 30_000
+/** How long a mutation lease stays current, in milliseconds. */
+const MUTATION_TTL_MS = 5_000
+
+/** A live temp under `~tmp` exists only for write-then-link. Anything
+ *  older than this is crash litter the open sweep deletes. */
+const TEMP_STALE_MS = 30_000
+
+/** `~head` is not a StoreKey. It names the current token so a
+ *  successor reads `{dir}/{n}` without listing. */
+const HEAD = "~head"
 
 function ourHolder(): bigint {
 	return BigInt(process.pid)
@@ -122,53 +113,60 @@ function codeOf(error: Error): string | undefined {
 	return (error as NodeJS.ErrnoException).code
 }
 
+/** The lease body's magic first line. Version 1 of the one lock protocol. */
+const LEASE_MAGIC = "LEASE/1"
+
 function encodeLease(lease: Lease): Uint8Array {
-	return new TextEncoder().encode(`${lease.holder}\n${lease.token}\n${lease.expires}\n`)
+	return new TextEncoder().encode(`${LEASE_MAGIC}\n${lease.holder}\n${lease.token}\n${lease.expires}\n`)
 }
 
-const SIGNED_DECIMAL = regex("^-?\\d+$")
-const UNSIGNED_DECIMAL = regex("^\\d+$")
+const U64_DECIMAL = regex("^\\d+$")
 
+function u64Line(line: string): bigint | null {
+	if (!U64_DECIMAL.test(line)) {
+		return null
+	}
+	const value = BigInt(line)
+	if (value > U64_MAX) {
+		return null
+	}
+	return value
+}
+
+/** Lines as Rust `str::lines`: split on `\n`, one trailing terminator
+ *  unyielded, a trailing `\r` stripped per line. */
+function leaseLines(raw: string): string[] {
+	const parts = raw.split("\n")
+	if (parts.length > 0 && parts[parts.length - 1] === "") {
+		parts.pop()
+	}
+	return parts.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
+}
+
+/** The `LEASE/1` body: magic line, then holder, token, expires as
+ *  decimal u64 lines, and nothing after. Anything else is not a lease
+ *  and never breakable. */
 function parseLease(raw: string): Lease | null {
-	const lines = raw.trim().split("\n")
-	if (lines.length !== 3) {
+	const lines = leaseLines(raw)
+	if (lines.length !== 4) {
 		return null
 	}
-	const [holderLine, tokenLine, expiresLine] = lines
-	if (holderLine === undefined || tokenLine === undefined || expiresLine === undefined) {
+	const [magic, holderLine, tokenLine, expiresLine] = lines
+	if (magic !== LEASE_MAGIC || holderLine === undefined || tokenLine === undefined || expiresLine === undefined) {
 		return null
 	}
-	if (!SIGNED_DECIMAL.test(holderLine) || !UNSIGNED_DECIMAL.test(tokenLine) || !SIGNED_DECIMAL.test(expiresLine)) {
+	const holder = u64Line(holderLine)
+	const token = u64Line(tokenLine)
+	const expires = u64Line(expiresLine)
+	if (holder === null || token === null || expires === null) {
 		return null
 	}
-	return { holder: BigInt(holderLine), token: BigInt(tokenLine), expires: BigInt(expiresLine) }
+	return { holder, token, expires }
 }
 
+/** Expiry of the lease's own bytes: the only break. */
 function leaseExpired(lease: Lease, nowMs: number): boolean {
 	return lease.expires <= BigInt(nowMs)
-}
-
-/** EPERM/unreadable/unparseable ⇒ Unknown. Expiry is a fact of the lease bytes. */
-function livenessOf(lease: Lease | null, readable: boolean, nowMs: number): Liveness {
-	if (!readable || lease === null) {
-		return { tag: "unknown" }
-	}
-	if (leaseExpired(lease, nowMs)) {
-		return { tag: "dead" }
-	}
-	return { tag: "alive" }
-}
-
-/** A lease is breakable only when liveness is Dead. Unknown never breaks. */
-function breakable(liveness: Liveness): boolean {
-	switch (liveness.tag) {
-		case "dead":
-			return true
-		case "alive":
-			return false
-		case "unknown":
-			return false
-	}
 }
 
 function isUnproved(error: Error): boolean {
@@ -218,12 +216,12 @@ async function ensureParent(target: string, root: string): Promise<void> {
 
 let tempSeq = 0
 
-/** Write `bytes` to a fresh `wx` temp file beside `target` and fsync it.
+/** Write `bytes` to a fresh `wx` temp under `{root}/~tmp` and fsync it.
  *  The caller publishes the synced temp atomically. */
-async function syncedTemp(target: string, bytes: Uint8Array, root: string): Promise<string> {
-	await ensureParent(target, root)
+async function syncedTemp(root: string, bytes: Uint8Array): Promise<string> {
 	tempSeq += 1
-	const temp = path.join(path.dirname(target), reservedTemp(path.basename(target), process.pid, tempSeq))
+	const temp = path.join(root, ...reservedTemp(process.pid, tempSeq).split("/"))
+	await fs.mkdir(path.dirname(temp), { recursive: true })
 	const handle = await fs.open(temp, "wx")
 	const written = await errors.try(
 		(async function writeAll() {
@@ -234,7 +232,7 @@ async function syncedTemp(target: string, bytes: Uint8Array, root: string): Prom
 	await handle.close()
 	if (written.error) {
 		await fs.rm(temp, { force: true })
-		throw errors.wrap(written.error, `write ${target}`)
+		throw errors.wrap(written.error, `write temp for ${root}`)
 	}
 	return temp
 }
@@ -254,107 +252,134 @@ async function publishLink(temp: string, dest: string): Promise<"linked" | "occu
 	throw linked.error
 }
 
-const LEASE_NAME_RE = regex("^\\.(.+)\\.lease\\.(\\d+)$")
-const TEMP_NAME_RE = regex("^\\.(.+)\\.tmp\\.\\d+\\.\\d+$")
+/** The lease directory for `key`: `{root}/~lease/{key}`. */
+function leaseDir(root: string, key: string): string {
+	return path.join(root, LEASE_NAMESPACE, ...key.split("/"))
+}
 
-async function listLeaseFiles(dir: string, name: string): Promise<LeaseFile[]> {
-	const listed = await errors.try(fs.readdir(dir))
-	if (listed.error) {
-		if (codeOf(listed.error) === "ENOENT") {
-			return []
+function tokenPath(dir: string, token: bigint): string {
+	return path.join(dir, String(token))
+}
+
+function headPath(dir: string): string {
+	return path.join(dir, HEAD)
+}
+
+async function readHead(dir: string): Promise<bigint | null> {
+	const read = await errors.try(fs.readFile(headPath(dir), "utf8"))
+	if (read.error) {
+		if (codeOf(read.error) === "ENOENT") {
+			return null
 		}
-		throw listed.error
+		throw read.error
 	}
-	const found: LeaseFile[] = []
-	for (const entry of listed.data) {
-		const match = LEASE_NAME_RE.exec(entry)
-		if (match === null || match[1] !== name || match[2] === undefined) {
-			continue
-		}
-		const filePath = path.join(dir, entry)
-		const read = await errors.try(fs.readFile(filePath, "utf8"))
-		if (read.error) {
-			if (codeOf(read.error) === "ENOENT") {
+	const token = u64Line(read.data.trim())
+	if (token === null || token < 1n) {
+		return null
+	}
+	return token
+}
+
+async function writeHead(root: string, dir: string, token: bigint): Promise<void> {
+	const dest = headPath(dir)
+	const temp = await syncedTemp(root, new TextEncoder().encode(String(token)))
+	const replaced = await errors.try(fs.rename(temp, dest))
+	if (replaced.error) {
+		await fs.rm(temp, { force: true })
+		throw replaced.error
+	}
+	await fsyncDir(dir)
+}
+
+/** Removes `{dir}/{1..=current-1}` after `~head` names `current`. */
+async function forgetPredecessors(dir: string, current: bigint): Promise<void> {
+	for (let token = current - 1n; token >= 1n; token -= 1n) {
+		await fs.rm(tokenPath(dir, token), { force: true })
+	}
+}
+
+interface CurrentLease {
+	readonly token: bigint
+	readonly lease: Lease
+}
+
+function probeFrom(dir: string, start: bigint): Promise<CurrentLease | null> {
+	return (async function probe(): Promise<CurrentLease | null> {
+		let best: CurrentLease | null = null
+		let token = start
+		while (token <= U64_MAX) {
+			const read = await errors.try(fs.readFile(tokenPath(dir, token), "utf8"))
+			if (read.error) {
+				if (codeOf(read.error) === "ENOENT") {
+					break
+				}
+				token += 1n
 				continue
 			}
-			found.push({ path: filePath, token: BigInt(match[2]), lease: null, readable: false })
-			continue
+			const lease = parseLease(read.data)
+			if (lease !== null) {
+				best = { token, lease }
+			}
+			token += 1n
 		}
-		found.push({
-			path: filePath,
-			token: BigInt(match[2]),
-			lease: parseLease(read.data),
-			readable: true
-		})
+		return best
+	})()
+}
+
+/** The current lease is `{dir}/{n}` for the token `~head` names, or
+ *  the highest `{dir}/{n}` at or after that hint. A mint past a stale
+ *  head is still visible: the probe opens `n`, `n+1`, … until a gap. */
+async function currentLease(dir: string): Promise<CurrentLease | null> {
+	const start = (await readHead(dir)) ?? 1n
+	const found = await probeFrom(dir, start)
+	if (found === null && start > 1n) {
+		return await probeFrom(dir, 1n)
 	}
 	return found
 }
 
-/** Drop a lease file only when its bytes still name this holder and token. */
-async function casDrop(leasePath: string, expected: Lease): Promise<void> {
-	const read = await errors.try(fs.readFile(leasePath, "utf8"))
-	if (read.error) {
-		return
-	}
-	const lease = parseLease(read.data)
-	if (lease === null) {
-		return
-	}
-	if (lease.holder !== expected.holder || lease.token !== expected.token) {
-		return
-	}
-	await fs.rm(leasePath, { force: true })
-}
-
-async function heldByUs(held: FsLease): Promise<boolean> {
-	const read = await errors.try(fs.readFile(held.path, "utf8"))
-	if (read.error) {
-		return false
-	}
-	const lease = parseLease(read.data)
-	if (lease === null) {
-		return false
-	}
-	return lease.holder === held.holder && lease.token === held.token
-}
-
-async function acquireFsLease(
+async function tryMint(
+	root: string,
 	dir: string,
-	name: string,
+	key: string,
+	token: bigint,
+	holder: bigint,
+	ttlMs: number
+): Promise<boolean> {
+	await fs.mkdir(dir, { recursive: true })
+	const body = encodeLease({ holder, token, expires: BigInt(Date.now() + ttlMs) })
+	const dest = path.join(root, ...reservedLease(key, token).split("/"))
+	const temp = await syncedTemp(root, body)
+	const published = await errors.try(publishLink(temp, dest))
+	await fs.rm(temp, { force: true })
+	if (published.error) {
+		throw published.error
+	}
+	if (published.data === "occupied") {
+		return false
+	}
+	await fsyncDir(dir)
+	const headed = await errors.try(writeHead(root, dir, token))
+	if (headed.error === undefined) {
+		await forgetPredecessors(dir, token)
+	}
+	return true
+}
+
+/** Acquire the fenced lease on `{root}/~lease/{key}`: mint the next
+ *  monotonic token iff the current lease's own bytes are expired.
+ *  `wait` sleeps out a live holder; `refuse` throws. */
+async function acquireFsLease(
+	root: string,
+	key: string,
 	ttlMs: number,
 	contend: "wait" | "refuse" = "wait"
 ): Promise<FsLease> {
-	await fs.mkdir(dir, { recursive: true })
+	const dir = leaseDir(root, key)
+	const holder = ourHolder()
 	for (;;) {
-		const now = Date.now()
-		const incumbents = await listLeaseFiles(dir, name)
-		let highest = 0n
-		let blocked = false
-		const dead: LeaseFile[] = []
-		for (const incumbent of incumbents) {
-			if (incumbent.token > highest) {
-				highest = incumbent.token
-			}
-			const liveness = livenessOf(incumbent.lease, incumbent.readable, now)
-			switch (liveness.tag) {
-				case "dead":
-					dead.push(incumbent)
-					break
-				case "alive": {
-					const holder = incumbent.lease === null ? null : incumbent.lease.holder
-					if (holder === ourHolder()) {
-						blocked = true
-					} else {
-						blocked = true
-					}
-					break
-				}
-				case "unknown":
-					blocked = true
-					break
-			}
-		}
-		if (blocked) {
+		const current = await currentLease(dir)
+		if (current !== null && !leaseExpired(current.lease, Date.now())) {
 			if (contend === "refuse") {
 				throw errors.new("replica directory has an owner")
 			}
@@ -363,64 +388,43 @@ async function acquireFsLease(
 			})
 			continue
 		}
-		const holder = ourHolder()
-		const token = highest + 1n
-		const dest = path.join(dir, reservedLease(name, token))
-		const body = encodeLease({
-			holder,
-			token,
-			expires: BigInt(now + ttlMs)
-		})
-		const wrote = await errors.try(syncedTemp(dest, body, dir))
-		if (wrote.error) {
-			if (isVanished(wrote.error) || isUnproved(wrote.error)) {
-				continue
-			}
-			throw wrote.error
-		}
-		const published = await errors.try(publishLink(wrote.data, dest))
-		await fs.rm(wrote.data, { force: true })
-		if (published.error) {
-			if (isVanished(published.error) || isUnproved(published.error)) {
-				continue
-			}
-			throw published.error
-		}
-		if (published.data === "occupied") {
+		const token = current === null ? 1n : current.token + 1n
+		const minted = await tryMint(root, dir, key, token, holder, ttlMs)
+		if (!minted) {
 			continue
 		}
-		await fsyncDir(dir)
-		const held: FsLease = { dir, name, holder, token, path: dest }
-		for (const stale of dead) {
-			if (stale.lease !== null) {
-				await casDrop(stale.path, stale.lease)
-			}
-		}
-		return held
+		return { root, dir, holder, token, path: tokenPath(dir, token) }
 	}
 }
 
+/** True iff this token is still the max — a stale holder lost the CAS
+ *  and must not publish. */
+async function stillCurrent(held: FsLease): Promise<boolean> {
+	const current = await currentLease(held.dir)
+	return current !== null && current.token === held.token
+}
+
+/** Release by rewriting the held token with an already-expired body so
+ *  the next acquirer does not wait us out. */
 async function releaseFsLease(held: FsLease): Promise<void> {
-	const read = await errors.try(fs.readFile(held.path, "utf8"))
-	if (read.error) {
+	const body = encodeLease({ holder: held.holder, token: held.token, expires: 0n })
+	const wrote = await errors.try(syncedTemp(held.root, body))
+	if (wrote.error) {
 		return
 	}
-	const lease = parseLease(read.data)
-	if (lease === null) {
+	const replaced = await errors.try(fs.rename(wrote.data, held.path))
+	if (replaced.error) {
+		await fs.rm(wrote.data, { force: true })
 		return
 	}
-	if (lease.holder !== held.holder || lease.token !== held.token) {
-		return
-	}
-	await casDrop(held.path, lease)
 	const synced = await errors.try(fsyncDir(held.dir))
 	if (synced.error) {
 		return
 	}
 }
 
-async function sweepReserved(root: string): Promise<void> {
-	const listed = await errors.try(fs.readdir(root, { withFileTypes: true }))
+async function sweepStaleTemps(dir: string): Promise<void> {
+	const listed = await errors.try(fs.readdir(dir, { withFileTypes: true }))
 	if (listed.error) {
 		if (codeOf(listed.error) === "ENOENT") {
 			return
@@ -429,34 +433,28 @@ async function sweepReserved(root: string): Promise<void> {
 	}
 	const now = Date.now()
 	for (const entry of listed.data) {
-		const full = path.join(root, entry.name)
-		if (entry.isDirectory()) {
-			if (isReservedName(entry.name)) {
-				continue
-			}
-			await sweepReserved(full)
+		if (!entry.isFile()) {
 			continue
 		}
-		if (!entry.isFile() || !isReservedName(entry.name)) {
+		const full = path.join(dir, entry.name)
+		const st = await errors.try(fs.stat(full))
+		if (st.error) {
 			continue
 		}
-		if (TEMP_NAME_RE.test(entry.name)) {
+		if (now - st.data.mtimeMs > TEMP_STALE_MS) {
 			await fs.rm(full, { force: true })
-			continue
 		}
-		const match = LEASE_NAME_RE.exec(entry.name)
-		if (match === null) {
-			continue
-		}
-		const read = await errors.try(fs.readFile(full, "utf8"))
-		if (read.error) {
-			continue
-		}
-		const lease = parseLease(read.data)
-		const liveness = livenessOf(lease, true, now)
-		if (breakable(liveness) && lease !== null) {
-			await casDrop(full, lease)
-		}
+	}
+}
+
+/** Sweep crash litter: stale temps under `~tmp`, and superseded tokens
+ *  directly under `~lease` once `~head` names the current one. */
+async function sweepReserved(root: string): Promise<void> {
+	await sweepStaleTemps(path.join(root, TEMP_NAMESPACE))
+	const dir = path.join(root, LEASE_NAMESPACE)
+	const current = await currentLease(dir)
+	if (current !== null) {
+		await forgetPredecessors(dir, current.token)
 	}
 }
 
@@ -489,7 +487,11 @@ function cloneFetched(fetched: Fetched): Fetched {
 /** The five verbs over one local directory. One machine is load-bearing. */
 function fsStore(root: string): ObjectStore {
 	const rootPath = path.resolve(root)
-	const swept = sweepReserved(rootPath)
+	const swept = (async function open() {
+		await sweepReserved(rootPath)
+		await fs.mkdir(path.join(rootPath, TEMP_NAMESPACE), { recursive: true })
+		await fs.mkdir(path.join(rootPath, LEASE_NAMESPACE), { recursive: true })
+	})()
 
 	function objectPath(key: StoreKey): string {
 		return path.join(rootPath, ...key.split("/"))
@@ -507,8 +509,8 @@ function fsStore(root: string): ObjectStore {
 		return { bytes, etag: contentEtag(bytes) }
 	}
 
-	async function withKeyLease<T>(target: string, body: (held: FsLease) => Promise<T>): Promise<T> {
-		const held = await acquireFsLease(path.dirname(target), path.basename(target), MUTATION_LEASE_MS)
+	async function withKeyLease<T>(key: StoreKey, body: (held: FsLease) => Promise<T>): Promise<T> {
+		const held = await acquireFsLease(rootPath, key, MUTATION_TTL_MS)
 		const ran = await errors.try(body(held))
 		await releaseFsLease(held)
 		if (ran.error) {
@@ -549,11 +551,12 @@ function fsStore(root: string): ObjectStore {
 			const target = objectPath(key)
 			const ran = await errors.try(
 				(async function createBody(): Promise<Create> {
-					return await withKeyLease(target, async function underLease(held): Promise<Create> {
-						if (!(await heldByUs(held))) {
+					return await withKeyLease(key, async function underLease(held): Promise<Create> {
+						if (!(await stillCurrent(held))) {
 							return { tag: "ambiguous" }
 						}
-						const temp = await syncedTemp(target, bytes, rootPath)
+						await ensureParent(target, rootPath)
+						const temp = await syncedTemp(rootPath, bytes)
 						const published = await errors.try(publishLink(temp, target))
 						await fs.rm(temp, { force: true })
 						if (published.error) {
@@ -597,15 +600,15 @@ function fsStore(root: string): ObjectStore {
 			const target = objectPath(key)
 			const ran = await errors.try(
 				(async function swapBody(): Promise<Swap> {
-					return await withKeyLease(target, async function underLease(held): Promise<Swap> {
-						if (!(await heldByUs(held))) {
+					return await withKeyLease(key, async function underLease(held): Promise<Swap> {
+						if (!(await stillCurrent(held))) {
 							return { tag: "ambiguous" }
 						}
 						const current = await readFetched(target)
 						if (current === null || current.etag !== etag) {
 							return { tag: "moved" }
 						}
-						const temp = await syncedTemp(target, bytes, rootPath)
+						const temp = await syncedTemp(rootPath, bytes)
 						const renamed = await errors.try(fs.rename(temp, target))
 						if (renamed.error) {
 							await fs.rm(temp, { force: true })
@@ -636,8 +639,8 @@ function fsStore(root: string): ObjectStore {
 			const target = objectPath(key)
 			const ran = await errors.try(
 				(async function deleteBody() {
-					await withKeyLease(target, async function underLease(held) {
-						if (!(await heldByUs(held))) {
+					await withKeyLease(key, async function underLease(held) {
+						if (!(await stillCurrent(held))) {
 							return
 						}
 						await fs.rm(target, { force: true })
@@ -707,5 +710,16 @@ function memStore(): ObjectStore {
 
 export type { S3Config, S3Credentials } from "#store-s3.ts"
 export { s3Store } from "#store-s3.ts"
-export type { Create, CreateProbe, Etag, Fetched, FsLease, Lease, Liveness, ObjectStore, Poll, Swap, SwapProbe }
-export { acquireFsLease, etag, fsStore, memStore, releaseFsLease, resolveAmbiguousCreate, resolveAmbiguousSwap }
+export type { Create, CreateProbe, Etag, Fetched, FsLease, Lease, ObjectStore, Poll, Swap, SwapProbe }
+export {
+	acquireFsLease,
+	encodeLease,
+	etag,
+	fsStore,
+	MUTATION_TTL_MS,
+	memStore,
+	parseLease,
+	releaseFsLease,
+	resolveAmbiguousCreate,
+	resolveAmbiguousSwap
+}

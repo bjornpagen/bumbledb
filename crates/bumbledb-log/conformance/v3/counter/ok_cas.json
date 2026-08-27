@@ -1,0 +1,6 @@
+{
+  "kind": "counter",
+  "expect": "ok",
+  "value": "8192",
+  "hex": "38313932"
+}

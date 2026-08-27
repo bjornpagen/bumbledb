@@ -1,0 +1,276 @@
+{
+  "surface": "key-grammar",
+  "accept": [
+    {
+      "name": "plain",
+      "key": "a"
+    },
+    {
+      "name": "manifest",
+      "key": "manifest"
+    },
+    {
+      "name": "log_slot",
+      "key": "log/c00000000/0000000000000009"
+    },
+    {
+      "name": "ckpt_mdb",
+      "key": "ckpt/abababababababababababababababababababababababababababababababab.mdb"
+    },
+    {
+      "name": "ids",
+      "key": "ids/0000002a/0007"
+    },
+    {
+      "name": "tenant",
+      "key": "t/tenant-1/manifest"
+    },
+    {
+      "name": "tilde_mid",
+      "key": "a~b"
+    },
+    {
+      "name": "tilde_last",
+      "key": "x~"
+    },
+    {
+      "name": "wave_mid",
+      "key": "a\u301Cb"
+    },
+    {
+      "name": "lookalike_last",
+      "key": "x\uFF5E"
+    },
+    {
+      "name": "lock_longer",
+      "key": "a.lockx"
+    },
+    {
+      "name": "lock_upper",
+      "key": "a.LOCK"
+    },
+    {
+      "name": "triple_dot",
+      "key": "..."
+    },
+    {
+      "name": "dot_leading",
+      "key": ".a"
+    },
+    {
+      "name": "dot_trailing",
+      "key": "a."
+    },
+    {
+      "name": "honest_tmp",
+      "key": "tmp/x"
+    },
+    {
+      "name": "honest_lease",
+      "key": "lease/manifest"
+    },
+    {
+      "name": "accents",
+      "key": "h\u00E9llo"
+    },
+    {
+      "name": "cjk",
+      "key": "\u65E5\u672C\u8A9E/\u30AD\u30FC"
+    },
+    {
+      "name": "emoji",
+      "key": "\uD83D\uDE42"
+    },
+    {
+      "name": "backslash",
+      "key": "a\\b"
+    }
+  ],
+  "refuse": [
+    {
+      "name": "empty",
+      "key": "",
+      "why": "empty"
+    },
+    {
+      "name": "slash_only",
+      "key": "/",
+      "why": "slash"
+    },
+    {
+      "name": "slash_leading",
+      "key": "/a",
+      "why": "slash"
+    },
+    {
+      "name": "slash_trailing",
+      "key": "a/",
+      "why": "slash"
+    },
+    {
+      "name": "segment_empty",
+      "key": "a//b",
+      "why": "slash"
+    },
+    {
+      "name": "dot",
+      "key": ".",
+      "why": "dot"
+    },
+    {
+      "name": "dot_dot",
+      "key": "..",
+      "why": "dot"
+    },
+    {
+      "name": "dot_mid",
+      "key": "a/./b",
+      "why": "dot"
+    },
+    {
+      "name": "dot_dot_mid",
+      "key": "a/../b",
+      "why": "dot"
+    },
+    {
+      "name": "reserved_tmp",
+      "key": "~tmp/1.2",
+      "why": "reserved"
+    },
+    {
+      "name": "reserved_lease",
+      "key": "~lease/ckpt-scratch",
+      "why": "reserved"
+    },
+    {
+      "name": "reserved_lease_token",
+      "key": "~lease/k/1",
+      "why": "reserved"
+    },
+    {
+      "name": "tilde_only",
+      "key": "~",
+      "why": "lookalike"
+    },
+    {
+      "name": "tilde_first",
+      "key": "~x",
+      "why": "lookalike"
+    },
+    {
+      "name": "tilde_later_segment",
+      "key": "a/~x",
+      "why": "lookalike"
+    },
+    {
+      "name": "lookalike_small_tilde",
+      "key": "\u02DCtmp/x",
+      "why": "lookalike"
+    },
+    {
+      "name": "lookalike_fullwidth",
+      "key": "\uFF5Elease/manifest",
+      "why": "lookalike"
+    },
+    {
+      "name": "lookalike_wave",
+      "key": "\u301Cx",
+      "why": "lookalike"
+    },
+    {
+      "name": "lookalike_2e1e",
+      "key": "\u2E1Ex",
+      "why": "lookalike"
+    },
+    {
+      "name": "lookalike_fe4f",
+      "key": "\uFE4Fx",
+      "why": "lookalike"
+    },
+    {
+      "name": "lock",
+      "key": "a.lock",
+      "why": "lock"
+    },
+    {
+      "name": "lock_nested",
+      "key": "x/y.lock",
+      "why": "lock"
+    },
+    {
+      "name": "lock_only",
+      "key": ".lock",
+      "why": "lock"
+    },
+    {
+      "name": "lock_zwsp",
+      "key": "manifest.lock\u200B",
+      "why": "format"
+    },
+    {
+      "name": "zwsp_tilde",
+      "key": "\u200B~tmp",
+      "why": "format"
+    },
+    {
+      "name": "zwsp_mid",
+      "key": "a\u200Bb",
+      "why": "format"
+    },
+    {
+      "name": "zwsp_only",
+      "key": "\u200B",
+      "why": "format"
+    },
+    {
+      "name": "bom_first",
+      "key": "\uFEFFa",
+      "why": "format"
+    },
+    {
+      "name": "nul",
+      "key": "a\u0000b",
+      "why": "control"
+    },
+    {
+      "name": "newline",
+      "key": "a\nb",
+      "why": "control"
+    },
+    {
+      "name": "tab",
+      "key": "a\tb",
+      "why": "control"
+    },
+    {
+      "name": "del",
+      "key": "a\u007Fb",
+      "why": "control"
+    },
+    {
+      "name": "line_sep",
+      "key": "log/\u2028/1",
+      "why": "separator"
+    },
+    {
+      "name": "para_sep",
+      "key": "a\u2029b",
+      "why": "separator"
+    },
+    {
+      "name": "space",
+      "key": "a b",
+      "why": "separator"
+    },
+    {
+      "name": "space_only",
+      "key": " ",
+      "why": "separator"
+    },
+    {
+      "name": "nbsp",
+      "key": "a\u00A0b",
+      "why": "separator"
+    }
+  ]
+}

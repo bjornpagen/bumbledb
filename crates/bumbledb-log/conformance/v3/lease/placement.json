@@ -1,0 +1,19 @@
+{
+  "kind": "lease-placement",
+  "body_magic": "LEASE/1",
+  "namespace": "~lease",
+  "dir": "~lease/{key}",
+  "token_file": "{token}",
+  "first_token": "1",
+  "head_file": "~head",
+  "head_body": "decimal current token",
+  "generation_file": "gen",
+  "released_expires": "0",
+  "temp_file": "~tmp/{pid}.{seq}",
+  "constants": {
+    "mutation_ttl_ms": "5000",
+    "dir_ttl_ms": "300000",
+    "temp_stale_ms": "30000",
+    "lock_retry_ms": "10"
+  }
+}

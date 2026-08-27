@@ -1,0 +1,19 @@
+{
+  "version": 3,
+  "surfaces": {
+    "batch": ["batch", "fuzz/batch", "fuzz/storm.json"],
+    "braids": ["braids"],
+    "chain": ["chain"],
+    "counter-body": ["counter"],
+    "documents": [
+      "documents/checkpoint",
+      "documents/manifest",
+      "documents/sidecar",
+      "fuzz/documents"
+    ],
+    "key-grammar": ["keys"],
+    "lease-body": ["lease"],
+    "machine-constants": ["machine-constants.json"],
+    "scratch-body": ["scratch"]
+  }
+}

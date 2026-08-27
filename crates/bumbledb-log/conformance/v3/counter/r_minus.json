@@ -1,0 +1,6 @@
+{
+  "kind": "counter",
+  "expect": "refusal",
+  "refusal": "Counter",
+  "hex": "2d31"
+}

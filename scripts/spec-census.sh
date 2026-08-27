@@ -4,6 +4,9 @@
 # lean/conformance/README.md, docs/cookbook.md, ts/COOKBOOK.md,
 # (k) the banned-token roster (scripts/banned-tokens.txt) is empty of
 # hits in crates/bumbledb-log/src, ts-log/src, examples/lambda/src.
+# (l) the surface manifest (crates/bumbledb-log/conformance/v3/
+# surfaces.json) is pin-complete: every protocol surface names a live
+# golden, and every golden family names its surface.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -733,8 +736,114 @@ if [ "$roster_files" -eq 0 ]; then
   fail=1
 fi
 
+# ---- (l): pin-completeness (30 §2) -----------------------------------
+# The surface manifest is the protocol boundary as data: every surface
+# entry names golden path(s) that exist and are non-empty, and every
+# golden family directory (plus any loose root golden) under
+# conformance/v3/ is named by some surface — a surface without a pin,
+# or a pin without a surface, is red. The corpus's own bookkeeping
+# files (README.md, inventory.json, schemas.json, surfaces.json) are
+# the roster, not surfaces.
+
+CORPUS=crates/bumbledb-log/conformance/v3
+SURFACE_MANIFEST=$CORPUS/surfaces.json
+
+pin_surfaces=0
+pin_rows=0
+pin_paths=()
+
+if [ ! -f "$SURFACE_MANIFEST" ]; then
+  echo "spec-census: FAIL — $SURFACE_MANIFEST missing" >&2
+  fail=1
+else
+  pin_last_surface=''
+  while IFS=$'\t' read -r surface pin; do
+    [ -n "$surface" ] && [ -n "$pin" ] || continue
+    pin_rows=$((pin_rows + 1))
+    if [ "$surface" != "$pin_last_surface" ]; then
+      pin_surfaces=$((pin_surfaces + 1))
+      pin_last_surface="$surface"
+    fi
+    pin_paths+=("$pin")
+    target="$CORPUS/$pin"
+    if [ -d "$target" ]; then
+      if [ -z "$(find "$target" -type f -size +0c -print -quit)" ]; then
+        echo "spec-census: FAIL — pin lane: surface '$surface' names family '$pin/' which holds no non-empty golden" >&2
+        fail=1
+      fi
+    elif [ -f "$target" ]; then
+      if [ ! -s "$target" ]; then
+        echo "spec-census: FAIL — pin lane: surface '$surface' names golden '$pin' which is empty" >&2
+        fail=1
+      fi
+    else
+      echo "spec-census: FAIL — pin lane: surface '$surface' has no golden at '$pin' (a surface without a pin is not a protocol surface)" >&2
+      fail=1
+    fi
+  done < <(python3 - "$SURFACE_MANIFEST" <<'PY'
+import json
+import sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+surfaces = doc["surfaces"]
+if not isinstance(surfaces, dict) or not surfaces:
+    raise SystemExit("surface manifest carries no surfaces")
+for surface in sorted(surfaces):
+    pins = surfaces[surface]
+    if not isinstance(pins, list) or not pins:
+        raise SystemExit(f"surface {surface!r} names no pins")
+    for pin in pins:
+        if not isinstance(pin, str) or not pin:
+            raise SystemExit(f"surface {surface!r} carries a non-path pin")
+        print(f"{surface}\t{pin}")
+PY
+)
+fi
+
+if [ "$pin_rows" -eq 0 ]; then
+  echo "spec-census: FAIL — pin lane: surface manifest has zero pins (vacuous pass)" >&2
+  fail=1
+fi
+
+pin_covered() {
+  local rel="$1" pin
+  [ "${#pin_paths[@]}" -gt 0 ] || return 1
+  for pin in "${pin_paths[@]}"; do
+    [ "$rel" = "$pin" ] && return 0
+    case "$rel" in "$pin"/*) return 0 ;; esac
+    case "$pin" in "$rel"/*) return 0 ;; esac
+  done
+  return 1
+}
+
+pin_families=0
+while IFS= read -r dir; do
+  rel="${dir#"$CORPUS"/}"
+  pin_families=$((pin_families + 1))
+  if ! pin_covered "$rel"; then
+    echo "spec-census: FAIL — pin lane: golden family '$rel/' is named by no surface (a pin without a surface)" >&2
+    fail=1
+  fi
+done < <(find "$CORPUS" -mindepth 1 -type d | sort)
+
+while IFS= read -r loose; do
+  rel="${loose#"$CORPUS"/}"
+  case "$rel" in
+    README.md | inventory.json | schemas.json | surfaces.json) continue ;;
+  esac
+  if ! pin_covered "$rel"; then
+    echo "spec-census: FAIL — pin lane: root golden '$rel' is named by no surface (a pin without a surface)" >&2
+    fail=1
+  fi
+done < <(find "$CORPUS" -mindepth 1 -maxdepth 1 -type f | sort)
+
+if [ "$pin_families" -eq 0 ]; then
+  echo "spec-census: FAIL — pin lane: zero golden families under $CORPUS (vacuous pass)" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean, surface manifest $pin_surfaces surfaces / $pin_rows pins over $pin_families golden families"

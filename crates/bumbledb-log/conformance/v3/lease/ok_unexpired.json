@@ -1,0 +1,11 @@
+{
+  "kind": "lease",
+  "expect": "ok",
+  "note": "a live lease: a contender never breaks it before expires",
+  "value": {
+    "holder": "41",
+    "token": "1",
+    "expires": "253402300799000"
+  },
+  "hex": "4c454153452f310a34310a310a3235333430323330303739393030300a"
+}

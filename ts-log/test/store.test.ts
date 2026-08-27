@@ -8,11 +8,24 @@ import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
 import { ErrStore } from "#errors.ts"
 import { storeKey } from "#keys.ts"
-import { etag, fsStore, memStore, resolveAmbiguousCreate, resolveAmbiguousSwap } from "#store.ts"
+import {
+	acquireFsLease,
+	encodeLease,
+	etag,
+	fsStore,
+	MUTATION_TTL_MS,
+	memStore,
+	parseLease,
+	releaseFsLease,
+	resolveAmbiguousCreate,
+	resolveAmbiguousSwap
+} from "#store.ts"
 import { joinPrefix, s3Store } from "#store-s3.ts"
 
 const SLOT = storeKey("log/c00000000/0000000000000001")
 const MANIFEST = storeKey("manifest")
+
+const leaseCorpus = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/v3/lease")
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-store-"))
 
@@ -21,6 +34,21 @@ after(function cleanup() {
 })
 
 const encoder = new TextEncoder()
+
+function leaseFixture(name: string): Uint8Array {
+	return new Uint8Array(fs.readFileSync(path.join(leaseCorpus, `${name}.bin`)))
+}
+
+interface LeaseSidecar {
+	readonly kind: string
+	readonly expect: "ok" | "refusal"
+	readonly value?: { readonly holder: string; readonly token: string; readonly expires: string }
+	readonly hex: string
+}
+
+function leaseSidecar(name: string): LeaseSidecar {
+	return JSON.parse(fs.readFileSync(path.join(leaseCorpus, `${name}.json`), "utf8"))
+}
 
 describe("the five verbs over a process map", function suite() {
 	test("get on an absent key is null, not an error", async function absent() {
@@ -128,16 +156,92 @@ describe("the five verbs over a process map", function suite() {
 	})
 })
 
+describe("the LEASE/1 corpus goldens", function suite() {
+	const okCases = ["ok_mutation", "ok_released", "ok_generation_sidecar", "ok_unexpired", "ok_expired"]
+	const refusalCases = [
+		"r_no_magic",
+		"r_version_2",
+		"r_fifth_line",
+		"r_negative_holder",
+		"r_expires_overflow",
+		"r_missing_expires"
+	]
+
+	test("every ok body parses to its sidecar value and re-encodes byte-identically", function round() {
+		for (const name of okCases) {
+			const bytes = leaseFixture(name)
+			const sidecar = leaseSidecar(name)
+			assert.equal(sidecar.expect, "ok", name)
+			assert.equal(toHex(bytes), sidecar.hex, name)
+			const lease = parseLease(new TextDecoder().decode(bytes))
+			assert.ok(lease !== null, name)
+			assert.ok(sidecar.value !== undefined, name)
+			assert.equal(lease.holder, BigInt(sidecar.value.holder), name)
+			assert.equal(lease.token, BigInt(sidecar.value.token), name)
+			assert.equal(lease.expires, BigInt(sidecar.value.expires), name)
+			assert.deepEqual(encodeLease(lease), bytes, name)
+		}
+	})
+
+	test("every refusal body parses to null: not a lease, never breakable", function refuse() {
+		for (const name of refusalCases) {
+			const bytes = leaseFixture(name)
+			const sidecar = leaseSidecar(name)
+			assert.equal(sidecar.expect, "refusal", name)
+			assert.equal(toHex(bytes), sidecar.hex, name)
+			assert.equal(parseLease(new TextDecoder().decode(bytes)), null, name)
+		}
+	})
+
+	test("the placement table names the constants this driver runs", function placement() {
+		const table = JSON.parse(fs.readFileSync(path.join(leaseCorpus, "placement.json"), "utf8"))
+		assert.equal(table.body_magic, "LEASE/1")
+		assert.equal(table.namespace, "~lease")
+		assert.equal(table.head_file, "~head")
+		assert.equal(table.first_token, "1")
+		assert.equal(table.constants.mutation_ttl_ms, String(MUTATION_TTL_MS))
+		assert.equal(table.constants.lock_retry_ms, "10")
+	})
+
+	test("a Rust-spelled unexpired lease refuses to break; its expiry mints the next token", async function crossPin() {
+		const root = path.join(tmpRoot, "rust-lease")
+		const dir = path.join(root, "~lease", "manifest")
+		fs.mkdirSync(dir, { recursive: true })
+		fs.writeFileSync(path.join(dir, "1"), leaseFixture("ok_unexpired"))
+		fs.writeFileSync(path.join(dir, "~head"), "1")
+		await assert.rejects(function unexpired() {
+			return acquireFsLease(root, "manifest", MUTATION_TTL_MS, "refuse")
+		})
+		fs.writeFileSync(path.join(dir, "1"), leaseFixture("ok_expired"))
+		const held = await acquireFsLease(root, "manifest", MUTATION_TTL_MS, "refuse")
+		assert.equal(held.token, 2n)
+		assert.equal(fs.readFileSync(path.join(dir, "~head"), "utf8").trim(), "2")
+		assert.equal(fs.existsSync(path.join(dir, "1")), false, "the superseded token is forgotten")
+		const minted = parseLease(fs.readFileSync(path.join(dir, "2"), "utf8"))
+		assert.ok(minted !== null)
+		assert.equal(minted.holder, BigInt(process.pid))
+		assert.equal(minted.token, 2n)
+		await releaseFsLease(held)
+		const released = parseLease(fs.readFileSync(path.join(dir, "2"), "utf8"))
+		assert.ok(released !== null)
+		assert.equal(released.expires, 0n, "release rewrites the held token with an already-expired body")
+	})
+})
+
 describe("the five verbs over a directory", function suite() {
-	test("an expired lease beside the key is broken by putSwap", async function leases() {
+	test("an expired lease under ~lease/{key} is broken by putSwap", async function leases() {
 		const root = path.join(tmpRoot, "s6")
 		const store = fsStore(root)
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
 		assert.ok(created.tag === "created")
-		fs.writeFileSync(path.join(root, ".manifest.lease.1"), `${process.pid}\n1\n0\n`)
+		const dir = path.join(root, "~lease", "manifest")
+		fs.writeFileSync(path.join(dir, "2"), encodeLease({ holder: 999n, token: 2n, expires: 0n }))
+		fs.writeFileSync(path.join(dir, "~head"), "2")
 		const swapped = await store.putSwap(MANIFEST, encoder.encode("v2"), created.etag)
 		assert.equal(swapped.tag, "swapped")
-		assert.equal(fs.readdirSync(root).filter((name) => name.startsWith(".manifest.lease.")).length, 0)
+		const current = parseLease(fs.readFileSync(path.join(dir, "3"), "utf8"))
+		assert.ok(current !== null)
+		assert.equal(current.expires, 0n, "the verb's own lease is released after the swap")
 	})
 
 	test("the etag is the blake3 of the content, computed and never stored", async function etags() {
@@ -153,18 +257,24 @@ describe("the five verbs over a directory", function suite() {
 		const swapped = await store.putSwap(MANIFEST, next, created.etag)
 		assert.ok(swapped.tag === "swapped")
 		assert.equal(swapped.etag, toHex(new Uint8Array(internalBlake3(next))))
-		assert.deepEqual(fs.readdirSync(root), [MANIFEST], "no sidecar and no lease residue beside the object")
+		const visible = fs.readdirSync(root).filter((name) => !name.startsWith("~"))
+		assert.deepEqual(visible, [MANIFEST], "no sidecar and no lease residue beside the object")
 	})
 
-	test("open sweeps leftover temps and expired leases", async function sweep() {
+	test("open sweeps stale temps under ~tmp and spares fresh ones", async function sweep() {
 		const root = path.join(tmpRoot, "sweep")
-		fs.mkdirSync(root, { recursive: true })
-		fs.writeFileSync(path.join(root, ".manifest.tmp.1.1"), "litter")
-		fs.writeFileSync(path.join(root, ".manifest.lease.9"), "1\n9\n0\n")
+		const temps = path.join(root, "~tmp")
+		fs.mkdirSync(temps, { recursive: true })
+		const stale = path.join(temps, "999.1")
+		const fresh = path.join(temps, "999.2")
+		fs.writeFileSync(stale, "litter")
+		fs.writeFileSync(fresh, "mid-link")
+		const aged = new Date(Date.now() - 60_000)
+		fs.utimesSync(stale, aged, aged)
 		const store = fsStore(root)
 		assert.equal(await store.get(MANIFEST), null)
-		assert.equal(fs.existsSync(path.join(root, ".manifest.tmp.1.1")), false)
-		assert.equal(fs.existsSync(path.join(root, ".manifest.lease.9")), false)
+		assert.equal(fs.existsSync(stale), false)
+		assert.equal(fs.existsSync(fresh), true)
 	})
 
 	test("putCreate against a directory is a key-shape fault, not exists", async function directory() {

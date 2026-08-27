@@ -1,0 +1,10 @@
+{
+  "kind": "lease",
+  "expect": "ok",
+  "value": {
+    "holder": "7",
+    "token": "3",
+    "expires": "100"
+  },
+  "hex": "4c454153452f310a370a330a3130300a"
+}
