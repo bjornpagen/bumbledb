@@ -24,7 +24,6 @@ export {
 	contentionOf,
 	ErrChainMismatch,
 	ErrContention,
-	ErrGapDetected,
 	ErrManifestMissing,
 	ErrRefused,
 	ErrReplayDiverged,

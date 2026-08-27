@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb",
-	"version": "0.19.2",
+	"version": "0.20.0",
 	"description": "Embedded relational database for TypeScript with typed schemas, queries, and commit-time constraints",
 	"type": "module",
 	"exports": {
@@ -52,7 +52,7 @@
 		"arkregex": "^0.0.8"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.0.0-beta.5",
+		"@biomejs/biome": "2.5.4",
 		"@types/node": "^26.1.0",
 		"typescript": "^7.0.2"
 	},

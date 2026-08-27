@@ -19,7 +19,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValidateDescriptor as _, ValueType,
 };
-use bumbledb::{Db, Value, Violation, obs};
+use bumbledb::{Admission, Db, Value, Violation, obs};
 use bumbledb_log::apply::{Applied, apply};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::codec::{BatchHeader, Codec, OpKind};
@@ -28,7 +28,7 @@ use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::sidecar::Chain;
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{Commit, Durability, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Durability, Options, Slotted, Writer, WriterOpened};
 
 const RECIPE: RelationId = RelationId(0);
 const STEP: RelationId = RelationId(1);
@@ -188,10 +188,10 @@ fn replica_digest(replica: &FsReplica) -> [u8; 32] {
         .expect("catalog digest")
 }
 
-fn accepted_generation<R>(outcome: &Commit<R>) -> u64 {
+fn accepted_slot<R>(outcome: &Admission<Slotted<R>>) -> u64 {
     match outcome {
-        Commit::Accepted { generation, .. } => *generation,
-        Commit::Rejected(violations) => panic!("accepted expected, got {violations:?}"),
+        Admission::Accepted(slotted) => slotted.slot,
+        Admission::Rejected(violations) => panic!("accepted expected, got {violations:?}"),
     }
 }
 
@@ -210,7 +210,7 @@ fn intern_mint_determinism_lands_byte_identical_catalog_digests_across_replicas(
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&first), 1);
+    assert_eq!(accepted_slot(&first), 1);
 
     // Listed order runs step ops before the recipe op: first-use mint
     // order inside the batch is the host's op order, and the log
@@ -228,7 +228,7 @@ fn intern_mint_determinism_lands_byte_identical_catalog_digests_across_replicas(
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&second), 2);
+    assert_eq!(accepted_slot(&second), 2);
 
     // The note body reuses the string kitchen slot 1 minted — the one
     // slot every arrival order applies first — so this history's
@@ -242,7 +242,7 @@ fn intern_mint_determinism_lands_byte_identical_catalog_digests_across_replicas(
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&third), 1);
+    assert_eq!(accepted_slot(&third), 1);
 
     let minted = writer_digest(&writer);
     let replica_one = open_replica(root.clone(), &root.join("r1"));
@@ -269,14 +269,14 @@ fn intern_mint_determinism_lands_byte_identical_catalog_digests_across_replicas(
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&fourth), 2);
+    assert_eq!(accepted_slot(&fourth), 2);
     let fifth = writer
         .commit(|batch| {
             batch.insert(RECIPE, [recipe_row(3, "barm")]);
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&fifth), 3);
+    assert_eq!(accepted_slot(&fifth), 3);
 
     let replay_one = open_replica(root.clone(), &root.join("r3"));
     let replay_two = open_replica(root.clone(), &root.join("r4"));
@@ -315,7 +315,7 @@ fn fresh_in_command_ids_replay_and_a_collision_rejects_as_ordinary_functionality
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&minted), 1);
+    assert_eq!(accepted_slot(&minted), 1);
 
     let collision = writer
         .commit(|batch| {
@@ -323,7 +323,7 @@ fn fresh_in_command_ids_replay_and_a_collision_rejects_as_ordinary_functionality
             Ok(())
         })
         .expect("commit");
-    let Commit::Rejected(violations) = collision else {
+    let Admission::Rejected(violations) = collision else {
         panic!("a fresh-id collision is a rejection, got an acceptance");
     };
     assert!(
@@ -370,7 +370,7 @@ fn concurrent_fresh_double_mint_re_judges_to_the_serial_functionality_rejection(
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&won), 1);
+    assert_eq!(accepted_slot(&won), 1);
 
     // B still stands at the zero vector: its local apply accepts, its
     // publish loses slot 1, and the one path re-judges the recorded
@@ -381,7 +381,7 @@ fn concurrent_fresh_double_mint_re_judges_to_the_serial_functionality_rejection(
             Ok(())
         })
         .expect("commit");
-    let Commit::Rejected(violations) = lost else {
+    let Admission::Rejected(violations) = lost else {
         panic!("the double mint must re-judge to a rejection");
     };
     assert!(
@@ -435,7 +435,7 @@ fn host_order_inside_a_batch_rides_the_wire_but_cannot_reach_stored_bytes() {
                 Ok(())
             })
             .expect("seed");
-        assert_eq!(accepted_generation(&seeded), 1);
+        assert_eq!(accepted_slot(&seeded), 1);
     };
     seed(&forward);
     seed(&reverse);
@@ -448,7 +448,7 @@ fn host_order_inside_a_batch_rides_the_wire_but_cannot_reach_stored_bytes() {
             Ok(())
         })
         .expect("forward order");
-    assert_eq!(accepted_generation(&fwd), 2);
+    assert_eq!(accepted_slot(&fwd), 2);
     let rev = reverse
         .commit(|batch| {
             batch.delete(RECIPE, [recipe_row(102, "ciabatta")]);
@@ -457,7 +457,7 @@ fn host_order_inside_a_batch_rides_the_wire_but_cannot_reach_stored_bytes() {
             Ok(())
         })
         .expect("reverse order");
-    assert_eq!(accepted_generation(&rev), 2);
+    assert_eq!(accepted_slot(&rev), 2);
 
     let slot_fwd = FsStore::new(root_fwd)
         .get(&log_key("", braid, 2))
@@ -504,7 +504,7 @@ fn a_net_noop_commit_takes_the_engine_noop_arm_and_publishes_nothing() {
             Ok(())
         })
         .expect("commit");
-    assert_eq!(accepted_generation(&first), 1);
+    assert_eq!(accepted_slot(&first), 1);
 
     obs::start_capture();
     let again = writer
@@ -515,20 +515,17 @@ fn a_net_noop_commit_takes_the_engine_noop_arm_and_publishes_nothing() {
         .expect("commit");
     let events = obs::finish_capture();
 
-    let Commit::Accepted {
-        generation,
+    let Admission::Accepted(Slotted {
+        slot,
         durability,
         braid: got,
         ..
-    } = again
+    }) = again
     else {
-        panic!("the net no-op reports acceptance at the current generation");
+        panic!("the net no-op reports acceptance at the current slot");
     };
     assert_eq!(got, braid);
-    assert_eq!(
-        generation, 1,
-        "no advance: the current generation is the answer"
-    );
+    assert_eq!(slot, 1, "no advance: the current slot is the answer");
     assert_eq!(durability, Durability::Published);
 
     assert!(
@@ -573,7 +570,7 @@ fn a_rejected_commit_leaves_no_lmdb_commit_no_object_and_no_advance() {
     let events = obs::finish_capture();
 
     assert!(
-        matches!(outcome, Commit::Rejected(_)),
+        matches!(outcome, Admission::Rejected(_)),
         "a step without its recipe violates the containment"
     );
     assert!(

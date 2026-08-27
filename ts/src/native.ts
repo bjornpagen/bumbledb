@@ -594,7 +594,7 @@ interface Native {
 	logRenderCkptScratch(digest: Uint8Array): Uint8Array
 }
 
-const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64"] as const
+const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64", "linux-x64"] as const
 
 const requireNative = createRequire(import.meta.url)
 

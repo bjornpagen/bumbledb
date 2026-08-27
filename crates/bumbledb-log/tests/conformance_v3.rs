@@ -891,7 +891,10 @@ fn spec_generator_agrees() {
         let spelled = std::fs::read(out.join(format!("{stem}.bin")))
             .unwrap_or_else(|_| panic!("{stem}: the generator spells this golden"));
         let golden = std::fs::read(v3().join(format!("{stem}.bin"))).expect("corpus golden");
-        assert_eq!(spelled, golden, "{stem}: spec and corpus agree byte-for-byte");
+        assert_eq!(
+            spelled, golden,
+            "{stem}: spec and corpus agree byte-for-byte"
+        );
     }
 
     let index = read_json(&out.join("truncations/index.json"));

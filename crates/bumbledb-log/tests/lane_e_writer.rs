@@ -1,20 +1,20 @@
 //! The commit discipline and the one loss path: the exact outcome
 //! types, the publish law, spanning refusal, the split verb, the
 //! ambiguous-PUT absorption, and the loss shapes — identical effects
-//! and strict supersets landing Accepted at the current generation
-//! through the re-judged net no-op, disjoint-shaped losses landing a
-//! re-judged publish with a fresh header at tip+1, conflicts landing
-//! the serial Rejected.
+//! and strict supersets landing Accepted at the current slot through
+//! the re-judged net no-op, disjoint-shaped losses landing a re-judged
+//! publish with a fresh header at tip+1, conflicts landing the serial
+//! Rejected.
 
 mod lane_e_support;
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::braids::BraidId;
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{
-    BraidOutcome, Commit, Durability, Error, Options, Writer, WriterOpened,
+    BraidOutcome, Durability, Error, Options, Slotted, Writer, WriterOpened,
 };
 use lane_e_support::{
     AmbiguousOnce, NOTE, RECIPE, STEP, TestLog, codec, insert, kitchen_braid, note_braid, note_row,
@@ -52,18 +52,18 @@ fn accepted_publish_advances_the_chain() {
             Ok(42u32)
         })
         .expect("commit");
-    let Commit::Accepted {
+    let Admission::Accepted(Slotted {
         value,
         braid: got,
-        generation,
+        slot,
         durability,
-    } = outcome
+    }) = outcome
     else {
         panic!("accepted expected");
     };
     assert_eq!(value, 42);
     assert_eq!(got, braid);
-    assert_eq!(generation, 1, "braid generation, never the sum");
+    assert_eq!(slot, 1, "braid slot, never the sum");
     assert_eq!(durability, Durability::Published);
 
     let store = FsStore::new(root);
@@ -93,7 +93,7 @@ fn rejection_is_free_of_network() {
         })
         .expect("commit");
     assert!(
-        matches!(outcome, Commit::Rejected(_)),
+        matches!(outcome, Admission::Rejected(_)),
         "a step without its recipe violates the containment"
     );
     let store = FsStore::new(root);
@@ -118,7 +118,10 @@ fn publish_law_net_noop_creates_no_slot() {
             Ok(())
         })
         .expect("commit");
-    assert!(matches!(first, Commit::Accepted { generation: 1, .. }));
+    assert!(matches!(
+        first,
+        Admission::Accepted(Slotted { slot: 1, .. })
+    ));
 
     let again = writer
         .commit(|batch| {
@@ -126,15 +129,13 @@ fn publish_law_net_noop_creates_no_slot() {
             Ok(())
         })
         .expect("commit");
-    let Commit::Accepted {
-        generation,
-        durability,
-        ..
-    } = again
+    let Admission::Accepted(Slotted {
+        slot, durability, ..
+    }) = again
     else {
         panic!("a net no-op is accepted");
     };
-    assert_eq!(generation, 1, "accepted at the current generation");
+    assert_eq!(slot, 1, "accepted at the current slot");
     assert_eq!(durability, Durability::Published);
     let store = FsStore::new(root);
     assert!(
@@ -191,18 +192,24 @@ fn commit_split_is_the_explicit_verb() {
     assert_eq!(outcomes.len(), 2);
     assert!(matches!(
         outcomes[0],
-        BraidOutcome::Accepted {
+        BraidOutcome {
             braid,
-            generation: 1,
-            durability: Durability::Published,
+            admission: Admission::Accepted(Slotted {
+                slot: 1,
+                durability: Durability::Published,
+                ..
+            }),
         } if braid == kitchen_braid(&codec)
     ));
     assert!(matches!(
         outcomes[1],
-        BraidOutcome::Accepted {
+        BraidOutcome {
             braid,
-            generation: 1,
-            durability: Durability::Published,
+            admission: Admission::Accepted(Slotted {
+                slot: 1,
+                durability: Durability::Published,
+                ..
+            }),
         } if braid == note_braid(&codec)
     ));
     assert_eq!(writer.vector().at(kitchen_braid(&codec)), 1);
@@ -227,11 +234,11 @@ fn ambiguous_put_absorbed_by_fetch_and_compare() {
     assert!(
         matches!(
             outcome,
-            Commit::Accepted {
-                generation: 1,
+            Admission::Accepted(Slotted {
+                slot: 1,
                 durability: Durability::Published,
                 ..
-            }
+            })
         ),
         "byte-equal Exists is our own earlier PUT, absorbed"
     );
@@ -239,7 +246,7 @@ fn ambiguous_put_absorbed_by_fetch_and_compare() {
 }
 
 #[test]
-fn identical_effects_race_lands_accepted_at_the_winners_generation() {
+fn identical_effects_race_lands_accepted_at_the_winners_slot() {
     let root = temp_dir("identical_race");
     let dir = root.join("w");
     let writer = open_at(root.clone(), &dir, 11);
@@ -255,17 +262,15 @@ fn identical_effects_race_lands_accepted_at_the_winners_generation() {
             Ok(())
         })
         .expect("commit");
-    let Commit::Accepted {
-        generation,
-        durability,
-        ..
-    } = outcome
+    let Admission::Accepted(Slotted {
+        slot, durability, ..
+    }) = outcome
     else {
         panic!("a loss whose effects the winner performed reports Accepted");
     };
     assert_eq!(
-        generation, 1,
-        "the re-judgment nets a no-op and the publish law answers at the winner's generation"
+        slot, 1,
+        "the re-judgment nets a no-op and the publish law answers at the winner's slot"
     );
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
@@ -308,11 +313,11 @@ fn strict_superset_race_lands_accepted_with_the_residue_present() {
     assert!(
         matches!(
             outcome,
-            Commit::Accepted {
-                generation: 1,
+            Admission::Accepted(Slotted {
+                slot: 1,
                 durability: Durability::Published,
                 ..
-            }
+            })
         ),
         "the winner strictly contains us; the re-judgment nets a no-op"
     );
@@ -350,7 +355,7 @@ fn conflict_loss_rejudges_to_the_serial_rejection() {
         })
         .expect("commit");
     assert!(
-        matches!(outcome, Commit::Rejected(_)),
+        matches!(outcome, Admission::Rejected(_)),
         "exactly the verdict serial execution would have produced"
     );
     assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
@@ -391,15 +396,13 @@ fn disjoint_loss_rejudges_and_publishes_at_tip_plus_one() {
             Ok(())
         })
         .expect("commit");
-    let Commit::Accepted {
-        generation,
-        durability,
-        ..
-    } = outcome
+    let Admission::Accepted(Slotted {
+        slot, durability, ..
+    }) = outcome
     else {
         panic!("a disjoint-shaped loss lands");
     };
-    assert_eq!(generation, 2, "the re-judged publish lands at tip+1");
+    assert_eq!(slot, 2, "the re-judged publish lands at tip+1");
     assert_eq!(durability, Durability::Published);
     assert_eq!(writer.losses(), 1, "one loss, one re-judgment");
     let store = FsStore::new(root);
@@ -447,7 +450,7 @@ fn adoption_catches_up_and_continues_the_chain() {
                 Ok(())
             })
             .expect("commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     drop(writer_a);
 
@@ -460,7 +463,7 @@ fn adoption_catches_up_and_continues_the_chain() {
                 Ok(())
             })
             .expect("commit"),
-        Commit::Accepted { generation: 2, .. }
+        Admission::Accepted(Slotted { slot: 2, .. })
     ));
     writer_b
         .with_db(|db| {

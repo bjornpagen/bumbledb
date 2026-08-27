@@ -114,6 +114,7 @@
     "fuzz/documents/sidecar_prefix_177"
   ],
   "fuzz_storm": "fuzz/storm.json",
+  "identities": "identities.json",
   "key_grammar": "keys/grammar.json",
   "key_tilde_family": "keys/tilde-family.json",
   "lease": [
@@ -122,10 +123,12 @@
     "ok_mutation",
     "ok_released",
     "ok_unexpired",
+    "r_crlf",
     "r_expires_overflow",
     "r_fifth_line",
     "r_missing_expires",
     "r_negative_holder",
+    "r_no_final_newline",
     "r_no_magic",
     "r_version_2"
   ],

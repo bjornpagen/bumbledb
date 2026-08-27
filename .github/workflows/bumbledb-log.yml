@@ -177,6 +177,141 @@ jobs:
           echo "S3 smoke credentials present; running the crate's gated smoke"
           cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture
 
+  linux-x64:
+    runs-on: ubuntu-24.04
+    container: amazonlinux:2023
+    timeout-minutes: 90
+    steps:
+      - name: Install the Amazon Linux 2023 toolchain
+        # AL2023 ships curl-minimal. `dnf install curl` without
+        # --allowerasing is a conflict; the transaction dies before
+        # rustup, the napi build, or either artifact upload.
+        run: |
+          dnf -y install --allowerasing \
+            gcc \
+            gcc-c++ \
+            make \
+            binutils \
+            git \
+            tar \
+            gzip \
+            xz \
+            unzip \
+            python3 \
+            sed \
+            gawk \
+            diffutils \
+            findutils \
+            ca-certificates \
+            curl \
+            nodejs24 \
+            nodejs24-npm
+          alternatives --set node /usr/bin/node-24
+      - uses: actions/checkout@v5
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ts/crate/target
+          key: log-al2023-x64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
+          restore-keys: |
+            log-al2023-x64-cargo-
+      - name: Activate the pinned pnpm
+        # AL2023's nodejs24 does not ship corepack (official Node via
+        # setup-node does; this job stays on the dnf userspace so the
+        # napi .node is minted against glibc 2.34). nodejs24-npm can
+        # install corepack; corepack then activates the packageManager pin.
+        run: |
+          npm install -g corepack
+          corepack enable pnpm
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.elan
+            lean/.lake
+          key: log-al2023-x64-lean-${{ hashFiles('lean/lean-toolchain') }}
+          restore-keys: |
+            log-al2023-x64-lean-
+      - name: install elan
+        # lean/lean-toolchain owns the exact version; elan resolves
+        # and installs it on first `lake` invocation inside lean/.
+        # A cache hit leaves the toolchain on disk; this step is PATH.
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Resolve the pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ts
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: log-al2023-x64-pnpm-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
+          restore-keys: |
+            log-al2023-x64-pnpm-
+      - name: Install ts/ (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: Put ts/ node_modules/.bin on PATH
+        run: echo "$GITHUB_WORKSPACE/ts/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Build the napi .node
+        run: node scripts/build.ts
+        working-directory: ts
+      - name: Build the duty binary
+        run: cargo build --release --bin duty
+      - name: Install ts-log/ (frozen lockfile)
+        # lane_b_interop.rs spawns ts-log/test/interop-child.ts, which
+        # resolves @bjornpagen/bumbledb from this install. nextest is
+        # battery lane 3, ahead of the ts/ trio.
+        run: pnpm install --frozen-lockfile
+        working-directory: ts-log
+      - name: Put ts-log/ node_modules/.bin on PATH
+        run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: scripts/battery.sh
+      - name: Stage the linux-x64 artifacts
+        run: |
+          mkdir -p /tmp/grail-artifacts
+          cp ts/npm/linux-x64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-x64.node
+          cp target/release/duty /tmp/grail-artifacts/bumbledb-log-duty-linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bumbledb.linux-x64.node
+          path: /tmp/grail-artifacts/bumbledb.linux-x64.node
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bumbledb-log-duty-linux-x64
+          path: /tmp/grail-artifacts/bumbledb-log-duty-linux-x64
+          if-no-files-found: error
+      - name: Gated S3 smoke
+        env:
+          BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
+          BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
+          BUMBLEDB_S3_SMOKE_ENDPOINT: ${{ secrets.BUMBLEDB_S3_SMOKE_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=
+          [ -n "${BUMBLEDB_S3_SMOKE_BUCKET:-}" ] || missing="$missing BUMBLEDB_S3_SMOKE_BUCKET"
+          [ -n "${AWS_ACCESS_KEY_ID:-}" ] || missing="$missing AWS_ACCESS_KEY_ID"
+          [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] || missing="$missing AWS_SECRET_ACCESS_KEY"
+          if [ -n "$missing" ]; then
+            echo "SKIPPED S3 smoke: credential-gated lane not run (missing$missing)"
+            exit 0
+          fi
+          echo "S3 smoke credentials present; running the crate's gated smoke"
+          cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture
+
   darwin:
     runs-on: macos-latest
     timeout-minutes: 90

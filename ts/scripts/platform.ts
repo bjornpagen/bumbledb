@@ -12,7 +12,7 @@ import * as errors from "@superbuilders/errors"
  * single-source pin in `test/build-platform.test.ts` holds all three in
  * lockstep.
  */
-const PUBLISH_PLATFORMS = ["darwin-arm64", "linux-arm64"] as const
+const PUBLISH_PLATFORMS = ["darwin-arm64", "linux-arm64", "linux-x64"] as const
 
 function isPublishPlatform(target: string): boolean {
 	return (PUBLISH_PLATFORMS as readonly string[]).includes(target)

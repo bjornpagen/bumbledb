@@ -54,7 +54,10 @@ const BATCH_DECODE_IDENTITIES: &[&str] = &[
 ];
 
 /// The encode family rides the exhaustive `wire_tags!` table — a new
-/// core variant fails compile in `tags::log_encode_refusal`.
+/// core variant fails compile in `tags::log_encode_refusal`, and the
+/// table is an assertee of the core's own speller: the
+/// `encode_tags_are_the_core_identities` test pins each row to
+/// `EncodeError::identity`.
 const BATCH_ENCODE_IDENTITIES: &[&str] = tags::log_encode_refusal::TAGS;
 
 const MANIFEST_IDENTITIES: &[&str] = &["Malformed", "Version"];
@@ -851,10 +854,12 @@ mod mint_table {
     };
     use bumbledb::schema::{RelationDescriptor, RelationId, SchemaDescriptor, ValueType};
     use bumbledb_log::braids::{BraidId, braids};
-    use bumbledb_log::codec::DecodeError;
+    use bumbledb_log::codec::{DecodeError, EncodeError, ValueShape};
     use bumbledb_log::manifest::{CheckpointError, ManifestError};
     use bumbledb_log::sidecar::SidecarError;
     use serde_json::Value as Json;
+
+    use crate::tags;
 
     fn one_braid() -> BraidId {
         let descriptor = SchemaDescriptor {
@@ -948,6 +953,56 @@ mod mint_table {
         ];
         let spelled: Vec<&'static str> = witnesses.iter().map(DecodeError::identity).collect();
         assert_eq!(spelled, BATCH_DECODE_IDENTITIES);
+    }
+
+    #[test]
+    fn encode_tags_are_the_core_identities() {
+        let braid = one_braid();
+        let witnesses = [
+            EncodeError::FingerprintMismatch,
+            EncodeError::UnknownBraid { braid: 1 },
+            EncodeError::UnknownRelation {
+                op: 0,
+                relation: RelationId(9),
+            },
+            EncodeError::ClosedRelation {
+                op: 0,
+                relation: RelationId(0),
+            },
+            EncodeError::OpRelationOutsideBraid {
+                op: 0,
+                relation: RelationId(0),
+                braid,
+            },
+            EncodeError::Arity {
+                op: 0,
+                relation: RelationId(0),
+                row: 0,
+            },
+            EncodeError::Value {
+                op: 0,
+                relation: RelationId(0),
+                row: 0,
+                field: 0,
+                cause: ValueShape::Kind {
+                    expected: ValueType::Bool,
+                },
+            },
+            EncodeError::TooManyOps,
+            EncodeError::TooManyRows { op: 0 },
+        ];
+        for refusal in &witnesses {
+            assert_eq!(
+                tags::log_encode_refusal::tag(refusal),
+                refusal.identity(),
+                "the bridge tag row is the core's own identity"
+            );
+        }
+        let spelled: Vec<&'static str> = witnesses.iter().map(EncodeError::identity).collect();
+        assert_eq!(
+            spelled, BATCH_ENCODE_IDENTITIES,
+            "the witness list covers every encode variant in table order"
+        );
     }
 
     #[test]

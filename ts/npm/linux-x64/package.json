@@ -1,12 +1,12 @@
 {
-	"name": "@bjornpagen/bumbledb-linux-arm64",
+	"name": "@bjornpagen/bumbledb-linux-x64",
 	"version": "0.20.0",
-	"description": "Prebuilt linux-arm64 native binary for @bjornpagen/bumbledb (amazonlinux:2023, glibc 2.34)",
+	"description": "Prebuilt linux-x64 native binary for @bjornpagen/bumbledb (amazonlinux:2023, glibc 2.34)",
 	"os": [
 		"linux"
 	],
 	"cpu": [
-		"arm64"
+		"x64"
 	],
 	"main": "bumbledb.node",
 	"files": [
@@ -17,7 +17,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/bjornpagen/bumbledb.git",
-		"directory": "ts/npm/linux-arm64"
+		"directory": "ts/npm/linux-x64"
 	},
 	"engines": {
 		"node": ">=24"

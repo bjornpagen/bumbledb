@@ -31,7 +31,7 @@ use bumbledb_log::replica::{OpenRefusal, Opened, Provenance, Refreshed, Replica,
 use bumbledb_log::sidecar::Chain;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{Create, ObjectStore};
-use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Options, Writer, WriterOpened};
 
 const RECIPE: RelationId = RelationId(0);
 const STEP: RelationId = RelationId(1);
@@ -386,7 +386,7 @@ fn five_hundred_commits_restore_to_every_recorded_vector() {
                 Ok(())
             })
             .expect("commit");
-        assert!(matches!(outcome, Commit::Accepted { .. }));
+        assert!(matches!(outcome, Admission::Accepted(_)));
         writer.quiesce();
         let digest = writer
             .with_db(|db| db.catalog_digest().expect("catalog digest"))

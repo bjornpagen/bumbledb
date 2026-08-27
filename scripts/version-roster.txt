@@ -1,6 +1,7 @@
-ts/crate/Cargo.toml
 crates/bumbledb-c/Cargo.toml
-ts/package.json
+ts-log/package.json
+ts/crate/Cargo.toml
 ts/npm/darwin-arm64/package.json
 ts/npm/linux-arm64/package.json
-ts-log/package.json
+ts/npm/linux-x64/package.json
+ts/package.json

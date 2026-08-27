@@ -1,0 +1,10 @@
+# The owner publishes this tarball from a darwin-arm64 host. The packaged
+# os/cpu stay linux/x64 so consumers skip it off-host. This setting is
+# the pack/publish host's architecture set, not the shipped constraint.
+supportedArchitectures:
+  os:
+    - current
+    - linux
+  cpu:
+    - current
+    - x64

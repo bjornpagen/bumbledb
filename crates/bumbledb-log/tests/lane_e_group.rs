@@ -12,13 +12,13 @@ use std::sync::Barrier;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
     Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
 };
-use bumbledb_log::writer::{Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Options, Slotted, Writer, WriterOpened};
 use lane_e_support::{
     NOTE, RECIPE, STEP, codec, kitchen_braid, note_row, recipe_row, step_row, temp_dir, theory,
 };
@@ -97,9 +97,9 @@ fn open_gated(
 fn packed_pair(
     writer: &GatedWriter,
     gate: &AtomicBool,
-    first: impl FnOnce() -> bumbledb_log::writer::Result<Commit<()>> + Send,
-    second: impl FnOnce() -> bumbledb_log::writer::Result<Commit<()>> + Send,
-) -> (Commit<()>, Commit<()>) {
+    first: impl FnOnce() -> bumbledb_log::writer::Result<Admission<Slotted<()>>> + Send,
+    second: impl FnOnce() -> bumbledb_log::writer::Result<Admission<Slotted<()>>> + Send,
+) -> (Admission<Slotted<()>>, Admission<Slotted<()>>) {
     let start = Barrier::new(2);
     std::thread::scope(|scope| {
         let holder = scope.spawn(|| {
@@ -118,7 +118,7 @@ fn packed_pair(
         std::thread::sleep(Duration::from_millis(150));
         gate.store(true, Ordering::SeqCst);
         let hold = holder.join().expect("join holder").expect("holder commit");
-        assert!(matches!(hold, Commit::Accepted { .. }));
+        assert!(matches!(hold, Admission::Accepted(_)));
         (
             first_task.join().expect("join").expect("commit"),
             second_task.join().expect("join").expect("commit"),
@@ -151,14 +151,14 @@ fn a_drain_packs_concurrent_commits_into_one_transaction() {
 
     // The step alone would reject (no recipe 7); the drain is one
     // transaction, so the engine judges the composite's final state.
-    let Commit::Accepted { generation: g1, .. } = step_outcome else {
+    let Admission::Accepted(Slotted { slot: s1, .. }) = step_outcome else {
         panic!("the composite accepted what a solo run would reject");
     };
-    let Commit::Accepted { generation: g2, .. } = recipe_outcome else {
+    let Admission::Accepted(Slotted { slot: s2, .. }) = recipe_outcome else {
         panic!("accepted expected");
     };
-    assert_eq!(g1, 1);
-    assert_eq!(g2, 1, "one batch, one generation, one object");
+    assert_eq!(s1, 1);
+    assert_eq!(s2, 1, "one batch, one slot, one object");
 
     let codec = codec();
     let braid = kitchen_braid(&codec);
@@ -196,11 +196,11 @@ fn a_rejected_composite_falls_back_one_by_one() {
     );
 
     assert!(
-        matches!(guilty, Commit::Rejected(_)),
+        matches!(guilty, Admission::Rejected(_)),
         "the guilty write gets its own serial rejection"
     );
     assert!(
-        matches!(innocent, Commit::Accepted { generation: 1, .. }),
+        matches!(innocent, Admission::Accepted(Slotted { slot: 1, .. })),
         "an innocent write never fails for a neighbor's violation"
     );
     let codec = codec();

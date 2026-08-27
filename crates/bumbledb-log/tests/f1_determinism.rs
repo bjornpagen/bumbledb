@@ -26,7 +26,7 @@ use bumbledb_log::replica::{Opened, Provenance, Replica, Vector};
 use bumbledb_log::sidecar::Chain;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{Create, ObjectStore};
-use bumbledb_log::writer::{Batch, Commit, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Batch, Options, Slotted, Writer, WriterOpened};
 
 const RECIPE: RelationId = RelationId(0);
 const STEP: RelationId = RelationId(1);
@@ -315,9 +315,7 @@ fn run_direct(
             .unwrap_or_else(|error| panic!("seed {seed}: command {index} failed: {error}"));
         let after = writer.vector();
         match outcome {
-            Commit::Accepted {
-                braid, generation, ..
-            } => {
+            Admission::Accepted(Slotted { braid, slot, .. }) => {
                 if after == before {
                     continue;
                 }
@@ -327,11 +325,11 @@ fn run_direct(
                     "seed {seed}: one batch advances its braid by exactly one"
                 );
                 assert_eq!(
-                    generation,
+                    slot,
                     after.at(braid),
-                    "seed {seed}: the reported generation is the slot number"
+                    "seed {seed}: the reported slot is the braid's slot number"
                 );
-                published.push((braid, generation));
+                published.push((braid, slot));
                 digests.push(
                     writer
                         .with_db(Db::catalog_digest)
@@ -339,7 +337,7 @@ fn run_direct(
                         .expect("direct digest"),
                 );
             }
-            Commit::Rejected(_) => {
+            Admission::Rejected(_) => {
                 assert_eq!(
                     after, before,
                     "seed {seed}: a rejected commit advances nothing"
@@ -558,7 +556,9 @@ fn the_writers_own_duty_checkpoint_hops_to_the_direct_digest() {
     for index in 0..24 {
         let ops = gen_command(&mut rng, &mut shadow);
         let before = writer.vector();
-        writer
+        // Accept and reject both count as arrivals; the publish tally is
+        // the vector delta, so the admission arm itself is not consulted.
+        let _ = writer
             .commit(|batch| {
                 stage(batch, &ops);
                 Ok(())

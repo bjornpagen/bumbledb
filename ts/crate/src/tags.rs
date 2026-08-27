@@ -329,11 +329,12 @@ wire_tags! {
 
 wire_tags! {
     /// `bumbledb_log::codec::EncodeError` — the encode-refusal identity
-    /// kinds. The log core spells decode identities itself
-    /// (`DecodeError::identity`); the encode enum carries none, so the
-    /// bridge is the one speller — exhaustively, so a new core variant
-    /// fails compile HERE. The roster is a row family of the
-    /// `log-identities.json` mint table.
+    /// kinds. The log core is the one speller
+    /// (`EncodeError::identity`); this table is an assertee, pinned
+    /// variant-for-variant to the core's spelling by the
+    /// `encode_tags_are_the_core_identities` test — and exhaustive, so
+    /// a new core variant fails compile HERE. The roster is a row
+    /// family of the `log-identities.json` mint table.
     mod log_encode_refusal for EncodeError {
         FINGERPRINT_MISMATCH: EncodeError::FingerprintMismatch => "FingerprintMismatch",
         UNKNOWN_BRAID: EncodeError::UnknownBraid { .. } => "UnknownBraid",

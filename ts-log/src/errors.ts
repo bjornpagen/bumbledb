@@ -4,12 +4,13 @@
  * causes carried as data properties read back with the `*Of` accessors —
  * never by message-string matching. There is deliberately no
  * `ErrAlreadyApplied`: the state it would name is absorbed by idempotent
- * replay (L10) and never surfaces. ManifestMissing, Ambiguous, OverWidth,
+ * replay (L10) and never surfaces. ManifestMissing, OverWidth,
  * RefillNeeded, Exhausted, and SlotRetired are named sums of their own: a
- * replica without a manifest, an unproved conditional write, a draw past
- * the lease width, a cached id block too short for the draw, the u64
- * ceiling, and a below-floor create. Exhaustion means the id space is
- * spent — a refill is never an exhaustion.
+ * replica without a manifest, a draw past the lease width, a cached id
+ * block too short for the draw, the u64 ceiling, and a below-floor
+ * create. Exhaustion means the id space is spent — a refill is never an
+ * exhaustion. An unproved conditional write is the store verbs' own
+ * `ambiguous` outcome arm, never an error identity.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -28,9 +29,6 @@ const ErrSpanningCommit = errors.new(
 	"bumbledb-log spanningCommit: the recorded ops span braids — commitSplit is the explicit verb"
 )
 
-/** 404 at or below the current checkpoint's vector: the tail was gc'd. */
-const ErrGapDetected = errors.new("bumbledb-log gapDetected: the log tail below the checkpoint vector was collected")
-
 /** A rejected replay on a store that passed the wholeness check. */
 const ErrReplayDiverged = errors.new(
 	"bumbledb-log replayDiverged: a published batch rejected during steady-state replay"
@@ -44,13 +42,6 @@ const ErrContention = errors.new("bumbledb-log contention: consecutive live-tip 
 
 /** A replica (or any read-role handle) found no manifest; only the writer births a store. */
 export const ErrManifestMissing = errors.new("bumbledb-log manifestMissing: the store has no manifest")
-
-/**
- * A conditional write the transport cannot prove (S3 409, timeout, a
- * retried PUT). The machine GET-verifies; this identity is the unproved
- * arm, never a proved Exists or Moved.
- */
-const ErrAmbiguous = errors.new("bumbledb-log ambiguous: the conditional write is unproved")
 
 /** A single id draw larger than one lease width; the width is the one block size. */
 const ErrOverWidth = errors.new("bumbledb-log overWidth: the draw exceeds the lease width")
@@ -152,13 +143,6 @@ interface ContentionData {
 	readonly cause: ContentionCause
 }
 
-type AmbiguousVerb = "create" | "swap"
-
-interface AmbiguousData {
-	readonly verb: AmbiguousVerb
-	readonly key: StoreKey
-}
-
 interface OverWidthData {
 	readonly requested: bigint
 }
@@ -192,7 +176,6 @@ type LeaseRefusal =
 const refusalData = new WeakMap<Error, RefusalCause>()
 const chainData = new WeakMap<Error, ChainMismatchData>()
 const contentionData = new WeakMap<Error, ContentionData>()
-const ambiguousData = new WeakMap<Error, AmbiguousData>()
 const overWidthData = new WeakMap<Error, OverWidthData>()
 const refillNeededData = new WeakMap<Error, RefillNeededData>()
 const exhaustedData = new WeakMap<Error, ExhaustedData>()
@@ -222,12 +205,6 @@ function refuseManifestMissing(detail: string): never {
 
 function isManifestMissing(error: unknown): boolean {
 	return error instanceof Error && errors.is(error, ErrManifestMissing)
-}
-
-function throwAmbiguous(data: AmbiguousData, detail: string): never {
-	const error = errors.wrap(ErrAmbiguous, detail)
-	ambiguousData.set(error, data)
-	throw error
 }
 
 function refuseOverWidth(data: OverWidthData, detail: string): never {
@@ -266,10 +243,6 @@ function contentionOf(error: Error): ContentionData | undefined {
 	return contentionData.get(error)
 }
 
-function ambiguousOf(error: Error): AmbiguousData | undefined {
-	return ambiguousData.get(error)
-}
-
 function overWidthOf(error: Error): OverWidthData | undefined {
 	return overWidthData.get(error)
 }
@@ -294,8 +267,6 @@ function wrapStore(inner: Error, detail: string): Error {
 }
 
 export type {
-	AmbiguousData,
-	AmbiguousVerb,
 	ChainCause,
 	ChainMismatchData,
 	ContentionCause,
@@ -308,14 +279,11 @@ export type {
 	SlotRetiredData
 }
 export {
-	ambiguousOf,
 	chainMismatchOf,
 	contentionOf,
-	ErrAmbiguous,
 	ErrChainMismatch,
 	ErrContention,
 	ErrExhausted,
-	ErrGapDetected,
 	ErrOverWidth,
 	ErrRefillNeeded,
 	ErrRefused,
@@ -335,7 +303,6 @@ export {
 	refuseOverWidth,
 	refuseSlotRetired,
 	slotRetiredOf,
-	throwAmbiguous,
 	throwContention,
 	throwRefillNeeded,
 	wrapStore

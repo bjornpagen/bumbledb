@@ -144,7 +144,7 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal("snapshot" in db, false)
 		assert.deepEqual(
 			Reflect.ownKeys(db).toSorted(),
-			["prepare", "read", "schema", "write", "writeFrom"],
+			["catalogDigest", "prepare", "read", "schema", "write", "writeFrom"],
 			"the surface is exactly the pinned verbs — no retired write form survives"
 		)
 		db.read(function probeScope(instance) {

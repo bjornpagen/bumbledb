@@ -6,9 +6,9 @@
 # amazonlinux:2023 container (grail/40): Amazon Linux is the linux
 # userspace — glibc 2.34, never Ubuntu — and that linux cell is the
 # first real execution of the engine's linux arms and of the
-# scalar-fallback promise (docs/architecture/00-product.md — other
-# 64-bit platforms compile and run scalar fallback correctly, no
-# performance promises). The suite is linux-clean by construction:
+# scalar-fallback promise (other 64-bit platforms compile and run
+# scalar fallback correctly, no performance promises). The suite is
+# linux-clean by construction:
 # every host-pinned falsifier is #[ignore]d and every macos-only
 # integration binary is whole-file cfg(target_os = "macos"). Run
 # 29697582864 falsified that claim once — clockproxy's plausibility
@@ -26,16 +26,17 @@
 #   caches; the first run on a cold cache (toolchain download + full
 #   builds) will exceed it once.
 #
-# Deliberate exclusions (each per the measurement discipline,
-# docs/architecture/60-validation.md):
+# Deliberate exclusions (each per the measurement discipline: measure
+# first, decide by the number):
 #   * NO benches: timing on a shared virtualized runner is noise; every
 #     pinned margin is measured locally on the M2 Max.
 #   * NO asm gates (scripts/check-asm.sh): aarch64 codegen inspection
 #     is a local gate for the same reason — runner codegen/toolchain
 #     drift would make it flaky without making it informative.
-#   * NO fuzzing lanes: the fuzzing apparatus was hard-deleted by owner
-#     ruling (2026-07-20, docs/architecture/60-validation.md § the
-#     deletion record); the corpus-replay lane died with it.
+#   * NO fuzzing lanes: the fuzzing apparatus died by owner ruling
+#     (2026-07-20) and the corpus-replay lane with it; the storm recipe
+#     (crates/bumbledb-log/conformance/v3/README.md § Fuzz) runs inside
+#     the battery, not as a CI lane of its own.
 name: ci
 
 on:

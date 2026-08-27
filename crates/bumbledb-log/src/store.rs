@@ -205,6 +205,11 @@ impl Lease {
         .into_bytes()
     }
 
+    /// Strict-canonical: the accepted set is exactly [`Self::encode`]'s
+    /// image, so parse∘encode is the identity and every accepted body
+    /// is its own re-render. A body missing its final newline,
+    /// CRLF-terminated, or spelling a non-canonical decimal is not a
+    /// lease and never breakable.
     #[must_use]
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
@@ -218,11 +223,12 @@ impl Lease {
         if lines.next().is_some() {
             return None;
         }
-        Some(Self {
+        let lease = Self {
             holder,
             token,
             expires,
-        })
+        };
+        (lease.encode() == bytes).then_some(lease)
     }
 }
 

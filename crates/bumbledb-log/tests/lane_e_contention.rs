@@ -8,12 +8,12 @@
 
 mod lane_e_support;
 
-use bumbledb::{SchemaDescriptor, Value};
+use bumbledb::{Admission, SchemaDescriptor, Value};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::writer::{
-    Commit, ContentionCause, Error, LOSS_BOUND, Options, Writer, WriterOpened, WriterStep,
+    ContentionCause, Error, LOSS_BOUND, Options, Slotted, Writer, WriterOpened, WriterStep,
 };
 use lane_e_support::{
     BOOKING, BOOKING_CAPACITY, Competitor, CrashOnce, NOTE, RacingStore, VENUE, codec, note_braid,
@@ -94,7 +94,10 @@ fn sixteen_disjoint_losses_surface_slot_race_and_keep_pending() {
             Ok(())
         })
         .expect("commit after the race");
-    assert!(matches!(outcome, Commit::Accepted { generation: 18, .. }));
+    assert!(matches!(
+        outcome,
+        Admission::Accepted(Slotted { slot: 18, .. })
+    ));
     assert_eq!(writer.backlog(), None);
     assert_eq!(writer.vector().at(braid), 18);
     let fs = FsStore::new(root);
@@ -132,7 +135,7 @@ fn a_rejecting_terminal_rejudgment_surfaces_hot_key_from_the_violation() {
                 Ok(())
             })
             .expect("venue setup"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     // Fifteen racer bookings plus ours fit; the sixteenth crosses the
     // ceiling exactly where the bound is spent, so the terminal
@@ -234,6 +237,6 @@ fn open_ending_in_contention_keeps_pending_and_serves() {
             Ok(())
         })
         .expect("publication retries on the next commit");
-    assert!(matches!(outcome, Commit::Accepted { .. }));
+    assert!(matches!(outcome, Admission::Accepted(_)));
     assert_eq!(reopened.backlog(), None);
 }

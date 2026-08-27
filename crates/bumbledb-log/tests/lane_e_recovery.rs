@@ -8,13 +8,13 @@ mod lane_e_support;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use bumbledb::SchemaDescriptor;
+use bumbledb::{Admission, SchemaDescriptor};
 use bumbledb_log::codec::{BatchHeader, OpKind};
 use bumbledb_log::manifest::log_key;
 use bumbledb_log::sidecar::{Chain, Pending, SidecarRead};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{Commit, Error, NoFaults, Options, Writer, WriterOpened, WriterStep};
+use bumbledb_log::writer::{Error, NoFaults, Options, Slotted, Writer, WriterOpened, WriterStep};
 use lane_e_support::{
     CrashOnce, NOTE, STEP, TestLog, codec, insert, note_braid, note_row, step_row, temp_dir, theory,
 };
@@ -109,7 +109,7 @@ fn arm_two_born_noop_clears_and_publishes_nothing() {
                 Ok(())
             })
             .expect("setup commit"),
-        Commit::Accepted { generation: 1, .. }
+        Admission::Accepted(Slotted { slot: 1, .. })
     ));
     let err = writer
         .commit(|batch| {
@@ -354,7 +354,7 @@ fn run_scripted_recovery_child() {
             .is_none(),
         "recovery never double-publishes"
     );
-    println!("LANE_E_RECOVERY recovered arm=Settled generation=1 slot=present");
+    println!("LANE_E_RECOVERY recovered arm=Settled slot=1 object=present");
 }
 
 /// Finding 122: the pending batch is written by the test script to a
@@ -399,7 +399,7 @@ fn scripted_pending_recovers_in_a_second_process() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        stdout.contains("LANE_E_RECOVERY recovered arm=Settled generation=1 slot=present"),
+        stdout.contains("LANE_E_RECOVERY recovered arm=Settled slot=1 object=present"),
         "child names Settled and the present slot: {stdout}"
     );
 

@@ -12,7 +12,7 @@ Root: `crates/bumbledb-log/conformance/v3/`.
 | `braids/` | Derived braid maps, one file per schema. |
 | `batch/*.json` + `*.bin` | Wire batches. Sidecar names schema, fingerprint, expect, and the decoded value (or refusal). |
 | `chain/` | `verifyChain` goldens over v:3 batch bytes. |
-| `documents/{manifest,checkpoint,sidecar}/` | Canonical single-line document bytes (`.bin`) plus the decoded value (`.json`). |
+| `documents/{manifest,checkpoint,sidecar}/` | Canonical binary document records (`.bin`) plus the decoded value (`.json`). |
 | `lease/` | `LEASE/1` lease-body goldens, plus `placement.json` — the fs-lock placement table (`~lease/{key}/{n}` tokens, `~head` pointer, TTL constants). |
 | `counter/` | id-lease counter body goldens: canonical decimal ASCII u64 in, typed `Counter` refusal otherwise. |
 | `scratch/` | ckpt-scratch body goldens: version byte `3` + 32-byte digest; any other body parses to nothing on both drivers. |
@@ -26,13 +26,14 @@ Root: `crates/bumbledb-log/conformance/v3/`.
 
 ## Grammar
 
-- **Version is 3.** Batch `u16 LE` at offset 4 is `3`. Manifest, checkpoint, and sidecar documents begin `{"v":3,…}`. A well-formed `v:2` document or batch is `Version`.
-- **Pending bytes are lowercase hex** of the codec's canonical batch rendering. Base64 is `Malformed` (`documents/sidecar/r_pending_base64`).
-- **Every `u64`/`i64` that is not the `v` discriminator is a decimal string.** `9007199254740993` (`2^53+1`) and `18446744073709551615` cannot be a JSON number. A JSON-number `g`/`ts`/`writer`/`gen`, or a fractional string, is `Malformed`.
+- **Version is 3.** The batch wire spells it `u16 LE` at offset 4 (after the `BDBL` magic); every document — manifest, checkpoint, sidecar, ckpt-scratch — opens with version byte `3`. A well-formed version-2 body is `Version`.
+- **Documents are binary records**: version byte, `u32 LE` counts and raw braid ids, `u64 LE` numbers, raw 32-byte digests, and optional digests as a presence byte (`0x00` absent, `0x01` + 32 bytes). Manifest: version byte, fingerprint digest, optional checkpoint digest. Checkpoint: version byte, `u32 LE` braid count, `(braid u32 LE, g u64 LE, hash digest, ts u64 LE)` entries, catalog digest, `writer u64 LE`, optional prev digest. Sidecar: version byte, `u32 LE` chain count, `(braid u32 LE, g u64 LE, prev digest, ts u64 LE)` entries, then the pending arm — the absence byte, or the presence byte + `braid u32 LE`, `gen u64 LE`, `u32 LE` length, and the held batch bytes verbatim.
+- **Braid entries ascend in raw-id order** (which leaves a duplicate no place to stand). An id outside the schema's own decomposition is `UnknownBraid`; a checkpoint whose braid set is not exactly the derived set is `BraidSet`; trailing bytes after any record are `Malformed`/`TrailingBytes` at the offending offset.
 - **Intervals are half-open.** `start >= end` is `EmptyInterval`. A fixed-width interval whose end is not in the domain (the ceiling is not a value) is `IntervalOverflow` — `r_fixed_interval_overflow`, `r_fixed_interval_ray`.
 - **A row vector cannot outrun its bytes.** A declared `row_count` or `op_count` the remaining bytes cannot back is `Truncated` immediately — `r_row_count_unbacked`, `r_op_count_unbacked`, `r_truncated_row`. Zero-field `Tick` with a nonzero count and no payload is `r_zero_width_rows`.
 - **Strings are bytes-in, bytes-out.** A leading U+FEFF is a character (`ok_string_bom`), not a BOM the drivers strip. Invalid UTF-8 is `InvalidUtf8`.
-- **Digests are 32 bytes / 64 lowercase hex.** A short `prev` cannot encode.
+- **Digests are 32 raw bytes on the wire, 64 lowercase hex in sidecars.** A short `prev` cannot encode.
+- **Lease bodies are strict-canonical.** `Lease::parse` accepts exactly the `LEASE/1\n{holder}\n{token}\n{expires}\n` bytes `encode` renders: a body missing its final newline (`r_no_final_newline`), a CRLF-terminated body (`r_crlf`), or a non-canonical decimal refuses.
 
 ## Sidecar JSON
 
@@ -62,9 +63,9 @@ Document:
 
 ## Rulings
 
-On representation the cutover subdirectory wins; 60 owns this seam.
-
-- Batch wire version is 3 (one version number; parent `20-command-codec.md`'s `version 2` is dead text).
-- `"v":3` stays a JSON number — the discriminator 70 spells. Every other u64/i64 is a decimal string.
-- Checkpoint documents carry `"v":3` as the first field.
-- Pending bytes are hex, never base64.
+- One version number: the batch wire and every document spell version 3.
+- Sidecar `.json` numeric fields are decimal strings — `9007199254740993`
+  (`2^53+1`) and `18446744073709551615` cannot be JSON numbers; the wire
+  carries them `u64 LE`/`i64 LE`.
+- A held pending batch rides the sidecar document verbatim, bytes for
+  bytes; the document never re-spells the batch grammar.

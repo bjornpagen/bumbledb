@@ -1,0 +1,6 @@
+{
+  "kind": "lease",
+  "expect": "refusal",
+  "note": "parse accepts exactly what encode renders; a body missing its final newline is not a lease",
+  "hex": "4c454153452f310a370a330a313030"
+}

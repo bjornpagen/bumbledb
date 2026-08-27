@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use bumbledb::schema::FieldId;
-use bumbledb::{SchemaDescriptor, Value};
+use bumbledb::{Admission, SchemaDescriptor, Value};
 use bumbledb_log::lease::{LEASE_WIDTH, LeaseRefusal, Leased, ids_key, lease_block};
 use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{Commit, Error, Options, Writer, WriterOpened};
+use bumbledb_log::writer::{Error, Options, Slotted, Writer, WriterOpened};
 use lane_e_support::{NOTE, codec, note_braid, temp_dir, theory};
 
 const ROLE_ENV: &str = "LANE_E_CHILD_ROLE";
@@ -60,7 +60,10 @@ fn reserve_draws_from_birth_and_advances_the_counter() {
             Ok(())
         })
         .expect("commit");
-    assert!(matches!(outcome, Commit::Accepted { generation: 1, .. }));
+    assert!(matches!(
+        outcome,
+        Admission::Accepted(Slotted { slot: 1, .. })
+    ));
 
     let store = FsStore::new(root.clone());
     let counter = store
@@ -96,7 +99,8 @@ fn reserve_draws_from_birth_and_advances_the_counter() {
             );
             Ok(())
         })
-        .expect("commit");
+        .expect("commit")
+        .unwrap();
     let counter = store
         .get(&ids_key("", NOTE, FieldId(0)))
         .expect("get")
@@ -131,7 +135,8 @@ fn adoption_reads_the_counter_as_the_floor() {
             );
             Ok(())
         })
-        .expect("commit");
+        .expect("commit")
+        .unwrap();
     drop(writer_a);
 
     let writer_b = ready(
@@ -155,7 +160,8 @@ fn adoption_reads_the_counter_as_the_floor() {
             );
             Ok(())
         })
-        .expect("commit");
+        .expect("commit")
+        .unwrap();
 }
 
 #[test]

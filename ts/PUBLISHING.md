@@ -15,6 +15,37 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
+**`0.20.0` is the bridge-burning release** over `0.19.2` — the one-core
+cutover, shipping as one number, with no compatibility arm anywhere by
+design. The banner facts:
+
+- **`@bjornpagen/bumbledb-log` no longer exports engine types.** The
+  engine is a peer; engine types are imported from
+  `@bjornpagen/bumbledb` directly.
+- **`Batch`/`Commit` are the engine's shapes composed** — the commit
+  outcome is `Admission<Slotted>` (the engine's admission sum over the
+  log-owned `Slotted { value, braid, slot, durability }`), not a
+  log-local twin.
+- **The protocol grammar has ONE reader**: the shared native core behind
+  `@bjornpagen/bumbledb`'s `internalLog*` bridge. The log package
+  therefore REQUIRES the exact-version engine at runtime — the peer is a
+  live dependency, not a type convenience (the FFI ABI is not
+  semver-stable; a main package only ever resolves its own-version
+  binary).
+- **The fs lease protocol has one spelling**: the `LEASE/1` body under
+  `~lease/{key}/{n}` tokens + the `~head` pointer, 5 s TTL, release by
+  `expires=0` rewrite. 0.19.x TS dotfile leases are NOT honored; they
+  expire by their own TTL and are never read.
+- **No compatibility arm exists anywhere** — no dual reader, no
+  version sniff, no migration shim. 0.19.x and 0.20.0 drivers meet only
+  through the protocol bytes the one reader accepts.
+
+The C ABI stays **generation 4** (`bdb_abi_version()` is unchanged) and
+engine storage stays format **8** — existing stores open unchanged. The
+publish order is the standing one below: both platform packages first,
+then the engine SDK, then `@bjornpagen/bumbledb-log` with peer
+`^0.20.0`.
+
 `0.19.2` is the structural-invariant release over `0.19.1` — the TS type
 tier proves what it says. The roster is a nonempty declaration-order
 handle VECTOR (`ClosedHandleTuple`; an empty vocabulary is unspellable),
@@ -64,9 +95,10 @@ sibling of `internalBlake3`), and its consumer is
 fields, closed rosters, materialized statements, and the real fingerprint
 so the driver's 741-line re-derivation and fingerprint-mirror string-axiom
 refusal delete rather than get a second fix. The shipped set is
-`{darwin-arm64, linux-arm64}`; the linux artifact is built in
-`amazonlinux:2023` (glibc 2.34) and placed by the owner from the CI run
-into `ts/npm/linux-arm64/` before publish. Nothing else moved: the C ABI
+`{darwin-arm64, linux-arm64, linux-x64}`; both linux artifacts are built
+in `amazonlinux:2023` (glibc 2.34) — arm64 on `ubuntu-24.04-arm`, x64 on
+`ubuntu-24.04` — and placed by the owner from the CI run into
+`ts/npm/linux-arm64/` and `ts/npm/linux-x64/` before publish. Nothing else moved: the C ABI
 stays **generation 4** (`bdb_abi_version()` is unchanged — an added JS
 export is not an ABI event), storage stays format **8**, and no
 fingerprint pin moved. The lockstep is prepared unpublished in this
@@ -238,6 +270,7 @@ stayed byte-identical to the 0.3.0 tree).
 | `@bjornpagen/bumbledb` | pure JS + `.d.ts` (no binary) | none (installs everywhere) |
 | `@bjornpagen/bumbledb-darwin-arm64` | only `bumbledb.node` | `darwin` / `arm64` |
 | `@bjornpagen/bumbledb-linux-arm64` | only `bumbledb.node` | `linux` / `arm64` (AL2023) |
+| `@bjornpagen/bumbledb-linux-x64` | only `bumbledb.node` | `linux` / `x64` (AL2023) |
 
 The PUBLISHED main manifest declares every shipped platform package as an
 `optionalDependency` pinned EXACT to its own version — but the REPO manifest
@@ -273,38 +306,40 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits the workspace version and the roster manifests; the
-build enforces the match. The workspace version is `0.19.2` in this tree;
+build enforces the match. The workspace version is `0.20.0` in this tree;
 `pnpm run build` asserts the lockstep on every run.
 
-## Runbook (0.19.2, darwin-arm64 host, owner)
+## Runbook (0.20.0, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.19.2 (the build asserts it — the
+# 1. The lockstep is already set to 0.20.0 (the build asserts it — the
 #    platform pins are NOT repo fields, they inject at pack time):
-#    - Cargo.toml [workspace.package] version = "0.19.2" (the one writer)
-#    - every path on scripts/version-roster.txt equals 0.19.2
-#    - ts-log peerDependencies["@bjornpagen/bumbledb"] is ^0.19.2
-#    bdb_abi_version() answers 4 (unchanged: a type-tier refactor is not
-#    an ABI event).
+#    - Cargo.toml [workspace.package] version = "0.20.0" (the one writer)
+#    - every path on scripts/version-roster.txt equals 0.20.0
+#    - ts-log peerDependencies["@bjornpagen/bumbledb"] is ^0.20.0
+#    bdb_abi_version() answers 4 (unchanged: the one-core cutover moves
+#    the TS/wire tier, not the C layout).
 
-# 2. Download Lane C's linux-arm64 artifacts from a green
-#    bumbledb-log.yml run (amazonlinux:2023 on ubuntu-24.04-arm). The
-#    two artifact names are `bumbledb.linux-arm64.node` and
-#    `bumbledb-log-duty`. This hop never ran that workflow; the owner
-#    waits for a real GitHub run with both artifacts attached.
+# 2. Download the linux artifacts from a green bumbledb-log.yml run
+#    (amazonlinux:2023 — the arm64 job on ubuntu-24.04-arm, the x64 job
+#    on ubuntu-24.04). The artifact names are `bumbledb.linux-arm64.node`,
+#    `bumbledb.linux-x64.node`, `bumbledb-log-duty` (arm64, for the
+#    Lambda layer), and `bumbledb-log-duty-linux-x64`.
 #
 #    gh run download <run-id> --name bumbledb.linux-arm64.node --dir /tmp/grail-artifacts
+#    gh run download <run-id> --name bumbledb.linux-x64.node --dir /tmp/grail-artifacts
 #    gh run download <run-id> --name bumbledb-log-duty --dir /tmp/grail-artifacts
 #    cp /tmp/grail-artifacts/bumbledb.linux-arm64.node ts/npm/linux-arm64/bumbledb.node
+#    cp /tmp/grail-artifacts/bumbledb.linux-x64.node ts/npm/linux-x64/bumbledb.node
 #
 #    The duty binary is not an npm package — it ships inside the Lambda
 #    Layer. Keep it for examples/lambda/layer/duty/bin/bumbledb-log-duty
 #    (mode +x) before the example deploy. Darwin is built on this
-#    machine in step 3; linux-arm64 is placed, never rebuilt here.
-#    Verify the packed linux-arm64 tarball is exactly LICENSE +
+#    machine in step 3; the linux binaries are placed, never rebuilt
+#    here. Verify each packed linux tarball is exactly LICENSE +
 #    bumbledb.node + package.json.
 
 # 3. Build + verify the darwin tree (fails on version drift, unloadable
@@ -316,13 +351,15 @@ pnpm test           # runs the build, then node --test (the ONE test spelling)
 pnpm exec tsc --noEmit
 pnpm exec biome check .
 
-# 4. Publish BOTH PLATFORM packages FIRST — the main's exact-pinned
+# 4. Publish ALL PLATFORM packages FIRST — the main's exact-pinned
 #    optional deps must already exist in the registry when the main
 #    resolves. (Interactive: npm prompts for the 2FA one-time password.)
-#    linux-arm64/pnpm-workspace.yaml names linux in supportedArchitectures
-#    so this darwin host can pack it; the tarball os/cpu stay linux/arm64.
+#    Each linux package's pnpm-workspace.yaml names linux in
+#    supportedArchitectures so this darwin host can pack it; the tarball
+#    os/cpu stay linux/<cpu>.
 pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks ./npm/linux-arm64
+pnpm publish --no-git-checks ./npm/linux-x64
 
 # 5. Publish the MAIN package. (`prepublishOnly` reruns the build;
 #    another OTP prompt. The prepack hook injects the exact-version
@@ -331,13 +368,13 @@ pnpm publish --no-git-checks ./npm/linux-arm64
 pnpm publish --no-git-checks
 
 # 6. Verify the three versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.19.2 version
-pnpm view @bjornpagen/bumbledb-linux-arm64@0.19.2 version
-pnpm view @bjornpagen/bumbledb@0.19.2 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.20.0 version
+pnpm view @bjornpagen/bumbledb-linux-arm64@0.20.0 version
+pnpm view @bjornpagen/bumbledb@0.20.0 version
 
 # 7. Tag the release commit and push the tag (owner ceremony, like the
 #    publishes — the agent side never publishes or tags):
-#    git tag -a v0.19.2 <release-commit> -m "bumbledb 0.19.2" && git push origin v0.19.2
+#    git tag -a v0.20.0 <release-commit> -m "bumbledb 0.20.0" && git push origin v0.20.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -359,35 +396,38 @@ minutes) refuses any just-published package for ~24h, so consumers who do not
 exclude `@bjornpagen/*` (this repo does, in `ts/pnpm-workspace.yaml`) cannot
 install a fresh release until a day after publish.
 
-## Publish of @bjornpagen/bumbledb-log 0.19.2 (after the SDK lands)
+## Publish of @bjornpagen/bumbledb-log 0.20.0 (after the SDK lands)
 
-The log driver publishes AFTER the three 0.19.2 SDK packages verify in
-the registry — its peerDependency is `^0.19.2`, unresolvable a minute
-earlier. It is a platformless package: pure TypeScript source
-(`files` ships `src/` + README, `exports` points at `src/index.ts`), no
-napi half, no platform sibling, no pack-time pin injection — so the
-whole ceremony is the verification trio and one publish. `ts-log/`'s
+The log driver publishes AFTER the three 0.20.0 SDK packages verify in
+the registry — its peerDependency is `^0.20.0`, unresolvable a minute
+earlier, and in 0.20.0 that peer is a RUNTIME requirement: the driver's
+protocol reader is the engine's native core behind the `internalLog*`
+bridge, so the package does nothing without the engine installed beside
+it. It ships no binary of its own: pure TypeScript source (`files`
+ships `src/` + README, `exports` points at `src/index.ts`), no napi
+half, no platform sibling, no pack-time pin injection — so the whole
+ceremony is the verification trio and one publish. `ts-log/`'s
 manifest already carries `publishConfig.access: "public"` and
 `"private": false`; the repo-local `link:../ts` engine link lives in
 `devDependencies`, which npm does not publish, so the published manifest
 names only the peer range.
 
 ```sh
-# From the ts-log/ package root, after step 6 above answers 0.19.2 thrice.
+# From the ts-log/ package root, after step 6 above answers 0.20.0 thrice.
 cd ts-log
-pnpm install          # resolves the ^0.19.2 peer against the registry now
+pnpm install          # resolves the ^0.20.0 peer against the registry now
 pnpm test             # node --test, the ONE test spelling
 pnpm run typecheck
 pnpm run lint
 pnpm publish --no-git-checks   # interactive OTP, same as the SDK packages
 
 # Verify:
-pnpm view @bjornpagen/bumbledb-log@0.19.2 version
+pnpm view @bjornpagen/bumbledb-log@0.20.0 version
 ```
 
-The package's own version is `0.19.2` — `ts-log/package.json` is on
+The package's own version is `0.20.0` — `ts-log/package.json` is on
 `scripts/version-roster.txt`, and `assertVersionLockstep` asserts both
-that version and the peer range `^0.19.2`.
+that version and the peer range `^0.20.0`.
 
 ## Post-publish: the primer cutover lands
 
