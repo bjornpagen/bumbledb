@@ -874,8 +874,18 @@ fi
 # bytes — a reader agreeing with itself proves nothing.
 python3 scripts/spec-gen.py --check >/dev/null || { echo "spec-census: FAIL — lane (n) the spec generator disagrees with the corpus (scripts/spec-gen.py --check)" >&2; fail=1; }
 
+# ---- (o): the packaged tilde table is the crate table, byte for byte ----
+# ts-log ships src/tilde-family.json inside its files roster so the module
+# never reads outside the published package; the generator's output under
+# conformance/v3/keys/ stays the one source, and this lane is the twin pin.
+if ! cmp -s crates/bumbledb-log/conformance/v3/keys/tilde-family.json ts-log/src/tilde-family.json; then
+  echo "spec-census: FAIL — lane (o) ts-log/src/tilde-family.json drifted from crates/bumbledb-log/conformance/v3/keys/tilde-family.json — recopy the generated table" >&2
+  fail=1
+fi
+
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean, surface manifest $pin_surfaces surfaces / $pin_rows pins over $pin_families golden families, identity table regeneration-clean"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved, API-sense snapshot token absent, zero-dyn exemption pinned (Error::source 3, credential refresh 3), purged store-and-value tokens absent outside history, one-owner constants single-sited, banned-token roster $roster_lines lines clean, surface manifest $pin_surfaces surfaces / $pin_rows pins over $pin_families golden families, identity table regeneration-clean, packaged tilde table byte-identical"

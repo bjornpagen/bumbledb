@@ -54,7 +54,7 @@ chain.json	crates/bumbledb-log/src	fixed	chain.json
 chain.json	ts-log/src	fixed	chain.json
 chain.json	examples/lambda/src	fixed	chain.json
 .json store keys	crates/bumbledb-log/src	regex	\.json["']	theory.json,conformance/
-.json store keys	ts-log/src	regex	\.json["']	theory.json,conformance/
+.json store keys	ts-log/src	regex	\.json["']	theory.json,conformance/,tilde-family.json
 .json store keys	examples/lambda/src	regex	\.json["']	theory.json
 BOM/whitespace/leading-zero/duplicate-key arms	crates/bumbledb-log/src	regex	skip_bom|strip_bom|SkipBom|leading_zero|LeadingZero|duplicate_key|DuplicateKey|duplicateKey|skip_ws|skipWs	schema_file.rs
 BOM/whitespace/leading-zero/duplicate-key arms	ts-log/src	regex	skip_bom|strip_bom|SkipBom|leading_zero|LeadingZero|duplicate_key|DuplicateKey|duplicateKey|skip_ws|skipWs	schema_file.rs

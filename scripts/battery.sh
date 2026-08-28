@@ -48,4 +48,7 @@ echo "==> ts/ (test, typecheck, lint)"
 echo "==> ts-log/ (test, typecheck, lint)"
 (cd ts-log && pnpm test && pnpm typecheck && pnpm lint)
 
+echo "==> packed-tarball import gate (scripts/packed-import.sh)"
+scripts/packed-import.sh
+
 echo "==> battery green"

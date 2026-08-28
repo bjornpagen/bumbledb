@@ -27,8 +27,14 @@ const LOCK_SUFFIX = ".lock"
 const TEMP_NAMESPACE = "~tmp"
 const LEASE_NAMESPACE = "~lease"
 
-/** The one tilde table both drivers consume: ASCII `~`, its lookalikes, and the NFKC preimage of U+007E. */
-const TILDE_TABLE_URL = new URL("../../crates/bumbledb-log/conformance/v3/keys/tilde-family.json", import.meta.url)
+/**
+ * The one tilde table both drivers consume: ASCII `~`, its lookalikes, and
+ * the NFKC preimage of U+007E. The packaged copy beside this module is the
+ * census-pinned byte-identical twin of the generator's output at
+ * crates/bumbledb-log/conformance/v3/keys/tilde-family.json, so the read
+ * never leaves the published files roster.
+ */
+const TILDE_TABLE_URL = new URL("./tilde-family.json", import.meta.url)
 
 const CODE_POINT_SPELLING = regex("^U\\+[0-9A-F]{4,6}$")
 
