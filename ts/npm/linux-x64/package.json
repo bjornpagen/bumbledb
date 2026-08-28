@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb-linux-x64",
-	"version": "0.20.0",
+	"version": "0.20.1",
 	"description": "Prebuilt linux-x64 native binary for @bjornpagen/bumbledb (amazonlinux:2023, glibc 2.34)",
 	"os": [
 		"linux"

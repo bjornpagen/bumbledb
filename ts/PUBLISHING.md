@@ -1,5 +1,18 @@
 # Publishing @bjornpagen/bumbledb
 
+`0.20.1` is the packaging-fix release over `0.20.0` — one defect, one
+gate. `@bjornpagen/bumbledb-log@0.20.0` read its tilde table through a
+repo-relative URL that escapes the published files roster, so a
+registry install threw ENOENT at module init. The table now ships
+inside the package (`src/tilde-family.json`, census lane (o) pins it
+byte-identical to the generator's output under `conformance/v3/keys/`),
+and `scripts/packed-import.sh` — a battery lane — packs all five
+tarballs, installs them into a bare consumer, and imports them in a
+fresh node process, so an out-of-roster read can never publish again.
+The publish sequence below is unchanged; the linux binaries come from a
+green CI run of this release's commit.
+
+
 The owner-run release runbook. Owner-run, from the `ts/` package root, on a
 darwin-arm64 host, logged in to npm (`pnpm whoami` answers). Node >=24 is
 the floor for `engines` (`ts/`, `ts/npm/*`, `ts-log`) and for the `.ts`
