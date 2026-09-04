@@ -16,7 +16,7 @@ The public core supports **Rust and TypeScript only**. Delete the entire public 
 | `bumbledb-log` local/hosted history | TypeScript on qualified Node runtimes | Internal Rust protocol plus thin Node boundary |
 | Log migrations and application integration | High-level TypeScript schema/intent values, generated migration-plan artifacts, explicit Node runner | Canonical plan generation; internal Rust freeze, bounded plan execution, validation and publication |
 
-The API names and examples throughout this proposal are proposed contracts, not current exports. Rust-shaped log notation in other chapters describes internal types/protocol meaning, not a public Rust SDK promise. React Native/Expo inspires checked-in generated migration assets only; no mobile, browser or Edge native runtime is promised. Qualified Node deployment on Vercel is explicitly in scope, subject to native packaging, disk and request limits—not dismissed as an unsupported runtime.
+The API names and examples throughout this proposal are proposed contracts, not current exports. [34](34-sdk-syntax-and-composition.md) fixes the cohesive Rust core, TypeScript core and TypeScript log spelling to implement and compile-test. Rust-shaped log notation in other chapters describes internal types/protocol meaning, not a public Rust SDK promise. React Native/Expo inspires checked-in generated migration assets only; no mobile, browser or Edge native runtime is promised. Qualified Node deployment on Vercel is explicitly in scope, subject to native packaging, disk and request limits—not dismissed as an unsupported runtime.
 
 The product is a high-performance application database, including one database per student/user/tenant. Its primary workloads are application reads, small graphs, forms, feeds and transactional state—not an analytical warehouse or fleet platform. Preserve the Free Join/set engine's performance character while making every supported path bounded and correct. Existing typed `relation`/`schema`/`query` values lower directly to shared IR; do not add a SQL/query/schema parser or an imperative migration language.
 
@@ -38,11 +38,12 @@ Creation is a separate explicit constructor. `open` of a missing or unreadable c
 | `StateStamp` | `(incarnation, data_revision)`; advances only for a net change to application facts, and is the exact-state witness |
 | `HeadRevision` | Changes on every authoritative HEAD CAS, including maintenance; never a read-dependent application witness |
 | `CommandId` | `(receipt_epoch, request_id128)`; caller supplies stable request identity in an explicitly open epoch |
+| `RequestId` | Log-owned nominal request-identity role over 128 bits; explicitly constructed from a core `Id128` value, not interchangeable with an entity ID |
 | `CommandDigest` | Hash of canonical concrete command meaning, including identity, conditions and application-supplied values |
 | `CommandRef` | Identity, command ID and digest; sufficient to resolve an uncertain submission without retaining a database handle |
 | `Id128` | Ordinary application-owned 128-bit identifier: 16 native bytes, canonical 32-character lowercase hexadecimal TypeScript value |
 
-History identities, stamps and command references are **log-layer values**, not core engine dependencies. `Id128` is the exception: an ordinary fixed-width application value, unrelated to publication authority. None of the history coordinates is interchangeable with LMDB generation, local catalog identity or a HEAD ETag. Maintenance changes HEAD without changing decision or data state; a rejected command changes decision identity without changing data state. Sequence arithmetic alone does not prove ancestry; the driver validates the corresponding chain.
+Database/history identities, stamps and command references are **log-layer values**, not core engine dependencies. `SchemaId` and `Id128` are core-owned values imported by the log: canonical schema identity and an ordinary fixed-width application value, respectively. None of the history coordinates is interchangeable with LMDB generation, local catalog identity or a HEAD ETag. Maintenance changes HEAD without changing decision or data state; a rejected command changes decision identity without changing data state. Sequence arithmetic alone does not prove ancestry; the driver validates the corresponding chain.
 
 IDs and tokens are small owned immutable values. A witness contains no database pointer or read transaction. A command can be stored/retried after its original snapshot and handle close. A command for one incarnation cannot accidentally execute against another. The core stores application IDs as ordinary fixed-width values/newtypes and does not issue log identities.
 
@@ -50,17 +51,23 @@ Application IDs contain **no incarnation, decision counter, issuer lease or birt
 
 ### Minimal standalone core interface
 
-`Db::apply(CheckedDelta, ExpectedGeneration, WorkContext)` judges one immutable final-state change and commits an admitted state atomically in LMDB. `ExpectedGeneration` is `Any` or a core-local snapshot witness. It returns accepted/no-change, complete invariant rejection, moved witness, or infrastructure failure. A core-local witness binds catalog/store identity and generation, not a `StateStamp`. There is no named-command deduplication or remote-publication claim in this package. Concurrent logical callers are supported; LMDB serializes their actual local write transactions.
+`Db::apply(&ChangeSet, ExpectedGeneration, &ExecutionPolicy)` judges one immutable final-state change and commits an admitted state atomically in LMDB. `ChangeSet` is the ergonomic public name for the sealed checked delta described in the engine chapters; it is not a second representation beside `CheckedDelta`. `ExpectedGeneration` is `Any` or a core-local snapshot witness. It returns accepted/no-change, complete invariant rejection, moved witness, or infrastructure failure. A core-local witness binds catalog/store identity and generation, not a `StateStamp`. There is no named-command deduplication or remote-publication claim in this package. Concurrent logical callers are supported; LMDB serializes their actual local write transactions.
 
 Core snapshots and compact/copy building blocks pin coherent LMDB content and generic metadata. The narrow integration path is `prepare_write(CheckedDelta)` → admitted `PreparedWrite` → `seal(HostChanges)` → `SealedWrite::commit/abort`. `HostChanges` contains bounded opaque host records/attachment under the same LMDB transaction, after the log knows the judgment and decision hash. Sealing permits no further application-fact mutation. The engine does not parse those records as receipts or import log types; this is not a public general KV framework. A rejected application candidate is aborted; the same exclusive owner prepares an empty application delta plus its log-owned rejection records. A raw snapshot copy is not exposed as a core backup product with retention/migration policy. Applications requiring stable retries, generated history identities, backup or migration select `LocalHistory` or `HostedHistory`.
 
-## Command construction is synchronous, finite and owned
+## A core change, then a log envelope
 
-The builder accepts concrete inserts, deletes and one optional exact-state condition. `finish` consumes it and returns a sealed `Command`, or a typed build failure. Inputs are copied into Rust-owned canonical representation at their acceptance boundary. Finishing performs canonical sorting/deduplication and shape/type checking once, under explicit command size/work limits. Within **one** command, the canonical delta is `(add, remove ∖ add)` and application is `(state ∖ remove) ∪ add`: the exact same fact on both sides is add-wins, independent of builder call/fact iteration order. There is no symbolic-ID resolution pass or graph-isomorphism/alpha-renaming framework. This is not an add-wins CRDT across separate commands, which still follow authoritative decision order.
+The **core** owns scalars/`Id128`, relation/schema/`SchemaId`, typed facts, `ChangeSet`, query expressions/templates/parameters, `QueryReader`, `ExecutionSession`, `CompleteResult`, the row/value codec, `ExecutionPolicy`, `DbError` and `Violations`. The log imports those exact definitions and native capabilities. It does not mirror them in log-specific builders, query/result types or a second codec. Migration plans likewise embed the checked core schema/expression representation rather than implementing a separate relational evaluator.
 
-Generated schema APIs and dynamic APIs meet at the same checked canonical row type. External user codecs return input to that parser, not trusted persisted bytes. A generated fast path may construct the same private representation only inside the trusted crate boundary. A hidden public constructor is not a proof.
+`ChangeSet.builder(schema, policy)` accepts concrete inserts/deletes. `finish()` consumes the builder and returns an immutable core `ChangeSet`, or a typed build failure. Inputs are copied into Rust-owned canonical representation at their acceptance boundary. Finishing performs sorting/deduplication and shape/type checking once, under explicit size/work limits. Within **one** change set, the canonical delta is `(add, remove ∖ add)` and application is `(state ∖ remove) ∪ add`: the exact same fact on both sides is add-wins, independent of builder call/fact iteration order. There is no symbolic-ID resolution pass or graph-isomorphism/alpha-renaming framework. This is not an add-wins CRDT across separate commands, which still follow authoritative decision order.
 
-The builder itself does no I/O, acquires no database writer gate and invokes no replayable application-effect callback. Explicit input getters/iterators execute synchronously; their side effects cannot be undone, but they are never automatically replayed. Input/work limits bound copied data and completed ingestion steps; they cannot preempt a getter, iterator `next()` or application callback that never returns. A convenience `build(fn)` may invoke a **synchronous** callback exactly once; thenables and escaped builder use are rejected. There is no automatic rerun for ID refill, conflict, cancellation or retries. An application performs HTTP calls before construction or after a receipt, never inside a database-owned callback.
+A builder failure spends the construction, not just the failing row: constructor/insert/delete/finish errors release all accumulated native ownership when the active call unwinds, including getter/iterator exceptions and native allocation failures. Only successful `finish` transfers the owned change. Reject reentrant use before mutation; a caught reentrancy error cannot let an aborted outer construction resume. No partial builder is reusable, and retained failed wrappers hold no native buffers. This makes fluent one-expression construction safe without relying on finalizers; explicitly retained drafts also support synchronous disposal. Rust uses ordinary ownership/drop on the same failure boundaries.
+
+The log's `Command.seal({ scope, id, changes, precondition, result }, policy)` adds only database/incarnation scope, stable request/epoch identity, exact-state intent and bounded durable-result metadata. It verifies the change's core `SchemaId` matches the scope and retains the **same immutable native change**, without iterating JS rows, copying them into a second format or normalizing again. The log owns versioned envelope framing/hash; the embedded fact/change encoding is core-owned. A core change contains no command ID, receipt epoch, `StateStamp` or idempotency-result metadata. Reusing a change in an explicitly new command is an application choice; it is not a retry of the old command.
+
+Typed schema APIs and dynamic APIs meet at the same checked canonical row type. External user codecs return input to that parser, not trusted persisted bytes. A generated fast path may construct the same private representation only inside the trusted crate boundary. A hidden public constructor is not a proof.
+
+The core builder itself does no I/O, acquires no database writer gate and invokes no replayable application-effect callback. Explicit input getters/iterators execute synchronously; their side effects cannot be undone, but they are never automatically replayed. Input/work limits bound copied data and completed ingestion steps; they cannot preempt a getter, iterator `next()` or application callback that never returns. The canonical examples use ordinary builder calls, not a database-owned transaction callback. There is no automatic rerun for ID refill, conflict, cancellation or retries. An application performs HTTP calls before construction or after a receipt, never inside native admission/replay.
 
 Mutable buffers, `Buffer` slices, shared backing arrays and one-shot iterables cannot change an accepted command. In 1.0 shared-memory byte views must be copied from a stable input or refused; the SDK must not claim a coherent snapshot of a concurrently written `SharedArrayBuffer`. Iterator/getter exceptions terminate construction before dispatch. Builders cannot accept infinite input without consuming a configured work limit.
 
@@ -91,12 +98,14 @@ Constraints remain essential: a condition protects the application's observation
 ```ts
 type SubmitOutcome =
   | { kind: "decided"; receipt: TerminalReceipt; localHealth: LocalMaterializationHealth }
-  | { kind: "not-submitted"; command: CommandRef; error: DbError }
-  | { kind: "outcome-unknown"; command: CommandRef; error: DbError }
+  | { kind: "not-submitted"; command: CommandRef; error: LogError }
+  | { kind: "outcome-unknown"; command: CommandRef; error: LogError }
+
+type LogError = DbError | ProtocolError
 
 type LocalMaterializationHealth =
   | { kind: "ready"; at: DecisionStamp }
-  | { kind: "unavailable"; error: DbError }
+  | { kind: "unavailable"; error: LogError }
 
 type TerminalOutcome =
   | { kind: "committed"; changed: ChangeSummary; result: CommandResult }
@@ -115,6 +124,8 @@ interface TerminalReceipt {
 `CommandResult` is bounded caller-declared scalar metadata, including application-owned IDs when useful, not an arbitrary host closure return value. Its grammar and digest contribution are fixed by the command codec. No closures, host objects or nondeterministic response calculations enter durable receipts.
 
 `localHealth` describes this invocation's materialization, **not durable receipt content**. Ready names its actual verified local frontier; a resolved receipt does not itself prove the cache has reached that decision. Unavailable carries a bounded typed cause without changing the recorded outcome. Subsequent reads still request their own consistency; cleanup/close failure cannot erase a known decided receipt.
+
+`LogError` is a small union, not a copied core hierarchy: a core failure remains the exact core `DbError`; `ProtocolError` adds only log-specific codes with the same documented code/operation/retry/detail conventions. If a protocol error needs a core cause, it retains that typed cause unchanged. The core imports neither type from the log. Request IDs likewise add a nominal command role, not a new scalar codec: `RequestId.from(coreId)` is an explicit pure conversion over the core's canonical 128-bit bytes.
 
 Every terminal arm is a durable decision in the **log** package. Hosted history requires its authoritative HEAD CAS; `LocalHistory` requires its single durable LMDB transaction. Raw core `Db::apply` does not manufacture receipts. A no-change command still receives an identity and decision, so business-action retries do not depend on whether a set happened to change. Returning a preexisting application ID in a no-change receipt does not issue that ID or assert that an entity fact exists. Invariant rejection has complete statement-level diagnostics according to the engine contract; if the bounded diagnostic representation cannot be produced, return a resource failure before deciding, not a falsely complete rejection.
 
@@ -153,11 +164,13 @@ An invalid, unrelated, future, retired or unavailable coordinate has an explicit
 
 Snapshot facts, metadata, counters and stamps refer to the same physical read transaction. Ordinary log readers never point at a candidate LMDB generation awaiting publication. A snapshot acquired before a later successful command may continue observing the earlier published state; a snapshot requested `AtLeast(receipt.decision_at)` must meet that receipt or fail explicitly.
 
-A snapshot has no mutation method and never exposes the private engine handle. There is no `replica.db.write` escape hatch. Candidate preview is not in 1.0. Copied result data and witnesses may outlive the snapshot; database-backed cursors may not silently do so.
+A snapshot has no mutation method and never exposes the private engine handle. There is no `replica.db.write` escape hatch. Both a core snapshot and a log snapshot satisfy the core's small `QueryReader<Schema>` capability: the same typed `get` and `execute`, parameters, policies, errors and result owners. A shared application read helper takes that interface with no adapter. The log adds identity/stamps/freshness around the published core read capability; it does not expose `apply`, a writable `Db`, a raw transaction or a cast to one. Candidate preview is not in 1.0. Copied result data and witnesses may outlive the snapshot; database-backed cursors may not silently do so.
 
 ## Query construction, execution and result ownership
 
 Use one immutable schema-level `QueryTemplate`. It contains validated logical IR, not tenant rows, dictionary IDs or unbounded per-tenant memo state. A snapshot-bound `ExecutionSession` owns mutable planning/execution/cache state and is explicitly closable. It may be reused within its documented identity/snapshot scope; schema-level templates can be shared across same-schema tenants.
+
+A typed nonrecursive query result is also a relation expression usable as a downstream query source. Naming does not create a different CTE type or require materialization. Projection distinctness, aggregate input grain, final rounding and error boundaries survive composition; a later query cannot blindly inline hidden bindings and change a count. Frozen finite predecessor expressions may feed the supported positive, projection-only linear recursion, but aggregates/arithmetic/negation cannot participate in its feedback cycle. Chapters 10–13 define those exact semantic limits; chapter 34 shows their common SDK spelling.
 
 The TypeScript convenience `snapshot.execute(template, parameters, context)` owns an operation-scoped internal session and closes it before returning the independent `CompleteResult`. Explicit reusable sessions use the same mechanism, remain bound to their snapshot identity and require disposal; no second executor or result lifetime is implied by the convenience method.
 
@@ -171,11 +184,11 @@ This is paged **delivery after complete execution**, not a promise to return the
 
 The engine uses one RAM-to-temporary-LMDB ordered-map abstraction for needed scratch, not a new external-sort/hash storage engine. Ordering here describes bounded physical LMDB keys; long logical keys use exact-checked candidate buckets, and answers remain unordered sets. Large data does not require large result arrays or resident relation images. Exact answers must agree with and without optional caches, at high and low memory, including deterministic floating aggregates.
 
-No database-size limit is inferred from RAM. `workingBytes`, `spillBytes`, `outputBytes`, work units, deadline and cancellation describe **this operation's** envelope. Logical database bytes, mapped virtual address space, physical disk and RSS are different measurements. An operation can be too costly for the supplied policy without the database being unsupported.
+No database-size limit is inferred from RAM. Core `ExecutionPolicy` specifies `workingBytes`, `spillBytes`, `outputBytes`, input limits, work units, deadline and cancellation for **this operation's** envelope; the engine derives its mutable accounting `WorkContext` internally. Log options reuse that policy and add only remote retry/admission/publication settings. Logical database bytes, mapped virtual address space, physical disk and RSS are different measurements. An operation can be too costly for the supplied policy without the database being unsupported.
 
 ## Proposed TypeScript use
 
-This example is contract pseudocode, not a claim that these names currently compile. It assumes authentication produced a trusted database binding and that `requestKey` plus the application-generated `entryId` were retained with the original intent before the first dispatch. An `Id128.random()` convenience produces the value once; retries do not call it again.
+This example is contract pseudocode, not a claim that these names currently compile. It assumes authentication produced a trusted database binding and that the log `RequestId` named `requestKey` plus the application-generated entity `entryId` were retained with the original intent before the first dispatch. An `Id128.random()` convenience produces entity bytes once; request roles use an explicit `RequestId.from(...)` conversion, and retries do not generate either again.
 
 ```ts
 await using db = await HostedHistory.open(source, theory, runtimeOptions)
@@ -184,16 +197,20 @@ await using rows = await snap.execute(balanceQuery, { account }, queryOptions)
 const previous = (await rows.collect({ maxBytes: 64_000 }))[0]
 if (!previous) throw new Error("Account balance is missing")
 
-const draft = Command.builder(theory, db.identity, {
-  id: { receiptEpoch: db.receiptEpoch, requestId: requestKey },
-  precondition: { kind: "exact-state", at: snap.stateStamp },
-  limits: commandLimits
-})
+const draft = ChangeSet.builder(theory, requestOptions)
 draft.delete(Balance, [previous])
 draft.insert(Balance, [{ account, amount: previous.amount - debit }])
 draft.insert(LedgerEntry, [{ id: entryId, account, amount: debit }])
-draft.returning({ entry: entryId })
-using command = draft.finish()
+using changes = draft.finish()
+const expected = snap.stateStamp
+await snap.close()
+using command = Command.seal({
+  scope: db.identity,
+  id: { receiptEpoch: db.receiptEpoch, requestId: requestKey },
+  changes,
+  precondition: { kind: "exact-state", at: expected },
+  result: { entry: entryId }
+}, requestOptions)
 
 const outcome = await db.submit(command, requestOptions)
 switch (outcome.kind) {
@@ -203,7 +220,7 @@ switch (outcome.kind) {
 }
 ```
 
-Async database work runs outside the JS event loop. `using` releases local sealed command values; `await using` closes owners, snapshots, completed results (which may own disk scratch) or runtime operations requiring a drain. Disposing a command only releases its owned bytes; it cannot cancel a command already submitted. The native runtime retains its own immutable reference until the operation ends. An HTTP adapter preserves an already decided receipt separately from a later cleanup/close error; standard disposal failure cannot be reclassified as command rejection. Use the explicit close report when the host must return known publication plus unavailable local-health detail.
+`ChangeSet` is imported from the core; `Command` and `HostedHistory` from the log. Async database work runs outside the JS event loop. `using` releases sealed change/command value handles; `await using` closes owners, snapshots, completed results (which may own disk scratch) or runtime operations requiring a drain. Sealing a command retains its own immutable reference to the core change; disposing the caller's change cannot invalidate it. Disposing a command cannot cancel one already submitted: the native runtime retains its own reference until the operation ends. An HTTP adapter preserves an already decided receipt separately from a later cleanup/close error; standard disposal failure cannot be reclassified as command rejection. Use the explicit close report when the host must return known publication plus unavailable local-health detail.
 
 Public TypeScript storage/query/log operations use the bounded asynchronous native adapter in 1.0. No public blocking TypeScript core/LocalHistory adapter is added; ordinary Rust core calls retain their native blocking API. Schema/query/command value construction remains synchronous and finite. No sync callback is silently permitted to become async.
 
@@ -227,7 +244,7 @@ Host float equality is not a database predicate builder. Documentation must show
 
 Rust and TypeScript carry the same stable core error code, operation, retry classification and bounded diagnostic detail. The TypeScript log extends that vocabulary with its protocol-specific outcomes; it does not create a public Rust log API or any C API. Families: `InvalidInput`, `Misuse`, `Incompatible`, `Unavailable`, `ResourceLimit`, `Cancelled`, `DeadlineExceeded`, `Corruption`, `Internal`. Specific codes distinguish foreign identity, stale/closed handle, command mismatch, unsupported artifact, local lock busy, insufficient disk and unmet read consistency. Host authentication failure belongs to the host boundary, not a forged engine semantic refusal.
 
-Core Rust uses enums/results, and TypeScript core/log operational methods return their documented tagged outcomes and typed errors. Human messages are explanatory and not a stable retry API. Receipt decisions remain distinct from errors. `OutcomeUnknown` is a submission certainty arm, not merely `retryable: true` on an exception.
+Core Rust uses enums/results. TypeScript core constructors/reads reject with the core typed `DbError`; core apply resolves to its `kind`-discriminated accepted/no-change/invariant-rejected/moved result and rejects only for operational failure. Log open/snapshot-acquisition/resolve operations may fail with `LogError`; `get`/`execute` on an acquired `QueryReader` remain core operations with core errors. Submit resolves to its documented certainty union, retaining errors inside `not-submitted`/`outcome-unknown`. Its protocol-specific cases do not rename or copy core failures. Human messages are explanatory and not a stable retry API. Receipt decisions remain distinct from errors. `OutcomeUnknown` is a submission certainty arm, not merely `retryable: true` on an exception.
 
 Detailed violations and query parameters contain tenant data. Default logs include IDs, codes, work/cost counters and redacted causes, not facts, request bodies or credentials. Debug payload capture is an explicit host action with its own retention policy.
 
@@ -243,18 +260,18 @@ Every row is a required test family, not work this proposal has already executed
 
 | Gate | Exact obligation |
 | --- | --- |
-| API-01 Canonical ownership | Mutate array/slice/Buffer/Id128 input after each builder call, during submit and CAS retry; one-shot iterators; getter throws; escaped/spent builders. Permute duplicate add/remove calls: same-fact add wins within the command; separate commands remain ordered. Local and replayed concrete commands remain identical or construction fails before dispatch. |
-| API-02 Closed ingestion | Downstream custom codecs, invalid bool/interval/fixed-width/UTF-8/relation/float images never admit corrupt state. Generated and dynamic APIs have the same accepted domain. |
+| API-01 Canonical ownership | Mutate array/slice/Buffer/Id128 input after each builder call, during submit and CAS retry; one-shot iterators; getter throws; escaped/spent builders. Every failed builder call spends/releases native state; retained failed wrappers with GC disabled plateau, and reentrant/caught-error calls cannot resume mutation. Permute duplicate add/remove calls: same-fact add wins within the command; separate commands remain ordered. Local and replayed concrete commands remain identical or construction fails before dispatch. |
+| API-02 Closed ingestion | Downstream custom codecs, invalid bool/interval/fixed-width/UTF-8/relation/float images never admit corrupt state. Typed and dynamic APIs have the same accepted domain. Core ChangeSet and log envelope share the exact canonical change bytes/normalization; foreign schema/native-runtime capabilities refuse before mutation. |
 | API-03 Conditions | Two stale read/decrement commands: only the permitted exact-state decision applies. Blind effects retain documented set semantics. Maintenance/no-change/rejection do not move a `StateStamp`; every terminal receipt moves `DecisionStamp`. |
 | API-04 Named retries | Crash before/after dispatch and before response; duplicate simultaneous submissions; same ID/different digest; live-handle continuation after unknown; Frozen/closed/retired receipt lookup. Known publication plus failed local apply/cleanup returns the original receipt with separate unavailable local health, never rejection/unknown. No repeated business effect or silently refreshed request ID. |
 | API-05 Published reads | Pause candidate application/PUT/CAS at every point, then succeed, lose, reject, cancel or crash. Every ordinary observed snapshot belongs to published history, not merely the converged final state. |
-| API-06 Application IDs | Id128 canonical width/hex validation, generation once before sealing, same-ID retries after response loss/restart/CAS loss, changed application ID under the same command ID yields digest conflict, and explicit injected collisions follow ordinary laws. Restore preserves IDs without authority checks. Assert no allocator/reservation/FreshRef/fresh-map or ID-burn persistence survives in public APIs or execution. |
+| API-06 Application IDs | Id128 canonical width/hex validation, nominal entity/request-role confusion, generation once before sealing, same-ID retries after response loss/restart/CAS loss, changed application ID under the same command ID yields digest conflict, and explicit injected collisions follow ordinary laws. RequestId adds no scalar codec or allocator. Restore preserves IDs without authority checks. Assert no allocator/reservation/FreshRef/fresh-map or ID-burn persistence survives in public APIs or execution. |
 | API-07 Output atomicity | All query, bind, overflow, foreign-template, decode, cancellation and resource errors expose no current partial result. Implicit execute sessions close on success/error while completed results remain independent; explicit sessions retain only their documented snapshot scope. Success/error/success reuse and page interruption preserve result identity. |
 | API-08 Identity | Same schema/equal sequence/different data, changed bucket/prefix, case aliases, reborn namespace, remount and migration cannot reuse cache, receipt, witness or mutable execution state across identity boundaries. |
 | API-09 Float boundary | Full scalar golden corpus including every sign/exponent class, subnormals, sNaN/qNaN payloads, infinities and signed zeros; JS/Rust/wire/query/key/sum/mean results agree bit-for-bit after canonicalization. Float interval endpoints/membership/duration agree with chapter 11. |
 | API-10 Bounded work | Tiny command/query/catch-up limits at every allocation/growth boundary; cancellation before queue, during I/O/compute/spill/finalization. No hidden native work continues after a reported completed cancellation. Ambiguous publication remains unknown. |
 | API-11 Large database | Identical answers and receipts with database > RAM, above the old 32 GiB map cap, caches off, forced LMDB scratch, small result pages and low resident-memory allowance. No artificial logical-size rejection. |
-| API-12 Public examples | Core Rust/TS and log TypeScript examples compile/run against packed 1.0 artifacts. No C API/package/header or public Rust log export exists. AST-first schema/query/generated-plan examples contain no SQL/query parser or handwritten migration execution callback. Compile-fail and dynamic tests reject mutation through snapshots and foreign typed references. |
+| API-12 Public examples | Chapters 33–34 core Rust/TS and log TypeScript examples compile/run against packed 1.0 artifacts. The same core query/params/ChangeSet/result/codec and QueryReader helper work across local core/local log/hosted log without an adapter or duplicate type hierarchy. Test composed aggregate/projection grain and relaxed capacity spellings. No C API/package/header, public Rust log SDK, SQL/query parser or handwritten migration execution callback exists. Compile-fail and dynamic tests reject snapshot mutation and foreign typed references. |
 
 ## Audit disposition
 

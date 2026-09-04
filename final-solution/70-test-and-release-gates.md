@@ -66,6 +66,7 @@ Also cover non-indexed observations in the FFI/packaging and hosting reports: pa
 - Include the separately built native Node crate and all Rust consumers. Prove the C crate, public headers/exports, packaging hooks, examples, workspace references and dedicated workflow are gone. Test public examples as downstream consumers, including compile-fail invalid capability use.
 - Regenerate native descriptors and schema/plan artifacts into staging and compare; no in-place mutation of the release source tree is necessary.
 - Reject unsupported storage/protocol families before any cleanup or write. A reset numeric format version under new magic must not accept old v1/v8 fixtures.
+- Qualify one shared Node artifact/runtime per supported platform, used by both core and log packages. Rust core dependency checks remain log/AWS-free; importing the core Node package starts no transport or log maintenance. Duplicate runtime handles refuse safely rather than crossing addon pointers.
 
 ### Canonical values
 
@@ -88,10 +89,13 @@ Float intervals require dense numeric denotation fixtures, not enumeration of re
 - Preserve the fresh-refused-key counterexample's semantic intent even though the old fresh-ID physical mechanism is gone.
 - Prove/model only the actual admitted language. Update the Lean mutable-support/closed-relation premise rather than citing the old braid theorem as publication proof.
 - Reject `sorry`, unreviewed axioms, missing theorem cases and an empirical bridge that silently regenerates expected outputs from production code. Explicitly document hardware, LMDB and S3 assumptions outside the formal model.
+- Grouped-measure tests cover supported alias normalization in Rust/TS/dynamic schema inputs, count as unit weight, zero-weight members, empty child groups for existing parents, missing-parent vacuity plus separate containment, dependent upper bounds and exact duration. Do not preserve cosmetic spelling failures as semantic laws or lower count-existence to containment without its key/admission premises. No pointwise temporal occupancy or weighted-bag semantics is implied.
 
 ## G04 — Query semantics and optimizer legality
 
 Run every admitted operator/type pairing through the naive model, optimized engine, optimization-disabled engine and the SQL-compatible subset through SQLite. Assert the legal pairing inventory is populated, not just a large random-case count. Closed relations, disjunction, negation, recursion, temporal operations, grouping and parameter sets must be tested in combination.
+
+Nonrecursive relation composition includes aggregate/computed outputs consumed downstream. Test distinct-student projection then count versus attempt-binding count; equal-valued weights on distinct bindings; inner no-group behavior; inner overflow/cast/measure error followed by an outer false filter; and one-rounding at each stage. Inline/materialized/forced-spill executions must agree on facts and semantic errors. Frozen finite computed predecessor relations may feed the one positive linear closure; rejection tests cover aggregation, value invention, negation and mutual recursion through the cycle. Names alone are not materialization directives.
 
 Float rewrites need explicit negative tests: no reassociation of primitive arithmetic, no implicit FMA, no `x-x -> 0` for arbitrary nonfinite x, no `x/x -> 1`, no comparison substitution based on IEEE `NaN != NaN` when database equality is canonical equality. Equivalent plans and input permutations produce identical exact reduction bits. Cancellation and resource checks must not license a truncated set result.
 
@@ -197,6 +201,8 @@ Fuzz bounded parser and boundary inputs: wrong type/width/schema, unknown tags, 
 HTTP/example adapters validate method/path/event shape and size, decode base64 correctly, and require a host-supplied authenticated tenant mapping. Test logs/errors do not emit private fact payloads or credentials by default. This is scoped boundary qualification, not a claim to have built a full authentication product.
 
 The Next.js/Alchemy and x86 Vercel Node examples are release consumers: production build, server-only imports, native asset inclusion, selected Node/libc/CPU floor, actual local-disk envelope, real IAM/credential rotation, local development, generated deployment migration and schema/history mismatch on ordinary open. Client/Edge imports must fail usefully. The Expo/Drizzle analogy does not qualify a React Native or browser runtime. The >40-GiB engine lane runs on fitting hardware, not a serverless scratch directory without that capacity.
+
+Chapter 34's proposed Rust/core-TS/log-TS syntax becomes executable consumer fixtures during implementation. The same core schema, scalar/ID, ChangeSet, query template, typed parameters, QueryReader helper, CompleteResult and value codec must work across the applicable surfaces without application adapters or duplicate brands. Log-only identity/receipt/freshness remains outside core exports; a shared read helper gains no write capability. Generated migration plans invoke the same core query operators and stage semantics. API-12, FFI-08, PKG-03 and TS-MIG-04/07/10 own this evidence; no new SDK testing framework is required.
 
 ## G15 — Earn the performance claims without turning them into superstition
 

@@ -19,6 +19,9 @@ Status: proposed successor, 2026-09-04. This folder specifies implementation wor
 13. This is a per-student/per-user application database, not an analytics warehouse. Preserve excellent warm Free Join execution. Apple Silicon is the first optimization target; ARM Graviton and x86 Vercel are canonical portable targets, with specialized tuning deferred. The M2 Max ledger in `../bumblebench` supplies regime-specific evidence and methodology, not constants valid on every chip.
 14. Supply a small server-side Next.js + Alchemy integration and qualify Vercel's Node deployment. The Expo/Drizzle comparison is workflow inspiration, not a new mobile target. Serverless local disk and cold materialization are measured workload constraints, not reasons to invent a remote page engine.
 15. Revisit the in-repo README/benchmarks, policy constants and storage amplification. Distinguish justified indexed-admission cost from redundant representation; size each hash by its role, population and threat model. Hardware-accelerated candidates must win actual workloads, not reputation.
+16. Keep exact grouped-measure constraints: count is unit weight, not a separate weighted-relation semantics. Normalize harmless supported spellings instead of policing them across languages. Preserve nonnegative exact measures, scalar grouping and meaningful domain restrictions; do not add time-varying occupancy, arbitrary query assertions or a weighted-bag engine.
+17. Queries produce typed relations that compose, including nonrecursive aggregate outputs used by later queries. Names do not mandate materialization. Preserve distinctness, group, rounding and error boundaries; retain only the positive finite-active-domain linear recursive fragment, with no value creation, negation or aggregation through its cycle.
+18. The usage layers are porous by reuse, not by bypassing authority. The log imports the core's values, schema/query/change types, canonical codecs, read interface, results and execution policy. It adds history identity and publication, never a parallel fact/query/change API. Rust and TypeScript syntax receive a side-by-side review before implementation.
 
 The two supplied copies of the representation-first essay are byte-identical (SHA-256 `a931bb20a66d732fa66961fac6e1e249f1fee1166f920f313ce46b943fd663c3`). Its principle is the design method here. Its historical quotations are user-supplied reference material, not newly verified scholarship.
 
@@ -45,6 +48,8 @@ Application facts and declared laws
 
 The dependency arrow never points from the engine to the log. The core does not know what S3, a tenant routing record, a command receipt epoch, or a schema migration is. The log uses the engine; it does not introduce another implementation of relational semantics. TypeScript constructs schema/query/plan data; it does not introduce another implementation of the log machine. Migration execution consumes generated data at the log layer, outside an ordinary live application command. The generator must refuse ambiguous business intent rather than guess it.
 
+The core owns `SchemaId` and ordinary application `Id128` values as well as its schema/query AST, sealed `ChangeSet` and `CompleteResult`. A log command is an envelope around that same change set; a published log snapshot satisfies the same core query-read interface while adding log stamps. Shared helpers need no row lifting, remarshal DSL or log-specific query/result class. Porosity never grants a writable core owner through a log handle. The [syntax review](34-sdk-syntax-and-composition.md) makes this boundary concrete.
+
 ## Binding successor decisions
 
 These decisions coordinate the detailed chapters. They are proposed requirements, not descriptions of current 0.x behavior.
@@ -60,6 +65,8 @@ These decisions coordinate the detailed chapters. They are proposed requirements
 | Publication outcomes | Named terminal decisions, plus explicit unresolved transport/lifecycle outcomes | Byte equality and timeout do not manufacture ownership or rejection |
 | Entity identity | Application-owned nominal 128-bit values, generated once before command sealing | No FreshRef, allocator, issuance receipt, reserved/burned range, or history-dependent entity codec; UUID uniqueness is probabilistic, not a protocol theorem |
 | Value equality | Canonical full values; hashes accelerate lookup but do not define equality | Exact set identity also under forced hash collision |
+| Grouped constraints | Exact nonnegative measure of distinct matching child facts per selected parent; count uses unit weight | One measure family, canonical internal windows; zero total is not absence, and total duration is not simultaneous occupancy |
+| Query composition | Typed relation-expression dependencies, with explicit restricted linear closure | Nonrecursive aggregate results can feed further queries; no projection-only CTE product or compulsory full materialization merely because an expression is named |
 | Hash width | 16-byte local fingerprints with exact comparison; 32-byte authoritative BLAKE3 commitments; transient routing hashes remain separate | Save repeated index bytes without weakening content-identity commitments; AEGIS is evaluated before format freeze, not silently substituted by CPU |
 | Binary64 | Canonical NaN, canonical zero, total relational order | One equality/hash/key law across languages and storage |
 | Float reductions | Exact mergeable finite accumulator with explicit nonfinite states; one final rounding | Answer does not depend on plan, iteration order, or RAM versus disk execution |
@@ -70,6 +77,7 @@ These decisions coordinate the detailed chapters. They are proposed requirements
 | Retention | Current recoverable state and explicit retained restore points | No default time-window PITR claim or clock-driven deletion policy in the small 1.0 core |
 | Migration | Schema SDK → canonical schema diff → generated plan/history → log-layer staged execution and explicit cutover | No user-authored migration code; one final destination per pending batch, with necessary intermediate validation but no needless intermediate publication |
 | Public log surface | TypeScript only; one internal Rust machine | No public Rust/C log compatibility burden; core language surfaces remain independently qualified |
+| SDK reuse | Core primitives imported by log; one shared native Node artifact/runtime per supported platform/version | No log row builder, scalar codec, query dialect, result class or second addon engine; Rust core remains log/AWS-independent |
 
 Detailed algorithms, edge conditions, cost, and proof obligations belong to the corresponding chapters; this table does not prove them. In particular, a single HEAD alone does not solve garbage collection, uncertain publication, or receipt retention. Those need the precise restrictions in [20](20-durable-protocol.md) and [21](21-storage-and-retention.md).
 
@@ -90,6 +98,8 @@ The redesign earns its complexity budget by removing mechanisms:
 - The entire public C product disappears: crate, headers, exports, examples, packaging and dedicated release workflow. Public Rust log bindings also disappear; internal Rust remains tested. TypeScript owns schema authoring and generated migration ergonomics, not another durability algorithm.
 - Numeric writer IDs as fences, FreshRef placeholders, 28-byte issued IDs, separate counter objects, reservation burns and issuance-only receipt cases disappear. Native Node owners still need bounded lifetime handling; deleting C is not a proof of Node safety.
 - Handwritten migration modules, user-maintained relation-coverage lists and helper-closure/purity machinery disappear. Generated canonical data is the deployable artifact; ambiguous intent is declared in the schema evolution metadata or rejected at generation.
+- Separate log change recording/value encoding and SDK-level row lifting disappear; commands wrap the core's sealed changes, and migrations execute the core's typed operators. Core public exports do not acquire log-only protocol types.
+- Capacity spelling-ban tables and projection-only named-query special cases disappear where canonical normalization and typed composition express the same supported meaning. Real arithmetic, ownership and recursion restrictions remain; no generic assertion interpreter is introduced.
 - Default immortal text interning, full-relation RAM images as a requirement, and an arbitrary database-size cap disappear.
 - Expiring filesystem mutation leases and checks immediately before an unconditional rename disappear in favor of ordinary enforced local ownership.
 - Time equality sentinels, default 90-day restore claims, and a second clock-based retention machine disappear. Explicit retained roots replace the promise; the capability change is public.

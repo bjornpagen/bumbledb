@@ -12,7 +12,7 @@ The attachment's representation principle is useful here: a constructor should d
 
 In particular:
 
-- `CheckedDelta` proves canonical typed input, not schema admission or remote durability.
+- `CheckedDelta`, the native representation of the public `ChangeSet`, proves canonical typed input, not schema admission or remote durability; these names do not denote two change representations.
 - `PreparedWrite` proves judgment of one private candidate at one core snapshot, not successful HEAD publication.
 - `OwnedSnapshot` owns one read transaction, not an arbitrary collection of rows labeled with a convenient generation.
 - A sealed `CompleteResult` proves completed query evaluation/storage for that attempt, not future transport infallibility.
@@ -31,7 +31,8 @@ These boundaries should delete repeated checks and independent state machines. I
 | Braids are distributed publication lanes | Mutable relation support is an admission/planning hint; tenant history is ordered by the log | Do not cite an independence theorem as a causal/read-visibility guarantee |
 | Hash equality is fact equality | Exact canonical bytes decide logical equality; hash selects candidates | Formal set equality and implementation equality now have a direct bridge |
 | Every general query requires full images | Keep direct probes and Free Join/COLT as preferred paths; bounded cursor fallback is complete | Preserve fast application reads without making relation image size a database limit |
-| Head arithmetic is categorically forbidden | Small typed arithmetic only at the nonrecursive result boundary | Useful float queries without value-inventing recursion |
+| Projection-only interiors and terminal-only aggregate/arithmetic outputs | Typed nonrecursive relation stages may expose aggregate/computed results to consumers; recursive cycle stays projection-only | Useful composition without value creation or aggregation in recursive feedback |
+| Equivalent window/query spellings require independent client ban tables | One finite canonical typed representation with proved normalizations | Preserve meaning and diagnostics without making source spelling a semantic axiom |
 | Floating arithmetic is assumed mathematically associative | Typed operation roster distinguishes scalar rounded ops from exact aggregates | Optimizer legality follows the actual numerical domain |
 
 Retain the useful integer interval point-domain/ceiling model, compile-time/runtime schema checks, final-state admission, and finite recursive fragment. Add dense numeric `Interval<F64>` through the shared exact endpoint-order algebra, with its separate length semantics. Breaking permission is not a reason to replace Free Join or a working compact representation merely to reduce the number of fast-path names.
@@ -50,21 +51,29 @@ Explicitly distinguish canonical wire bytes from bounded physical index keys. Th
 
 Define normalized net delta, its final candidate, and each admitted law. Prove the reference judge's soundness/completeness for the supported finite forms. Model diagnostic statement IDs separately from bounded example citations. A rejected physical landing must not remove a proposed fact from the judgment universe.
 
+Retain the grouped capacity denotation: for each selected keyed parent, sum the exact nonnegative count/source-u64/bounded-integer-duration measure over distinct complete selected source facts with the matching **scalar** key. Prove its empty-child total is zero, its zero-weight-membership distinction, dimension/defined-duration premises and widened fold bounds. This is not pointwise temporal occupancy or a weighted relation algebra; interval projection, implicit weight joins and float duration weights are outside the selected law grammar. Harmless window aliases normalize with denotation and authored-diagnostic correspondence, not a ban on every alternate client spelling. Query expressions remain query values, not a new arbitrary schema-assertion language.
+
 For incremental admission, retain explicit support/delta-restriction lemmas and abstract consultation costs where useful. Do not label a law mathematically impossible merely because the fastest current incremental enforcement plan does not handle it. The admission grammar, baseline algorithm, optimization eligibility, and host resource policy are different boundaries.
 
 ### C. Queries, errors, and resource interruption
 
-Define the finite set-of-bindings denotation; union/projection/negation; group formation; exact integer and float aggregates; temporal packing; and finite linear least fixed point. A pure reference evaluator should return either a complete set or the specified semantic error.
+Define the finite typed relation-expression denotation: set bindings/rows; union/projection/negation; group formation; exact integer and float aggregates; temporal packing; and positive finite-active-domain linear least fixed point. Nonrecursive derived nodes may expose aggregate/computed rows to downstream queries. State the input grain explicitly: an aggregate folds distinct complete input rows/bindings; prior projection can change that grain, naming cannot. No input binding creates no query group, unlike a schema capacity's existing-parent empty-child total. A pure reference evaluator should return either a complete set or the specified semantic error.
+
+Replace the current Lean `Interior` projection-only premise where it describes nonrecursive composition; do not cite it as evidence for aggregate-derived stages. Model an acyclic graph with an optional single positive linear recursive node, not a general rule-program interpreter. Frozen finite predecessors, including computed/aggregate outputs, extend the recursive input active domain once; prove induction that projection-only recursive heads stay inside it. No aggregate, partial arithmetic or value creation occurs in the cyclic component, and no computed node depending on recursion feeds it back. The finite-domain premise concerns actual frozen input values, not where a name was spelled in source.
+
+Specify stage error and rounding boundaries independently of physical materialization. A stage's total input predicates precede its partial output calculations; a downstream filter cannot suppress a required upstream error. Unreferenced definitions need not execute. Prove any permitted predicate pushdown, inlining, streaming fusion or reuse preserves both completed values and errors, including duplicate grain and aggregate finalization. A named expression does not require a complete intermediate RAM table or an exported result owner. Reusing the core AST/evaluator for generated migration plans must preserve these same boundaries rather than create a second expression semantics.
 
 Resource exhaustion and cancellation are not an alternative truth value. State a partial-correctness theorem: any successful bounded execution equals the unlimited denotation; interruption returns no completed result. Prove a separate counted-work/allocation protocol property for the abstract executor. Actual RSS and filesystem latency remain measured environmental properties.
 
-The preferred Free Join/COLT plan, direct-probe eligibility, cursor fallback, semi-naive frontier transition, scratch set operations, and rewrite/distinctness witnesses need equivalence statements. Preserve and requalify the existing checked distinct-binding witness: it removes real dedup work rather than proving a seen-table mandatory everywhere. Do not formalize LMDB page layouts or hundreds of SIMD instructions to prove the cursor enumerates the right bindings; isolate the abstract cursor contract, then test its concrete adapter.
+The preferred Free Join/COLT plan, direct-probe eligibility, cursor fallback, derived-stage composition, semi-naive frontier transition, scratch set operations, and rewrite/distinctness witnesses need equivalence statements. Preserve and requalify the existing checked distinct-binding witness: it removes real dedup work rather than proving a seen-table mandatory everywhere. Do not formalize LMDB page layouts or hundreds of SIMD instructions to prove the cursor enumerates the right bindings; isolate the abstract cursor contract, then test its concrete adapter.
 
 ### D. Float arithmetic and aggregation
 
 Model canonical binary64 as bits with exact integer/rational interpretation for finite values. **Both sum and mean remain required.** Prove the canonical numerical sum-case merge table, 34-limb finite bound under the count limit, exact merge associativity/commutativity, final ties-to-even rounding, and mean's exact-rational denominator behavior. Prove integer widened sum bounds and final-range failure semantics too. Float interval Allen/pack/coverage proofs reuse exact endpoint order; bounded length rounds endpoint subtraction once, while unbounded measure and finite-result overflow are distinct. A numerical length is not a discrete point count and is not an approximate capacity law.
 
 Basic rounded scalar operations need a clear independent specification. The implementation can use guarded hardware operations on qualified architectures; the bridge to those operations is differential/architectural evidence, not a theorem that the Rust compiler honors every hardware instruction assumption. Never prove reassociation of mathematical reals and cite it for rounded binary64 expressions.
+
+Aggregate-derived outputs are finalized canonical scalars. A consumer never secretly receives the producer's exact accumulator. Prove/negatively test subgroup-rounding and mean-of-means boundaries: inlining does not license substituting one global reduction. Share an exact total/count only when the same stage and distinct input/argument justify it. Frozen computed float values may enter a recursive input domain as ordinary values; numerical work is not repeated through the recursive cycle.
 
 ### E. History and lifecycle belong to the log/bindings model
 
@@ -129,7 +138,7 @@ All lanes below are **required future evidence; not performed as part of this Ma
 | Gate | What it must establish | What it does not establish |
 | --- | --- | --- |
 | `P-KERNEL` | Lean build and theorem axiom audit; no unfinished proofs, new unreviewed axioms, or proof escapes | Correctness of Rust/LLVM/LMDB/hardware |
-| `P-SEMANTIC` | Independent naive evaluator versus baseline and optimized engine on generated finite instances; values and errors equal | Every infinite input shape or all schedules |
+| `P-SEMANTIC` | Independent staged evaluator versus baseline/optimized engine; grouped-capacity zero/weight/domain laws, projection grain, aggregate-derived consumers, finite frozen recursive predecessors and producer errors agree | Every infinite input shape or all schedules |
 | `P-FLOAT` | Complete F-* roster from 11, exact reference arithmetic and changed host FPU state | Real-number algebra for rounded expressions |
 | `P-REPRESENTATION` | Downstream safe API construction tests; parser fuzz/goldens; forced hash collisions; schema/write/read roundtrips | Absence of all unsafe ABI misuse |
 | `P-DISK` | Q-* and E-* disk/native resource paths, map growth, larger-than-RAM data, crash/reopen | S3 authority semantics or raw `.mdb` portability |

@@ -58,7 +58,7 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | --- | --- | --- |
 | SDK-001 | One Rust machine owns immutable unresolved attempts; a new command cannot overwrite them | Failure then next command on the same live handle preserves correct local state and resolvable outcome. G07/G09 |
 | SDK-002 | Shared lifecycle authority checked inside queued operations; close revokes admission | Retained writers and queued requests cannot dispatch new publications after closure. G07/G11 |
-| SDK-003 | Copy/normalize into a sealed command before asynchronous work; recorder becomes spent | Caller buffer mutation and escaped builders cannot change persisted/applied command meaning. G02/G07/G14 |
+| SDK-003 | Core ChangeSet owns/normalizes inputs before asynchronous work; log seals only its history envelope around that same value | Caller buffer mutation and escaped builders cannot change persisted/applied command meaning; no duplicate log recorder or scalar codec. G02/G07/G14 |
 | SDK-004 | Every acquisition returns a distinct generation-bound idempotent borrow; borrow disposal returns that borrow | Double/stale release cannot consume another borrow or close the shared owner. G11 |
 | SDK-005 | Owner/pool close accounts for opening operations as real owned work | An in-flight open cannot outlive shutdown and return an unowned live replica/timer. G11 |
 | SDK-006 | Remove expiring directory renewal from ownership; process-lifetime OS lock and explicit capability revocation | Missing stale token can never be interpreted as successful ownership renewal; paused owner remains fenced by real exclusion. G08/G11 |
@@ -141,6 +141,8 @@ These were discussed in the audit without separate implementation IDs. They are 
 | All missing tests pass before release | [70](70-test-and-release-gates.md), exact-artifact G16 packet |
 | TypeScript log and schema-generated migration workflow | [33](33-typescript-migrations-and-apps.md), generated canonical plans/history, staged execution, native server-only Next.js/Alchemy/Vercel examples; G10/G13/G14 |
 | Hard-delete the C product; Rust and TS only | [32](32-ffi-and-release-packaging.md), removal inventory plus independent Rust/Node safety/artifact gates; G00/G01/G11/G13 |
+| Keep grouped measures, simplify notation and query composition | [10](10-semantics-and-engine.md), [12](12-query-execution.md): exact per-parent measure/empty-group laws, canonical supported aliases, nonrecursive aggregate composition and restricted linear closure; E-ADMIT/Q-IR/Q-GROUP/Q-RECUR and G03/G04 |
+| Porous SDKs with one core vocabulary and aesthetic syntax | [30](30-client-apis.md), [34](34-sdk-syntax-and-composition.md): same core ChangeSet/query/read/result/codec through Rust, TS core and TS log; no writable log escape or duplicate addon engine; API-12/FFI-08/PKG-03 and G01/G13 |
 | Apple Silicon performance identity; Graviton and x86 Vercel portability | [40](40-performance-contract.md), existing in-repo and M2 Max evidence, application workloads, regime-qualified constants and actual target execution; G15 |
 | Explain/reduce storage amplification and right-size hashing | [41](41-storage-and-hashing.md), physical namespace accounting, indexed-SQLite parity, hash-role/collision budget and TigerBeetle comparison; G02/G03/G05/G15 |
 | Commit and push proposal before coding | Documentation-only commit; no release tag, format mutation, source fix or production migration in this phase |

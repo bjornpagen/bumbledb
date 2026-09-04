@@ -59,8 +59,8 @@ The constructors below are proposed extensions around the existing relation/sche
 
 ~~~ts
 // src/db/schema.ts — ordinary typed schema declarations shared by app and generator
-import { bool, id128, key, relation, schema, str } from "@bjornpagen/bumbledb"
-import { backfill, literal, migrationIntent } from "@bjornpagen/bumbledb-log/schema"
+import { bool, id128, key, literal, relation, schema, str } from "@bjornpagen/bumbledb"
+import { backfill, migrationIntent } from "@bjornpagen/bumbledb-log/schema"
 
 export const Note = relation("Note", { id: id128, body: str, pinned: bool })
 export const App = schema("App", { Note }, [key(Note, ["id"])])
@@ -74,7 +74,7 @@ Given a checked previous schema with Note(id, body), generation emits a native M
 
 The expression is a typed literal AST, not a function returning values during execution. More complex supported backfills use the same typed field/expression/query IR vocabulary: field references, literals, checked casts and the explicitly supported deterministic expression fragment. This does not authorize arbitrary JavaScript, SQL text, network fetches, clocks, random values, plugin functions or opaque “run this code” nodes.
 
-Application code imports App/Note from the ordinary schema module. Runtime queries retain the existing query(App).rule(...) construction style and inferred parameter/row types. The generated runtime contract checks that this application's expected canonical schema/history is deployed; it does not replace the schema SDK with generated classes.
+Application code imports App/Note from the ordinary schema module. Runtime queries retain the existing query(App).rule(...) construction style and inferred parameter/row types. A nonrecursive query expression, including aggregate output, can be used as a typed downstream relation source under the core's set/grain/error/rounding semantics. The generator reuses that core expression IR for its supported deterministic transforms; it does not define a migration-only evaluator or a log-specific query builder. The generated runtime contract checks that this application's expected canonical schema/history is deployed; it does not replace the schema SDK with generated classes. [34](34-sdk-syntax-and-composition.md) gives the shared Rust/TypeScript schema/query/change spelling and one read helper that works directly with core, local-log and hosted-log snapshots.
 
 ### Generation must know what it is allowed to infer
 
@@ -234,7 +234,7 @@ import { databases } from "@/src/db/server"
 import { noteById } from "@/src/db/queries"
 import { requirePrincipal, bindingFor, parseId128 } from "@/src/auth"
 import { requestPolicy } from "@/src/db/runtime-policy"
-import { encodeRows } from "@bjornpagen/bumbledb-log"
+import { encodeRows } from "@bjornpagen/bumbledb"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -258,7 +258,9 @@ export async function GET(request: Request, context: {
 
 Auth, binding resolution, ID parsing and deadline policy are application-owned helpers, not invented SDK authentication. The policy includes request/platform cancellation and a cleanup margin. Match actual host cancellation behavior; an HTTP abort never undoes a published command.
 
-Writes use an application-owned Id128 generated once before the original request/command is sealed and retained with its stable request ID. A helper can use 16 cryptographically random bytes; UUIDv4 is also a 128-bit representation but has 122 random bits because of version/variant fields. Neither promises absolute uniqueness. Ordinary schema keys/references handle conflicts. No allocator, FreshRef or generated-ID receipt exists.
+Writes construct the core's `ChangeSet`, then the log's `Command.seal({ scope, id, changes, precondition, result }, policy)` wraps that exact immutable native value. `ChangeSet`, schema/query/parameter/result values, `ExecutionPolicy`, errors and row codecs come from the core, not duplicate log exports or remarshal loops. Only identity/precondition/durable result metadata and publication controls belong to the log. Chapter 34 shows the complete insert/read/witnessed-correction examples.
+
+Application-owned Id128 values are generated once before the original request/command is sealed and retained with its stable request ID. A helper can use 16 cryptographically random bytes; UUIDv4 is also a 128-bit representation but has 122 random bits because of version/variant fields. Neither promises absolute uniqueness. Ordinary schema keys/references handle conflicts. No allocator, FreshRef or generated-ID receipt exists.
 
 Do not share tenant rows, snapshots or owners through Next/React/CDN caches keyed only by query text. Keep dynamic authenticated requests as the default; explicit app caching needs identity/schema/parameters/published-stamp keys and an invalidation policy. Writes also need the app's CSRF/origin/session protections and typed decided/unknown-outcome handling.
 
@@ -355,7 +357,7 @@ These rows replace the earlier callback/purity/artifact-closure obligations unde
 | TS-MIG-07 Fusion semantics | Fused pending suffix equals ordered reference-plan evaluation, including intermediate errors/laws, seeds, f64 sum/mean and deterministic output. Five simple maps use one final materialization/publication; genuinely required private passes are explained/measured. |
 | TS-MIG-08 Concurrency/ambiguity | Same/different operations, changed planSetDigest, lost freeze/genesis replies and competing staging owners resolve to matching authority or typed refusal. No duplicate lineage or silent source substitution. |
 | TS-MIG-09 Cutover | Final target frozen until explicit activation; old writers fenced; activation marker survives receipt retirement. Same reference cannot thaw later Frozen/Deleted state. Race abort against activation/delayed genesis: durable target cancellation precedes source thaw, uncertain cancellation stays frozen, and cancelled operations cannot resume. No automatic rollback after activation/receipts/effects. |
-| TS-MIG-10 Tooling boundary | User writes schema/typed intent only; migration runner consumes generated plans/index without source paths/authoring/compiler. Ordinary app schema/query inference remains direct SDK use, with no mandatory runtime-type codegen. No handwritten migration callback/helper-purity framework/parser. CLI/direct API identical native outcomes; app bundle excludes admin plans. |
+| TS-MIG-10 Tooling boundary | User writes schema/typed intent only; migration runner consumes generated plans/index without source paths/authoring/compiler. Ordinary app schema/query inference remains direct SDK use, with no mandatory runtime-type codegen. Generated expressions reuse the core IR/evaluator with the same grouped/projection/rounding/error semantics; no log/migration query DSL or handwritten callback/helper-purity framework/parser. CLI/direct API identical native outcomes; app bundle excludes admin plans. |
 | APP-01 Server boundary | Dev/build/production app imports can construct typed schema/query values but perform no opens/migrations/schema generation. Native/admin artifacts never enter client/Edge/public bundles. Ordinary schema imports preserve AST-first inference. |
 | APP-02 Auth/isolation | Anonymous/forged tenant/binding/stamp/direct-origin calls refuse before open. Concurrent per-user databases and Next/CDN caching never cross identity; writes demonstrate CSRF/auth and stable command/Id128 retry semantics. |
 | APP-03 Request ownership | Warm/cold/concurrent invocations, HMR, abort/deadline, owner fault and process death. Independent borrows release, result conversion stays bounded, no stale forever-cached writer or hidden native work. |
@@ -363,7 +365,7 @@ These rows replace the earlier callback/purity/artifact-closure obligations unde
 | APP-05 Real credentials/IAM | Actual AWS server role/bucket policy and separately configured Vercel credential path work and refresh. Cross-prefix/admin/list/delete denial and protected HEAD tested. Missing deployment access or unattached intended role is incomplete. |
 | APP-06 Host envelope | Measure full cold materialization, warm reuse, tenant churn, shared FDs/concurrency, disk/memory/output/deadline budgets and cleanup on actual hosts. Insufficient disk refuses; no ephemeral LocalHistory durability or network-filesystem escape claim. |
 | APP-07 Deployment rehearsal | Generate/verify/init, coalesced schema/data plans, interrupted admin job, frozen rollout, lost activation and rollback boundaries with exact staged artifacts. No migrations/generation on public request paths. |
-| APP-08 Minimal integration | Generated files/config preserve existing app code, compile/run on qualified versions, expose app-owned auth/binding/policy, and need no C SDK/public Rust log/mobile runtime. Common per-user workloads—not analytics-only benchmarks—exercise the example. |
+| APP-08 Minimal integration | Generated files/config preserve existing app code, compile/run on qualified versions, expose app-owned auth/binding/policy, and need no C SDK/public Rust log/mobile runtime. Core QueryReader helpers/templates/params/ChangeSet/results/codecs are used directly, without log-specific adapters or duplicate native representations. Common per-user workloads—not analytics-only benchmarks—exercise the example. |
 
 ## Evidence and limits
 

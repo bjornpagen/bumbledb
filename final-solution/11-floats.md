@@ -53,7 +53,7 @@ No implicit mixed numeric promotion: `I64`, `U64`, and `F64` are different domai
 
 A later truncating or saturating cast must be named separately. Never reuse Rust's saturating `as` behavior as an undocumented database law.
 
-Keep arithmetic-producing expressions at the nonrecursive query boundary for 1.0. Do not let `x+1` become a recursive rule's new active-domain value. This maintains the existing useful termination boundary while making ordinary computed answers useful.
+Arithmetic-producing expressions belong to typed **nonrecursive relation-expression stages**, including a derived stage whose outputs another nonrecursive stage consumes. This replaces the old terminal-output-only restriction; it does not put partial arithmetic directly into relational filters. Each stage preserves the operand tree, canonicalization and error contract in [12](12-query-execution.md). Frozen finite nonrecursive outputs may be inputs to a recursive query, but the recursive feedback cycle itself cannot aggregate or create values: `x+1` cannot manufacture a new recursive value on each round.
 
 ## 3. The embedding process does not own our rounding contract
 
@@ -110,6 +110,8 @@ Preserve the existing set-query group rule: **no binding means no group**. A glo
 
 Distinct binding semantics matter: two binding tuples `(entityA, amount=1)` and `(entityB, amount=1)` contribute two amounts; projecting away identity before the aggregate can intentionally leave one distinct input tuple. The optimizer must not deduplicate only numeric arguments when the binding vocabulary still distinguishes them.
 
+An aggregate-derived relation exposes its **final canonical scalar values**, not hidden exact accumulator states. A downstream mean of per-course means averages those once-rounded group means; it is not generally the global mean of the original bindings. Likewise a sum of subgroup sums can differ from one sum over their original union because each subgroup boundary rounded. Naming, inlining or fusing stages cannot erase that rounding boundary, distinct-row grain or an upstream numerical error. Sharing exact sum/count state is permitted within one aggregate stage with the same input binding set and argument; carrying an unrounded state through a public derived scalar would change its meaning.
+
 ## 5. All surfaces, not a kernel-only feature
 
 Required in the same release: Rust schema macro and dynamic descriptor; typed/dynamic fact input; literal and parameter validation; closed relation constants; equality/range/negative atoms; keys, containment selections and joins; answer decoding; direct key probes; naive oracle; query explain; logical export; log codec; core Rust/TypeScript values; packaged artifacts and declarations. The public C surface is deleted. The public log API is TypeScript-only; its one internal Rust codec/runtime participates in conformance testing without creating another public SDK. These are typed AST/codec paths, not a new textual query parser.
@@ -140,7 +142,7 @@ The ordered execution words use the non-NaN F64 order-key mapping. Allen's thirt
 
 For a bounded float interval, `length` computes the exact endpoint difference rounded once to canonical F64 under the numerical guard. A rounded overflow to infinity is `MeasureOverflow`; e.g. `[-MAX_FINITE,+MAX_FINITE)` is bounded but its F64 length overflows. Either nonfinite bound gives `UnboundedMeasure`. These are different errors. Length is not a number of representable points, and is not silently narrowed to `u64`. **No `FixedInterval<F64>` or float-width schema compression ships:** rounded addition can collapse a positive requested width at a large start, and does not establish constant exact length. Applications supply two checked bounds.
 
-Capacity counts and weights stay exact nonnegative integers even over float-position intervals. Existing integer duration capacity is unchanged; float-length/approximate capacity is refused at schema validation, not quietly judged with rounding. This keeps the admission algebra exact while adding useful continuous ranges.
+Capacity remains chapter 10's exact nonnegative **whole scalar-key group** measure. A row may contain a float interval, but neither that field nor the new interval algebra adds pointwise temporal occupancy, interval grouping projections or simultaneous weighted coverage. Existing bounded integer-duration weights remain exact; float-length/approximate capacity is refused at schema validation, not quietly judged with rounding. Useful continuous query ranges and grouped admission are separate capabilities.
 
 ## 6. Optimizer law table
 
@@ -157,6 +159,7 @@ Capacity counts and weights stay exact nonnegative integers even over float-posi
 | `x/x → 1` | Forbidden without nonzero finite-domain proof | Zero, infinities, NaN |
 | `x*0 → 0` | Forbidden without finite-domain proof | Infinity and NaN |
 | Push float aggregate through join/union | Only with binding-equivalence proof | Both numerical and set-input meanings matter |
+| Fuse aggregate-derived stages or push consumer predicates into them | Only with stage-denotation and error/rounding equivalence | A rounded derived scalar is not an exact partial accumulator; filtering a consumer cannot hide an upstream required error |
 
 Represent such conditions in typed operator metadata/witnesses used by validation and optimization. Do not build a universal algebraic theorem engine or rely on a blacklist of source strings. The reference evaluator retains the original typed expression tree and group bindings.
 
@@ -172,13 +175,13 @@ All are **future acceptance obligations, not tests executed in this proposal**. 
 | `F-ARITH` | Compare +,-,*,/,negation/casts against an independent correctly rounded integer/rational or established software IEEE reference; include tie/overflow/underflow/subnormal/cancellation boundaries |
 | `F-ENV` | Set every supported nondefault rounding mode and FTZ/DAZ/FPCR flush setting before entry; operation bits remain specified; host environment restored on success, error, cancellation and unwind |
 | `F-AGG` | All permutations and disjoint partitions/merge trees give identical exact sum/mean bits; overlapping/replayed binding inputs deduplicate before accumulation; negative fixture shows partial-state merge itself is not idempotent; RAM/scratch and finite-mean-overflow cases agree |
-| `F-SET` | Equal NaNs/zeros deduplicate consistently; different entity bindings with same amount contribute separately; union/negation/projection/aggregate cross-product agrees with naive evaluator |
-| `F-OPT-NEG` | Each forbidden rewrite above has a minimal counterexample that actually distinguishes it; optimized engine matches unoptimized evaluator |
+| `F-SET` | Equal NaNs/zeros deduplicate consistently; different entity bindings with same amount contribute separately; projection-before-group versus naming-only grain, union/negation and aggregate-derived consumers agree with the independent staged evaluator |
+| `F-OPT-NEG` | Each forbidden rewrite above has a minimal counterexample that actually distinguishes it; optimized engine matches unoptimized evaluator, including staged subgroup rounding, mean-of-means versus global mean, and consumer filters that would hide an upstream cast/measure/aggregate error |
 | `F-CROSS` | Identical scalar/interval/aggregate bit fixtures on Apple Silicon macOS, qualified Graviton Linux ARM64 and Linux x86-64 through fresh Rust/Node builds; log command/export fixtures compare the internal Rust codec/runtime with its public TypeScript surface; no C artifact |
 | `F-WIRE` | Log replay and checkpoint roundtrip preserve canonical facts/receipts; old tag/version refuses; JS mutable buffer or JSON special-value loss cannot enter a sealed command |
 | `F-RESOURCE` | Tiny group budgets force RAM→LMDB transition during float accumulation; no early rounding, missed group, uncharged accumulator, or partial result on disk-full/cancel |
 | `F-PROOF` | Lean representation/equality/order and exact-accumulator/merge/rounding lemmas complete; implementation linkage independently tested as described in 13 |
-| `F-INTERVAL` | Dense endpoint oracle versus constructor/codec/index/Allen/pack/coverage paths; ±0, NaN refusal, both infinity bounds, adjacent representable endpoints, `[-Infinity,-MAX_FINITE)`, finite-length overflow, nonfinite membership false; no FixedInterval<F64> or approximate-capacity escape |
+| `F-INTERVAL` | Dense endpoint oracle versus constructor/codec/index/Allen/pack/coverage paths; ±0, NaN refusal, both infinity bounds, adjacent representable endpoints, `[-Infinity,-MAX_FINITE)`, finite-length overflow, nonfinite membership false; no FixedInterval<F64>, float-length capacity or accidental pointwise-occupancy admission escape |
 
 Golden arithmetic should include `{1e16,1,-1e16}` summing to exactly 1 before rounding, `{MAX_FINITE,MAX_FINITE}` whose mean is `MAX_FINITE` despite sum overflow, and `{MIN_SUBNORMAL,MIN_SUBNORMAL}`. Cross-architecture comparison is bitwise, never an epsilon assertion. Decimal source spellings in tests must be paired with exact expected bit patterns to avoid a shared parser masking an arithmetic bug.
 

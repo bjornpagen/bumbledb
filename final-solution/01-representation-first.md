@@ -34,6 +34,9 @@ Types make a smaller set of states representable inside their trust boundary. Th
 | Floating sum of scan order | Query plan is observable arithmetic input | Exact mergeable accumulator plus one rounding | Different plan or spill partitions changing the result |
 | Clock fields and equality sentinel | Restart changes deletion policy | Explicit retained roots and GC epoch barrier | Clock coincidence becoming deletion authority |
 | Handwritten migration callbacks and coverage/checksum scaffolding | Hidden effects, duplicated schema knowledge, repeated full rebuilds | Schema/type declarations generate canonical plan data and history | A JavaScript migration interpreter, helper-closure purity system and manual coverage lists |
+| Capacity notation ban tables in every authoring layer | Equivalent intentions need different spellings and duplicate rejection machinery | One normalized grouped-measure law over distinct child facts | Harmless syntax differences determining semantic admission; count remains the unit-measure case |
+| Projection-only interiors plus a special query flavor | Ordinary query results cannot be reused uniformly | Typed relation-expression graph with a restricted closure node | A named intermediate as a separate product; naming does not itself require materialization |
+| Log recorder, scalar tags, row lifting and result wrappers | One fact/query/change is represented twice across adjacent packages | Log envelope and published-read metadata around imported core capabilities/values | Parallel schema/query/change codecs and application conversion layers |
 
 These are commitments to remove failure classes, not an excuse to implement all conceivable optimizations. The detailed chapters must name the simplest working mechanism for each row.
 
@@ -54,6 +57,10 @@ The core `bumbledb` is responsible for canonical values, an admitted theory, exa
 The optional `bumbledb-log` owns history, command identity, materialization binding, remote publication, retained restore points, backup and schema migration. LocalHistory commits directly in LMDB; HostedHistory uses S3 authority. LocalHistory does not emulate the hosted object store. Neither use case requires a fleet orchestration product.
 
 The client layers own host-language ergonomics, not another semantic parser or protocol. The existing schema/query SDK already constructs data and lowers it directly; schema evolution follows that same architecture. Users author TypeScript schema values, from which tools generate canonical schema snapshots, migration plans and checked history. Declarative intent resolves ambiguity; arbitrary migration callbacks are not part of the product. The log's only public SDK is TypeScript, and its native executor runs generated plan data. The proof model owns independent statements of semantics, not a generated restatement of every implementation branch. Tests own independent expectations, not snapshots of whatever the implementation happens to emit.
+
+The reuse boundary is literal: core scalar/schema/change/query types and their canonical encoding are imported, not independently mirrored in the log. Log snapshots share the core read interface/results but never expose writable core ownership. Migration plans describe orchestration and source/target mapping around the core's operators, not a migration-only expression language. One Node runtime owns native handles for both packages; capability identity is checked rather than inferred from matching package versions.
+
+Canonical representation is not canonical-utterance policing. Equivalent supported capacity windows should normalize once; ill-typed or semantically unsupported operations still refuse. Typed query composition also does not erase semantic boundaries: an inner distinct projection may change what an outer count counts, and an inner aggregate may fail before an outer filter runs. A name is not a materialization command, but neither is it permission to substitute an expression while changing its set grain or errors.
 
 ## Cost is part of the representation
 

@@ -20,7 +20,7 @@ The registry is an ordinary library data structure keyed by database identity. I
 | `Snapshot` | An owner-registered read capability at one coherent state | Mutation or publication authority |
 | `ExecutionSession` | Bounded mutable per-snapshot query state and caches | A schema-wide tenant data cache |
 | `CompleteResult` | Completed owned rows or independent temporary-LMDB result storage | A hidden pin on the source database after execution completes |
-| `Command` / witness / receipt | Owned immutable values | A live database or directory lock |
+| Core `ChangeSet` / log `Command` / witness / receipt | Owned immutable values; a command retains its core change | A live database or directory lock |
 
 Every acquire creates a fresh `TenantBorrow`, even when the underlying slot is reused. It captures `SlotId` and a one-shot release state. Releasing it twice is harmless; using that borrow after release returns `ClosedHandle`. It cannot decrement a successor slot. No public `release(tenantName)` exists.
 
@@ -121,7 +121,7 @@ Node's default asynchronous API submits native work to a fixed-capacity Rust exe
 
 The scheduling policy is deliberately simple: bounded FIFO queues with per-tenant concurrent-operation limits and round-robin admission among ready tenants. Long query loops poll the same work/cancellation context at bounded checkpoints. This is a small executor, not a pluggable scheduler architecture. LMDB's local writer exclusion remains the actual writer transaction rule.
 
-Native query work, integrity judgment, replay and checkpoint encoding do not run synchronously on the Node event loop. Result conversion is page-bounded; a completed million-row query is not materialized into one enormous JS array. Command copying is synchronous, charged during checked finite ingestion, and limited before dispatch. Limits bound accepted data/completed ingestion steps, not the duration of arbitrary host getters or iterators. Async bulk-command ingestion is deferred; there is no second public ingestion protocol in 1.0.
+Native query work, integrity judgment, replay and checkpoint encoding do not run synchronously on the Node event loop. Result conversion is page-bounded; a completed million-row query is not materialized into one enormous JS array. Core `ChangeSet` ingestion is synchronous, charged and limited before dispatch; log sealing retains that checked native value without a second row walk/copy. Limits bound accepted data/completed ingestion steps, not the duration of arbitrary host getters or iterators. Async bulk-command ingestion is deferred; there is no second public ingestion protocol in 1.0.
 
 Cancellation propagates through queue admission, reads, stream bodies, replay, query operators, LMDB scratch, checkpoint copy and backoff. It is checked at growth/work boundaries, not just once at function entry. Bounded retry policies apply per operation; a repeatedly identical corrupt replay never silently reseeds forever. Cached-read freshness and maintenance progress are observable even when a bounded pass does not finish.
 

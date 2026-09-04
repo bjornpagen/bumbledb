@@ -106,6 +106,8 @@ Each family needs warm reuse, first execution after open, first read after inser
 
 For every cell report absolute p50/p95/p99, observed work and output count, preparation versus execution versus result delivery, bytes copied/decoded, allocations/retained capacity, peak RSS, actual disk consumption, and every failure/timeout. Report no-sync results separately and never use them as evidence for acknowledged durability. For hosted app calls, show queue, query/judgment, remote publication, cache catch-up and local commit distinctly; core microseconds do not erase network or scheduling costs.
 
+Include grouped-measure admission with small and large touched child groups, and aggregate-derived query composition before/after safe inlining. Count actual reverse-index bytes/group walks; removing notation casework is not itself a throughput claim. A named query must not force a full intermediate merely for syntax, but optimizations preserve its distinctness, rounding and error boundaries. Measure the selected shared Node artifact's installed/binary size and core-only import cost separately from activated hosted runtime cost.
+
 Set product latency budgets from these operations, including x86 serverless cold-start and CPU-allocation behavior; do not invent universal nanosecond promises from the M2 run. A Vercel-class Node host without adequate local disk/lifetime is an explicitly unsupported materialization placement, not a benchmark success achieved by ignoring setup/recovery.
 
 ## 7. Method and release discipline

@@ -46,9 +46,9 @@ Start with an empty `User(id, email)` relation whose `id` is a key. Writer A ind
 
 ### Capacity is not union-closed
 
-A room has integral capacity one. Two writers independently add different reservations for the same interval. Each state fits capacity; their union does not. Replacing reservations with a semilattice of claims can record the conflict, but does not make both bookings valid. Escrow/partitioned rights could coordinate in advance; that is another policy and state machine, not free union. It is not added in 1.0.
+A class has enrollment capacity one. Two writers independently enroll different students. Each state fits capacity; their union does not. Replacing enrollments with a semilattice of claims can record the conflict, but does not make both admissions valid. Escrow/partitioned rights could coordinate in advance; that is another policy and state machine, not free union. It is not added in 1.0.
 
-The tiny executable fixture should use capacity `Room(r,1)` and distinct identity-bearing claims `Booking(a,r,[0,1))` / `Booking(b,r,[0,1))`, each with unit weight. The two bookings are distinct set facts; their capacity measure is two, so deduplication cannot hide the conflict.
+The tiny executable fixture should use capacity `Class(c,1)` and distinct facts `Enrollment(c,a)` / `Enrollment(c,b)`, each with unit weight. Their grouped measure is two, so deduplication cannot hide the conflict. A weighted variant replaces unit count with exact nonnegative child weights and has the same issue. Neither example requires a new pointwise temporal-capacity feature.
 
 ### Deletion and references need meaning, not just a merge function
 
@@ -87,7 +87,7 @@ These refine G03/G04/G06/G07/G09, and are **not yet passed**.
 | Gate | Required evidence |
 | --- | --- |
 | `CONC-01` | Independent finite-state checks and Lean lemmas for set normalization/idempotence and the stated raw-delta commutation condition; distinguish one-command tie rules from sequential commands |
-| `CONC-02` | Executable key, interval-capacity and parent-delete/child-insert counterexamples; no optimization advertises both conflicting commands as admitted in one invalid state |
+| `CONC-02` | Executable key, grouped count/weighted-capacity and parent-delete/child-insert counterexamples; no optimization advertises both conflicting commands as admitted in one invalid state |
 | `CONC-03` | Real LMDB parallel readers/writers, held snapshots and resize barriers; one owner and correct visibility with no new local merge layer |
 | `CONC-04` | Multiple hosted contenders, lost responses and repeated same IDs; one ordered terminal decision per named command and no candidate visibility; maps to PROTO-01–10 |
 | `CONC-05` | Mutable-support theorem premises tested against runtime law analysis, shared closed vocabularies and incremental versus full judgment |
