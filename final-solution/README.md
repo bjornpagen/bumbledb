@@ -64,7 +64,7 @@ No replacement for LMDB, remote page-tree engine, analytics warehouse, public C 
 
 Semilattice laws are used where they apply: set deduplication/union, monotone frontiers and proved incremental reasoning. Keys and upper capacities are not generally union-closed; deletes and read-dependent intentions need more than union. Exact numeric accumulator merge is associative/commutative over disjoint binding partitions, **not idempotent**. [02](02-concurrency-and-semilattices.md) spells out the boundary and counterexamples.
 
-These scope cuts are the point. The test suite may be extensive; the production mechanisms should remain few.
+These scope cuts are the point. The test suite may be extensive; the production mechanisms should remain few. The final scope also defers snapshot compression/native snapshot-image acceleration, auxiliary large-command objects, async bulk-command ingestion, blocking TypeScript adapters and background cache warming. LocalHistory persists receipts/current state without a duplicate command-body log. None is needed to deliver the selected application contract.
 
 ## Read the proposal
 
@@ -95,7 +95,7 @@ For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 60 → 7
 
 ## How this becomes 1.0
 
-The implementation starts by freezing canonical examples, new format families and regression/model inventories. Values/admission, LMDB ownership and a real application vertical slice anchor parallel work on Free Join/fallback execution, the internal log machine, recovery/retention and schema generation. Performance measurements start early, before deleting existing hot paths; equivalence and cost must justify both additions and deletions.
+The implementation starts with canonical semantic examples, distinct format families and regression/model inventories. Physical golden bytes freeze after the targeted storage/hash/long-key probes, not before measurements exist. Values/admission, LMDB ownership and a real application vertical slice anchor parallel work on Free Join/fallback execution, the internal log machine, recovery/retention and schema generation. Performance measurements start early, before deleting existing hot paths; equivalence and cost must justify both additions and deletions.
 
 The old audit has **47 indexed implementation observations**, plus architectural, operational, performance, assurance and unindexed boundary issues. Every one has an explicit successor obligation in [50](50-audit-closure-matrix.md). None is marked fixed by writing prose.
 
@@ -104,3 +104,9 @@ Before promotion, every required qualification gate must pass on the exact candi
 Full streamed checkpoints, single-tenant HEAD contention, inline text, exact numerical reductions and offline migration all have real costs. They must be measured against the intended apps before claiming the design is fast enough. A failure of those measurements calls for a visible design decision, not an undisclosed second architecture.
 
 This proposal is ambitious about quality and conservative about mechanism count. Its definition of “amazing” is concrete: a model applications can trust, a backend used well, predictable ownership and recovery, strong performance in the intended regime, correct slowdown beyond memory, and evidence behind every shipped claim.
+
+## Final consistency verdict
+
+**GO for implementation; not yet qualified for release.** The final cross-review reconciled migration abort versus activation/genesis, terminal deletion versus GC roots, receipt lookup versus new-command admission, shared-worker costs, and client health/ownership. The corrections use the existing authority, transaction and ownership mechanisms; they do not introduce another service or protocol. Existing gate families now explicitly exercise those edges.
+
+Start with one end-to-end slice: canonical facts → final-state judgment → LMDB → Free Join/query → TypeScript → reopen, followed by LocalHistory named retry and hosted lost-response recovery. Force the disk path against the warm path early. The remaining uncertainty is implementation/proof/performance evidence—not an invitation to expand the feature list. A new production mechanism must displace existing machinery or satisfy a selected contract that the existing mechanisms cannot; another paragraph or test family is not sufficient justification.

@@ -23,7 +23,9 @@ Protocol-generated path components are a single canonical lower-case ASCII encod
 
 `HEAD` is never deleted or reused during the incarnation's operational life, including after logical tenant deletion: `Deleted` is a tombstone state. Normal writer credentials cannot delete it. Restoring old object versions over it is not a supported repair. A genuinely new database receives a new incarnation and path.
 
-An object key is qualified by **epoch, kind, full 32-byte content digest, and expected length**. Readers verify the length, domain-separated digest, grammar version, identity, and nested references before interpretation. Checksums are not substitute authorization. The same digest at another epoch is a distinct storage name. Do not truncate object identity or GC marks to a fast table fingerprint: those names determine publication/reachability, rather than merely selecting candidates for full-value comparison. Reducing one chunk-reference digest from 32 to 16 bytes saves 16 bytes per eight-MiB chunk, not 16 bytes per fact; measure actual representation multiplicity before trading away the stronger identity assumption.
+The Deleted variant in chapter 20 has **no active recovery root**. Only explicitly retained named roots and the roots of any already-running GC barrier continue protecting old objects. Deletion preserves that barrier's progress; the next collection can reclaim objects it conservatively protected once no retained root needs them. Cancelling a target before genesis uses this same terminal variant with no invented snapshot. Ordinary access refuses before trying to hydrate a tombstone.
+
+An `ObjectRef` contains **epoch, kind, full 32-byte content digest, and expected length**; the storage key shown above uses epoch/kind/digest, while expected length is checked reference metadata. Readers verify the length, domain-separated digest, grammar version, identity, and nested references before interpretation. Checksums are not substitute authorization. The same digest at another epoch is a distinct storage name. Do not truncate object identity or GC marks to a fast table fingerprint: those names determine publication/reachability, rather than merely selecting candidates for full-value comparison. Reducing one chunk-reference digest from 32 to 16 bytes saves 16 bytes per eight-MiB chunk, not 16 bytes per fact; measure actual representation multiplicity before trading away the stronger identity assumption.
 
 The production S3 adapter needs only the concrete operations this protocol uses: read a versioned head, conditionally create/replace it, stream immutable objects, list actual object names for collection, and delete eligible objects. Do not create a generic storage framework to defend the old five-verbs abstraction. A memory adapter and deterministic fault adapter exist for testing; a filesystem object store is not a second production storage engine.
 
@@ -51,10 +53,10 @@ A `LogSnapshotCertificate` wraps **one owned core read transaction**. Its facts,
 The log owns export/import framing. A checkpoint is:
 
 1. A canonical stream of schema identity, application facts, and log system records, including authoritative migration-history/provenance metadata. Physical LMDB row IDs, dictionary numbering, freelist layout, and host page sizes are not authoritative identities.
-2. Fixed-target byte chunks, initially 8 MiB uncompressed. Chunks may split long framed records; the decoder is a bounded streaming parser. Compression, if enabled, declares and enforces uncompressed lengths and resource limits.
-3. A streamed manifest listing chunk order, object refs, compressed/uncompressed lengths, stream digest, logical application/system digests, and the captured stamps. The manifest itself is streamed/spooled and multipart-uploaded if necessary; it need not fit RAM.
+2. Fixed-target byte chunks, initially 8 MiB, **uncompressed in 1.0**. Chunks may split long framed records; the decoder is a bounded streaming parser. No compression codec or decompression path is selected.
+3. A streamed manifest listing chunk order, object refs/byte lengths, stream digest, logical application/system digests, and the captured stamps. The manifest itself is streamed/spooled and multipart-uploaded if necessary; it need not fit RAM.
 
-The first implementation is full logical export, not content-defined incremental chunking, a remote page cache, or a custom persistent tree. Identical immutable chunks can be reused **only where the GC reference rule permits**; correctness does not depend on cross-checkpoint deduplication. An optional native LMDB image is a later, separately qualified cache acceleration, not required for the initial authoritative format.
+The first implementation is full logical export, not content-defined incremental chunking, a remote page cache, or a custom persistent tree. Identical immutable chunks can be reused **only where the GC reference rule permits**; correctness does not depend on cross-checkpoint deduplication. Snapshot compression and native LMDB snapshot-image acceleration are deferred, not dormant 1.0 format variants.
 
 Upload concurrency is bounded and charged before buffers/requests start. Default two 8 MiB chunk buffers does not become “one buffer per chunk.” Multipart requests use checked manifests, explicit complete/abort outcomes, bounded retry, and a documented incomplete-upload cleanup policy. A multipart upload identifier is not publication. No checkpoint is referenced until every required object has been durably completed and content-verified.
 
@@ -117,7 +119,7 @@ The complete persistent GC state is in the existing head. No collector owns auth
 
 ### 1. Close an object epoch
 
-From exact head H with epoch E and `gc=Idle`, form a barrier containing the current recovery root and all named roots in H. Publish H' by CAS, incrementing `object_epoch` to E+1 and installing `Marking { cutoff_epoch:E, protected_roots, barrier_id }`.
+From exact head H with epoch E and `gc=Idle`, form a barrier containing its Live recovery root, if any, and all explicitly retained named roots in H. A Deleted head contributes no active root; an empty root set is valid. Publish H' by CAS, incrementing `object_epoch` to E+1 and installing `Marking { cutoff_epoch:E, protected_roots, barrier_id }`.
 
 The root set is immutable for this collection. It need not include future roots because of the reference rule below. Commands and maintenance continue after the barrier using the new epoch. If a candidate CAS races the barrier, either the candidate wins first and is in the captured roots, or it loses and must rebuild against the new epoch.
 
@@ -184,7 +186,7 @@ All gates below are release-blocking for the corresponding supported backend; sk
 | `STORE-02` | Grow across 32 GiB and several elastic map-resize boundaries with concurrent readers/writes; correct facts and typed real disk/address exhaustion |
 | `STORE-03` | Capture snapshot, continuously commit while exporting; complete export matches the captured attachment/stamps, not later generation; no quiet-window restart |
 | `STORE-04` | Staged checkpoint S, newer T writes, other checkpoint B; preserve `(S,T]`, reject backwards base, and keep all retained roots |
-| `STORE-05` | Chunk corruption, truncation, wrong key/hash/length, compression bomb, malformed manifest and cyclic refs; bounded refusal before activation or deletion |
+| `STORE-05` | Chunk corruption, truncation, wrong key/hash/length, unsupported compression framing, malformed manifest and cyclic refs; bounded refusal before activation or deletion, with no decompressor invoked |
 | `STORE-06` | Abort each chunk/multipart request, lose completion response, retry, crash; never publish an incomplete snapshot; orphan discovery remains possible |
 | `STORE-07` | Replay envelope reached during sustained writes/failed maintenance; bounded refusal, then progress after checkpoint, with no acknowledged loss |
 | `STORE-08` | Cache has same schema/counters under another prefix/account/incarnation; refuse before reads, replay, or cleanup; include case/Unicode aliases on actual filesystems |
@@ -195,7 +197,7 @@ All gates below are release-blocking for the corresponding supported backend; sk
 | `LOCAL-03` | LocalHistory grows beyond hosted tail policy, retires receipts, reopens, and restores a named point; LMDB recovery needs no remote replay checkpoint, current retirement is atomic, old point preserves its original evidence |
 | `GC-01` | Old writer stages X, barrier marks/deletes X, old writer resumes; old CAS cannot publish; restaged new-epoch X is never hit by old collector |
 | `GC-02` | Pause before/after epoch CAS on both writer and collector; every interleaving either protects the candidate or invalidates its expected head |
-| `GC-03` | Drop current checkpoint while a named restore point still needs it; restore still succeeds after complete collection |
+| `GC-03` | Drop current checkpoint while a named restore point still needs it; restore still succeeds after complete collection; tombstone an authority during a barrier, preserve its progress, then collect former live objects in a later pass after explicit roots release; the tombstone itself remains |
 | `GC-04` | Crash after checkpoint CAS, advance head twice, reopen scratch; no immediate remote delete based on current-head inequality |
 | `GC-05` | Add/remove roots concurrently with mark/sweep; include repinning an unretained old ref; rule rejects unsafe introduction |
 | `GC-06` | Kill during mark, upload partial mark set, corrupt one mark page; no sweep from incomplete proof |

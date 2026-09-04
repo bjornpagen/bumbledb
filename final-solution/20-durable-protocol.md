@@ -53,12 +53,17 @@ This is the **hosted** logical schema. `HistoryAuthority` is `LocalHistory { com
 Head {
   format, database_id, incarnation_id, schema_id,
   revision,
-  access: Active | Frozen { reason, operation_id } | Deleted { operation_id },
-  decision: DecisionStamp,
-  state: StateStamp,
-  recovery: { checkpoint: SnapshotRef, tip: DecisionRef, tail_count, tail_bytes },
-  receipts: { open_epoch, retired_through },
-  migration_history: MigrationHistoryRef,
+  lifecycle: Live {
+    access: Active | Frozen { reason, operation_id },
+    decision: DecisionStamp,
+    state: StateStamp,
+    recovery: { checkpoint: SnapshotRef, tip: DecisionRef, tail_count, tail_bytes },
+    receipts: { open_epoch, retired_through },
+    migration_history: MigrationHistoryRef
+  } | Deleted {
+    operation_id,
+    reason: Erasure | MigrationAborted { source_identity, plan_set_digest }
+  },
   activation: NotActivated | Activated {
     operation_id, target_genesis, cause: Create | Restore | Migration { plan_set_digest }
   },
@@ -89,6 +94,10 @@ LogSnapshotCertificate {
 Genesis is an explicit **admitted initial snapshot**, empty for ordinary blank creation but potentially nonempty for a validated import, restore, or migration. Its sequence-zero decision sentinel hashes a versioned genesis record binding identity/schema, canonical initial application/system digests, and migration/source provenance; it is not one universal zero hash that can authenticate unrelated initial states. Avoid self-reference: the genesis preimage excludes its own stamp and the snapshot-manifest hash that will carry that stamp. Compute the initial logical digests/provenance first, then genesis hash, then the certificate/manifest binding that hash. Migration-history entries bind target identity and logical target digest, not a circular copy of the target genesis hash. A new incarnation begins with `StateStamp(incarnation,0)`, open receipt epoch 1, retired-through 0, and no executable old-incarnation command receipts. The initial application facts may already be nonempty; data revision counts subsequent changes, not imported row count. Old receipts can remain explicit archival recovery evidence. Parent hashes authenticate sequence continuity; they do **not** require retaining every parent object forever. A recovery root means “this checkpoint at S plus exactly the decisions `(S,T]`,” not an unrestricted traversal back to genesis. The retention walker uses the same stopping boundary as recovery.
 
 The head is bounded metadata, not the receipt database. The named-root count defaults to 64 and has an explicit configured cap and encoded-byte cap. A full list returns `RootCapacityExceeded`; it never discards another root. These are metadata/resource policy bounds, not database-size limits. Large snapshot manifests are streamed/indexed in objects, not embedded in `HEAD`.
+
+`Deleted` is a terminal tombstone, **not a live recovery root with writes disabled**. It has no current checkpoint/tip, receipt table or migration-history dependency. It preserves identity/revision, bounded deletion/cancellation and prior activation evidence, object epoch/GC progress, and only explicitly policy-retained named roots. Activation hashes are evidence values, not implicit object-retention edges. Ordinary open/read/submit/resolve refuses before hydration; authorized retained-root inspection and collection remain separate operations. GC can therefore reclaim the former live state once explicit roots and an in-progress barrier no longer protect it. No transition returns this incarnation to Live.
+
+Cancelling an unpublished migration target can conditionally create its `Deleted/MigrationAborted` tombstone **instead of genesis**, using the planned target identity and exact source/operation/plan binding. This has no fictitious checkpoint or decision stamp and has `NotActivated` evidence. A delayed conditional genesis creation then loses. A live unactivated target can be cancelled only by a matching Frozen-to-Deleted transition racing on the same authority as activation; if activation won, automatic source thaw is refused. Chapter 22 gives the corresponding local publication fence and crash ordering.
 
 The receipt table is a `bumbledb-log` system table materialized transactionally beside application facts. A checkpoint contains it; decisions after the checkpoint are its bounded delta. Consequently a small command normally uploads one decision object and conditionally replaces `HEAD`, not a new remote receipt tree or database image.
 
@@ -158,10 +167,10 @@ The candidate uses a private LMDB write transaction prepared against one publish
 The exact steps are:
 
 1. Admit resource budgets and lifecycle capability; seal the command once.
-2. Read/verify `HEAD`, database identity, active mode, and receipt policy; bring local published state to that **finite captured tip**. A warm writer may start from its already verified exact head and committed materialization, paying for a refresh only on movement; stale candidates are safe because their CAS cannot bypass a newer head/epoch.
-3. Look up the command ID in the checkpointed receipt table plus tail. If found, return the recorded outcome after checking the digest; do not execute again.
-4. Check the precondition and admit the concrete canonical delta. Judge the private application write and form the complete decision bytes/digest. While retaining the same exclusive writer session, seal opaque host-record changes containing receipt and attachment into the same transaction. No application facts change after judgment. For a rejected application delta, abort it and prepare an empty application delta in that same session, then seal the rejection receipt. No-change decisions likewise still seal their receipt. A host-record allocation/storage/sealing failure prevents remote CAS.
-5. Verify every referenced dependency is either inherited from this exact parent recovery/root closure or newly staged in `head.object_epoch`. Upload and verify the immutable decision and any large command objects allowed by the grammar. Do not expose a success yet. The decision contains its outcome but not a circular copy of its own digest; that digest is then carried by the sealed receipt/head attachment.
+2. Read/verify `HEAD`, database identity and control grammar; refuse a Deleted authority before hydration. For a Live authority, bring local published state to that **finite captured tip**. A warm writer may start from its already verified exact head and committed materialization, paying for a refresh only on movement; stale candidates are safe because their CAS cannot bypass a newer head/epoch. Decoding Frozen/receipt policy is not yet a new-command admission check.
+3. For a retained receipt epoch, look up the command ID in the checkpointed receipt table plus tail. If found, return the recorded outcome after checking the digest; do not execute again, even when the authority is Frozen or that epoch is closed. A retired epoch instead returns its permanent expiry refusal; an archival root cannot reopen it.
+4. Only an unseen command requires Active access and an epoch admitting new commands. Then check the precondition and admit the concrete canonical delta. Judge the private application write and form the complete decision bytes/digest. While retaining the same exclusive writer session, seal opaque host-record changes containing receipt and attachment into the same transaction. No application facts change after judgment. For a rejected application delta, abort it and prepare an empty application delta in that same session, then seal the rejection receipt. No-change decisions likewise still seal their receipt. A host-record allocation/storage/sealing failure prevents remote CAS.
+5. Verify every referenced dependency is either inherited from this exact parent recovery/root closure or newly staged in `head.object_epoch`. Upload and verify the one immutable decision containing the complete bounded command/result grammar; auxiliary large-command objects are not part of 1.0. Do not expose a success yet. The decision contains its outcome but not a circular copy of its own digest; that digest is then carried by the sealed receipt/head attachment.
 6. Form `HEAD'` from **that exact `HEAD`**: increment revision and decision sequence; update state revision iff facts change; advance tip/count/bytes; retain all unrelated roots and GC fields.
 7. Conditionally replace `HEAD` using its exact opaque version. **The successful atomic replacement is the hosted publication linearization point.** No cross-object atomic transaction is assumed: immutable dependencies were completed first.
 8. Return the durable receipt once publication is known. Commit/apply the local LMDB transaction and attachment together before exposing the new local snapshot. If local commit fails after remote publication, return/retain `Published` plus local-cache-unavailable health; poison/rebuild the cache, never downgrade the command to rejected or automatically execute a new request.
@@ -186,9 +195,11 @@ The generic S3 adapter preserves raw `Committed`, definite `PreconditionFailed`,
 
 ## Receipt rotation and bounded retention
 
-Only one receipt epoch admits unseen commands. Rotating `open_epoch` is a head maintenance CAS. Older, unretired epochs are closed: known IDs return their receipt, absent IDs return `CommandEpochClosed`. A delayed writer using the previous head cannot publish after this barrier.
+Only one receipt epoch admits unseen commands. Require `0 <= retired_through < open_epoch`; rotation strictly advances `open_epoch`, and retirement can advance only through closed epochs. Constructors/parsers reject backward rotation, retirement of the open epoch and wrapping counters. Rotating `open_epoch` is a head maintenance CAS. Older, unretired epochs are closed: known IDs return their receipt, absent IDs return `CommandEpochClosed`. A delayed writer using the previous head cannot publish after this barrier.
 
 `retired_through` is a monotone prefix. Retirement is explicit operator/application policy and advances atomically with a checkpoint that no longer promises the retired receipt rows. It is not a wall-clock timeout hidden in a client. IDs at or below the frontier always refuse execution, whether their receipt still happens to exist in an older named snapshot or backup.
+
+Prepare the filtered checkpoint privately; never remove currently promised receipt rows from the readable materialization before the authoritative frontier advances. Recovery first verifies an older checkpoint against **its own original logical system digest**, then filters receipt rows according to the captured target head's retirement policy and replays the retained suffix. Hashing already-filtered rows against the older certificate would be a false corruption error. LocalHistory changes its frontier and retained rows atomically in LMDB without a hosted checkpoint.
 
 Within a retained epoch, success/rejection/no-op identity survives checkpointing and response loss. After retirement, precise outcome retrieval is no longer promised, but the protocol still prevents duplicate execution under the expired ID. An application must not turn `ReceiptExpiredUnknown` into an automatic new-ID retry. Essential long-lived business idempotency belongs in application facts whose lifetime matches the business process.
 
@@ -205,7 +216,7 @@ State witnesses are log-layer values copied from these snapshots. A witness from
 ## Local and S3 modes without a second filesystem protocol
 
 - **Core embedded:** normal `bumbledb` transactions, local durable LMDB commits, core generation/snapshot vocabulary. No log receipt claim is implied.
-- **Local history:** optional `bumbledb-log` wrapper stores current facts, retained decisions/receipts, and its identity/stamp attachment in the same local LMDB transaction. Its linearization point is durable LMDB commit. It uses the same command evaluator/outcome grammar but does not emulate an object store with expiring token files. LMDB already contains complete authoritative state: no remote-tail envelope or full checkpoint is required merely to reopen it. Receipt retirement is an atomic local metadata/row change; independent named snapshots preserve their own older evidence.
+- **Local history:** optional `bumbledb-log` wrapper stores current facts, retained terminal receipts, and its identity/current-stamp attachment in the same local LMDB transaction. Its linearization point is durable LMDB commit. It uses the same command evaluator/outcome grammar but does not persist a second command-body log or emulate an object store with expiring token files. LMDB already contains complete authoritative state: no remote-tail envelope or full checkpoint is required merely to reopen it. Receipt retirement is an atomic local metadata/row change; independent named snapshots preserve their own older evidence. Exact older-stamp requests without retained evidence return `WitnessUnavailable`; they do not justify retaining every command body forever.
 - **S3 history:** conditional S3 head replacement is authority; local LMDB is a recoverable materialization. Local transaction success before remote publication is never ordinary success.
 
 A local-history directory has one owning process lifetime, enforced by a supported OS lock acquired before cleanup and held through native close. In-process readers can be concurrent. A paused holder remains owner; no timeout enables another process to steal ordinary POSIX mutation rights. Remote writers can use separate local directories and arbitrate through the same S3 head. An object-store filesystem emulator is test support, not an alternate production database engine. The same canonical command/outcome evaluator does not imply identical physical crash mechanisms; the local LMDB commit and hosted S3 CAS are deliberately distinct publication variants.
@@ -242,7 +253,7 @@ These are required new tests, not claims that they already exist or pass. Feed t
 | `PROTO-13` | Continuous append while refresh runs; captured-tip refresh terminates or returns budgeted progress rather than chasing infinity |
 | `PROTO-14` | Close/revoke while sealing, preparing, uploading, in-flight, and settling; no new post-close dispatch and no discarded uncertainty |
 | `PROTO-15` | Corrupt parent/hash/length/schema/sequence/wrong incarnation; fail closed before rows become readable |
-| `PROTO-16` | Rotation racing unseen old-epoch command, known retry and retirement; exact new-admission boundary and monotone retired prefix; hydrate a published old-epoch tail after rotation/freeze and prove its historical effects are replayed despite current admission refusing that epoch |
+| `PROTO-16` | Rotation/freeze racing unseen commands, known retries and retirement; retained known IDs resolve while Frozen or epoch-closed, unseen commands do not execute, and retired epochs permanently refuse. Reject backward/open-epoch retirement; verify an old checkpoint's original digest before filtering, and never remove promised live rows before frontier publication. Historical replay ignores current admission guards; Deleted refuses ordinary access before hydration |
 | `PROTO-17` | Core embedded and LocalHistory are separately tested; local history atomically persists facts/receipt/head attachment across process kill |
 | `PROTO-18` | Tiny work/memory/tail/receipt budgets at every loop; charge before growth, bounded cancellation, no unbounded retry or abandoned worker; inject `MAP_FULL`/allocation/I/O failure while sealing host records after decision hashing and prove no CAS was dispatched |
 | `PROTO-19` | Empty creation and nonempty restore/migration genesis; canonical acyclic logical-digest projection excludes self/control fields while outer certificates bind them; counters start at zero, fresh receipt epoch starts empty, old-scoped commands cannot acquire current admission, and hydration installs captured-head controls instead of old checkpoint authority |

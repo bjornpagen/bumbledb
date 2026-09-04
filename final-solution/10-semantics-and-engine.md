@@ -154,15 +154,15 @@ Perform page-producing candidate writes before the remote CAS. If a later local 
 
 `ENOSPC`, quota exhaustion, map-address reservation failure, reader-slot exhaustion, corrupt pages, and map-size exhaustion are distinct diagnostics. A host may impose explicit tenant disk quotas; that is not a built-in 32 GiB database ceiling. Free-space checks reserve useful headroom but cannot prove a concurrent filesystem write will succeed. The actual commit result remains authoritative.
 
-Native LMDB files are local caches tied to their supported page/word/endian/platform envelope. Canonical streamed rows are the portable interchange boundary used by the log. Do not promise that a raw `.mdb` copied across arbitrary architectures will open correctly.
+Native LMDB files are local physical storage tied to their supported page/word/endian/platform envelope. They are authoritative for core/LocalHistory and disposable materializations only for HostedHistory. Canonical streamed rows are the portable interchange boundary used by the log. Do not promise that a raw `.mdb` copied across arbitrary architectures will open correctly.
 
 ## 7. Private candidate hosting
 
-The preferred hosted path keeps an uncommitted `RwTxn` on a dedicated owning worker while the log's conditional HEAD publication is in flight. Existing ordinary `RoTxn`s continue to see committed state; new ordinary readers also open committed snapshots. Never use heed's special nested-read-of-write facility as an ordinary read surface.
+The selected hosted path keeps an uncommitted `RwTxn` on its owning worker in the bounded shared executor while the log's conditional HEAD publication is in flight. Existing ordinary `RoTxn`s continue to see committed state; new ordinary readers also open committed snapshots. Never use heed's special nested-read-of-write facility as an ordinary read surface.
 
 The worker does not move the transaction through an arbitrary async executor. It owns it until commit/abort; network completion is delivered as data. Per-attempt deadlines and cancellation bound waiting. On a CAS loss, abort, catch up, and rejudge the same immutable command. On an unresolvable response within the budget, abort local candidate and hand control back with an explicit unknown publication outcome. The durable log owns retry evidence.
 
-This holds LMDB's one-writer slot across one bounded network attempt. That is a real throughput tradeoff, accepted for the simpler per-tenant total-order design. It does **not** clone a database per candidate, expose speculative state, or force other tenants to wait on the same worker. If measurement rejects this cost, an overlay may be evaluated later; it is not an extra 1.0 subsystem.
+This holds LMDB's one-writer slot across one bounded network attempt. That is a real throughput tradeoff, accepted for the simpler per-tenant total-order design. It does **not** clone a database per candidate, expose speculative state, or serialize unrelated tenants on this tenant's LMDB writer lock. Shared worker/transport capacity can still queue unrelated tenants; budget and measure that contention using chapter 31's existing fair admission. No per-tenant thread or candidate-overlay subsystem is added in 1.0.
 
 ## 8. Audit disposition and acceptance obligations
 

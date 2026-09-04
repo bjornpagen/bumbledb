@@ -36,11 +36,15 @@ M0: contract, regression/model skeletons, format families
 
 Independent prototypes, test models and binding scaffolds can proceed in parallel. The arrows constrain integration evidence, not who may read or work first. Floats' value/proof work begins in M1 and their executor/native qualification continues through M7. A real per-user application vertical slice is an early integration target, including reopen and lost-response recovery. Preserve measured warm Free Join behavior while building the bounded fallback; do not delete the existing fast path and defer discovering the regression until M7.
 
+M0–M6 exits cover the implemented dependency-ready portion of their named gates, with exact test names recorded in the single chapter 70 ledger. Cross-packet tests remain explicitly pending until their dependencies exist: receipt/GC histories need M5, migration histories and packaged consumers need M6, and complete workload/platform qualification closes in M7. Never label an entire G-family passed merely because its early substrate tests passed. `PKG-07B` alone is post-promotion distribution verification, completed in M8.
+
 ## M0 — Freeze the contract and make failures durable evidence
 
 Create the implementation's explicit guarantee/test inventory from [50](50-audit-closure-matrix.md) and [70](70-test-and-release-gates.md). Preserve original fixture source, observed outputs and artifact limitations. For each old failure, express the successor property in an independent harness or model even where the old public API is removed.
 
 Freeze the finite scalar/law/query roster, same-command add-wins normalization, integer/float interval denotations, canonical float quotient, integer aggregate overflow semantics, concrete 128-bit entity values, command grammar, three history coordinates, local versus hosted publication, and generated migration plan/history contract. Use small golden examples as the first executable specification. Maintain one issue-to-test ledger, not separate inconsistent “done” lists in each language. Freeze hash roles/widths only after the explicit collision/threat model and preformat cost probes in chapter 41; no hash equals fact identity.
+
+Freeze semantic examples before dependent implementation; do not mistake this for freezing an unmeasured physical layout before any prototype exists. Short-lived storage/hash/long-key probes precede final physical golden bytes. Select one layout and one algorithm per role after those probes, remove losing variants, then freeze persistent encodings before format qualification. The first vertical slice is canonical insert/judge/query/reopen through LMDB and TypeScript, with warm Free Join versus forced-disk equivalence and a LocalHistory named retry; hosted lost-response recovery extends that same slice as M4 lands.
 
 Freeze the initial supported OS/CPU/libc/Node/backend matrix in chapter 32: Apple Silicon, ARM Graviton and x86 Vercel Node are canonical targets. Core runs natively; the TypeScript log requires supported Node/native execution and fitting local storage. Browser, Edge, Expo/React Native and WebAssembly support are not implied. ARM/x86 portable correctness is required now; specialized tuning beyond Apple Silicon is not.
 
@@ -56,7 +60,7 @@ Deliverables: approved golden roster, counterexample inventory, independent tiny
 
 ## M1 — Canonical data and a judge with one meaning
 
-Replace the safe raw-codec trust opening with checked typed field construction and a schema-bound byte parser. Close the interval constructor bypass. Add `F64` with canonical NaN/zero, total order, strict canonical bytes, explicit casts, sum/mean and dense-domain `Interval<F64>`. Share endpoint-order kernels; distinguish bounded float measure overflow from unbounded rays. No fixed-width float encoding or approximate capacity weights.
+Replace the safe raw-codec trust opening with checked typed field construction and a schema-bound byte parser. Close the interval constructor bypass. Add `F64` with canonical NaN/zero, total order, strict canonical bytes, explicit casts, sum/mean and dense-domain `Interval<F64>`. Share endpoint-order kernels; distinguish bounded float measure overflow from unbounded rays. No `FixedInterval<F64>`/float-width interval compression or approximate capacity weights; ordinary F64 and float-interval payloads remain fixed-size.
 
 Make full canonical tuple equality authoritative, including long values and collision buckets. Remove default global text interning and expose text as ordinary live value bytes. Keep local physical row IDs separate from application values. Test actual LMDB maximum key sizes and large determinants before selecting physical index encodings.
 
@@ -96,7 +100,7 @@ Add stable command identity, exact-state condition, durable no-change/rejection 
 
 Run the independent history model through client-visible schedules during implementation, not as a final cleanup exercise. Include candidate reads, delayed CAS, lost response, later decisions, checkpoint/receipt movement, live-handle next commands, close and post-publication local failure. Distinguish exact known success, definite precondition failure and unknown transport outcome at the real adapter boundary.
 
-Delete: per-braid slots, vector recovery floors, split commits, writer-ID fencing/counter objects, public raw mutable replica access and the second TypeScript protocol. Exit: G07/G09 and PROTO children pass in deterministic models and real local adapter tests; preliminary real-S3 qualification begins in an explicitly authorized disposable environment.
+Delete: per-braid slots, vector recovery floors, split commits, writer-ID fencing/counter objects, public raw mutable replica access and the second TypeScript protocol. Exit: the implemented command/publication portion of G07/G09 and PROTO passes in deterministic models and real local adapter tests; checkpoint/GC histories and whole-product performance remain recorded dependencies for M5–M7. Preliminary real-S3 qualification begins in an explicitly authorized disposable environment.
 
 ## M5 — Recovery and deletion that preserve the one history
 
@@ -106,19 +110,19 @@ Implement explicit named roots/hydration holds, receipt retirement and hosted ep
 
 Add independent backup/restore primitives in the internal log and TypeScript surface. Restore a writable copy into a new incarnation; preserve old entity IDs as data. Test without the original cache/origin and with independent backup permissions. Do not call an active-store pointer an independent backup.
 
-Delete: scratch-as-deletion-authority, age sentinels/default PITR promise, historical slot/token scans, partial hydration accepted as empty state, retries that lose discovery evidence. Exit: G08/G10 and STORE/LOCAL/GC/FS/S3/REC/BACKUP/RESTORE/ERASE children pass in their declared lanes. Real S3 is mandatory for the hosted claim.
+Delete: scratch-as-deletion-authority, age sentinels/default PITR promise, historical slot/token scans, partial hydration accepted as empty state, retries that lose discovery evidence. Exit: the implemented storage/recovery portion of G08/G10 and STORE/LOCAL/GC/FS/S3/REC/BACKUP/RESTORE/ERASE passes in its available lanes; migration, packaged deployment and full workload qualification remain explicit M6–M7 dependencies. Real S3 is mandatory for the hosted claim.
 
 ## M6 — The application-facing product
 
 Delete the public C API and replace any remaining internal lifetime-erased callback pointers with bounded capabilities where needed. Make TypeScript owners, borrows, commands, snapshots and results explicitly disposable, with small inert wrappers after native close. Keep Rust guards genuinely lifetime-safe. Build bounded asynchronous Node workers so hosted/native work does not block unrelated requests.
 
-Deliver the schema/query SDK, TypeScript log API, schema-diff generator, canonical repo-local plans/history, explicit `migrate()` workflow and server-only Next.js/Alchemy/Vercel examples in [33](33-typescript-migrations-and-apps.md). Users write schemas, never imperative migration modules. Generation requires declarative intent where rename/backfill/destruction is ambiguous. The native log executor validates the generated chain, freezes source authority, evaluates the pending batch with necessary intermediate checks, stages one final destination, admits/verifies it, then returns a still-frozen `ReadyToSwitch` binding and activation reference. Do not publish/rebuild a complete intermediate incarnation per file when plan composition can preserve the same meaning. Activation and binding cutover remain explicit; a durable activation marker resolves lost responses. Abort/thaw is available only while nonactivation is proven. Ordinary app startup never quietly rewrites a production tenant.
+Deliver the schema/query SDK, TypeScript log API, schema-diff generator, canonical repo-local plans/history, explicit `migrate()` workflow and server-only Next.js/Alchemy/Vercel examples in [33](33-typescript-migrations-and-apps.md). Users write schemas, never imperative migration modules. Generation requires declarative intent where rename/backfill/destruction is ambiguous. The native log executor validates the generated chain, freezes source authority, evaluates the pending batch with necessary intermediate checks, stages one final destination, admits/verifies it, then returns a still-frozen `ReadyToSwitch` binding and activation reference. Do not publish/rebuild a complete intermediate incarnation per file when plan composition can preserve the same meaning. Activation and binding cutover remain explicit; a durable activation marker resolves lost responses. Abort must irreversibly fence target activation/delayed genesis before thawing the matching source; observing nonactivation is insufficient. Ordinary app startup never quietly rewrites a production tenant.
 
 The examples must work from installed packages with actual deployment runtime, native bundling, IAM attachment, refreshed credentials, authenticated tenant mapping, deadlines and errors. Alchemy provisions ordinary resources, not a new database control plane. Local development uses LocalHistory. Hosted Node uses S3 and fitting local disk for materialization. Qualify Vercel's ephemeral-disk/cold-open envelope explicitly; larger tenants remain supported on provisioned hosts. Edge is a different unsupported runtime, not a synonym for Vercel Node.
 
 Remove public Rust log exports/docs and the entire C crate/header/export/packaging/workflow/example surface. Internal Rust/Node tests remain indispensable. No compatibility shim, dormant C feature or separate C artifact remains.
 
-Delete: source-mutating packing hooks, unchecked native-version pairing, event/body auth shortcuts, automatic implicit migrations, and duplicate cross-language log API maintenance. Exit: API/RUN/FFI/PKG plus chapter 33 migration/application children pass, including pristine consumer and production-shaped deployment tests.
+Delete: source-mutating packing hooks, unchecked native-version pairing, event/body auth shortcuts, automatic implicit migrations, and duplicate cross-language log API maintenance. Exit: API/RUN/FFI, pre-promotion PKG and chapter 33 migration/application tests run against fresh staged consumers and production-shaped deployments; M7 closes their whole-product evidence. Post-publication `PKG-07B` is not a pre-promotion exit condition.
 
 ## M7 — Close the ledger and complete whole-product measurement
 
@@ -134,7 +138,7 @@ All known supported-behavior defects close with fix, permanent regression and in
 
 Build release artifacts once in staging from the clean candidate revision. Record toolchains, dependency locks, supported targets and all artifact digests. Test those artifacts through isolated installation, API examples, migration drills and backend qualification. Packaging must not rewrite the checkout.
 
-Complete G16 before release authorization/tagging. Publish the tested platform dependencies and packages in the declared order; verify downloaded artifacts equal the staged artifacts and exact native pins resolve. Do not rebuild a different binary during publication. If post-publication installation verification fails, report and repair the release; do not pretend a tag means success.
+Complete G16's **pre-promotion packet**, including `PKG-07A`, before release authorization/tagging. Publish the tested platform dependencies and packages in the declared order; then complete `PKG-07B` by verifying downloaded artifacts equal the staged artifacts and exact native pins resolve. Only then is G16/release completion final. Do not rebuild a different binary during publication. If post-publication installation verification fails, report and repair the release; do not pretend a tag means success.
 
 No source implementation, production migration, cloud resource creation, package publication, or 1.0 tag is authorized by the current proposal-writing phase. The next authorized campaign starts at M0/M1 with these documents and the preserved audit as its contract.
 

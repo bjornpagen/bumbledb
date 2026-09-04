@@ -45,6 +45,20 @@ Engine, replication and SDK reviewers cross-read peer chapters. The primary revi
 
 These decisions are reflected in the normative chapters and root contract. They are not independent optional alternatives to be recombined arbitrarily during implementation.
 
+### Final consistency and minimality pass
+
+The three subsystem agents performed a further read-only cross-review; the primary reviewer integrated all edits. The final pass found and corrected these proposal seams:
+
+- Abort must durably fence target activation **and delayed genesis** before source thaw. An absent/unactivated observation is not a fence. Hosted CAS and the existing stable local namespace lock implement it; cancellation is terminal and race/crash cases extend MIG/TS-MIG gates.
+- A Deleted authority is a distinct tombstone with no active recovery root, not a Live record that keeps its entire database collectible only in theory. Explicit named roots and existing barrier progress remain protected; ordinary access refuses before hydration.
+- Retained receipt lookup precedes new-command admission, so Frozen/closed-epoch retries can resolve. Retirement invariants and original-checkpoint digest verification precede row filtering; LocalHistory needs no duplicate command-body log.
+- A shared executor can queue unrelated tenants even though their LMDB writer locks are independent. Managed revocation, legal Rust borrows, stable lock placement and result/session ownership are now stated consistently.
+- Decided receipts carry separate local materialization health. Input limits do not claim to preempt arbitrary synchronous JavaScript. The Next.js example compares immutable imported configuration references rather than serializing credential providers or adding a manual revision counter.
+- Unselected snapshot compression/native-image variants, large-command indirection, bulk ingestion, blocking TypeScript adapters and background warming are deferred. Existing gate families cover refusal of unsupported formats and the retained safety properties.
+- Milestone evidence follows actual dependencies; physical encodings freeze after early probes. Pre-promotion qualification and post-publication distribution verification are separate, avoiding circular release gates. Fixed-width float-interval compression is refused, not the required fixed-size F64 payload.
+
+Final reviewer judgment: **ready to begin implementation, not ready to release**. No further architecture contradiction was identified in this pass. This is a bounded review conclusion, not proof that unknown defects are absent; the selected numerical, storage, concurrency, deployment and performance evidence remains required. No production code, successor tests, benchmarks, AWS/deployment operations or data mutations were executed by this pass; external writes are limited to committing/pushing the proposal documentation.
+
 ## What was actually checked in this proposal phase
 
 The team inspected current source, examples, toolchain/runtime definitions, installed LMDB wrapper documentation, relevant CI/scripts and the audit. The primary reviewer read the existing workspace/log/C workflows and battery/check/Miri scripts to ground the release gaps. Nightly feature availability was inspected; chapter 13 distinguishes that from compiling/benchmarking a successor prototype. Follow-up read-only Nessie research revisited original intent; the current typed schema/query constructors and direct IR lowering, together with the owner's latest instructions, ground the generated migration design. Historical model suggestions were not treated as owner decisions.

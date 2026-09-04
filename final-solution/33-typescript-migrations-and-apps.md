@@ -189,9 +189,9 @@ The configuration helpers/policy are application-owned. The runner consumes gene
 
 Activation persists its one-time marker with the authority change. A lost response resolves by activationRef; repeated activation returns the recorded outcome/current access mode without thawing a subsequently Frozen or Deleted target. Applied/activation history does not expire with ordinary command receipts.
 
-Status distinguishes UpToDate, Pending, InProgress/Paused, ReadyToSwitch, Activated, OutcomeUnknown and typed drift/refusal. Unknown publication is never resolved by assuming a timeout means failure. Same operation with a different plan/source refuses.
+Status distinguishes UpToDate, Pending, InProgress/Paused, ReadyToSwitch, Activated, Aborted, OutcomeUnknown and typed drift/refusal. Unknown publication is never resolved by assuming a timeout means failure. Same operation with a different plan/source refuses.
 
-Before activation, explicit abort may discard the unused target and thaw the matching source after proving activation did not occur. After activation, do not auto-rollback: even unchanged data state can have new receipts and external effects. Require an explicit decision/effect audit and reverse/repair plan or documented loss acceptance.
+Before activation, explicit abort first durably fences the planned target with a terminal cancellation under that target's publication authority, **then** thaws the matching frozen source. This races atomically against activation or delayed genesis, including when the target is absent; a read of NotActivated is not enough. Unknown cancellation leaves the source frozen, activation winning forbids automatic thaw, and a cancelled operation cannot resume. Chapter 22 specifies the existing S3 CAS/local namespace-lock mechanism and crash ordering. After activation, do not auto-rollback: even unchanged data state can have new receipts and external effects. Require an explicit decision/effect audit and reverse/repair plan or documented loss acceptance.
 
 The application supplies its existing authenticated tenant-binding registry or one deployment environment value. Bumbledb creates no mutable router/alias service and claims no atomic transaction with external deployment configuration. Migrations use an appropriately provisioned Node admin job, not a request hook, Next build import or every worker startup. Native execution can still be expensive and needs disk/CPU/deadline budgets.
 
@@ -206,19 +206,27 @@ import { TenantCache } from "@bjornpagen/bumbledb-log"
 import contract from "./runtime-contract.json"
 import { runtimePolicy } from "./runtime-policy"
 
-const options = { ...runtimePolicy, expected: contract }
-const key = JSON.stringify(options)
 const state = globalThis as typeof globalThis & {
-  __bumbledb?: { key: string; cache: TenantCache }
+  __bumbledb?: {
+    policy: typeof runtimePolicy
+    expected: typeof contract
+    cache: TenantCache
+  }
 }
-if (state.__bumbledb && state.__bumbledb.key !== key) {
+if (state.__bumbledb && (
+  state.__bumbledb.policy !== runtimePolicy || state.__bumbledb.expected !== contract
+)) {
   throw new Error("Database runtime settings changed; restart the development server")
 }
-state.__bumbledb ??= { key, cache: new TenantCache(options) }
+state.__bumbledb ??= {
+  policy: runtimePolicy,
+  expected: contract,
+  cache: new TenantCache({ ...runtimePolicy, expected: contract })
+}
 export const databases = state.__bumbledb.cache
 ~~~
 
-Construction is inert; acquisition opens a trusted binding. The policy declares cache directory, owner/operation limits, memory/disk/output/work budgets and refreshable credential source. It is ordinary finite configuration, not a plugin framework. Platform/request policy numbers are measured settings, not new hard-coded engine size limits.
+Construction is inert; acquisition opens a trusted binding. The policy declares cache directory, owner/operation limits, memory/disk/output/work budgets and refreshable credential source. Treat the imported policy descriptor, its nested static configuration and generated contract as immutable: configuration changes replace those values. The global slot compares those exact imported references, not a freshly spread options object or a serialization of callbacks/providers. A changed reference conservatively requires a full development-server restart, even if semantically equal. The same configured provider may refresh its internal credentials normally; live credential state is not static configuration. No manual revision counter or generic configuration-identity framework is needed. Platform/request policy numbers are measured settings, not new hard-coded engine size limits.
 
 ~~~ts
 // app/api/notes/[id]/route.ts — proposed Bumbledb API
@@ -346,7 +354,7 @@ These rows replace the earlier callback/purity/artifact-closure obligations unde
 | TS-MIG-06 Resume | Crash every freeze/capture/execute/validate/final-genesis boundary. Same operation/plan restarts only unpublished work from fixed original source; resolves/reuses a completed target. No JS stack journal or intermediate published incarnation. |
 | TS-MIG-07 Fusion semantics | Fused pending suffix equals ordered reference-plan evaluation, including intermediate errors/laws, seeds, f64 sum/mean and deterministic output. Five simple maps use one final materialization/publication; genuinely required private passes are explained/measured. |
 | TS-MIG-08 Concurrency/ambiguity | Same/different operations, changed planSetDigest, lost freeze/genesis replies and competing staging owners resolve to matching authority or typed refusal. No duplicate lineage or silent source substitution. |
-| TS-MIG-09 Cutover | Final target frozen until explicit activation; old writers fenced; activation marker survives receipt retirement. Same reference cannot thaw later Frozen/Deleted state. No automatic rollback after activation/receipts/effects. |
+| TS-MIG-09 Cutover | Final target frozen until explicit activation; old writers fenced; activation marker survives receipt retirement. Same reference cannot thaw later Frozen/Deleted state. Race abort against activation/delayed genesis: durable target cancellation precedes source thaw, uncertain cancellation stays frozen, and cancelled operations cannot resume. No automatic rollback after activation/receipts/effects. |
 | TS-MIG-10 Tooling boundary | User writes schema/typed intent only; migration runner consumes generated plans/index without source paths/authoring/compiler. Ordinary app schema/query inference remains direct SDK use, with no mandatory runtime-type codegen. No handwritten migration callback/helper-purity framework/parser. CLI/direct API identical native outcomes; app bundle excludes admin plans. |
 | APP-01 Server boundary | Dev/build/production app imports can construct typed schema/query values but perform no opens/migrations/schema generation. Native/admin artifacts never enter client/Edge/public bundles. Ordinary schema imports preserve AST-first inference. |
 | APP-02 Auth/isolation | Anonymous/forged tenant/binding/stamp/direct-origin calls refuse before open. Concurrent per-user databases and Next/CDN caching never cross identity; writes demonstrate CSRF/auth and stable command/Id128 retry semantics. |

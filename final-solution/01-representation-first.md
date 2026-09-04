@@ -10,7 +10,7 @@ The successor applies the same method to those boundaries. It does not expand th
 
 1. **What does this value mean?** Its denotation must not depend on which host, query plan, dictionary generation, or retry path produced it.
 2. **What evidence permits its creation?** Parsing may establish canonical bytes; admission may establish schema laws; a successful CAS may establish publication. These are different certificates.
-3. **How long is that evidence valid?** A canonical owned value stays canonical. An observed remote HEAD may change immediately. A borrow can be revoked. Treating all three as permanent proofs is a category error.
+3. **How long is that evidence valid?** A canonical owned value stays canonical. An observed remote HEAD may change immediately. A managed borrow token can be revoked; a legal Rust page borrow must remain valid until it ends. Treating these as the same lifetime is a category error.
 4. **Which branches disappear?** If a new abstraction does not remove independent state, repeated validation, duplicated mechanisms, or a necessary substrate boundary, it has not earned its place.
 
 Types make a smaller set of states representable inside their trust boundary. They do not make disk failure, thread cancellation, a paused process, or a changed remote object impossible. Those events become explicit inputs to a small transition machine.

@@ -48,7 +48,7 @@ enum OwnerState {
 
 The variant owns only the resources valid for that state. `Faulted` is not a secret permission to keep serving uncertain facts. It may retain resources needed for safe shutdown or diagnosis; recovery is an explicit bounded operation. A local read-only cache with a last known published snapshot may serve that snapshot only through an explicitly documented healthy cached-read policy, not by ignoring a corruption error.
 
-Opening is registered before asynchronous work starts. Same-binding callers may share that single open attempt but receive independent borrow capsules upon completion. A cancelled waiter does not necessarily cancel another waiter's still-needed open. When the last waiter leaves, cancel the open unless the registry explicitly requested warming; automatic background warming is not in 1.0.
+Opening is registered before asynchronous work starts. Same-binding callers may share that single open attempt but receive independent borrow capsules upon completion. A cancelled waiter does not necessarily cancel another waiter's still-needed open. When the last waiter leaves, cancel the open; background warming is not in 1.0.
 
 Shutdown first closes admission, then joins/cancels registered opens, then drains owners. An open completing in the closing epoch tears itself down and never installs a ready slot or timer. Concurrent `close` calls join one stored closing operation. Registry state must not depend on a promise that can complete after it has been forgotten.
 
@@ -70,6 +70,8 @@ GC/finalizers are a leak backstop only. Correct eviction, native lock release, m
 ## Directory exclusion is local and kernel-held
 
 Use the supported operating system's lifetime file lock around the physical local environment, acquired **before** any mount, sidecar recovery, cleanup or directory replacement. Keep it held through native close and teardown. A process paused for an hour still holds the lock; time does not mint a competing local owner. Process death releases it according to the supported OS primitive.
+
+The lock has a stable namespace identity outside replaceable staging/materialization directories; renaming a directory or unlinking a lock file must not let another process lock a different inode for the same authority. Keep namespace locks and terminal cancellation/deletion markers out of ordinary scratch/cache cleanup. Final local migration-target install and cancellation use this same exclusion, as specified in chapter 22.
 
 No wall-clock TTL, token predecessor chain, periodic lease renewal or check-then-rename proof is needed for this local resource. The lock does not claim to fence S3; the remote HEAD protocol provides publication authority. Shared network filesystems are unsupported unless separately qualified for the required lock and durability semantics. Local filesystem support is explicit, not inferred from a path looking ordinary.
 
@@ -119,7 +121,7 @@ Node's default asynchronous API submits native work to a fixed-capacity Rust exe
 
 The scheduling policy is deliberately simple: bounded FIFO queues with per-tenant concurrent-operation limits and round-robin admission among ready tenants. Long query loops poll the same work/cancellation context at bounded checkpoints. This is a small executor, not a pluggable scheduler architecture. LMDB's local writer exclusion remains the actual writer transaction rule.
 
-Native query work, integrity judgment, replay and checkpoint encoding do not run synchronously on the Node event loop. Result conversion is page-bounded; a completed million-row query is not materialized into one enormous JS array. Command copying is also bounded by a prechecked input limit, with incremental async ingestion into a owned builder for a separately explicit bulk API only if implemented and tested; ordinary atomic command construction remains finite.
+Native query work, integrity judgment, replay and checkpoint encoding do not run synchronously on the Node event loop. Result conversion is page-bounded; a completed million-row query is not materialized into one enormous JS array. Command copying is synchronous, charged during checked finite ingestion, and limited before dispatch. Limits bound accepted data/completed ingestion steps, not the duration of arbitrary host getters or iterators. Async bulk-command ingestion is deferred; there is no second public ingestion protocol in 1.0.
 
 Cancellation propagates through queue admission, reads, stream bodies, replay, query operators, LMDB scratch, checkpoint copy and backoff. It is checked at growth/work boundaries, not just once at function entry. Bounded retry policies apply per operation; a repeatedly identical corrupt replay never silently reseeds forever. Cached-read freshness and maintenance progress are observable even when a bounded pass does not finish.
 

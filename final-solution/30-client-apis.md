@@ -8,7 +8,7 @@ Keep two packages with a one-way dependency. The core exposes **create, open, sn
 
 The public core supports **Rust and TypeScript only**. Delete the entire public C API, its crate/header, exports, artifacts, examples and release wiring during implementation; it is not merely deprecated or hidden. The public **`bumbledb-log` product is TypeScript-only**: `LocalHistory`, `HostedHistory`, commands, backup/restore and generated migrations have no separately supported Rust log SDK. Internal Rust still owns durable protocol evaluation, S3 authority, receipt handling and checked import. TypeScript constructs typed schema/query values and invokes explicit generation/execution; it does not implement a second database state machine.
 
-`LocalHistory` stores facts, decisions, receipts and its head attachment in one local LMDB transaction; `HostedHistory` uses supported S3 HEAD authority with a local LMDB materialization. They share command evaluation/outcome grammar without emulating an object store on local files. Applications needing only embedded facts/laws/query execution use the core without importing the log. No ordinary log success is a speculative local acknowledgement.
+`LocalHistory` stores facts, retained terminal receipts and its current-stamp/head attachment in one local LMDB transaction, without a second command-body log; `HostedHistory` uses supported S3 HEAD authority with a local LMDB materialization. They share command evaluation/outcome grammar without emulating an object store on local files. Applications needing only embedded facts/laws/query execution use the core without importing the log. No ordinary log success is a speculative local acknowledgement.
 
 | Product | Supported public interface | Internal implementation |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ The builder accepts concrete inserts, deletes and one optional exact-state condi
 
 Generated schema APIs and dynamic APIs meet at the same checked canonical row type. External user codecs return input to that parser, not trusted persisted bytes. A generated fast path may construct the same private representation only inside the trusted crate boundary. A hidden public constructor is not a proof.
 
-The builder itself does no I/O, acquires no database writer gate and invokes no replayable application-effect callback. Explicit input getters/iterators execute synchronously as bounded input ingestion; their side effects cannot be undone, but they are never automatically replayed. A convenience `build(fn)` may invoke a **synchronous** callback exactly once; thenables and escaped builder use are rejected. There is no automatic rerun for ID refill, conflict, cancellation or retries. An application performs HTTP calls before construction or after a receipt, never inside a database-owned callback.
+The builder itself does no I/O, acquires no database writer gate and invokes no replayable application-effect callback. Explicit input getters/iterators execute synchronously; their side effects cannot be undone, but they are never automatically replayed. Input/work limits bound copied data and completed ingestion steps; they cannot preempt a getter, iterator `next()` or application callback that never returns. A convenience `build(fn)` may invoke a **synchronous** callback exactly once; thenables and escaped builder use are rejected. There is no automatic rerun for ID refill, conflict, cancellation or retries. An application performs HTTP calls before construction or after a receipt, never inside a database-owned callback.
 
 Mutable buffers, `Buffer` slices, shared backing arrays and one-shot iterables cannot change an accepted command. In 1.0 shared-memory byte views must be copied from a stable input or refused; the SDK must not claim a coherent snapshot of a concurrently written `SharedArrayBuffer`. Iterator/getter exceptions terminate construction before dispatch. Builders cannot accept infinite input without consuming a configured work limit.
 
@@ -90,9 +90,13 @@ Constraints remain essential: a condition protects the application's observation
 
 ```ts
 type SubmitOutcome =
-  | { kind: "decided"; receipt: TerminalReceipt }
+  | { kind: "decided"; receipt: TerminalReceipt; localHealth: LocalMaterializationHealth }
   | { kind: "not-submitted"; command: CommandRef; error: DbError }
   | { kind: "outcome-unknown"; command: CommandRef; error: DbError }
+
+type LocalMaterializationHealth =
+  | { kind: "ready"; at: DecisionStamp }
+  | { kind: "unavailable"; error: DbError }
 
 type TerminalOutcome =
   | { kind: "committed"; changed: ChangeSummary; result: CommandResult }
@@ -109,6 +113,8 @@ interface TerminalReceipt {
 ```
 
 `CommandResult` is bounded caller-declared scalar metadata, including application-owned IDs when useful, not an arbitrary host closure return value. Its grammar and digest contribution are fixed by the command codec. No closures, host objects or nondeterministic response calculations enter durable receipts.
+
+`localHealth` describes this invocation's materialization, **not durable receipt content**. Ready names its actual verified local frontier; a resolved receipt does not itself prove the cache has reached that decision. Unavailable carries a bounded typed cause without changing the recorded outcome. Subsequent reads still request their own consistency; cleanup/close failure cannot erase a known decided receipt.
 
 Every terminal arm is a durable decision in the **log** package. Hosted history requires its authoritative HEAD CAS; `LocalHistory` requires its single durable LMDB transaction. Raw core `Db::apply` does not manufacture receipts. A no-change command still receives an identity and decision, so business-action retries do not depend on whether a set happened to change. Returning a preexisting application ID in a no-change receipt does not issue that ID or assert that an entity fact exists. Invariant rejection has complete statement-level diagnostics according to the engine contract; if the bounded diagnostic representation cannot be produced, return a resource failure before deciding, not a falsely complete rejection.
 
@@ -127,6 +133,8 @@ The normal client retry rule is simple: **resolve or resubmit the identical seal
 - a typed operational error without an invented decision.
 
 Same ID/different digest always refuses. Epoch closure/retirement are explicit maintenance actions, never local wall-clock expiry. A closed epoch retains existing receipts; a retired epoch cannot be resurrected. Closing a database owner does not retire receipt epochs.
+
+Frozen access still permits retained receipt lookup; only new command admission is frozen. A Deleted authority refuses ordinary lookup before hydration; authorized historical inspection is a separate log operation and cannot restore request admission.
 
 ## Public reads are published snapshots
 
@@ -151,6 +159,8 @@ A snapshot has no mutation method and never exposes the private engine handle. T
 
 Use one immutable schema-level `QueryTemplate`. It contains validated logical IR, not tenant rows, dictionary IDs or unbounded per-tenant memo state. A snapshot-bound `ExecutionSession` owns mutable planning/execution/cache state and is explicitly closable. It may be reused within its documented identity/snapshot scope; schema-level templates can be shared across same-schema tenants.
 
+The TypeScript convenience `snapshot.execute(template, parameters, context)` owns an operation-scoped internal session and closes it before returning the independent `CompleteResult`. Explicit reusable sessions use the same mechanism, remain bound to their snapshot identity and require disposal; no second executor or result lifetime is implied by the convenience method.
+
 Prepared statistics are an optimization, not a correctness premise. A trimmed execution session can rebuild its optional caches. Physical catalog identity remains separate from logical database identity so remount, migration and a rebuilt materialization cannot reuse stale physical ordinals or cached row references. The selected core stores inline text; there is no new dictionary-lifetime framework here.
 
 `execute(template, parameters, context)` returns a sealed `CompleteResult`, possibly backed by temporary LMDB scratch. Any execution failure publishes no result. Mutable reused out-parameters are not the default API. A lower-level reusable buffer, if retained internally, is cleared atomically on **every** error family. No aggregate binding means no group: a global aggregate over empty input returns an empty answer set, not an invented zero/NaN row.
@@ -172,6 +182,7 @@ await using db = await HostedHistory.open(source, theory, runtimeOptions)
 await using snap = await db.snapshot({ consistency: { kind: "latest" }, ...requestOptions })
 await using rows = await snap.execute(balanceQuery, { account }, queryOptions)
 const previous = (await rows.collect({ maxBytes: 64_000 }))[0]
+if (!previous) throw new Error("Account balance is missing")
 
 const draft = Command.builder(theory, db.identity, {
   id: { receiptEpoch: db.receiptEpoch, requestId: requestKey },
@@ -194,7 +205,7 @@ switch (outcome.kind) {
 
 Async database work runs outside the JS event loop. `using` releases local sealed command values; `await using` closes owners, snapshots, completed results (which may own disk scratch) or runtime operations requiring a drain. Disposing a command only releases its owned bytes; it cannot cancel a command already submitted. The native runtime retains its own immutable reference until the operation ends. An HTTP adapter preserves an already decided receipt separately from a later cleanup/close error; standard disposal failure cannot be reclassified as command rejection. Use the explicit close report when the host must return known publication plus unavailable local-health detail.
 
-A single-owner embedded convenience adapter may expose blocking `snapshot/apply/execute` for the core and `snapshot/submit/execute` for local log history. It delegates to the same implementation and must not be the default in a shared Node request loop. No sync callback is silently permitted to become async.
+Public TypeScript storage/query/log operations use the bounded asynchronous native adapter in 1.0. No public blocking TypeScript core/LocalHistory adapter is added; ordinary Rust core calls retain their native blocking API. Schema/query/command value construction remains synchronous and finite. No sync callback is silently permitted to become async.
 
 ## Floating values and cross-language fidelity
 
@@ -210,7 +221,7 @@ A single-owner embedded convenience adapter may expose blocking `snapshot/apply/
 
 JS built-in `JSON.stringify` is **not** the database value wire codec: it loses infinities/NaN and does not encode BigInt. The supplied HTTP/export value codec uses schema-tagged canonical scalars; every `f64`, including finite values, uses `{"$f64":"7ff8000000000000"}` with its own canonical 16-lowercase-hex-digit bit image. Integer values are canonical decimal strings, bytes use one strict encoding, and `Id128` uses 32 lowercase hex digits. This keeps human-facing JS ergonomics without inventing a second numeric semantics in TypeScript. Decoders reject malformed widths, unknown tags, noncanonical representations and wrong-schema values.
 
-Host float equality is not a database predicate builder. Documentation must show `field.eq(NaN)` rather than evaluating `NaN === NaN` in application code. Returned JS values are canonicalized, so `Object.is(value, -0)` is false. Do not claim decimal financial arithmetic from binary64; monetary examples retain scaled integers.
+Host float equality is not a database predicate builder. Documentation must show `r.eq(field, NaN)` in the rule-builder style rather than evaluating `NaN === NaN` in application code. Returned JS values are canonicalized, so `Object.is(value, -0)` is false. Do not claim decimal financial arithmetic from binary64; monetary examples retain scaled integers.
 
 ## Errors are data with one vocabulary
 
@@ -235,10 +246,10 @@ Every row is a required test family, not work this proposal has already executed
 | API-01 Canonical ownership | Mutate array/slice/Buffer/Id128 input after each builder call, during submit and CAS retry; one-shot iterators; getter throws; escaped/spent builders. Permute duplicate add/remove calls: same-fact add wins within the command; separate commands remain ordered. Local and replayed concrete commands remain identical or construction fails before dispatch. |
 | API-02 Closed ingestion | Downstream custom codecs, invalid bool/interval/fixed-width/UTF-8/relation/float images never admit corrupt state. Generated and dynamic APIs have the same accepted domain. |
 | API-03 Conditions | Two stale read/decrement commands: only the permitted exact-state decision applies. Blind effects retain documented set semantics. Maintenance/no-change/rejection do not move a `StateStamp`; every terminal receipt moves `DecisionStamp`. |
-| API-04 Named retries | Crash before/after dispatch and before response; duplicate simultaneous submissions; same ID/different digest; live-handle continuation after unknown; closed/retired receipt epochs. No repeated business effect or silently refreshed request ID. |
+| API-04 Named retries | Crash before/after dispatch and before response; duplicate simultaneous submissions; same ID/different digest; live-handle continuation after unknown; Frozen/closed/retired receipt lookup. Known publication plus failed local apply/cleanup returns the original receipt with separate unavailable local health, never rejection/unknown. No repeated business effect or silently refreshed request ID. |
 | API-05 Published reads | Pause candidate application/PUT/CAS at every point, then succeed, lose, reject, cancel or crash. Every ordinary observed snapshot belongs to published history, not merely the converged final state. |
 | API-06 Application IDs | Id128 canonical width/hex validation, generation once before sealing, same-ID retries after response loss/restart/CAS loss, changed application ID under the same command ID yields digest conflict, and explicit injected collisions follow ordinary laws. Restore preserves IDs without authority checks. Assert no allocator/reservation/FreshRef/fresh-map or ID-burn persistence survives in public APIs or execution. |
-| API-07 Output atomicity | All query, bind, overflow, foreign-template, decode, cancellation and resource errors expose no current partial result. Success/error/success reuse and page interruption preserve result identity. |
+| API-07 Output atomicity | All query, bind, overflow, foreign-template, decode, cancellation and resource errors expose no current partial result. Implicit execute sessions close on success/error while completed results remain independent; explicit sessions retain only their documented snapshot scope. Success/error/success reuse and page interruption preserve result identity. |
 | API-08 Identity | Same schema/equal sequence/different data, changed bucket/prefix, case aliases, reborn namespace, remount and migration cannot reuse cache, receipt, witness or mutable execution state across identity boundaries. |
 | API-09 Float boundary | Full scalar golden corpus including every sign/exponent class, subnormals, sNaN/qNaN payloads, infinities and signed zeros; JS/Rust/wire/query/key/sum/mean results agree bit-for-bit after canonicalization. Float interval endpoints/membership/duration agree with chapter 11. |
 | API-10 Bounded work | Tiny command/query/catch-up limits at every allocation/growth boundary; cancellation before queue, during I/O/compute/spill/finalization. No hidden native work continues after a reported completed cancellation. Ambiguous publication remains unknown. |
