@@ -4,7 +4,7 @@ Status: proposed breaking 1.0 design, not an implemented or verified protocol. T
 
 The choice is a single, never-reused tenant `HEAD`, changed by compare-and-swap, over immutable decision records and a bounded replay tail. LMDB remains the local database. A checkpoint replaces an older recovery base without changing the application state. There is no per-braid publication, distributed writer lease, shared ID-range allocator, universal commit DAG, or custom remote page engine.
 
-All machinery in this chapter belongs to **`bumbledb-log`**, whose 1.0 public product is the **TypeScript package and its TypeScript CLI/integrations**. Its Rust state machine is internal native implementation, not a second public Rust API; no public C log header/API ships in 1.0. The main `bumbledb` library remains facts, laws, queries, checked admission, and LMDB, with its own core-language bindings. An application using only the core does not acquire a remote history protocol, a command identity system, or backup/migration orchestration.
+All machinery in this chapter belongs to **`bumbledb-log`**, whose 1.0 public product is the **TypeScript package and its TypeScript CLI/integrations**. Its Rust state machine is internal native implementation, not a second public Rust API. The main `bumbledb` library remains facts, laws, queries, checked admission, and LMDB, with public Rust and TypeScript bindings. The successor has no public C core or log API; the old C surface is slated for deletion during implementation. An application using only the core does not acquire a remote history protocol, a command identity system, or backup/migration orchestration.
 
 ## The alternatives, and the actual price of the choice
 
@@ -16,6 +16,8 @@ All machinery in this chapter belongs to **`bumbledb-log`**, whose 1.0 public pr
 | **Tenant `HEAD` + immutable decision chain + LMDB checkpoint** | One linearization point, tenant-wide atomicity, straightforward retry and causality | One tenant is one write arbitration domain; direct S3 latency is real, contention wastes candidate work, and bounded replay requires checkpoint progress |
 
 A resident deployment is a placement/connection-reuse optimization of the selected protocol, not a different authority. **One authority is not one caller:** many hosted writers can contend through the same head; concurrent core/local-history callers serialize through LMDB's writer transaction. Arbitrary merge/union is not free because keys, deletes, and capacity laws are not generally closed under it. No additional CRDT/semilattice write protocol is introduced in 1.0. Cross-tenant atomicity is out of scope. A hot tenant is not silently split into multiple authorities.
+
+The intended hosted workload is many per-student/per-user application databases, with their actual sizes, burst patterns and cold-start frequency measured—not a claim that every tenant is tiny. A warm successful command normally has two sequential remote stages: immutable-object upload and conditional head replacement, in addition to judgment, queueing and local settlement. The private LMDB writer is occupied during the bounded publication attempt. Durable no-op/rejection decisions also pay that path. Before fixing public performance claims or policy defaults, measure the actual applications on Apple Silicon locally, ARM Graviton/AWS, and the qualified x86 Vercel Node runtime: warm/cold latency, 1/2/4 contenders, no-op/rejection-heavy workloads, and object requests/bytes per terminal result. Resident placement cannot erase S3 round trips; a throughput or p99 requirement not met by this protocol must be reported, not hidden behind an embedded-engine benchmark.
 
 ## Identity and coordinates
 
@@ -31,10 +33,15 @@ These are distinct types in `bumbledb-log`, not interchangeable integers. The ma
 | `StateStamp { incarnation, data_revision }` | Changes only when the net application fact set changes; used by exact-state read witnesses |
 | `ReceiptEpoch` | Command-admission/deduplication namespace, unrelated to object GC epochs |
 | `CommandId { receipt_epoch, request_id }` | Caller-stable request identity; `request_id` is 128 opaque bits, bound to one canonical command digest |
+| Application `EntityId` | Optional application-owned nominal `Bytes<16>` value; no command authority, receipt lifetime, or history coordinate is encoded in it |
 | `ObjectEpoch` | Namespace generation for newly introduced remote objects; advanced only by the GC barrier protocol |
 | `ObjectRef { epoch, kind, digest, length }` | Typed, verified immutable object identity; the digest alone is not its storage key |
 
 No coordinate wraps. Exhaustion is a typed administrative refusal, not zero, saturation, or ID reuse. An identical command ID with different bytes produces `CommandIdentityConflict`, never a second meaning. Application-supplied request IDs need uniqueness; collisions are detected by digest binding rather than being treated as successful idempotency.
+
+An entity identifier and `CommandId.request_id` may both contain 128 bits, but are distinct roles and SDK types. An entity value is ordinary persistent application data; a command ID binds one named request within the current incarnation/receipt namespace. Neither is accepted in place of the other merely because the bytes have the same width. The core continues to allow schemas with other ordinary scalar key domains; it does not require an entity-ID service or a new scalar primitive.
+
+Authoritative content digests remain full **256-bit/32-byte cryptographic values**: schema identity, command binding, decision/parent hashes, object addresses, snapshot application/system checks, and migration plan/history commitments. The current BLAKE3 baseline is not silently replaced/truncated because a short CPU-accelerated table hash benchmarks well. A non-authoritative lookup fingerprint can be narrower only when full canonical equality independently resolves collisions; receipt identity and GC reachability are not that kind of lookup. Cryptographic content hashes detect mismatched bytes under their collision-resistance assumption; they are not credentials or message authentication. The 128-bit application/request IDs and opaque S3 version token serve different roles.
 
 The local cache additionally binds the **configured origin**—backend/account/bucket/prefix as appropriate—and the complete database identity tuple. An origin move is an explicit log operation/runbook, not acceptance of a same-schema/equal-counter cache.
 
@@ -53,7 +60,7 @@ Head {
   receipts: { open_epoch, retired_through },
   migration_history: MigrationHistoryRef,
   activation: NotActivated | Activated {
-    operation_id, target_genesis, cause: Create | Restore | Migration { plan_digest }
+    operation_id, target_genesis, cause: Create | Restore | Migration { plan_set_digest }
   },
   roots: bounded list<NamedRoot>,
   object_epoch,
@@ -91,9 +98,9 @@ The verified migration-history prefix is fixed at this incarnation's genesis and
 
 Activation is a one-time bounded control record, not a mutable migration journal. `activateMigration` changes `NotActivated` to the matching `Activated` marker atomically with access becoming Active; later commands, freeze, GC and receipt retirement preserve it. A matching retry returns the recorded activation evidence and current access mode without mutation: it must not thaw a later Frozen state or revive a Deleted authority. An explicit ordinary blank creation can publish its corresponding initial activation marker with genesis. A named snapshot/backup captures control provenance; a cache hydrated from an older checkpoint installs the **captured target head's** current control projection after validating the checkpoint/tail, rather than restoring obsolete authority from the checkpoint. A restored lineage never acquires live authority from an old captured activation marker.
 
-**Exactly one authoritative fact payload:** the decision stores the symbolic canonical command, not a second resolved delta. Its sequence/incarnation deterministically resolve its fresh placeholders. `outcome_evidence` contains the terminal tag, changed summary, observed precondition state, or bounded rejection evidence; fresh mappings and the declared result recipe are deterministically expanded for the public receipt. Initial prepare and replay use the same pure Rust command resolver to produce a checked engine delta, never a host callback. Replay verifies the command digest and checks the recorded outcome against evaluation at the exact predecessor. Diagnostic selection/order is codec-defined, not dependent on available RAM or a caller's timeout; insufficient work budget returns progress/failure rather than different decision evidence. This costs deterministic resolution/admission work but removes duplicate fact bytes and a possible command/delta disagreement. After checkpointing, the receipt table retains the bounded ID/digest/outcome/result needed for lookup, not every old command body. Retired receipts can subsequently be removed under the explicit policy.
+**Exactly one authoritative fact payload:** the decision stores the concrete canonical command, not a second delta with duplicated facts. All application identifiers already have their final bytes. `outcome_evidence` contains the terminal tag, changed summary, observed precondition state, or bounded rejection evidence; a bounded declared result is copied into the public receipt. Initial prepare and replay use the same checked command decoder and core admission, never a host callback or sequence-dependent value resolver. Replay verifies the command digest and checks the recorded outcome against evaluation at the exact predecessor. Diagnostic selection/order is codec-defined, not dependent on available RAM or a caller's timeout; insufficient work budget returns progress/failure rather than different decision evidence. After checkpointing, the receipt table retains the bounded ID/digest/outcome/result needed for lookup, not every old command body. Retired receipts can subsequently be removed under the explicit policy.
 
-Historical replay is **not a call to current command submission**. It verifies identity/sequence/parent hash, canonical command meaning, the recorded application precondition/laws/outcome, and before/after state at the decision's exact predecessor. It must not reject an already published decision because today's receipt epoch is closed/retired or today's authority is Frozen/Deleted: those maintenance transitions are not all in the decision chain. Apply historical application effects, rebuild only the receipt rows required by the selected target's retention policy, and install that captured target's current control projection for **new** admission. This separates the shared pure resolver/judge from current authority/receipt-admission guards without adding a second semantic evaluator.
+Historical replay is **not a call to current command submission**. It verifies identity/sequence/parent hash, canonical command meaning, the recorded application precondition/laws/outcome, and before/after state at the decision's exact predecessor. It must not reject an already published decision because today's receipt epoch is closed/retired or today's authority is Frozen/Deleted: those maintenance transitions are not all in the decision chain. Apply historical application effects, rebuild only the receipt rows required by the selected target's retention policy, and install that captured target's current control projection for **new** admission. This separates the shared decoder/judge from current authority/receipt-admission guards without adding a second semantic evaluator.
 
 This historical verification rule grants no public access to a deleted database. The outer open/read/admin capability enforces the captured authority's current access policy; a historical evaluator used by an authorized restore/check cannot reactivate that authority.
 
@@ -101,7 +108,7 @@ Core support is narrow: a checked prepared LMDB write, an owned read snapshot, a
 
 ## Commands and durable results
 
-A command is **owned canonical data**, sealed before asynchronous work. The digest covers the identity scope, declared schema, precondition, operations, and result recipe, with fresh references still represented as placeholders. Copy mutable host bytes at this boundary. No ordinary command callback is rerun, retained inside a lock, or replayed on another host. Explicit repository migration transforms are a different API/workflow: TypeScript code runs outside native transactions against staged output and may be restarted under its declared migration contract, as specified in chapters 22 and 33.
+A command is **owned canonical data**, sealed before asynchronous work. The digest covers the identity scope, declared schema, precondition, concrete operations, and bounded declared result. Copy mutable host bytes at this boundary. No ordinary command callback is rerun, retained inside a lock, or replayed on another host. Repository migration assets are likewise canonical data: the TypeScript schema library generates a checked plan AST that the log's native executor applies in an explicit offline workflow, as specified in chapters 22 and 33. There is no arbitrary TypeScript transformation callback in either replay path.
 
 Use the core's exact per-command normalization: additions A and removals D become `(A, D \ A)`, producing `(S \ D) ∪ A`. Repeated effects deduplicate; spelling the same fact in both sets means addition wins **within that one command**, independent of iteration order. This is not an add-wins merge rule between concurrent commands; their authoritative order is still the tenant head/LMDB transaction order.
 
@@ -109,8 +116,8 @@ The 1.0 conditional form is deliberately narrow:
 
 ```text
 Condition = Unconditional | ExactState(StateStamp)
-TerminalOutcome = Committed { changed, result, fresh }
-                | NoChange { result, fresh }
+TerminalOutcome = Committed { changed, result }
+                | NoChange { result }
                 | PreconditionFailed { observed_state }
                 | InvariantRejected { complete_bounded_evidence }
 ```
@@ -121,7 +128,9 @@ All four terminal outcomes are published decisions and have stable receipts. A d
 
 Blind set changes preserve set meaning but do not promise that an unencoded read/modify/write business decision is serializable. Two blind deletes of an old counter fact and inserts of the same replacement can still be one net effect. Use an exact-state witness for that intent.
 
-Generated entity identities require no remote allocator. A `FreshRef(ordinal)` resolves in the winning decision to the canonical 28-byte tuple `(IncarnationId:128, decision_seq:64, ordinal:32)`. These are log-layer nominal bytes, not a new engine scalar. Tentative candidates can use different sequences after contention; concrete IDs are returned only in a published receipt. A fresh-reference-only command may publish `NoChange { result, fresh }`: it advances the decision stamp, not application state, and issues stable values without asserting any entity fact exists. Rejected decisions expose no fresh mapping. No provisional ID reservation is advertised as durable. Offline/client identities use an explicit application-supplied scalar domain instead.
+Application entity IDs are chosen **once, before command sealing**. The TypeScript convenience helper may generate a cryptographically random 128-bit value; its canonical application encoding is 32 lower-case hexadecimal characters backed by 16 native bytes. It does not contact the database or claim protocol-proven allocation uniqueness. Applications own the uniqueness policy and use declared laws/explicit handling where identity collisions matter. A command retry, including retry on another host after response loss, retains the same entity IDs, command ID, and canonical bytes. Regenerating an entity ID under the same command ID changes the digest and refuses with `CommandIdentityConflict`.
+
+An application may know an entity ID before any write; knowing it is not evidence that an entity exists or a command committed. There is no log allocation API, symbolic placeholder, generated-ID receipt field, ordinal, reserved range, or special allocation-only decision. A successful no-change command still has an ordinary durable receipt because its named result must remain stable. Restore and migration preserve application ID bytes unless explicitly instructed otherwise; changing incarnation changes command/witness authority, not entity identity.
 
 ## Publication state machine
 
@@ -151,7 +160,7 @@ The exact steps are:
 1. Admit resource budgets and lifecycle capability; seal the command once.
 2. Read/verify `HEAD`, database identity, active mode, and receipt policy; bring local published state to that **finite captured tip**. A warm writer may start from its already verified exact head and committed materialization, paying for a refresh only on movement; stale candidates are safe because their CAS cannot bypass a newer head/epoch.
 3. Look up the command ID in the checkpointed receipt table plus tail. If found, return the recorded outcome after checking the digest; do not execute again.
-4. Check the precondition; resolve placeholders from `head.decision.seq + 1` into a checked canonical delta **before** core admission. Judge the private application write and form the complete decision bytes/digest. While retaining the same exclusive writer session, seal opaque host-record changes containing receipt and attachment into the same transaction. No application facts change after judgment. For a rejected application delta, abort it and prepare an empty application delta in that same session, then seal the rejection receipt. No-change decisions likewise still seal their receipt. A host-record allocation/storage/sealing failure prevents remote CAS.
+4. Check the precondition and admit the concrete canonical delta. Judge the private application write and form the complete decision bytes/digest. While retaining the same exclusive writer session, seal opaque host-record changes containing receipt and attachment into the same transaction. No application facts change after judgment. For a rejected application delta, abort it and prepare an empty application delta in that same session, then seal the rejection receipt. No-change decisions likewise still seal their receipt. A host-record allocation/storage/sealing failure prevents remote CAS.
 5. Verify every referenced dependency is either inherited from this exact parent recovery/root closure or newly staged in `head.object_epoch`. Upload and verify the immutable decision and any large command objects allowed by the grammar. Do not expose a success yet. The decision contains its outcome but not a circular copy of its own digest; that digest is then carried by the sealed receipt/head attachment.
 6. Form `HEAD'` from **that exact `HEAD`**: increment revision and decision sequence; update state revision iff facts change; advance tip/count/bytes; retain all unrelated roots and GC fields.
 7. Conditionally replace `HEAD` using its exact opaque version. **The successful atomic replacement is the hosted publication linearization point.** No cross-object atomic transaction is assumed: immutable dependencies were completed first.
@@ -228,7 +237,7 @@ These are required new tests, not claims that they already exist or pass. Feed t
 | `PROTO-08` | Two witnessed decrements from one state; one changes state, the other records precondition failure; blind variant documents different meaning |
 | `PROTO-09` | Maintenance/no-op/rejection between witness and submission does not move StateStamp; change-and-restore does move it |
 | `PROTO-10` | Multiple relation changes reject atomically or publish atomically; no partial-prefix receipts exist |
-| `PROTO-11` | FreshRef IDs across lost attempts, restarts, repeated request IDs, ordinal/sequence overflow; no published ID reuse and no prepublication escape |
+| `PROTO-11` | Application-owned 128-bit entity values survive CAS losses, response loss, cross-host retries, replay and restore unchanged; same command ID with regenerated entity bytes conflicts; entity IDs cannot substitute for command/witness capabilities; no allocator/placeholders/generated-ID result remains |
 | `PROTO-12` | CAS wins, local commit/fsync fails, process dies; fresh materializer returns original receipt and facts without re-executing command |
 | `PROTO-13` | Continuous append while refresh runs; captured-tip refresh terminates or returns budgeted progress rather than chasing infinity |
 | `PROTO-14` | Close/revoke while sealing, preparing, uploading, in-flight, and settling; no new post-close dispatch and no discarded uncertainty |
@@ -237,6 +246,7 @@ These are required new tests, not claims that they already exist or pass. Feed t
 | `PROTO-17` | Core embedded and LocalHistory are separately tested; local history atomically persists facts/receipt/head attachment across process kill |
 | `PROTO-18` | Tiny work/memory/tail/receipt budgets at every loop; charge before growth, bounded cancellation, no unbounded retry or abandoned worker; inject `MAP_FULL`/allocation/I/O failure while sealing host records after decision hashing and prove no CAS was dispatched |
 | `PROTO-19` | Empty creation and nonempty restore/migration genesis; canonical acyclic logical-digest projection excludes self/control fields while outer certificates bind them; counters start at zero, fresh receipt epoch starts empty, old-scoped commands cannot acquire current admission, and hydration installs captured-head controls instead of old checkpoint authority |
+| `PROTO-20` | Qualify application write latency/throughput on the supported hosted targets with 1/2/4 contenders and 0/50/90% no-op/rejection mixes; record writer occupancy, p50/p99, requests/bytes and retry waste against explicit workload targets; no embedded-only performance substitution |
 
 Finite exhaustive schedules should cover at least two writers, two command IDs, two receipt epochs, a checkpoint, response loss, one reader, and GC barriers. Randomized longer histories complement this bound. Preserve minimized counterexamples and every client-visible read/outcome, not only final convergence.
 
@@ -245,7 +255,7 @@ Finite exhaustive schedules should cover at least two writers, two command IDs, 
 | Audit IDs | Replacement/removal | Closure gate and cost |
 |---|---|---|
 | REP-001/002/006 | No vacant slot reuse, vector floor, or writer-ID fence; one head order | PROTO-01/11 plus GC gates; tenant-wide serialization |
-| REP-004; ENG-004/007 | No leased fresh-ID ranges; IDs derive from winning decision | PROTO-04/11; wider nominal ID and no durable pre-reservation |
+| REP-004; ENG-004/007 | Delete database allocation/reservation; application-owned 128-bit values fixed before sealing | PROTO-04/11; ordinary application uniqueness policy, no formal allocation-issuance claim |
 | REP-008/020 | Exact-parent single chain; no independent split commit | PROTO-01/10; cross-relation conflicts share the tenant head |
 | REP-015; SDK-010 | Captured finite targets and execution budgets | PROTO-13/18; callers handle progress/overload |
 | REP-016; SDK-008/014 | Published read capability plus private candidate transaction | PROTO-07/12 and compile-fail tests; explicit ownership/worker discipline |

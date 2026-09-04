@@ -22,17 +22,18 @@ Types make a smaller set of states representable inside their trust boundary. Th
 | Mutable row references retained across await | Encoded command differs from locally applied command | Sealed owned canonical command | Caller alias changes after recording cannot alter meaning |
 | Applied candidate in the ordinary local DB | A concurrent reader sees a transaction later rejected | Uncommitted LMDB candidate | Dirty speculative visibility through ordinary committed snapshots |
 | Vacant next log slot | A collected slot looks newly available | Never-deleted tenant HEAD naming immutable decisions | Successful publication into a hole behind recovery's floor |
-| Separate arbitrary writer ID and counter fence | Healthy writers permanently depose each other | Fresh placeholders resolved by winning decision identity | Allocation ownership inferred from equal counter bytes |
+| Separate arbitrary writer ID, counter fence and fresh placeholders | Healthy writers depose each other; issuance adds command/replay cases | Application-owned 128-bit IDs sealed with all other command data | Allocation authority, lineage-qualified entity values and issuance-only outcomes |
 | Vector plus scalar sum | More total work disguises a regressed component | One tenant history order | Incomparable recovery floors and cross-braid partial command receipts |
 | Path plus matching schema/generation | Same-shaped state from another database accepted | Incarnation-bound materialization certificate | Misconfigured cache reuse silently serving foreign facts |
 | One shared tenant object with aggregate release count | Double/stale release consumes another borrow | Distinct spent/live borrow capability | One borrower releasing another owner or another generation |
-| Dead raw pointers kept diagnosable forever | Unbounded tombstone allocation and retained engines | Generation-tagged bounded handles, scoped payload ownership | Dead diagnostics owning a live database |
+| Public C callbacks and dead raw pointers kept diagnosable forever | Extra product surface, tombstones and retained engines | Delete C; bounded internal Node capabilities and scoped Rust ownership | Public C compatibility/diagnostic machinery; retained Node payloads still require testing |
 | Global immortal dictionary | Deleted text persists as live dictionary content | Ordinary canonical text in live tuples | Separate dictionary GC/refcount/latch lifetime mechanism |
-| Full relation image is the query input | Database size becomes a RAM requirement | Ordered storage cursors plus optional bounded acceleration | “Does not fit RAM” meaning “cannot execute” |
+| Full relation image is the only query input | Database size becomes a RAM requirement | Warm Free Join plus selective indexed access and bounded disk fallback | “Does not fit RAM” meaning “cannot execute”; no mandate to discard the fast warm path |
 | Multiple ad hoc spill paths | Sort/hash/recursion each invent storage and recovery | One temporary LMDB ordered-map representation | A second storage engine hiding inside query execution |
 | IEEE native equality mixed with bytes/hashes | NaN and signed zero break equivalence across consumers | One canonical binary64 quotient and total order | Set, key, grouping and codec disagreeing about equality |
 | Floating sum of scan order | Query plan is observable arithmetic input | Exact mergeable accumulator plus one rounding | Different plan or spill partitions changing the result |
 | Clock fields and equality sentinel | Restart changes deletion policy | Explicit retained roots and GC epoch barrier | Clock coincidence becoming deletion authority |
+| Handwritten migration callbacks and coverage/checksum scaffolding | Hidden effects, duplicated schema knowledge, repeated full rebuilds | Schema/type declarations generate canonical plan data and history | A JavaScript migration interpreter, helper-closure purity system and manual coverage lists |
 
 These are commitments to remove failure classes, not an excuse to implement all conceivable optimizations. The detailed chapters must name the simplest working mechanism for each row.
 
@@ -40,7 +41,7 @@ These are commitments to remove failure classes, not an excuse to implement all 
 
 LMDB already supplies durable ordered maps, page-backed access, atomic writes, and stable read transactions. Bumbledb should use those properties rather than insist that every relational operation rebuild an independent in-memory database first.
 
-The required baseline is a correct disk-native path. Warm columnar execution remains a valuable acceleration when its inputs and working state fit the chosen cache budget. Both consume the same admitted query semantics and produce the same canonical answers. Temporary oversized sets can move through one LMDB-backed scratch representation. Database size is not itself an error condition.
+The product's fast path is warm Free Join and selective indexed access over bounded working sets. A complete disk-native path is the correctness baseline and ordinary fallback, not a reason to replace all warm kernels with row-at-a-time cursors or temporary writes. Both consume the same admitted query semantics and produce the same canonical answers. Temporary oversized sets can move through one LMDB-backed scratch representation. Database size is not itself an error condition. Measure a deletion of an existing fast path as seriously as a proposed optimization.
 
 Map capacity, file allocation, page-cache residency, process RSS, and query scratch are different quantities. A large sparse virtual mapping is not a demand to allocate that amount of RAM. Elastic map growth is ordinary backend lifecycle work; it must be coordinated with live transactions according to LMDB's rules, not implemented as an arbitrary user-facing maximum size.
 
@@ -52,13 +53,13 @@ The core `bumbledb` is responsible for canonical values, an admitted theory, exa
 
 The optional `bumbledb-log` owns history, command identity, materialization binding, remote publication, retained restore points, backup and schema migration. LocalHistory commits directly in LMDB; HostedHistory uses S3 authority. LocalHistory does not emulate the hosted object store. Neither use case requires a fleet orchestration product.
 
-The client layers own host-language ergonomics, not another semantic parser or protocol. The log's only public SDK is TypeScript; its repo-local migration files describe explicit staged transformations and checked history. That is application orchestration outside native transactions, not a second log machine. The proof model owns independent statements of semantics, not a generated restatement of every implementation branch. Tests own independent expectations, not snapshots of whatever the implementation happens to emit.
+The client layers own host-language ergonomics, not another semantic parser or protocol. The existing schema/query SDK already constructs data and lowers it directly; schema evolution follows that same architecture. Users author TypeScript schema values, from which tools generate canonical schema snapshots, migration plans and checked history. Declarative intent resolves ambiguity; arbitrary migration callbacks are not part of the product. The log's only public SDK is TypeScript, and its native executor runs generated plan data. The proof model owns independent statements of semantics, not a generated restatement of every implementation branch. Tests own independent expectations, not snapshots of whatever the implementation happens to emit.
 
 ## Cost is part of the representation
 
 Choosing canonical NaNs removes equality ambiguity but deliberately loses NaN payload identity. Choosing exact floating reductions costs more than unchecked native addition but removes order dependence. Choosing a single tenant authority removes vector and split semantics but imposes tenant-wide publication contention. Choosing raw text removes dictionary lifetime machinery but can cost space for repeated labels. These are explicit engineering trades, not free theorems.
 
-Measure them at the intended application boundary. A smaller function that creates more work in every host is not a smaller system. A larger data value that deletes three recovery protocols may be an excellent bargain. A microbenchmark win that requires preserving a broken visibility contract is not a win.
+Measure them at the intended per-user application boundary. The sibling M2 Max ledger requires regime, antagonist, machine-code inspection and stamped evidence; use that method without importing its numbers to Graviton or x86. A smaller function that creates more work in every host is not a smaller system. A larger data value that deletes three recovery protocols may be an excellent bargain, but a 28-byte ID that introduces issuance machinery is not justified when a 16-byte application ID suffices. A microbenchmark win that requires preserving a broken visibility contract is not a win.
 
 ## What the essay does not license
 

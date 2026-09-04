@@ -8,8 +8,9 @@ Status: proposed implementation campaign. This documentation phase does not star
 - Break the representation once, deliberately. Do not maintain old braid publication, fresh counters, dictionary encodings and new semantics simultaneously inside the core to ease a pre-1.0 compatibility burden the owner explicitly rejected.
 - Keep intermediate changes reviewable and buildable where practical. A succession of dependency-ordered commits can implement one large breaking release; there is no requirement to publish transitional formats.
 - Every packet names its deletions, normative contract, proof/test changes and measured cost. If it adds a new authority or independently mutable cache, justify that addition against [01](01-representation-first.md).
-- Native Rust implements semantics and the log machine once. The public log product is TypeScript-only; no Rust/C log API stabilization is required. Core Rust/TypeScript/C remain supported and tested.
-- Repo-local TypeScript migrations are a finite log-layer authoring/runner workflow, not a core migration DSL or a fleet control plane.
+- Native Rust implements semantics and the log machine once. The public log product is TypeScript-only; the core supports Rust/TypeScript. Delete all public C code, headers, examples and release machinery; preserve applicable native-safety tests for Rust/Node.
+- TypeScript schema declarations generate migration plan/history data. There are no user-authored migration callbacks, manual coverage lists, JavaScript purity framework, core migration DSL or fleet control plane.
+- Benchmark the current engine and proposed replacements from M0 onward. Read the in-repo README/bench sources and sibling M2 Max ledger; classify constants by derivation, backend limit or measured policy. Chapters 40–41 are binding performance/space obligations, not post-rewrite polish.
 
 ## Dependency graph
 
@@ -20,28 +21,28 @@ M0: contract, regression/model skeletons, format families
           |                |
           +--> M2: LMDB ownership + snapshots + sealed host adjunct
                            |
-                    M3: disk-native queries + deterministic floats
+                    M3: Free Join + bounded disk path + floats
                            |
                     M4: one internal log machine + receipts
                            |
                     M5: checkpoints + retained roots + recovery/GC
                            |
-                    M6: thin clients + TS migration/app workflow
+                    M6: thin clients + generated schema evolution
                            |
-                    M7: complete qualification + performance work
+                    M7: complete qualification + performance closure
                            |
                     M8: exact-artifact release promotion
 ```
 
-Independent prototypes, test models and binding scaffolds can proceed in parallel. The arrows constrain integration evidence, not who may read or work first. Floats' value/proof work begins in M1 and their executor/FFI qualification continues through M7; it is not postponed until after the engine is frozen. A simple correct cursor path precedes heroic kernel optimization.
+Independent prototypes, test models and binding scaffolds can proceed in parallel. The arrows constrain integration evidence, not who may read or work first. Floats' value/proof work begins in M1 and their executor/native qualification continues through M7. A real per-user application vertical slice is an early integration target, including reopen and lost-response recovery. Preserve measured warm Free Join behavior while building the bounded fallback; do not delete the existing fast path and defer discovering the regression until M7.
 
 ## M0 — Freeze the contract and make failures durable evidence
 
 Create the implementation's explicit guarantee/test inventory from [50](50-audit-closure-matrix.md) and [70](70-test-and-release-gates.md). Preserve original fixture source, observed outputs and artifact limitations. For each old failure, express the successor property in an independent harness or model even where the old public API is removed.
 
-Freeze the finite scalar/law/query roster, same-command add-wins normalization, interval ceiling contract, canonical float quotient, integer aggregate overflow semantics, command grammar, three history coordinates, local versus hosted publication, and exact migration history contract. Use small golden examples as the first executable specification. Maintain one issue-to-test ledger, not separate inconsistent “done” lists in each language.
+Freeze the finite scalar/law/query roster, same-command add-wins normalization, integer/float interval denotations, canonical float quotient, integer aggregate overflow semantics, concrete 128-bit entity values, command grammar, three history coordinates, local versus hosted publication, and generated migration plan/history contract. Use small golden examples as the first executable specification. Maintain one issue-to-test ledger, not separate inconsistent “done” lists in each language. Freeze hash roles/widths only after the explicit collision/threat model and preformat cost probes in chapter 41; no hash equals fact identity.
 
-Freeze the initial supported OS/CPU/libc/Node/backend matrix in chapter 32. Core runs natively; the TypeScript log requires a supported Node/native server environment. Browser, Edge, Expo/React Native and WebAssembly support are not implied by a TypeScript API or the migration workflow analogy.
+Freeze the initial supported OS/CPU/libc/Node/backend matrix in chapter 32: Apple Silicon, ARM Graviton and x86 Vercel Node are canonical targets. Core runs natively; the TypeScript log requires supported Node/native execution and fitting local storage. Browser, Edge, Expo/React Native and WebAssembly support are not implied. ARM/x86 portable correctness is required now; specialized tuning beyond Apple Silicon is not.
 
 ### A clean format break
 
@@ -55,7 +56,7 @@ Deliverables: approved golden roster, counterexample inventory, independent tiny
 
 ## M1 — Canonical data and a judge with one meaning
 
-Replace the safe raw-codec trust opening with checked typed field construction and a schema-bound byte parser. Close the interval constructor bypass. Add `F64` as specified: canonical NaN/zero, total order, strict canonical wire encoding, explicit casts, and no float intervals/approximate capacity weights.
+Replace the safe raw-codec trust opening with checked typed field construction and a schema-bound byte parser. Close the interval constructor bypass. Add `F64` with canonical NaN/zero, total order, strict canonical bytes, explicit casts, sum/mean and dense-domain `Interval<F64>`. Share endpoint-order kernels; distinguish bounded float measure overflow from unbounded rays. No fixed-width float encoding or approximate capacity weights.
 
 Make full canonical tuple equality authoritative, including long values and collision buckets. Remove default global text interning and expose text as ordinary live value bytes. Keep local physical row IDs separate from application values. Test actual LMDB maximum key sizes and large determinants before selecting physical index encodings.
 
@@ -75,23 +76,23 @@ Keep the transaction on its owning worker across a bounded hosted attempt. Map-f
 
 Delete: expiring local leases, separately committed generation authority, GC-only close, snapshot metadata gathered from multiple source transactions, core fresh reservations and benchmark durability escape hatches in ordinary production API. Exit: G06/G11 substrate obligations and deterministic crash/resize/visibility schedules pass. Larger-data qualification begins here and finishes on complete product artifacts.
 
-## M3 — A complete disk path and optional warm kernels
+## M3 — Excellent application queries with a complete bounded fallback
 
-Implement cursor/index-nested-loop execution as the complete baseline. Build one scratch-map abstraction with charged RAM and temporary-LMDB backing; share it across projection distinct, group binding/state, derived relations, recursive frontiers and sealed results. It is not a second persistent database or an external-sort framework.
+Preserve Free Join and selective indexed access as primary application paths. Implement cursor/index-nested-loop execution as the complete bounded fallback and simple independent comparison path, not as a universal warm-query replacement. Build one scratch-map abstraction with charged RAM and temporary-LMDB backing; share it across projection distinct, group binding/state, derived relations, recursive frontiers and sealed results. A fitting warm query should not pay temporary-LMDB writes merely for architectural uniformity. This is not a second persistent database or an external-sort framework.
 
 Keep compact Boolean query structure instead of mandatory exponential expansion. Charge prepare, parameters, growth, intermediate work, aggregates and output before growth. Publish results only when evaluation/finalization is complete. A consuming result cursor transfers one sealed backing owner; streaming delivery failures do not turn a prefix into a complete answer.
 
 Implement exact integer widened sums and deterministic F64 arithmetic/reductions. Qualify the floating environment guard, architecture/compiler behavior, exact 34-limb accumulation and exact-rational mean rounding. The independent bit/rational oracle must not reuse production numerical helpers. Do not weaken deterministic answers for faster reduction.
 
-Retain warm SIMD/Free Join acceleration only behind correct budget reservation and fallback. Forced scalar/cursor/spill execution must agree with optimized paths, including errors and float bits. Tune after the baseline exists; missing measurements are not an excuse to require a whole relation in RAM.
+Retain warm SIMD/Free Join behind correct budget reservation and fallback. Forced scalar/cursor/spill execution must agree with optimized paths, including errors and float bits. Measure changes against the existing warm/post-write/cold workload record as they land. Tune batch, prefetch, table load and scratch thresholds through adversarial sweeps; neither missing measurements nor a fast kernel excuses requiring a whole relation in RAM.
 
 Delete: mandatory full images, output mutation on failure, hidden unbounded prepare/recursive paths, order-sensitive float reduction, invalid numerical rewrite rules. Exit: G04/G05/G12 semantic/fallback tests pass on small forced-spill fixtures, and controlled large-store campaign is executable.
 
 ## M4 — One internal durable history machine
 
-Implement LocalHistory and HostedHistory as explicit variants using the same canonical command resolver/outcome grammar. LocalHistory publishes through one durable LMDB commit. HostedHistory publishes through the tenant HEAD CAS over one immutable symbolic-command decision and a bounded recovery tail. LocalHistory does not simulate that object store.
+Implement LocalHistory and HostedHistory as explicit variants using the same canonical concrete-command/outcome grammar. LocalHistory publishes through one durable LMDB commit. HostedHistory publishes through the tenant HEAD CAS over one immutable command decision and a bounded recovery tail. LocalHistory does not simulate that object store.
 
-Add stable command identity, exact-state condition, durable no-change/rejection outcomes, three distinct coordinates and winning-decision fresh identities. Resolve uncertainty by retained receipts; closed/retired command epochs cannot become new commands by absence. Concrete fresh IDs never escape before publication. TypeScript supplies owned command values, not retryable arbitrary host callbacks.
+Add stable command identity, exact-state condition, durable no-change/rejection outcomes and three distinct coordinates. Resolve uncertainty by retained receipts; closed/retired command epochs cannot become new commands by absence. Application IDs are already concrete sealed values, preserved through retries/restores with no allocation result mapping. TypeScript supplies owned commands, not retryable arbitrary host callbacks.
 
 Run the independent history model through client-visible schedules during implementation, not as a final cleanup exercise. Include candidate reads, delayed CAS, lost response, later decisions, checkpoint/receipt movement, live-handle next commands, close and post-publication local failure. Distinguish exact known success, definite precondition failure and unknown transport outcome at the real adapter boundary.
 
@@ -109,17 +110,17 @@ Delete: scratch-as-deletion-authority, age sentinels/default PITR promise, histo
 
 ## M6 — The application-facing product
 
-Replace native lifetime-erased callback pointers with bounded generation-tagged capabilities where needed. Make TypeScript owners, borrows, commands, snapshots and results explicitly disposable, with small inert wrappers after native close. Keep core Rust guards genuinely lifetime-safe and core C's raw pointer obligations honest. Build bounded asynchronous Node workers so hosted/native work does not block unrelated requests.
+Delete the public C API and replace any remaining internal lifetime-erased callback pointers with bounded capabilities where needed. Make TypeScript owners, borrows, commands, snapshots and results explicitly disposable, with small inert wrappers after native close. Keep Rust guards genuinely lifetime-safe. Build bounded asynchronous Node workers so hosted/native work does not block unrelated requests.
 
-Deliver the TypeScript log API, repo-local migration manifest/ordered steps, explicit `migrate()` workflow and server-only Next.js + Alchemy example in [33](33-typescript-migrations-and-apps.md). The migration runner validates history/checksums, freezes source authority, applies explicit TypeScript transforms outside native transactions, stages and admits a new incarnation, verifies it, then returns a still-frozen `ReadyToSwitch` target and activation reference. Activation and application binding cutover are explicit, with a durable activation marker resolving lost responses. Automatic abort/thaw is only available while nonactivation is proven; after activation even no-change decisions can make rollback unsafe. An interrupted migration has a visible operation identity; ordinary app startup never quietly rewrites a production tenant.
+Deliver the schema/query SDK, TypeScript log API, schema-diff generator, canonical repo-local plans/history, explicit `migrate()` workflow and server-only Next.js/Alchemy/Vercel examples in [33](33-typescript-migrations-and-apps.md). Users write schemas, never imperative migration modules. Generation requires declarative intent where rename/backfill/destruction is ambiguous. The native log executor validates the generated chain, freezes source authority, evaluates the pending batch with necessary intermediate checks, stages one final destination, admits/verifies it, then returns a still-frozen `ReadyToSwitch` binding and activation reference. Do not publish/rebuild a complete intermediate incarnation per file when plan composition can preserve the same meaning. Activation and binding cutover remain explicit; a durable activation marker resolves lost responses. Abort/thaw is available only while nonactivation is proven. Ordinary app startup never quietly rewrites a production tenant.
 
-The example must work from installed packages with actual deployment runtime, native bundling, IAM attachment, refreshed credentials, authenticated tenant mapping, deadlines and errors. Alchemy provisions only ordinary resources the example needs; it is not a newly invented database control plane. Local development uses LocalHistory. Hosted Node uses S3 plus enough real local disk for materialization. An Edge/ephemeral host without that capacity is explicitly incompatible, not magically repaired by TypeScript types.
+The examples must work from installed packages with actual deployment runtime, native bundling, IAM attachment, refreshed credentials, authenticated tenant mapping, deadlines and errors. Alchemy provisions ordinary resources, not a new database control plane. Local development uses LocalHistory. Hosted Node uses S3 and fitting local disk for materialization. Qualify Vercel's ephemeral-disk/cold-open envelope explicitly; larger tenants remain supported on provisioned hosts. Edge is a different unsupported runtime, not a synonym for Vercel Node.
 
-Remove public Rust/C log headers/exports/docs. Internal Rust tests remain indispensable; lack of a public Rust SDK is not lack of a tested native machine. Package core C separately with its real ABI/support matrix.
+Remove public Rust log exports/docs and the entire C crate/header/export/packaging/workflow/example surface. Internal Rust/Node tests remain indispensable. No compatibility shim, dormant C feature or separate C artifact remains.
 
 Delete: source-mutating packing hooks, unchecked native-version pairing, event/body auth shortcuts, automatic implicit migrations, and duplicate cross-language log API maintenance. Exit: API/RUN/FFI/PKG plus chapter 33 migration/application children pass, including pristine consumer and production-shaped deployment tests.
 
-## M7 — Close the ledger, then measure the whole product
+## M7 — Close the ledger and complete whole-product measurement
 
 Run the entire [70](70-test-and-release-gates.md) inventory against fresh artifacts, not only tests filtered by changed source paths. Every detailed child has an executed lane and evidence; a broad green job does not cover missing float/FPU, local migration or GC cases.
 

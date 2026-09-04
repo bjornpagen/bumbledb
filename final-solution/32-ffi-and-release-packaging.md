@@ -1,172 +1,116 @@
-# 32 — A small native boundary that really closes
+# 32 — One internal Node boundary; no C product
 
-Status: proposed 1.0 design. This is an incompatible replacement for the current C callback-pointer/tombstone contract and GC-owned Node database lifetime. No implementation, sanitizer or release-packaging pass is claimed here.
+Status: proposed 1.0 replacement, not an implementation or qualification result. The supported public languages are Rust and TypeScript for the core, and TypeScript for the log. This chapter intentionally replaces the earlier proposal to retain a public C API.
 
-## Package boundaries
+## Delete the whole C surface
 
-Keep `bumbledb` as the public Rust/TypeScript/C facts/laws/query/LMDB core. Keep **`bumbledb-log` as a TypeScript-only public product**, backed by an internal Rust implementation of named command history, generated history IDs, publication, backup/restore and checked migration execution. Do not ship or support a public Rust log SDK/crate API, C log API, or `bumbledb_log.h` for 1.0. Internal Rust protocol crates may remain in the repository with private implementation exports; public compatibility commitments attach to the TypeScript contract, stored protocol and tested native bridge, not every internal Rust symbol.
+During implementation, remove the entire C product: crates/bumbledb-c, public headers and exported C database functions, generated header tooling, C examples/smoke programs, C-only tests and CI jobs, package/build/release targets, manifests, documentation and stale imports/references. There is no deprecated compatibility library, optional C feature, hidden supported header, or public C facade underneath the log. Remove old C artifacts from future release inputs; do not delete historical released artifacts or preserved audit evidence. Node's required internal N-API linkage still exists; that implementation detail is not a reusable public C database SDK.
 
-The Node native bridge may be built with a log feature; this does not make the Rust core depend on the log. Core-only consumers can build without AWS/log dependencies. Native feature support is reported in the ABI descriptor and checked before using an internal log export. Do not create independently compiled Rust engines that exchange internal pointers across separate dynamic libraries. The TypeScript migration subpath contains repo-file tooling and explicit orchestration; durable authority remains native.
+This is not permission to delete matching engine/Node safety coverage. SDK-013's immortal C callback tombstones disappear with the C surface, but the shared native owner/lock leak and lifecycle schedules must remain as Rust/Node regressions. Keep source audit evidence intact. The release deletion gate proves that the old product was actually removed, rather than merely renamed or left excluded from a workspace test.
 
-For C, publish one versioned **core-only** C ABI library and `bumbledb.h`. It contains no command history, S3, backup/migration or log identity functions. Node's internal history bindings are not routed through a newly supported C log facade. A Node process loads one compatible native runtime for its core/log owners; separately loaded core C libraries never exchange raw engine pointers with it.
+The Rust core remains public. Internal Rust log crates own history, receipts, S3 authority, recovery and generated-plan execution, without becoming a public Rust log SDK. TypeScript calls this one implementation through N-API. There is no second protocol state machine, another storage engine, or generic native plugin framework.
 
-This is feature selection, not a native plugin architecture. No arbitrary third-party execution, allocator or storage-driver plugin registry is required for 1.0.
+Core-only builds remain free of log/AWS dependencies. The Node bridge may be built with the log feature; it reports capabilities before optional exports are used. Core and log wrappers use one compatible native runtime. Independently compiled engines never exchange internal pointers.
 
-## The C lifetime tradeoff, decided explicitly
+## Node capabilities own and release actual resources
 
-The current API tries to diagnose a raw callback pointer after scope exit and even after database destruction. It preserves every pointer address forever through leaked tombstones. Those tombstones also retain engine ownership. This cannot be repaired into a bounded design while keeping every raw pointer eternally dereferenceable.
+A JavaScript wrapper contains a small opaque native capability and a live/spent/closing state, not a lifetime-erased pointer to a Rust callback scope. Native owner registration and generation checks prevent a retained wrapper from accidentally reaching a successor resource. Bounded slot bookkeeping may be used internally; its layout is not a public C ABI.
 
-Replace core database/snapshot/delta-builder/session/result capabilities with **by-value generation-tagged tokens**, resolved through a bounded runtime-owned slot table. No callback-scoped Rust reference pointer crosses C. This removes lifetime-erased `ReadInstance`/transaction pointers from the ordinary public ABI and eliminates the historical tombstone list.
+Owner close stops admission, revokes idle child capabilities, drains in-flight operation leases and drops the native environment before releasing directory exclusion. Retaining a closed JS object must not retain an engine Arc, mapping, file descriptor or lock. Finalizers are only a backstop; explicit close/disposal works with GC delayed or disabled.
 
-```c
-typedef struct {
-    uint64_t runtime_id;
-    uint64_t slot;
-    uint64_t generation;
-} bdb_handle;
+Every operation checks the exact owner/slot/borrow generation and resource kind, then acquires a scoped native operation lease before registry locks are released. Close cannot free an operation's data underneath it. No bookkeeping lock stays held through query execution, transport, filesystem calls or user code. Repeated close joins the same close operation; a deadline returns CloseIncomplete and leaves the owner Closing until actual drain.
 
-typedef struct bdb_runtime bdb_runtime;
-typedef uint32_t bdb_status;
+Public core Rust snapshots/views obey actual Rust lifetimes. A legal held guard can delay close or map growth and cause CloseIncomplete/ResizeBlockedByReaders; it is never forcibly invalidated. Managed Node snapshots can be revoked while idle because their native guards remain inside the runtime. This distinction is a safety property, not an opportunity to hide unbounded retained resources.
 
-bdb_status bdb_runtime_create(const bdb_runtime_options *, bdb_runtime **out);
-bdb_status bdb_db_open(bdb_runtime *, const bdb_open_options *, bdb_handle *out);
-bdb_status bdb_db_snapshot(bdb_runtime *, bdb_handle db, bdb_handle *out);
-bdb_status bdb_db_apply(bdb_runtime *, bdb_handle db, bdb_handle changes,
-                      const bdb_expected_generation *, const bdb_work_options *,
-                      bdb_apply_outcome *out);
-bdb_status bdb_handle_close(bdb_runtime *, bdb_handle);
-bdb_status bdb_runtime_close(bdb_runtime *, const bdb_close_options *,
-                            bdb_close_report *out);
-bdb_status bdb_runtime_destroy(bdb_runtime **);
-```
+## Value copying, results and errors
 
-Signatures are proposed shapes, not a compilable final header. The generated normative header must define error carriers, null rules, threading rules and ownership for every argument. The conceptual interface has no write/read callback whose lifetime must be tombstoned.
+Accepted input values become owned canonical Rust values before asynchronous work begins. Mutable arrays, Buffer slices and one-shot iterables cannot change a sealed command or query parameters. Copying may synchronously invoke input getters/iterators before native transaction entry; exceptions fail construction and are never automatically replayed. Shared-memory inputs must be copied from a stable source or refused.
 
-The slot table validates runtime ID, slot, generation and resource kind before obtaining an operation lease. Closing a handle removes its owned resource and increments the slot generation. Reusing the slot does not make an old copied token valid. Closing an already-closed token of that same runtime returns the documented idempotent closed status; other operations report `ClosedHandle`. A wrong resource kind reports `WrongHandleKind`, not a cast.
+Outbound values are owned arrays or bounded copied pages. No ordinary Node method hands out a view into an LMDB mapping that unrelated close can unmap. A CompleteResult is sealed only after full query execution; collect performs a bounded conversion, while intoCursor consumes its source owner and transfers sealed storage to one cursor. No shared/clone cursor subsystem is needed. A closed spent result cannot close its moved cursor.
 
-Slot capacity is a configured finite maximum, with explicit `HandleCapacity` refusal. `runtime_id` and slot generations never wrap or recycle into a previously valid identity: on exhaustion refuse further allocation. This remote theoretical exhaustion is a checked failure, not an immortal per-call allocation. Freed slots and capacities are measured in stress tests. There is no unbounded registry of historical callbacks.
+Argument tags, UTF-8, fixed widths, lengths, zero-arity rows, allocation arithmetic, schema ownership and result identity are checked before use. Native errors never expose half-initialized handles or a partially completed current answer. Unexpected panics are contained at the native entry boundary and reported as internal failures without unsafely continuing a damaged owner.
 
-The runtime itself remains an ordinary C-owned pointer with an ordinary lifetime: callers must not use it after successful destroy, and all incoming pointer/length pairs must describe valid readable/writable memory. No ABI can prove arbitrary caller memory valid. `runtime_destroy(&runtime)` requires completed close, frees the runtime and sets that supplied pointer to null; a copied stale runtime pointer is still caller misuse outside the safety contract. This honest rule replaces the false ambition to make arbitrary expired raw pointers safe forever.
+Stable error codes and typed outcomes survive async open/query/submit/close. Provider text can be preserved as a redacted cause; retries never parse English messages. A known published receipt survives subsequent local-cache/cleanup failure. OutcomeUnknown is publication uncertainty, not merely an exception labeled retryable.
 
-Copied stale **tokens**, used with a still-live runtime, are safely rejected. Foreign-runtime tokens are rejected even if slot/generation numbers happen to match. Tokens are not security credentials against hostile native code already executing in the same process.
+## IDs and floats stay ordinary checked values
 
-### What close releases
+Application Id128 values are 16 bytes natively and 32 lowercase hexadecimal characters in TypeScript. A cryptographic-random value helper may generate one before sealing; it is not an issuer or allocator. Preserve exact input IDs through CAS retry, reopen and generated migrations. No FreshRef, 28-byte decision-derived entity tuple, reservation counter, fresh-map codec or ID-burn transaction remains.
 
-Core C `db` close revokes child snapshot/session capabilities, stops admission, drains active operation leases, drops actual native environments and releases directory locks last. Node history close follows the same owner mechanics without a public C log handle. Neither waits for unreachable token copies. A result containing copied data or independent sealed scratch can remain valid after its source database closes; it has its own explicit handle/resource budget. Runtime close closes all of these resources.
+Canonical f64 values and deterministic sum/mean follow chapter 11. All NaNs canonicalize to 0x7ff8000000000000, signed zero to +0, and each arithmetic node canonicalizes its output. JSON uses the explicit schema-aware float-bit codec, not JSON.stringify's treatment of NaN/infinity.
 
-An in-flight operation cannot race a slot removal into use-after-free: lookup obtains a scoped owning operation lease before releasing the registry lock. Close marks the resource closing, prevents new leases and waits for existing ones. The table never holds its lock through a database operation or a user callback.
+Interval<F64> uses chapter 11's canonical 16-byte pair, dense continuous interval meaning, finite-point membership, infinite bounds and typed duration failures. Do not substitute representable-float counting or allow float widths/capacity weights by accident.
 
-Close deadline failure returns `CloseIncomplete`; the runtime stays live and closing. `destroy` refuses while native tasks/resources remain. Forced process termination is a host policy for an unresponsive kernel call, not an undocumented destructor behavior.
+Native execution establishes/restores the required floating environment at relevant foreign-thread entry: round-to-nearest ties-to-even, gradual underflow and no uncontrolled FTZ/DAZ/FMA behavior. Other native code in a Node host cannot silently change database answers. Nested entries and thread-pool execution must preserve the host environment. This remains necessary without a public C product.
 
-## C data ownership and zero-copy limits
+## Bounded scheduling, not synchronous native work on the request loop
 
-Inbound pointer/length slices are borrowed only for the duration explicitly declared by the function. Core changes are copied and validated before the call returns; queued/asynchronous work never borrows caller memory. Builder acceptance cannot keep a C stack pointer for later application.
+Async operations run on the bounded native runtime from chapter 31. Queue admission, per-owner active counts, network/FS lanes and result conversion are bounded. There is not an independent runtime per tenant. The prepared LMDB writer remains on its owning worker across a remote attempt; no JavaScript callback executes inside that transaction.
 
-Outbound row data belongs to an owned `CompleteResult` or page handle. A `bdb_bytes_view` or `bdb_string_view` into that result remains valid only while the result/page is live and not concurrently closed. Closing a page invalidates its views. A caller needing independent lifetime copies bytes. `intoCursor` consumes/spends the result token and transfers backing-store ownership to a new cursor token; closing the old token cannot close the cursor. There is no clone/shared-cursor API and no claim that a retained raw view is diagnosable after its backing result closes.
+Cancellation reaches queue admission, transport/body reads, computation, replay, scratch and result transfer. Rejecting a JS promise while untracked native work continues is not completed cancellation. The host can inspect/drain an interrupted operation; unknown publication retains its command reference.
 
-For asynchronous C use, choose a small explicit operation handle with `poll/wait/cancel` and typed result retrieval. It is the same bounded runtime task as Node/Rust async use. Do not call foreign completion callbacks while holding native locks, and do not retain arbitrary callback closures in the engine. Blocking C methods can be thin wrappers over this operation path or direct execution using the same work context. A process must not use inherited active runtimes after `fork`; create runtimes after the child has executed a fresh program. Report a wrong-process handle where detectable, without promising to repair arbitrary forked native-library state.
+Execution sessions retain accounted optional caches bound to their actual snapshot/physical identity. Schema-level query templates are immutable and shareable; mutable tenant rows/plans are not hidden inside a global GC-only object. Correct small application queries and larger-than-RAM fallback use the same semantics.
 
-Bulk rows use one flat canonical cell array with explicit row count and arity. Zero-arity relation handling is specified rather than inferred by dividing the number of cells. Validate multiplication/size arithmetic before allocation and accept/reject null+zero lengths consistently. No undocumented difference between generated typed facts, dynamic rows and wire import is permitted.
+## One checked native package contract
 
-Errors use owned bounded error detail with one free operation or a token in the same runtime table. Error strings never borrow temporary Rust formatting buffers. Outputs are initialized to an empty/invalid state before work; failure cannot expose a half-initialized handle, partial current answer or abandoned engine reference.
+Rust's ABI is not public or stable. The Node bridge is an exact-version internal N-API contract used by the packaged TypeScript wrappers. Do not create a second stable ABI or promise that arbitrary internal Rust types are callable downstream.
 
-## Float and identity transport
+A small bootstrap descriptor reports ABI major/minor, package/build revision, feature bitmap, engine format, supported codec/protocol versions, architecture, libc/minimum OS, baseline CPU features and N-API level. Check it before opening or mutating data. Missing artifact and present-but-incompatible artifact are distinct failures.
 
-The C scalar tag roster adds `F64` with an input `double`. A checked bit-image constructor/accessor supports exact codec tests and applications that need canonical wire bits. The ABI does not expose Rust enum layout or Rust's `F64` struct. Unknown numeric tags refuse before reading unrelated fields.
+Packed core/log manifests pin compatible native versions exactly. Runtime checks still cover manual installs, linked packages, bundlers and accidentally mixed binaries. Pin the Rust toolchain and dependency locks in release provenance; a compiler upgrade cannot silently change schema/value/protocol meaning.
 
-The schema boundary canonicalizes all NaNs to `0x7ff8000000000000` and both signed zeros to `+0`. Every arithmetic node canonicalizes its output too; for example `1 / neg(0)` is `+Infinity` under this value algebra. Total ordering, equality, keys, hashing and deterministic aggregates follow the engine chapter, not C's unordered IEEE comparison predicates. Integer conversion requires explicit checked casts.
+Patch releases do not change equality, float semantics, ID encoding, generated migration-plan meaning or receipt meaning. Storage/protocol/plan versions are independent of npm semver. Supported upgrades require fixtures; incompatible old stores refuse before mutation and use the log importer.
 
-The engine establishes/restores its required floating-point environment at a foreign-thread entry boundary: round-to-nearest ties-to-even, gradual underflow, and the required exception/mode behavior. A C host's rounding mode or FTZ/DAZ state must neither change database answers nor be silently left altered when the call returns. The guard is nested/reentrant-safe and tested on each supported architecture. Unsupported environment control is a platform qualification failure, not permission to claim deterministic results.
+## Canonical qualification targets
 
-Log `EntityId` is an opaque 28-byte value with explicit canonical endian encoding, not an internal Rust struct whose padding enters a digest. The core only sees ordinary fixed bytes/newtypes. Node exposes a branded canonical 56-character lowercase hex string; it is not a JS `number`, an unsafe 224-bit arithmetic imitation, or a callback-reserved provisional ID. Its embedded incarnation is birth provenance: restored old-born entity bytes remain valid application values, unlike old command/owner/witness authority tokens. Core C can carry the same bytes as ordinary schema-defined values but has no log ID issuance or accessor product.
-
-JSON/export codecs encode canonical `f64` bits explicitly. Native Node `number` ingress/egress remains ergonomic; JS's `JSON.stringify` NaN/infinity behavior is never used as the database serialization rule. The scalar golden corpus traverses core C/Node/Rust, storage, query parameters and result pages; the log command/receipt corpus traverses public TypeScript and internal Rust.
-
-## Node ownership and scheduling
-
-Node wrappers own opaque native capabilities plus a spent/closing state, not raw erased callback pointers. Their public `close`/`Symbol.dispose`/`Symbol.asyncDispose` match the resource lifetime. Finalizers may call idempotent close as a backstop; tests do not require a finalizer to run.
-
-The Node wrapper cannot keep a closed engine alive merely by retaining a stale `Db`, replica, writer, plan or tenant borrow object. Close removes the native resource from its owner. A JS object may retain a small inert token; it cannot retain the engine `Arc`, mapped file or environment lock.
-
-Async native tasks own immutable command/query inputs and report typed outcomes. They execute on the bounded runtime workers from chapter 31. Cancellation cannot be implemented solely as a rejected JS promise while native work continues unnoticed. The caller can inspect/drain an interrupted operation; unknown publication retains its `CommandRef`.
-
-Immutable schema templates are shareable. Execution sessions and their native retained caches are explicit owned resources, bound to physical catalog/snapshot identity and accounted. No GC-only prepared plan secretly owns unlimited memo data. Result conversion is bounded by pages; local or hosted APIs never automatically flatten arbitrarily large answers into JS arrays.
-
-Expose the complete stable error vocabulary, including errors from async open tasks. Do not drop typed engine error family into an unclassified message at an asynchronous boundary. JS error causes may preserve provider information, but retries depend on stable codes and publication certainty, not message parsing.
-
-## ABI and artifact policy
-
-Rust's ABI is not stable and is not exported. The supported native contracts are versioned **core C** and the exact-version Node N-API bridge used by the public TypeScript packages. There is no public Rust/C log API compatibility matrix. Pin the Rust nightly toolchain and lockfiles in release provenance; nightly is welcome internally, but a compiler experiment cannot quietly change the wire format or exported ABI.
-
-At initial load, a small fixed-layout `abi_info` export reports:
-
-- ABI major/minor and exported feature bitmap;
-- package version and build revision;
-- engine storage format and supported read/write codec versions;
-- log protocol/command codec version when enabled;
-- target architecture, libc/minimum OS, baseline CPU features and N-API level where applicable.
-
-The bootstrap descriptor layout itself is stable for ABI major 1. Callers check it before invoking version-dependent exports. Core and log JS packages use exact compatible native versions in the packed manifests; runtime compatibility is still checked, covering linked packages, manual binaries, bundlers and incorrectly published artifacts.
-
-Within 1.x, new enum/status cases are additive only where callers are required to handle unknown values; existing tag numbers and meanings do not change. C option structs carry `struct_size` and version fields, with documented zero defaults and bounded copying. Do not serialize raw `repr(C)` structs. Protocol/storage version compatibility is independent of package semver; an accepted version range is not replay evidence.
-
-Incompatible artifact/format combinations fail before opening/mutating a store. Patch releases cannot silently change canonical float equality, schema hashing, ID encoding or receipt meaning. Upgrade/downgrade support must be declared and demonstrated by fixtures, not inferred from matching symbol names.
-
-### Initial supported matrix
-
-Keep the finite current target family and qualify it precisely:
-
-| Target | 1.0 qualification policy |
+| Target | Required policy |
 | --- | --- |
-| macOS arm64 | Proposed minimum macOS 14; qualify macOS 14 and the current supported release, including native close/lock/mmap/FPU behavior |
-| Linux arm64 glibc | Build and run on the chosen minimum image; initially Amazon Linux 2023/glibc 2.34 is a defensible explicit floor, not universal Linux support |
-| Linux x86-64 glibc | Same explicit libc floor; baseline CPU compatibility separately tested, optional accelerated paths runtime-detected |
-| Node | Node 24 LTS minimum and Node 26 explicitly qualified against actual artifacts; no untested open-ended major-version promise. N-API compatibility alone is not full integration coverage. |
-| musl/Alpine, Windows, macOS x64, 32-bit | Not claimed unless a separate build plus complete applicable conformance/lifecycle matrix is added |
+| Apple Silicon macOS arm64 | Canonical development/performance target; initially macOS 14 minimum plus current supported macOS. Qualify native close/lock/mmap/FPU behavior and useful small per-user application workloads. |
+| AWS Graviton Linux arm64 | Supported portable correctness target with real deployment tests; initial glibc 2.34/AL2023 baseline. No separate Graviton tuning project before measurements justify one. |
+| Vercel Node Linux x86-64 | Supported application target inside a measured deployment envelope. Qualify the actual emitted x64 artifact, current runtime/libc/CPU, local-disk/FD/memory limits, warm concurrency and full cold recovery. No special x86 tuning claim yet. |
+| Node versions | Node 24 is the common deployment baseline. Node 26 may be separately qualified on hosts that offer it; do not claim Vercel Node 26 when its supported-version list does not. |
+| Not claimed | Edge/Worker/browser/mobile runtimes, musl/Alpine, Windows, macOS x64 and 32-bit targets without separate artifacts and complete qualification. |
 
-This table is a proposed initial support policy, not a claim those platforms were tested in this phase. Changes to its selected minima require updating the matrix and running the corresponding qualification. The release publishes exact tested runtime versions and artifact digests. No artifact may advertise `linux` so broadly that the loader quietly attempts glibc code on musl and emits a misleading missing-package message.
+These are support requirements, not claims of tests passed in this proposal. Publish exact tested versions and binary digests. For managed hosts that roll minor/patch versions, record the runtime observed during qualification and fail clearly on incompatibility.
 
-CPU-specific SIMD is optional acceleration with a verified baseline path: x86-64 baseline/SSE2 and ARMv8-A for the named 64-bit ARM targets, subject to the chosen OS ABI. Explicitly test illegal-instruction avoidance and f64 equivalence. Do not compile universally shipped binaries with the release builder's native CPU feature set.
+Use a correct baseline CPU path: x86-64/SSE2 and ARMv8-A subject to the platform ABI. Optional optimized paths require runtime detection and equivalence tests; universally shipped binaries must not be compiled for the release machine's native CPU. Apple Silicon is the initial tuning focus, not a different database semantics.
 
-## Packaging should not edit the source checkout
+Vercel Node is not Vercel Edge. Node compatibility does not by itself prove native packaging, mmap behavior, durable local storage or enough /tmp space. HostedHistory uses local files as disposable materialization, with S3 authority. LocalHistory needs genuinely durable owned storage and must not be advertised as durable on an ephemeral function filesystem. See chapter 33 for the concrete envelope and external evidence.
 
-Build from a controlled source revision into an isolated staging tree. Generate packed manifests there, inject exact native pins there, and retain unrelated optional dependencies exactly. `prepack`/`postpack` must not rewrite the developer's source `package.json` or rely on a post-hook running after process interruption.
+## Build and publish without mutating the checkout
 
-Keep source-test, native-build and release-pack gates distinct. A source-test command must not silently clean native output, regenerate declarations or pack/publish packages. A release-test command intentionally builds fresh artifacts and verifies the tarballs. Both report the artifact actually used; testing current TS against yesterday's native binary is useful only with that limitation stated.
+Build from controlled source into an isolated staging tree. Generate packed manifests and exact native pins there; preserve unrelated optional dependencies. No prepack/postpack hook rewrites the developer's package.json or depends on an interrupted post-hook repairing it.
 
-Release inputs include the root workspace plus the separately built Node and C bridge crates. The root workspace test pass does not cover crates excluded from that workspace. Build/lint/test feature matrices must enumerate them explicitly.
+Keep source tests, native builds and release-pack tests distinct. Source tests do not silently clean/build/pack/publish. Release tests intentionally build fresh artifacts and report their identity. A wrapper test against yesterday's native binary is not a clean release qualification.
 
-Release qualification produces immutable staged tarballs/libraries, hashes, the core C header, TypeScript declarations, provenance and a test report. **Before promotion**, install those exact tarballs in empty projects and a disposable/private staged registry; verify pins, file allowlists and simulated partial-publish recovery. None of these executable pre-release gates depends on a version already existing in the public registry.
+Enumerate every remaining Rust/Node crate, feature and target explicitly, including bridge crates outside the root workspace. Removing the C product is affirmative removal from that inventory. Ordinary docs/examples never depend on unpublished packages to pass a pre-promotion gate.
 
-Authorized publishing consumes those exact tested files rather than rebuilding a new untested binary. Publish platform artifacts before their main package, verify availability/version/digest, then publish the main/log packages. **After promotion**, download the actual public-registry artifacts, compare their digests and perform clean remote installation. Distribution verification is mandatory before declaring the release complete; failure is a release incident, not a retroactive green qualification report. A failed partial release remains diagnosable and retryable; do not edit source manifests to pretend it completed.
+Pre-promotion qualification installs the exact staged tarballs in empty projects and a disposable/private registry, checks pins/file allowlists and simulates partial publication. It needs no public registry version that does not exist yet. No publication is authorized by this document.
 
-This proposal authorizes no actual publication. The implementation campaign must separately obtain/run the normal release authorization and credentialed environment checks.
+After separately authorized promotion, download actual public-registry artifacts, verify the same digests and perform clean remote installation. Failure is a release incident and blocks declaring completion, not a retroactive green qualification report. Publish tested immutable files; never rebuild an untested native library during promotion.
 
-## Required native and release gates
+## Required boundary and release gates
+
+Existing gate IDs remain stable where their Rust/Node safety obligation survives; C-only harness requirements are replaced by explicit surface deletion, not quietly marked passed.
 
 | Gate | Required assertion |
 | --- | --- |
-| FFI-01 Lifecycle | C and Node create/read/query/close/reopen, with references/tokens retained, millions of bounded handle cycles and no GC. No permanent engine Arc, lock, mapping, FD or per-callback tombstone remains. |
-| FFI-02 Token safety | Wrong runtime/kind/generation, double close, slot reuse, capacity/exhaustion, stale tokens after DB close, close during operation lookup. Typed refusal without wrong-resource access; bounded registry memory. |
-| FFI-03 Boundary memory | ASan/LSan/UBSan C harnesses plus applicable Rust Miri tests, fuzzed valid-memory pointer/length/tag inputs, overflow/null/zero-arity and allocation failure. No unwind crosses C; all outputs valid/empty on failure. |
-| FFI-04 Threads | Parallel read/apply/close/cancel and wrong-thread uses according to documented contract; deadlock/reentrancy/poison paths. Run race tooling where supported; no freeing an active operation's data. |
-| FFI-05 Views | Close/reuse result page only after views' documented lifetime; legal copied data survives source close. Borrowed input mutation after acceptance cannot affect asynchronous work. Illegal raw-pointer use is not misrepresented as a supported diagnostic feature. |
-| FFI-06 Floats | Golden bit corpus, host rounding modes, FTZ/DAZ, foreign thread entry/nesting, register state restoration, overflow/underflow/NaN/zero arithmetic and aggregate order/spill equivalence. Same canonical result across all supported targets. |
-| FFI-07 Async bridge | Queued cancellation, active cancellation, JS throw/worker failure, close with unresolved submit, native open errors and bounded result conversion. No swallowed error kind or hidden forever-running task. |
-| FFI-08 ABI mismatch | Wrong major/minor/features/N-API/native package/version/format/codec/target/libc. Fail before store mutation, with precise present-but-incompatible versus missing-artifact errors. |
-| PKG-01 Reproducible inputs | Fresh locked builds of core, internal Rust log, Node core/log and core C at pinned nightly, including no-log builds and all advertised features. Provenance names commit, dirty state, toolchain, target, flags, dependency locks and digests. |
-| PKG-02 Clean staging | Interrupted manifest generation/build/pack at each phase leaves source tree unchanged. Existing unrelated optional dependencies survive. Staging retries yield equivalent intended manifests/artifact set. |
-| PKG-03 Isolated install | Actual tarballs installed in empty projects, without monorepo paths/dev dependencies/source condition aliases. ESM imports, type declarations, native load and core/log examples execute. Test supported npm/pnpm install flows and disabled optional dependencies error. |
-| PKG-04 Native matrix | Actual artifact boot/run on every advertised OS/arch/libc/Node row, minimum CPU and optimized paths. Unsupported hosts refuse explicitly; Node 24, additional advertised majors and Lambda image are genuinely executed. |
-| PKG-05 Cross-release data | Golden 1.0 stores/history/commands/receipts reopen/replay on supported upgrades. Incompatible 0.x/downgrade cases refuse read-only and direct users to log import, never mutate before discovering incompatibility. |
-| PKG-06 Public contract | Generated core C header and core/log TS declarations match exports and error tags; documentation snippets compile; standalone downstream custom-schema and dynamic API tests agree. Core dependency graph has no log/backup/migration types; no public Rust/C log SDK/header is packaged or advertised. |
-| PKG-07A Pre-promotion proof | Tested tarball/library digests equal immutable staged artifacts; empty-project and disposable/private-registry installs resolve exact native pins. Simulated partial publication and package-size/file allowlists pass before public promotion. Missing required qualification access is incomplete, never a silent pass. No production publication is performed by this proposal phase. |
-| PKG-07B Distribution proof | After separately authorized public promotion, actual registry-downloaded digests equal tested digests and clean remote installs resolve exact pins. Failure blocks declaring the release complete and triggers a release incident; it cannot rewrite pre-promotion test results as passed distribution evidence. |
+| FFI-01 Lifecycle | Rust/Node create/read/query/close/reopen with retained wrappers and GC disabled; millions of bounded cycles plateau. No native owner, mapping, FD, lock or historical callback tombstone persists. Port shared SDK-007/013 schedules. |
+| FFI-02 Capability safety | Wrong owner/kind/generation, double close, slot reuse, capacity/exhaustion, escaped borrow/snapshot and close during lookup refuse without wrong-resource access. Internal bookkeeping remains bounded. |
+| FFI-03 Boundary memory | Applicable Rust Miri/sanitizer/fuzz tests and a real Node addon harness cover valid-memory boundary tags/lengths, UTF-8, overflow, zero arity and allocation failure. No native unwind or half-initialized output escapes. No public C harness/product is retained to satisfy this row. |
+| FFI-04 Threads | Parallel Node/native read/apply/close/cancel, worker affinity, nested entry and poisoned/faulted owner paths. Race tooling where supported; no freeing active data or deadlock through bookkeeping locks. |
+| FFI-05 Owned values | Mutable input after acceptance cannot affect work. Result/page copies survive their documented owner lifetime; intoCursor spends/transfers once. Close/reuse/cancel cannot expose a mapping-backed JS view. |
+| FFI-06 Floats | Golden bits, foreign-thread rounding/FTZ/DAZ, nested guard restoration, scalar/interval edge cases and sum/mean order/spill equivalence on all canonical targets. |
+| FFI-07 Async bridge | Queue/active cancellation, JS throw, worker failure, open errors, unresolved submit during close and bounded result conversion. No erased error kind or untracked forever-running native task. |
+| FFI-08 Native mismatch | Wrong version/features/N-API/format/codec/architecture/libc/CPU refuse before store mutation; distinguish absent from incompatible artifacts. |
+| PKG-01 Reproducible inputs | Fresh locked Rust core/internal log/Node builds at the pinned toolchain, core-only and log-enabled variants. Provenance identifies source revision/dirty state, toolchain, targets, flags, locks and digests. |
+| PKG-02 Clean staging | Interrupt manifest/build/pack at each phase; source stays unchanged, unrelated optional deps survive and staging retry is coherent. |
+| PKG-03 Isolated install | Actual tarballs in empty npm/pnpm projects; ESM/types/native load/core/log/generated-plan examples run without monorepo paths or source aliases. Missing optional native dependencies fail clearly. |
+| PKG-04 Canonical targets | Actual artifacts execute on Apple Silicon, Graviton and Vercel Node x64. Verify supported Node/OS/libc/CPU, cold/warm paths, binary tracing and baseline fallbacks. Portable correctness required everywhere; unmeasured tuning claims forbidden. |
+| PKG-05 Data compatibility | Golden stores/history/commands/generated plans reopen/replay on supported upgrades. Incompatible old/downgrade cases refuse before writes, with explicit log import requirements. |
+| PKG-06 Whole C deletion/public contract | C crate, headers, symbols, examples, tests, workflows, release targets, dependencies/imports and public documentation are removed from the implementation/release tree; preserved audit/history is exempt. Rust/TS declarations/examples match remaining exports. No public Rust log SDK; no core migration/log dependency. Shared Rust/Node regression coverage remains. |
+| PKG-07A Pre-promotion proof | Exact staged digests, empty-project/private-registry installs, pins, package allowlists and simulated partial publication pass before public promotion. Missing required qualification is incomplete, not skipped-green. |
+| PKG-07B Distribution proof | After authorized promotion, actual registry-download digests/pins/clean installs match qualification. Failure blocks release completion and triggers an incident. |
 
-Run all known SDK/FFI counterexample schedules against freshly built artifacts, not only source wrappers. Source suites, packed artifacts and native lifecycle tests are complementary, not substitutes. Platform-specific required tests must appear as explicit failed/incomplete qualification if skipped; release is blocked for a claimed platform until they pass.
+## Audit disposition
 
-## Evidence and issue closure
-
-This design directly replaces `SDK-013`'s immortal C tombstones and `SDK-007`'s GC-owned native environment. It also closes the representational opening for `SDK-002/004/005` only when the runtime gates pass. Existing read-scope and foreign-plan protections must be preserved under the new token model; removing callbacks does not authorize cross-owner execution.
-
-The original unindexed packaging observations—unchecked runtime ABI, source-mutating prepack, build/test coupling, Linux/libc ambiguity, stale examples and unproven cross-release compatibility—map to PKG-01–06, PKG-07A/B and FFI-08. Preserve audit references and actual failing traces in the implementation's resolution ledger. A proposal, a compile pass or a new semver number is not closure evidence.
+C-specific pointer/tombstone compatibility is removed rather than preserved. Engine/Node lifetime, input-ownership, async error, native reclamation, float and packaging counterexamples remain obligations. Deleting an interface does not erase a shared bug; a new version, a compile pass or this proposal is not closure evidence.

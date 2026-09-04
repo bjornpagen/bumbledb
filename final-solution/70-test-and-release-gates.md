@@ -21,8 +21,8 @@ The current repository already has meaningful layers:
 - `scripts/battery.sh`: workspace format/lint/tests, feature checks, Lean/conformance, SDK build/test/type/lint and packed import.
 - `scripts/check.sh`: documentation tests, allocation gates, feature combinations and observational harness checks.
 - `scripts/lean.sh` and the conformance corpus: abstract semantics plus empirical cross-implementation comparison.
-- Separate `ts/crate` and `crates/bumbledb-c` checks: these crates are excluded from the root workspace today.
-- `.github/workflows/ci.yml`, `bumbledb-log.yml`, and `c-abi.yml`: macOS ARM64 and Amazon Linux 2023 x86-64/ARM64 build/test paths.
+- Separate `ts/crate` and `crates/bumbledb-c` checks exist in the audited tree; retain the native Node lane and remove the C crate/lane with affirmative absence checks.
+- `.github/workflows/ci.yml`, `bumbledb-log.yml`, and the old `c-abi.yml` identify existing macOS ARM64/Amazon Linux lanes. Port applicable platform/native properties before deleting the C workflow; qualify actual x86 Vercel Node deployment too.
 - `scripts/miri.sh`: selected low-level code under native and cross-interpreted targets.
 - Independent naive/SQLite oracles, compile-fail tests, kernel/disassembly checks, allocation measurement and packaged-import tests.
 
@@ -33,7 +33,7 @@ Fix the gaps rather than discarding this investment. Current CI explicitly skips
 | ID | Required evidence | Primary scope |
 | --- | --- | --- |
 | G00 | Complete specification/audit/test traceability and approved breaking changes | Every known issue and every public guarantee |
-| G01 | Clean pinned builds, lint, types, docs, features and dependencies | Rust, Lean, TS, C; all published artifacts |
+| G01 | Clean pinned builds, lint, types, docs, features and dependencies | Rust, Lean, TS; all published artifacts and complete C removal |
 | G02 | Canonical scalar/row/schema/command codecs, especially floats | Bytes and cross-language value identity |
 | G03 | Admission, final-state constraints, diagnostics and proof correspondence | Engine semantic correctness |
 | G04 | Query denotation, optimizer equivalence, error outputs and arithmetic | All admitted query forms |
@@ -41,9 +41,9 @@ Fix the gaps rather than discarding this investment. Current CI explicitly skips
 | G06 | LMDB transaction, snapshot, resize and local durability schedules | Core physical state and opaque attachment coherence |
 | G07 | Independent log history model and deterministic concurrency schedules | Single tenant publication authority |
 | G08 | Actual backend contract qualification | OS ownership, filesystem durability and real S3 conditions |
-| G09 | Named commands, witnesses, fresh identities and receipt retirement | Application-visible intent and retry semantics |
+| G09 | Named commands, witnesses, concrete application IDs and receipt retirement | Application-visible intent and retry semantics |
 | G10 | GC, checkpoint, backup/restore and migration drills | `bumbledb-log` only |
-| G11 | Lifecycle and ownership, native/C safety, repeated resource reclamation | Borrow/owner/operation/result handles |
+| G11 | Lifecycle and ownership, Rust/Node native safety, repeated resource reclamation | Borrow/owner/operation/result handles |
 | G12 | Work, queue, scratch, memory and cancellation behavior | Bounded host execution without a database-size cap |
 | G13 | Fresh native packages, platform/ABI compatibility and real consumers | Registry-shaped release artifacts and examples |
 | G14 | Untrusted input, authority boundaries and corruption refusal | Parsers, request adapters, cache/provenance isolation |
@@ -63,8 +63,8 @@ Also cover non-indexed observations in the FFI/packaging and hosting reports: pa
 ### Builds and surface compatibility
 
 - Clean-checkout builds use the pinned nightly and lockfiles, not a developer's prebuilt native library. Core default, supported feature combinations, log without S3, and log with its S3 feature compile and test.
-- Include the separate Node and C crates until/unless the workspace layout is deliberately changed. Test public examples as downstream consumers, including compile-fail examples of invalid capability use.
-- Regenerate headers/descriptors into staging and compare; no in-place mutation of the release source tree is necessary.
+- Include the separately built native Node crate and all Rust consumers. Prove the C crate, public headers/exports, packaging hooks, examples, workspace references and dedicated workflow are gone. Test public examples as downstream consumers, including compile-fail invalid capability use.
+- Regenerate native descriptors and schema/plan artifacts into staging and compare; no in-place mutation of the release source tree is necessary.
 - Reject unsupported storage/protocol families before any cleanup or write. A reset numeric format version under new magic must not accept old v1/v8 fixtures.
 
 ### Canonical values
@@ -73,11 +73,13 @@ For every scalar and tuple encoding assert round trip, canonical idempotence, ex
 
 Float fixtures must include both zeros; the smallest/largest subnormals; the normal/subnormal boundary; adjacent representable values; maximum finite values; both infinities; many positive/negative signaling/quiet NaN encodings; halfway rounding; overflow; underflow; and integer-cast boundaries near 2^53, i64 limits and u64 limits. Compare **canonical bits**, not approximate host numbers or ordinary JSON serialization.
 
-Run Rust/Node/C ingestion, storage/reopen, key lookup, membership, grouping, joins and result marshaling against the same corpus. TypeScript's `number`, JSON's lack of nonfinite numbers and C's floating environment are separate transport/host concerns; none may choose a different database equality relation.
+Run Rust/Node ingestion, storage/reopen, key lookup, membership, grouping, joins and result marshaling against the same corpus on Apple Silicon, ARM Graviton and x86 Vercel's declared CPU/runtime floor. TypeScript's `number`, JSON's lack of nonfinite values and the host FPU environment are separate concerns; none may choose a different database equality relation.
 
 Float property tests use a simple independent bit/rational reference, not the production conversion routine. Force wrong-rounding and FTZ/DAZ host environments where supported. Verify numerical execution establishes/restores its contract and that foreign host settings cannot silently change persisted or returned results.
 
 Public supported ingestion must not turn malformed interval/bool/text/byte/float rows into successful corrupt state. Force digest collisions with a test-only tiny/constant hash and verify full-value equality still decides fact identity and constraint results, including long values above LMDB's key-size bound.
+
+Float intervals require dense numeric denotation fixtures, not enumeration of representable floats: adjacent finite endpoints, gaps between adjacent endpoint values, left/right rays, both infinities, NaN refusal, canonical zero and bound parameters. Allen masks, coverage, packing and pointwise laws use exact endpoint order. Nonfinite point membership is false; unbounded measure and overflow of a bounded length are different errors. Float fixed-width encodings and capacity weights remain refused. Local fingerprints and authoritative content digests have separate width/domain/golden/collision tests; shortening a fingerprint cannot remove exact comparison.
 
 ### Admission and laws
 
@@ -135,7 +137,7 @@ Check every observation, not just end state:
 - A rejected candidate never becomes visible before final convergence.
 - Same ID/same digest retries return the same outcome; same ID/different digest refuses; retired IDs never execute again.
 - Two witnessed decrements either enact the intended serial changes or return explicit precondition failure. Blind set-write semantics remain separately tested.
-- FreshRef results are stable only after publication and cannot leak/reissue provisional IDs through callback or cancellation paths.
+- Entity IDs are generated once outside native submission and copied into sealed commands. Retries, response loss and restore preserve those bytes; no FreshRef/reservation/result-map API survives. Duplicate IDs follow ordinary schema laws, not a claim of collision-free issuance.
 - A failed/unknown attempt followed by another request on the same live handle preserves resolution evidence.
 - Captured-tip refresh does not chase infinite concurrent work. Every retry loop has a bounded outcome under contention or a stuck peer.
 
@@ -153,7 +155,7 @@ Credential absence blocks S3 qualification. Cloud tests must never run against a
 
 The main engine gets snapshot/admission tests, not a migration framework. These operations and their runbooks live in `bumbledb-log`.
 
-The public log product is TypeScript-only. Internal Rust model/adapter tests remain required; public Rust/C log API tests are not a promised surface. Core C and Rust are still fully qualified. LocalHistory's one-LMDB authority and independent local restore directories receive their own LOCAL-* crash tests; no hosted tail/epoch envelope is imposed just to reopen a local database.
+The public log product is TypeScript-only. Internal Rust model/adapter tests remain required; public Rust log API tests are not a promised surface and the entire public C product is removed. Rust/TS core behavior remains fully qualified. LocalHistory's one-LMDB authority and independent local restore directories receive their own LOCAL-* crash tests; no hosted tail/epoch envelope is imposed just to reopen a local database.
 
 - Publish while a checkpoint streams; advance the tip; publish the old coherent checkpoint with a validated retained suffix. It must not require a whole-database quiet period or re-copy on every conflict.
 - Advance a GC epoch while an old writer/checkpointer is paused at each upload/CAS boundary. Old objects cannot be introduced into live history after the deletion barrier.
@@ -163,7 +165,7 @@ The public log product is TypeScript-only. Internal Rust model/adapter tests rem
 - Named restore points preserve their complete checkpoint+tail closure. Explicit release changes their availability contract; restart or clock changes do not release them automatically.
 - Recover under another origin/cache mapping. Same schema and same revision with foreign data must refuse or reseed before serving, writing or cleaning up anything.
 - Migrate through explicit freeze/export/transform/admit/import/new-incarnation/cutover steps. Kill at every step. Old writers cannot resume into the new history, invalid transformed state cannot become current, and original data is not overwritten by a failed migration.
-- Run repo-local TypeScript migrations through the actual installed runner: ordered manifest/checksum validation, missing/edited/divergent history, empty genesis versus explicit baseline, bounded transforms, repeated operation identity, frozen-source recovery and expected-old binding cutover. No ordinary request silently migrates a tenant; no TypeScript callback runs inside or is replayed by a native application transaction. Chapter 33 defines the exact child inventory.
+- Run the schema generator and installed migration runner end to end: identical declarations produce identical canonical plans; automatic changes need no authored migration; rename/backfill/destruction ambiguity refuses without declarative intent. Check ordered plan/history identity, missing/edited/divergent history, baseline, bounded native evaluation, repeated operation identity, frozen-source recovery and expected-old cutover. Multiple pending plans build one final incarnation while preserving necessary intermediate checks; test composition against sequential denotation, including deduplication and rounding boundaries. No runtime imports user migration callbacks; no ordinary request silently migrates a tenant. Chapter 33 defines the exact child inventory.
 - Test 0.x format refusal, offline conversion with the declared matching old reader, new-format round trips, and restoring a backup with a new history identity. Never reset the version counter without a distinguishing format family.
 - Restore external blob references as part of the application drill. A relational restore whose required blobs were deleted is not a successful application restore.
 
@@ -171,11 +173,11 @@ There is no default time-window PITR guarantee in the selected 1.0 contract. Rem
 
 ## G11–G12 — Ownership, resource use and cancellation
 
-Run borrowed-owner state sequences as finite model tests and through real Rust, Node and C handles. Include double release, stale release after reopen, close while opening, close with queued/in-flight requests, retained writer after close, foreign database/plan, use after callback scope, repeated dispose, leaked client borrow, registry slot reuse and generation exhaustion.
+Run borrowed-owner state sequences as finite model tests and through real Rust/Node handles. Include double release, stale release after reopen, close while opening, close with queued/in-flight requests, retained writer after close, foreign database/plan, use after callback scope, repeated dispose, leaked client borrow, registry slot reuse and generation exhaustion where relevant.
 
-Verify native environments and locks actually release after the last authorized operation drains—not merely that a wrapper throws `closed`. Repeated open/read/query/close cycles must reach a stable resource envelope. Track file descriptors, mapped files, native owners, temporary LMDBs, timers, threads and memory, not just JavaScript heap. C diagnostic handles must not grow forever with historical callback count.
+Verify native environments and locks actually release after the last authorized operation drains—not merely that a wrapper throws `closed`. Repeated open/read/query/close cycles must reach a stable resource envelope. Track file descriptors, mapped files, native owners, temporary LMDBs, timers, threads and memory, not just JavaScript heap. Internal Node diagnostics must not retain payloads with historical operation count.
 
-Miri covers applicable pure unsafe Rust; ASan/UBSan/LSan or appropriate platform tools cover the FFI/native subprocess paths. Neither excuses invalid incoming C pointers: caller obligations remain documented. Safe stale-handle rejection is tested within the selected handle contract.
+Miri covers applicable pure unsafe Rust; ASan/UBSan/LSan or appropriate platform tools cover the internal Node/native subprocess paths. Buffer pin/copy, thread handoff, cancellation and close must obey that boundary's actual ownership contract. Removing public C eliminates its raw-pointer contract, not unsafe Rust or native lifetime obligations.
 
 Memory pressure trims optional caches and moves scratch work to LMDB rather than rejecting a database solely because it is large. Real disk/address-space exhaustion, an unrepresentable scalar, or a configured request deadline returns a precise error. Queue and worker limits control concurrent work; they are not a hidden database-size cap.
 
@@ -187,19 +189,21 @@ Include two-tenant noisy-neighbor tests: one slow/large request must not indefin
 
 Build exact native packages for the declared darwin-arm64, linux-arm64 and linux-x64 roster (or a deliberately revised prequalified roster). Exercise the oldest declared Node runtime as well as the current supported runtime. Linux artifacts run against their documented libc floor, not just any container with the word Linux on it.
 
-Pack from staging manifests. Install tarballs into empty consumers without workspace links/dev dependencies; import core and log separately; run create/write/read/query/reopen/close and hosted test-backend commands; typecheck downstream declarations and compile a C header consumer. Assert SDK/native ABI/format compatibility at load. Check mismatched artifacts refuse rather than calling the wrong export layout.
+Pack from staging manifests. Install tarballs into empty consumers without workspace links/dev dependencies; import core and log separately; run create/write/read/query/reopen/close and hosted test-backend commands; typecheck downstream declarations and verify no public C artifact/export survives. Assert SDK/native ABI/format compatibility at load. Check mismatched artifacts refuse rather than calling the wrong export layout.
 
 Fuzz bounded parser and boundary inputs: wrong type/width/schema, unknown tags, duplicate/conflicting operations, malformed UTF-8, pathological lengths, noncanonical floats, recursive size limits, object digest/length mismatches and foreign identity. Reinstate an actual corpus-replay/fuzz campaign where useful; a past preference for deleting fuzzing is not a 1.0 correctness constraint.
 
 HTTP/example adapters validate method/path/event shape and size, decode base64 correctly, and require a host-supplied authenticated tenant mapping. Test logs/errors do not emit private fact payloads or credentials by default. This is scoped boundary qualification, not a claim to have built a full authentication product.
 
-The Next.js + Alchemy example is also a release consumer: production build, server-only imports, actual native asset inclusion, the selected Node/libc target, real IAM attachment/credential rotation, local development, explicit deployment migration and schema/history mismatch on ordinary open. Client/Edge imports must fail usefully. The Expo/Drizzle analogy does not qualify a React Native or browser native runtime.
+The Next.js/Alchemy and x86 Vercel Node examples are release consumers: production build, server-only imports, native asset inclusion, selected Node/libc/CPU floor, actual local-disk envelope, real IAM/credential rotation, local development, generated deployment migration and schema/history mismatch on ordinary open. Client/Edge imports must fail usefully. The Expo/Drizzle analogy does not qualify a React Native or browser runtime. The >40-GiB engine lane runs on fitting hardware, not a serverless scratch directory without that capacity.
 
 ## G15 — Earn the performance claims without turning them into superstition
 
 Use actual intended application schemas where available. Cover booking/capacity, knowledge/graph metadata, and event/ledger identity; report each schema's coordination domain and unsupported query shapes.
 
-Measure warm point/query reads, first query after insert/replace/delete, cold reopen, beyond-memory cursor execution, scratch spill, cache churn, fresh result issuance, single/multiple remote writers, checkpoint/GC overlap, and recovery. Report absolute latency distributions, throughput, peak/resident memory, virtual map/file sizes, temporary disk, bytes decoded/copied and object operations per terminal decision.
+Measure warm Free Join/indexed reads, first query after insert/replace/delete, cold reopen, beyond-memory cursor execution, scratch spill, cache churn, command sealing with application IDs, single/multiple remote writers, checkpoint/GC overlap and recovery. Include small per-student tenants, not just a single large relation. Report absolute latency distributions, throughput, peak/resident memory, virtual map/file sizes, temporary disk, bytes decoded/copied and object operations per terminal decision.
+
+Chapters [40](40-performance-contract.md) and [41](41-storage-and-hashing.md) define mandatory workload/constant/storage/hash families. Revisit batch/load/prefetch/cache thresholds with falsifiers and in-situ antagonists. Separate machine facts from backend bounds and arbitrary policy. Account for per-namespace live key/value bytes, LMDB page occupancy/free pages, raw/compacted files, OS allocated blocks and indexed SQLite/WAL under the same data/index/durability conditions. Attribute the recorded 2.3–2.45× gap rather than labeling all overhead a Free Join tax. Compare 16-byte exact-checked local fingerprints, full authoritative digests and the AEGIS candidate on actual short-row and bulk inputs before freezing a new algorithm. No hash throughput claim or space-saving percentage is established by these documents.
 
 Retain all runs and configuration; do not select only best medians. Performance baselines compare identical correctness and durability semantics. Host-specific assembly/allocation assertions remain scoped measured claims; they do not replace application benchmarks or force an architecture-wide no-allocation promise.
 
@@ -212,12 +216,12 @@ The final release candidate is built from a clean committed tree. The packet inc
 1. Specification and breaking-change inventory, including float semantics and the new format family.
 2. Closed finding matrix with fix/test/review references and no unresolved known defect in supported behavior.
 3. Every required G00–G15 matrix result for that revision or a demonstrably identical promoted artifact.
-4. Exact source/native/package/binary digests, toolchains, dependency locks and generated-header/descriptor provenance.
+4. Exact source/native/package/binary digests, toolchains, dependency locks and generated schema/plan/native-descriptor provenance.
 5. Restore/migration, ownership, real S3 and large-database qualification records.
 6. Published workload results and explicit platform/backend/failure-domain limits.
 7. Tested installation, diagnosis, backup/restore, migration and rollback instructions.
 
-A small machine check validates completeness and identity before tagging/publishing. It rejects credential-skipped S3, stale native artifacts, missing core C coverage, unrun large-database qualification and open audit rows. Human review checks that the specification was not weakened just to make the packet green.
+A small machine check validates completeness and identity before tagging/publishing. It rejects credential-skipped S3, stale native artifacts, surviving public C artifacts or missing Node safety coverage, unrun large-database qualification and open audit rows. Human review checks that the specification was not weakened just to make the packet green.
 
 Separate prepublication qualification from distribution verification to avoid a circular gate. Before public promotion, exact staged artifacts pass all semantic/backend/platform/migration tests plus clean installation and a disposable/private registry publication rehearsal. After authorized publication, download the public registry artifacts, verify digest/pins/install, and only then declare release completion. A distribution mismatch is a release incident, never retroactive permission to ship unqualified code. The actual public registry cannot prove a version available before that version has been uploaded.
 
@@ -231,11 +235,11 @@ The following cross-index makes the chapter-specific families part of the releas
 | --- | --- | --- |
 | [02 concurrency](02-concurrency-and-semilattices.md) | `CONC-01` through `CONC-06` | G03/G04/G06/G07/G09/G15 |
 | [10 engine](10-semantics-and-engine.md) | `E-DELTA`, `E-VALUE`, `E-CODEC`, `E-SNAPSHOT`, `E-NO-RESERVE`, `E-ADMIT`, `E-TEXT`, `E-DURABILITY`, `E-VISIBILITY`, `E-ORIGIN`, `E-LARGE`, `E-BRIDGE` | G01/G02/G03/G06/G09/G11 |
-| [11 floats](11-floats.md) | `F-CANON`, `F-GOLDEN`, `F-ORDER`, `F-ARITH`, `F-ENV`, `F-AGG`, `F-SET`, `F-OPT-NEG`, `F-CROSS`, `F-WIRE`, `F-RESOURCE`, `F-PROOF` | G02/G03/G04/G05/G11/G12/G13 |
+| [11 floats](11-floats.md) | `F-CANON`, `F-GOLDEN`, `F-ORDER`, `F-ARITH`, `F-ENV`, `F-AGG`, `F-SET`, `F-OPT-NEG`, `F-CROSS`, `F-WIRE`, `F-RESOURCE`, `F-PROOF`, `F-INTERVAL` | G02/G03/G04/G05/G11/G12/G13 |
 | [12 queries](12-query-execution.md) | `Q-ATOMIC`, `Q-BUDGET`, `Q-DISK`, `Q-LARGE-STORE`, `Q-COLLISION`, `Q-FALLBACK`, `Q-RECUR`, `Q-GROUP`, `Q-TEMPORAL`, `Q-LIFETIME`, `Q-FAIR`, `Q-IR`, `Q-INJECT` | G04/G05/G06/G11/G12/G15 |
 | [13 assurance](13-lean-and-rust.md) | `P-KERNEL`, `P-SEMANTIC`, `P-FLOAT`, `P-REPRESENTATION`, `P-DISK`, `P-MEMORY`, `P-SCHEDULE`, `P-ARTIFACT`, `P-PERF` | G00–G15 as the linked lane specifies |
-| [20 protocol](20-durable-protocol.md) | `PROTO-01` through `PROTO-19` | G07/G08/G09/G11/G12 |
-| [21 storage](21-storage-and-retention.md) | `STORE-01` through `STORE-09`; `LOCAL-01` through `LOCAL-03` | G05/G06/G08/G10/G11/G12 |
+| [20 protocol](20-durable-protocol.md) | `PROTO-01` through `PROTO-20` | G07/G08/G09/G11/G12/G15 |
+| [21 storage](21-storage-and-retention.md) | `STORE-01` through `STORE-10`; `LOCAL-01` through `LOCAL-03` | G05/G06/G08/G10/G11/G12/G15 |
 | [21 collection](21-storage-and-retention.md) | `GC-01` through `GC-13` | G07/G08/G10/G12 |
 | [21 real backends](21-storage-and-retention.md) | `FS-01` through `FS-05`; `S3-01` through `S3-06` | G06/G08/G10/G11/G14 |
 | [22 recovery](22-recovery-and-migrations.md) | `REC-01` through `REC-07` | G06/G07/G09/G10/G11 |
@@ -248,6 +252,8 @@ The following cross-index makes the chapter-specific families part of the releas
 | [32 packages](32-ffi-and-release-packaging.md) | `PKG-01` through `PKG-06`; `PKG-07A`, `PKG-07B` | G01/G13/G16; PKG-07B public-distribution verification after authorized promotion |
 | [33 TypeScript migrations](33-typescript-migrations-and-apps.md) | `TS-MIG-01` through `TS-MIG-10` | G02/G05/G08/G10/G12/G13/G14 |
 | [33 application integration](33-typescript-migrations-and-apps.md) | `APP-01` through `APP-08` | G08/G10/G11/G12/G13/G14/G15 |
+| [40 application performance](40-performance-contract.md) | `APP-FAST`, `APP-MUTATE`, `APP-NUMERIC`, `APP-LARGE`, `APP-TENANTS`, `APP-TARGETS`, `APP-METHOD`, `APP-MAGIC` | G00/G04/G05/G06/G11/G12/G13/G15 |
+| [41 storage/hashing](41-storage-and-hashing.md) | `SPACE-01` through `SPACE-02`; `HASH-01` through `HASH-04` | G00/G02/G03/G04/G05/G13/G14/G15 |
 
 The TypeScript migration/application families are as mandatory as engine/protocol families. A checked history file alone does not qualify migration, and a successful local Next build alone does not qualify native deployment or the attached AWS permissions.
 

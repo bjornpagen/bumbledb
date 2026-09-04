@@ -13,7 +13,7 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | REP-001 | Delete vacant per-braid publication slots. A never-reused HEAD and epoch-bound staged dependencies are the only hosted publication path | A paused old writer cannot publish behind retained history or reference collected objects. G07/G08/G10; PROTO-01 and GC barrier schedules |
 | REP-002 | Delete scalar-sum ordering of vector recovery floors. One tenant order; checkpoint boundary must be an authenticated ancestor of the current tip | Fresh recovery after collection reconstructs the resulting state at its captured tip and every receipt promised by current retention; it need not retain every historical decision object forever. G07/G10 |
 | REP-003 | Delete clock-equality retention mode and implicit 90-day promise. Retain explicit named roots; release is an explicit authority operation | Restart/clock change cannot delete a retained restore point. G10; breaking policy documented, not silently weakened |
-| REP-004 | Delete separate counter-object allocation. Resolve fresh placeholders from the winning decision; preserve uncertainty in the adapter | No two successful commands issue the same generated entity identity; equal bytes do not prove ownership. G08/G09; PROTO-04/11 |
+| REP-004 | Delete the entire database entity allocator and FreshRef representation. Applications seal concrete 128-bit IDs | No reservation/counter ownership claim exists; retries preserve entity bytes, duplicate keys are judged normally, and UUID uniqueness is not misrepresented as absolute. G08/G09; PROTO-04/11 |
 | REP-005 | Delete expiring filesystem mutation leases. Kernel-held local ownership or actual S3 conditional replacement enforces authority | Suspended owner cannot coexist with a successor mutating its protected state. G06/G08/G11 |
 | REP-006 | Delete writer-number fencing of a shared allocator | Arbitrary caller identity cannot strand a healthy request in unchanged retries; every contention loop has a bounded outcome. G07/G09 |
 | REP-007 | Scratch is staging evidence, not remote deletion authority. Only rooted epoch GC may remove objects | Crash after publication, later checkpoint, reopen: every retained dependency remains recoverable. G10 |
@@ -38,7 +38,7 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | ENG-001 | Remove public unchecked interval construction; all typed/constant/dynamic inputs use checked canonical primitives | Safe supported input cannot commit invalid interval/bool/width representation. G02/G03; E-VALUE |
 | ENG-002 | Replace trusted safe raw `Fact` codecs with typed field encoding or checked external bytes | A custom integration cannot establish canonicality by merely returning success. G02/G03; E-CODEC |
 | ENG-003 | OwnedSnapshot holds one real read transaction; content, generation and attachment derive from it | Concurrent export/copy/checkpoint never mismatches metadata and rows. G06; E-SNAPSHOT |
-| ENG-004 | Remove core escaped fresh reservation contract. Log FreshRefs resolve only with a published decision | No prepublication ID can be presented as durably reserved; abrupt exit/retry preserves issued identity. G09; E-NO-RESERVE |
+| ENG-004 | Remove core escaped reservations and log FreshRefs; entity IDs are ordinary owned input | No database issuance capability remains; abrupt exit/retry preserves the sealed application's ID bytes. G09; E-NO-RESERVE |
 | ENG-005 | Judge the proposed relation/multimap independently of physical unique-index installation | All violated statement IDs are reported for completed judgment, including refused-row conflict permutations. G03; E-ADMIT |
 | ENG-006 | Remove mandatory immortal text dictionary; live tuples own canonical text | Deleted text has no independently live dictionary entry and disappears from live-state export; retention/physical erasure remains explicitly log/filesystem policy. G03/G06/G10; E-TEXT |
 | ENG-007 | Remove fresh-ID burn machine; do not flatten infrastructure failure into semantic rejection | Every persistence failure remains observable; terminal log outcome retains publication certainty. G03/G06/G09 |
@@ -49,7 +49,7 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | Audit ID | Successor disposition | Blocking property / gates |
 | --- | --- | --- |
 | QRY-001 | Results are owned complete values or an explicit error; scratch is not a published answer | Every failure family leaves no apparently complete partial current answer, including grouped overflow. G04/G12 |
-| QRY-002 | Disk-native execution, optional bounded caches and one RAM/LMDB scratch map; charge work/growth before or at bounded points | A query exceeding RAM continues on disk; deadlines/storage failures stop safely without unbounded native work or hidden truncation. G04/G05/G12 |
+| QRY-002 | Primary warm Free Join/selective index paths, bounded LMDB fallback and one RAM/LMDB scratch map; charge growth before or at bounded points | A query exceeding RAM continues on disk; deadlines/storage failures stop safely without unbounded native work or hidden truncation. G04/G05/G12/G15 |
 | QRY-003 | One public execution policy carried through all bindings, with effective values observable | Downstream users can control request budgets, and tests prove what each limit actually bounds. G01/G12 |
 
 ## SDK, native ownership and hosting
@@ -68,9 +68,9 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | SDK-010 | Same root fix as REP-015: finite targets and propagated WorkContext | Deadline/cancellation reaches actual native/I/O work, not just Promise waiting. G07/G12 |
 | SDK-011 | Cache/query budgets account for real resources; pressure uses LMDB, concurrent admission reserves actual work | No DB-size/RAM hard boundary; no uncounted opening storm or native-memory exemption. G05/G11/G12 |
 | SDK-012 | Same root fix as REP-012: no lifetime lease-token chain | Repeated use does not accumulate quadratic cleanup work. G11/G12 |
-| SDK-013 | Replace immortal raw callback tombstones with bounded generation-tagged handles; invalidate payload ownership | C read/destroy releases the engine and lock; long callback history has bounded retained resources. G11/G13 |
+| SDK-013 | Delete the entire public C API and its callback/tombstone mechanism; preserve the ownership property at Rust/Node boundaries | Affirmative crate/header/export/workflow/consumer removal checks; Node close/drain releases the engine/lock and long operation history has bounded resources. G00/G11/G13; FFI-* |
 | SDK-014 | Private uncommitted LMDB candidate plus published snapshot capability | Read-only wrappers never point at a candidate that later rejects. G06/G07 |
-| SDK-015 | No callback replay or refill retry machine; log placeholders, immutable operations and receipt results | Side effects cannot be duplicated by a hidden recording retry; old callback API removed/tested. G01/G09 |
+| SDK-015 | No callback replay, placeholder allocator or refill retry machine; concrete immutable operations and receipts | Side effects and entity generation cannot be duplicated by hidden recording retry; old callback API removed/tested. G01/G09 |
 | SDK-016 | Verify configured origin and authoritative incarnation before using cache, pending work, or scratch | Equal-schema/equal-revision cache reuse refuses/reseeds before any foreign fact or command crosses scope. G10/G11/G14 |
 
 ## Architecture: settle the questions, not just the symptoms
@@ -81,14 +81,14 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | ARCH-002 | Tenant total order replaces product-of-braid-prefix read semantics | No accidental cross-braid causality claim or split outcome. Cross-tenant work remains outside one transaction. G07/G09 |
 | ARCH-003 | Named commands and retained receipt epochs; permanent refusal after retirement | Crash-before-response, duplicate request, mismatched digest and expired-ID schedules. G09/G10 |
 | ARCH-004 | Database/incarnation, command/decision/state identity and local origin binding are separate | Foreign token/cache, rebirth, restore and migration tests. G09/G10/G14 |
-| ARCH-005 | One internal Rust log state machine; TypeScript-only public log product | One reference history corpus through internal Rust and public Node surface; no separately handwritten TS protocol or public Rust/C log API to maintain. Core C remains separately tested. G07/G13 |
+| ARCH-005 | One internal Rust log state machine; TypeScript-only public log product; Rust/TS core only | One reference history corpus through internal Rust and public Node surface; no separately handwritten TS protocol or public Rust log API, and no public C product anywhere. G07/G13 |
 | ARCH-006 | No braids-as-row-sharding story; one tenant is a write authority | Measure real-schema hot-tenant contention; resident placement does not change authority. G15 |
 
 ## Operations, kept at the log/host boundary
 
 | Audit ID | Minimal disposition | Blocking evidence |
 | --- | --- | --- |
-| OPS-001 | Repo-local TypeScript migration API in log using checked history, freeze, coherent export, admission and new incarnation; no core migration framework | Kill at each cutover step; invalid destination never current; old writer refuses; migration-file edits/history divergence refuse. G10/G13; chapter 33 |
+| OPS-001 | TypeScript schema SDK generates canonical migration plan/history; log owns freeze, staged execution, admission and one final new incarnation | Generation refuses unresolved ambiguity; no handwritten callback escape; kill at each cutover step, invalid destination never current, old writer refuses, plan edits/history divergence refuse. G10/G13; chapter 33 |
 | OPS-002 | Log backup/restore primitives and an independent protected recovery root in the deployment runbook | Restore after loss of local cache/active namespace; verify credentials/policy separate from ordinary GC. G08/G10 |
 | OPS-003 | Immutable blob first, reference/receipt commit second; application outbox and idempotent effect dispatcher pattern | Missing blob, orphan upload, lost acknowledgment and restored-reference drill. G09/G10/G13 |
 | OPS-004 | Actual owner/borrow/resource boundaries and host authentication-to-tenant mapping | Cross-tenant cache/handle attacks and noisy-neighbor/lifecycle tests. G11/G12/G14 |
@@ -99,7 +99,7 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 
 | Audit ID | Successor disposition | Blocking evidence |
 | --- | --- | --- |
-| PERF-001 | No compulsory relation-sized image rebuild after each write; disk-native baseline and bounded optional acceleration | First-read-after-insert/replace/delete; hot/cold/forced-disk equivalence and costs. G05/G15 |
+| PERF-001 | No compulsory relation-sized image rebuild after each write; preserve primary warm Free Join and bounded disk fallback | First-read-after-insert/replace/delete; hot/cold/forced-disk equivalence, retained hot-path assembly/allocation gates and in-situ costs. G05/G15; chapter 40 |
 | PERF-002 | Distinguish map size, file size, resident cache, plans/results and work; deterministic release and LMDB-backed scratch | >RAM and >32 GiB fixtures, tenant churn, retained result/plan/native owner accounting. G05/G11/G12/G15 |
 | PERF-003 | Count complete named-decision path, retries and checkpoint costs, not one winning PUT | Requests/bytes/time per terminal outcome at single/multiple writers; no old footprint speed claim. G15 |
 | PERF-004 | Coherent streamed checkpoint with validated suffix and bounded progress | Continuous-write checkpoint success, cancellation, peak disk/RAM and catch-up tests. G06/G10/G15 |
@@ -133,13 +133,16 @@ These were discussed in the audit without separate implementation IDs. They are 
 
 | Requirement | Deliverable and release evidence |
 | --- | --- |
-| Full first-class floats | [11](11-floats.md), all scalar/query/schema/client/codec surfaces, F-* and G02/G04/G13 |
+| Full first-class floats, including sum/mean and float intervals | [11](11-floats.md), dense numeric interval denotation, scalar/query/schema/client/codec surfaces, F-* and G02/G04/G13 |
 | LMDB larger than memory; no 32 GiB product cliff | [10](10-semantics-and-engine.md), [12](12-query-execution.md), elastic maps, disk-native paths, G05/G06 |
 | Aggressive elimination of casework | [01](01-representation-first.md), one owner per mechanism, explicit subtraction review in G00 |
 | Small core, no infrastructure expansion | Core/log dependency boundary, reuse LMDB for persistent and scratch ordered maps, manual host/runbook responsibilities |
 | Nightly where useful | [13](13-lean-and-rust.md), verified feature/toolchain ledger, nightly repin gates; G01/G04/G11/G15 |
 | All missing tests pass before release | [70](70-test-and-release-gates.md), exact-artifact G16 packet |
-| TypeScript log and repo-local migration workflow | [33](33-typescript-migrations-and-apps.md), checked migration history, staged transforms, native server-only Next.js + Alchemy example; G10/G13/G14 |
+| TypeScript log and schema-generated migration workflow | [33](33-typescript-migrations-and-apps.md), generated canonical plans/history, staged execution, native server-only Next.js/Alchemy/Vercel examples; G10/G13/G14 |
+| Hard-delete the C product; Rust and TS only | [32](32-ffi-and-release-packaging.md), removal inventory plus independent Rust/Node safety/artifact gates; G00/G01/G11/G13 |
+| Apple Silicon performance identity; Graviton and x86 Vercel portability | [40](40-performance-contract.md), existing in-repo and M2 Max evidence, application workloads, regime-qualified constants and actual target execution; G15 |
+| Explain/reduce storage amplification and right-size hashing | [41](41-storage-and-hashing.md), physical namespace accounting, indexed-SQLite parity, hash-role/collision budget and TigerBeetle comparison; G02/G03/G05/G15 |
 | Commit and push proposal before coding | Documentation-only commit; no release tag, format mutation, source fix or production migration in this phase |
 
 ## Closure record format

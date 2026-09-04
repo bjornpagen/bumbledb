@@ -31,6 +31,8 @@ For a canonical bit word `b`, the order key is `~b` for negative values and `b ^
 
 The 1.0 scalar roster is unary negation, addition, subtraction, multiplication, division, explicit numeric casts, comparisons, `is_nan`, and `is_finite`. Aggregates are count, sum, mean, min, and max. No sqrt/libm/transcendental library, implicit decimal, SIMD fast-math mode, or approximate aggregate family is required to ship this type.
 
+**Sum and mean are retained product requirements, not optional follow-up work.** Benchmark and improve their exact implementation on application-sized groups and real join inputs; do not replace their semantics with repeated native addition to win a microbenchmark. The performance contract in [40](40-performance-contract.md) includes both, separately from the cost of first-class scalar storage/comparison.
+
 For each arithmetic node:
 
 1. Evaluate its operands as their canonical scalar values.
@@ -55,7 +57,7 @@ Keep arithmetic-producing expressions at the nonrecursive query boundary for 1.0
 
 ## 3. The embedding process does not own our rounding contract
 
-Canonical NaN alone does not make native arithmetic deterministic. A C host can change rounding mode; x86 MXCSR can enable FTZ/DAZ; ARM FPCR can flush subnormals. These affect a valid embedded database call even when the engine never changes a compiler flag.
+Canonical NaN alone does not make native arithmetic deterministic. Other native code in a Rust/Node process can change rounding mode; x86 MXCSR can enable FTZ/DAZ; ARM FPCR can flush subnormals. Dropping the public C API does not remove these embedding risks.
 
 Use one small **numerical execution guard** around a whole numerical engine operation, not per tuple. On supported x86-64 and ARM64 targets it saves the calling thread's relevant floating control/status state, installs round-to-nearest-even with gradual underflow and nontrapping IEEE behavior, and restores the saved state on every normal/error/unwind exit. Include architecture-specific rounding and flush-control bits; do not assume an ARM register layout is x86 MXCSR with renamed fields. No host callback is invoked while this guard is active.
 
@@ -89,7 +91,7 @@ For up to `u64::MAX` contributing bindings, a signed 2,176-bit finite accumulato
 
 Prove this canonical merge is associative and commutative (with the empty identity), including count/error behavior. It combines **disjoint partitions of the already distinct binding set**. It is not idempotent: merging the same finite partial state twice doubles its contribution/count, and the accumulator alone carries no binding provenance capable of detecting that replay. Exact set deduplication must therefore happen before accumulation. There is no numerical state meaning “NaN and both infinities and an obsolete finite sum.”
 
-This approximately few-hundred-byte state per float sum/mean group is a real memory cost. The scratch relation can keep it in RAM or in temporary LMDB without changing the accumulator algorithm. Cache only as many active group states as the request budget permits. Do not add parallel aggregation just because the merge operation supports it; the merge law is valuable for disk execution and tests already.
+This approximately few-hundred-byte state per float sum/mean group is a real memory cost: 34 limbs alone are 272 bytes per finite group before count, key and table overhead. Use compact no-group/one-group paths and existing constant-group batch specialization where the binding proof permits; share one exact total/count when the same binding/argument requests both sum and mean. A query that never requests these aggregates pays no accumulator cost. Charge group capacity before allocation; temporary LMDB is the bounded overflow path, not the default route for a student's small dashboard. Do not add parallel aggregation merely because the merge operation supports it. The sibling benchmark's fast exact **u128 integer** sums are useful evidence for the existing integer kernels, not evidence that a 2,176-bit F64 accumulator has their throughput.
 
 Special cases are fixed, not implementation-dependent:
 
@@ -110,11 +112,35 @@ Distinct binding semantics matter: two binding tuples `(entityA, amount=1)` and 
 
 ## 5. All surfaces, not a kernel-only feature
 
-Required in the same release: Rust schema macro and dynamic descriptor; typed/dynamic fact input; literal and parameter validation; closed relation constants; equality/range/negative atoms; keys, containment selections and joins; answer decoding; direct key probes; naive oracle; query explain; logical export; log codec; core Rust/TS/C values; packaged artifacts and declarations. The public log API is TypeScript-only; its one internal Rust codec/runtime participates in conformance testing without creating a public Rust/C log product.
+Required in the same release: Rust schema macro and dynamic descriptor; typed/dynamic fact input; literal and parameter validation; closed relation constants; equality/range/negative atoms; keys, containment selections and joins; answer decoding; direct key probes; naive oracle; query explain; logical export; log codec; core Rust/TypeScript values; packaged artifacts and declarations. The public C surface is deleted. The public log API is TypeScript-only; its one internal Rust codec/runtime participates in conformance testing without creating another public SDK. These are typed AST/codec paths, not a new textual query parser.
 
-TypeScript uses `number` and integer domains use `bigint`. C accepts `double` at a typed value boundary and also exposes canonical bits. Wire/HTTP representations encode the canonical 64-bit payload explicitly; JSON's conversion of NaN/infinity to `null` is not a valid float codec. Freeze the generic JSON form as `{"$f64":"7ff8000000000000"}`: exactly sixteen lowercase hexadecimal digits containing canonical binary64 payload bits, with the same form for finite values. The shared codec rejects noncanonical payloads/alternate spellings. Host NaN payload preservation is not promised.
+TypeScript uses `number` and integer domains use `bigint`. Wire/HTTP representations encode the canonical 64-bit payload explicitly; JSON's conversion of NaN/infinity to `null` is not a valid float codec. Freeze the generic JSON form as `{"$f64":"7ff8000000000000"}`: exactly sixteen lowercase hexadecimal digits containing canonical binary64 payload bits, with the same form for finite values. The shared codec rejects noncanonical payloads/alternate spellings. Host NaN payload preservation is not promised.
 
-Log entity IDs remain nominal bytes, not numbers; a request ID must never be converted through `number`. Schema identity includes the float-domain/encoding version. Old clients or stores do not guess the meaning of a formerly unknown type tag.
+Application-owned entity IDs remain nominal 128-bit bytes, not numbers; a request ID must likewise never be converted through `number`. No fresh-ID placeholder exists. Schema identity includes the float-domain/encoding version. Old clients or stores do not guess the meaning of a formerly unknown type tag.
+
+### `Interval<F64>`: continuous ranges, compact ordered bounds
+
+Add this to the existing sealed interval element family; do not create a separate float temporal engine. The public value has two canonical F64 endpoints and a distinct schema/codec tag. The canonical payload is **16 bytes**, not a variable-size endpoint tree. Constructors normalize signed zero and reject NaN, then require strict numeric `start < end`. Wire parsing additionally rejects noncanonical endpoint bits. `-Infinity` is legal only as a lower bound and `+Infinity` only as an upper bound; strict ordering enforces those placements. Equal endpoints, including `[-0,+0)`, refuse.
+
+Its denotation is the half-open interval on a **dense numeric line**, with finite binary64 endpoints embedded as their exact rational values. Real-line language is intuitive; exact rational endpoint/order models suffice for the supported proofs and do not require enumerating real numbers. Infinity denotes a missing bound, not a point in the interval. In particular:
+
+| Value or operation | Meaning |
+| --- | --- |
+| `[0,1)` | All numeric positions from zero inclusive to one exclusive; not a count of binary64 encodings |
+| `[a,nextUp(a))`, finite ordered bounds | A valid positive-width interval; no successor arithmetic enters the interval algorithm |
+| `[-Infinity,-MAX_FINITE)` | A nonempty left ray even though no finite representable F64 query point lies inside it |
+| `[-Infinity,+Infinity)` | The complete numeric line |
+| `contains(p)` | Exact comparison after embedding a finite F64 point; false for NaN and either infinity |
+| `[a,b)` plus `[b,c)` | Adjacent, so pack coalesces to `[a,c)` |
+| End `b`, next start `nextUp(b)` | A real gap; never coalesce merely because the bounds are adjacent machine floats |
+
+This denotation avoids an otherwise hidden contradiction: if points meant *only representable finite floats*, `start < end` would admit the empty set `[-Infinity,-MAX_FINITE)`. Do not mix the dense model with that discrete model in Lean, membership, coverage or test oracles. Integer intervals retain their existing discrete point domain; generic endpoint-order algorithms can serve both without claiming their measures are identical.
+
+The ordered execution words use the non-NaN F64 order-key mapping. Allen's thirteen relations, overlap, intersection, selected containment/coverage, and pack/coalescing depend only on exact endpoint order and reuse the existing scalar/SIMD kernel structure. Empty intersections produce no interval fact. Float endpoints are never compared with an epsilon, and no integer/float interval coercion is implicit. The generic interval value itself need not expose a public lexicographic `Ord`; a physical index order is not another interval predicate.
+
+For a bounded float interval, `length` computes the exact endpoint difference rounded once to canonical F64 under the numerical guard. A rounded overflow to infinity is `MeasureOverflow`; e.g. `[-MAX_FINITE,+MAX_FINITE)` is bounded but its F64 length overflows. Either nonfinite bound gives `UnboundedMeasure`. These are different errors. Length is not a number of representable points, and is not silently narrowed to `u64`. **No `FixedInterval<F64>` or float-width schema compression ships:** rounded addition can collapse a positive requested width at a large start, and does not establish constant exact length. Applications supply two checked bounds.
+
+Capacity counts and weights stay exact nonnegative integers even over float-position intervals. Existing integer duration capacity is unchanged; float-length/approximate capacity is refused at schema validation, not quietly judged with rounding. This keeps the admission algebra exact while adding useful continuous ranges.
 
 ## 6. Optimizer law table
 
@@ -148,10 +174,11 @@ All are **future acceptance obligations, not tests executed in this proposal**. 
 | `F-AGG` | All permutations and disjoint partitions/merge trees give identical exact sum/mean bits; overlapping/replayed binding inputs deduplicate before accumulation; negative fixture shows partial-state merge itself is not idempotent; RAM/scratch and finite-mean-overflow cases agree |
 | `F-SET` | Equal NaNs/zeros deduplicate consistently; different entity bindings with same amount contribute separately; union/negation/projection/aggregate cross-product agrees with naive evaluator |
 | `F-OPT-NEG` | Each forbidden rewrite above has a minimal counterexample that actually distinguishes it; optimized engine matches unoptimized evaluator |
-| `F-CROSS` | Identical schema/query/value bit fixtures on macOS ARM64, Linux ARM64, Linux x86-64 through fresh core Rust/Node/C builds; log command/export fixtures compare the internal Rust codec/runtime with its public TypeScript surface |
+| `F-CROSS` | Identical scalar/interval/aggregate bit fixtures on Apple Silicon macOS, qualified Graviton Linux ARM64 and Linux x86-64 through fresh Rust/Node builds; log command/export fixtures compare the internal Rust codec/runtime with its public TypeScript surface; no C artifact |
 | `F-WIRE` | Log replay and checkpoint roundtrip preserve canonical facts/receipts; old tag/version refuses; JS mutable buffer or JSON special-value loss cannot enter a sealed command |
 | `F-RESOURCE` | Tiny group budgets force RAM→LMDB transition during float accumulation; no early rounding, missed group, uncharged accumulator, or partial result on disk-full/cancel |
 | `F-PROOF` | Lean representation/equality/order and exact-accumulator/merge/rounding lemmas complete; implementation linkage independently tested as described in 13 |
+| `F-INTERVAL` | Dense endpoint oracle versus constructor/codec/index/Allen/pack/coverage paths; ±0, NaN refusal, both infinity bounds, adjacent representable endpoints, `[-Infinity,-MAX_FINITE)`, finite-length overflow, nonfinite membership false; no FixedInterval<F64> or approximate-capacity escape |
 
 Golden arithmetic should include `{1e16,1,-1e16}` summing to exactly 1 before rounding, `{MAX_FINITE,MAX_FINITE}` whose mean is `MAX_FINITE` despite sum overflow, and `{MIN_SUBNORMAL,MIN_SUBNORMAL}`. Cross-architecture comparison is bitwise, never an epsilon assertion. Decimal source spellings in tests must be paired with exact expected bit patterns to avoid a shared parser masking an arithmetic bug.
 

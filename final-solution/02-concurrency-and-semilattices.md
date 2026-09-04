@@ -36,7 +36,7 @@ Valid(A) ∧ Valid(B) ∧ CommonValidAncestor(A, B)
     ⇒ Valid(A ∪ B)
 ```
 
-This is an invariant-confluence-style obligation, not a consequence of associativity. It must cover the actual operation grammar, not every imaginable state nor only a favorable example. Commands with reads, rejection receipts, deletion, fresh references and external effects have additional observable semantics beyond their final union.
+This is an invariant-confluence-style obligation, not a consequence of associativity. It must cover the actual operation grammar, not every imaginable state nor only a favorable example. Commands with reads, rejection receipts, deletion and external effects have additional observable semantics beyond their final union. Application entity IDs are already concrete when commands are sealed; no allocation semantics need to be merged.
 
 ## Three small counterexamples that block unrestricted merge
 

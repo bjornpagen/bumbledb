@@ -1,39 +1,44 @@
-# 12 — One query meaning, from warm RAM to disk
+# 12 — Free Join first, one query meaning beyond RAM
 
-Status: **proposed successor, not implemented or benchmarked**. The answer to a large database is not “allocate an image of every referenced relation,” and it is not “build a second analytical storage engine.” Use LMDB's ordered cursors as the complete baseline and keep optimized in-memory kernels as optional accelerators.
+Status: **proposed successor, not implemented or benchmarked**. Bumbledb is a high-performance application database, not an analytical warehouse. **Direct key probes and Free Join/COLT remain the preferred production paths**, with prepared reuse, measured batching and SIMD. Add complete bounded LMDB-cursor execution so memory pressure and a large tenant do not make valid data inaccessible. The fallback must not become an excuse to replace a measured fast path with universally slow execution.
 
 ## 1. Small architecture
 
-Four pieces are sufficient:
+Five focused pieces are sufficient:
 
 1. An immutable, schema-bound validated query template.
 2. A snapshot-bound execution session with a work context.
-3. A complete disk-native cursor executor.
-4. One transient relation/map abstraction that starts in RAM and can use temporary LMDB.
+3. Existing direct-probe and Free Join/COLT execution, adapted to checked canonical values and bounded ownership.
+4. A complete disk-native cursor fallback for the supported query language.
+5. One transient relation/map abstraction that starts in RAM and can use temporary LMDB.
 
-Reuse that transient abstraction for projection distinctness, aggregate binding distinctness/group state, derived relations, recursive seen/frontier sets, and completed answers. Do not independently invent an external sorter, partitioned hash-join framework, analytical file format, persistent chunk-image store, spill scheduler, and a cache service.
+Reuse that transient abstraction for projection distinctness, aggregate binding distinctness/group state, derived relations, recursive seen/frontier sets, and completed answers. Its RAM implementation retains useful fixed-arity/small-group specialization; one logical abstraction does not mean a virtual-call or runtime-key loop per tuple. Do not independently invent an external sorter, partitioned hash-join framework, analytical file format, persistent chunk-image store, spill scheduler, and a cache service.
 
-This is a deliberate selection of less machinery. The old SIMD/Free Join kernels remain useful only where their inputs fit the available budget and where they beat the baseline on the intended workload. Their presence must not make the database's valid size equal to its maximum in-memory relation image.
+This retains the database's identity while removing a size accident. Free Join's ability to blend binary and worst-case-optimal behavior matters for application graphs and cyclic joins. Keep the useful existing kernels unless a same-workload, same-durability comparison justifies replacement. Their resident inputs must fit the admitted budget, but their presence must not make the database's valid size equal to one image's RAM or `u32` position capacity. A relation or result that does not fit a fast representation uses a complete bounded path, not truncation or a schema-size ban. [40](40-performance-contract.md) records the actual source/benchmark evidence and release scorecard.
+
+Rust macros and TypeScript builders construct a **shared typed query AST directly**. Prepare validates and lowers that data; no SQL/Datalog string parser, query-language server, or hidden ORM interpreter is part of this work. Repeated executions change owned parameters, not source text that must be reparsed.
 
 ## 2. Preserve the actual set language
 
-Projection and union deduplicate full answer tuples. Negation tests existence in the same snapshot. Aggregation first identifies distinct full group bindings, then folds the requested argument of each binding: update a group accumulator only after the binding's insert-if-absent succeeds. Partial accumulator merges require disjoint binding partitions; exact addition is not idempotent and cannot itself deduplicate retry/union overlap. A group exists only if a binding derives it; empty global input emits no row. Recursion remains the supported finite active-domain linear fragment, evaluated to its least fixed point. No hidden output limit becomes relational truth.
+Projection and union deduplicate full answer tuples. Negation tests existence in the same snapshot. Aggregation first identifies distinct full group bindings, then folds the requested argument of each binding: update a group accumulator only after the binding's insert-if-absent succeeds, **or under a checked distinct-binding witness that proves the insert unnecessary**. Preserve and requalify the current `DistinctWitness`/elided-dedup path rather than mandating a seen-table for every aggregate. Partial accumulator merges require disjoint binding partitions; exact addition is not idempotent and cannot itself deduplicate retry/union overlap. A group exists only if a binding derives it; empty global input emits no row. Recursion remains the supported finite active-domain linear fragment, evaluated to its least fixed point. No hidden output limit becomes relational truth.
 
-Preserve scalar and temporal type distinctions, closed relations, keys, containment, capacity laws, and the existing useful interval operators. Arithmetic-producing expressions from [11](11-floats.md) remain at the nonrecursive output boundary. Do not expand the query language merely to populate a capability matrix.
+Preserve scalar and temporal type distinctions, closed relations, keys, containment, capacity laws, and the useful interval operators. `Interval<F64>` extends their ordered endpoint domain using [11](11-floats.md)'s dense semantics, not another execution family. Exact float sum and mean remain required. Arithmetic-producing expressions stay at the nonrecursive output boundary. Do not expand the query language merely to populate a capability matrix.
 
 Integer sums should also have order-independent failure semantics: for at most `u64::MAX` contributing bindings, accumulate `I64` in exact `i128` and `U64` in exact `u128`, then check the declared output range once. Count overflow is explicit. This avoids a planner-dependent intermediate overflow for a final sum that fits. Float sum/mean use their exact accumulator, not native repeated addition. This changes the old sequential-overflow contract and requires its own fixtures/proof update.
 
 Errors belong to the denotation too. A rewrite may not manufacture a cast/overflow error on a binding that the reference semantics filters out, nor suppress an error on a surviving binding. Keep partial arithmetic out of early relational filters in the minimal 1.0 fragment; typed comparisons and membership have total predicate semantics. Any later extension must specify evaluation/error behavior before optimizing it.
 
-## 3. The complete baseline uses cursors
+## 3. Fast-path selection and the complete cursor fallback
+
+First preserve the query classifier's exact keyed lookup where its proof applies: a primary-key read need not build any image or trie. For multi-relation application reads with admitted resident inputs, prefer the measured Free Join plan and lazy COLT construction. Retain survivor compaction, constant-group batch folds, small fixed-key-width specializations, and safe disjoint buffer reborrows. No rule says a scalar loop is always faster than NEON or that a NEON key sweep is always faster than the scalar tag-gated probe. The source and bumblebench contain counterexamples to both slogans.
 
 For each positive atom, enumerate a bounded LMDB cursor or use an available key/range probe under the current bound variables. A depth-first index-nested-loop join maintains only the current binding stack and cursor state. Apply bound comparisons and negative existence probes as soon as their variables are available. Stream surviving bindings to the transient sink.
 
-This can be slower than a good in-memory Free Join, especially for an unindexed Cartesian product. It nevertheless has three important properties: its memory use does not require full relations; it is a straightforward independent implementation to compare with optimized plans; and every accepted query has a correct path when an in-memory accelerator does not fit.
+This fallback can be much slower than in-memory Free Join, especially for an unindexed Cartesian product. Its purpose is correctness and usable bounded operation outside the resident regime, plus a simple implementation to compare against. It is **not** the performance reference to which fast application queries may regress. Every supported query has a correct path when resident execution does not fit; actual work limits can still refuse an impractical join. Such refusal is explicit, never a partial answer. A production app schema/query should be tuned from observed access plans, not told that a full scan is acceptable merely because it terminates.
 
 Do not hold a variable-width determinant in an LMDB key beyond its supported key size. For oversized text/tuple determinants, hash to candidates and compare the full canonical value, or scan if order is required. Never compare text intern numbers as though they were lexical text. Exact byte comparisons can borrow/chunk through mapped row values instead of allocating an entire candidate bucket.
 
-The planner may choose a poor cursor order; this affects work, not meaning. Explain must show estimated versus observed visits, indexes used, missing-index scans, transient storage mode, effective budget, and why a requested acceleration was not used. Statistics guide choices; stale statistics cannot authorize an invalid plan.
+The planner may choose a poor cursor order; this affects work, not meaning. Explain must show selected direct-probe/Free Join/cursor path, estimated versus observed visits, indexes used, missing-index scans, transient storage mode, effective budget, and why the preferred path was unavailable. Statistics guide choices; stale statistics cannot authorize an invalid plan. Register benchmark cells at these boundaries before implementation so changing the preferred path cannot hide a regression in one aggregate speedup.
 
 ## 4. One transient representation
 
@@ -54,16 +59,16 @@ Scratch owns its directory and environment until completion/result disposal. Clo
 
 ## 5. Operator capability matrix
 
-No supported operator may secretly require a full relation to fit RAM. Each row below is a **1.0 acceptance obligation**.
+No supported operator may secretly require a full relation to fit RAM. Each row below is a **1.0 acceptance obligation**, not a demand to route every small application query through temporary files or to add an analytical storage system.
 
 | Operator | Complete bounded-memory path | Optional warm acceleration | Real refusal condition |
 | --- | --- | --- | --- |
 | Scan / equality / range | LMDB cursor; exact collision candidate scan for hashed keys | Bounded decoded batch/SIMD predicate | I/O/corruption, deadline/work budget |
-| Positive join | Index-nested-loop/cursor join | Existing Free Join/hash/columnar kernel only after input reservation | Actual work/deadline exhaustion, not database size |
+| Positive join | Index-nested-loop/cursor fallback | Preferred Free Join/COLT application path after input reservation | Actual work/deadline exhaustion, not database size |
 | Negation / containment probe | Snapshot key/existence lookup or bounded scan | Cached bounded lookup set | Same resource/error policy |
 | Union / projection distinct | `ScratchRelation` exact set | Small RAM set | Scratch disk/quota/address-space failure |
-| Grouped count / integer sum / float sum/mean / min/max | Scratch group state plus exact distinct binding set when required | Budgeted group cache and exact accumulator merging | Group/count representation overflow, disk/work failure |
-| Temporal coalescing / pack | Scratch endpoint-ordered runs; cursor sweep per group | Small in-RAM sorted endpoints | Disk/work failure; invalid/ray measure remains semantic error |
+| Grouped count / integer sum / float sum/mean / min/max | Scratch group state plus exact distinct binding set when required | Constant-group batches, checked distinctness elision, budgeted group cache and exact accumulator merging | Group/count representation overflow, disk/work failure |
+| Temporal coalescing / pack | Scratch endpoint-ordered runs; cursor sweep per group for integer and float intervals | Existing ordered-endpoint/SIMD kernels and small RAM endpoint sets | Disk/work failure; unbounded measure and bounded float-length overflow are distinct |
 | Nonrecursive derived relation | Scratch output reused as an ordinary relation cursor | RAM relation when it fits | Actual resource failure |
 | Linear recursion | Scratch `seen`, `frontier`, and next-frontier; semi-naive rounds | RAM sets for small graphs | Deadline/work/explicit request round budget, scratch failure |
 | Complete result | Private RAM or LMDB-backed sealed result | Owned compact vectors | Actual output/scratch policy, not fixed row count |
@@ -73,15 +78,15 @@ Queries returning a tiny set after a massive join still consume work; an output-
 
 No general user-visible `ORDER BY`, external full-text collation sort, or arbitrary recursion is added by this table. A future ordered-answer feature must have its own exact comparator and disk path before acceptance.
 
-## 6. RAM acceleration is optional and bounded
+## 6. Resident performance is first-class and bounded
 
-Do not build a persistent chunk-image subsystem to repair the current full-copy image behavior. Start by decoding bounded batches from LMDB cursors. A warm small relation may have an ephemeral columnar image if its entire retained capacity is reserved; a large relation uses cursor batches directly. Images are evictable accelerators, not obligatory state.
+Do not build a persistent chunk-image subsystem to repair current full-copy behavior. Retain reusable columnar images and lazy COLT for the warm application regime, with complete retained capacity reserved before construction. Preserve zero-copy reuse for untouched relations and direct probes that bypass images. Large relations can use bounded cursor batches; bounded selected subsets may enter Free Join only with an explicit complete-subset plan witness. Images are evictable accelerators, not obligatory authoritative state.
 
 Cache keys include schema identity, native environment identity, snapshot/generation, and relation identity as appropriate. A schema-level template is immutable and shareable across tenants with the same schema; its mutable indexes, resolved text, and relation images are not. Do not weaken the foreign-catalog guard just to share plans.
 
-On a write, invalidate affected small images or reuse only a demonstrated safe immutable version. Old snapshots may retain their old versions, all charged to their owners. No append operation is required to copy a huge prefix merely to make the next read possible. A memory-pressure trim can make the next query allocate or use disk; zero allocation is a measured warmed regime, not a global semantic law.
+On a write, invalidate affected small images or reuse only a demonstrated safe immutable version. Old snapshots may retain their old versions, all charged to their owners. Benchmark insert/read, replace/read and delete/read alternation: the current append path still copies the decoded prefix into new full-size slabs, so calling it incremental does not prove a cheap first read. No append operation is required to copy a huge prefix merely to make the next read possible. A memory-pressure trim can make the next query allocate or use disk; zero allocation remains an important measured warmed regime, not a global semantic law that prohibits trimming.
 
-At plan selection, an optimization obtains the memory it needs or uses the baseline. If actual cardinality exceeds its reservation, restart from the same pinned snapshot using the cursor path or transfer its private sink into scratch using an explicitly tested transition. For 1.0, restarting a private query attempt is simpler than arbitrary mid-operator state migration; the externally observable result remains unpublished. Bound retries to one fallback, never an endless replan loop.
+At plan selection, the preferred resident path obtains its memory or uses the bounded fallback. If actual cardinality exceeds its reservation, restart from the same pinned snapshot using the cursor path or transfer its private sink into scratch using an explicitly tested transition. For 1.0, restarting a private query attempt is simpler than arbitrary mid-operator state migration; the externally observable result remains unpublished. Bound retries to one fallback, never an endless replan loop. Record the discarded work and fallback latency; a frequent restart is a planner/product defect to fix, not acceptable hidden overhead.
 
 ## 7. Work context and honest resource accounting
 
@@ -124,6 +129,8 @@ Execution builds a private result. Only after all relational work, aggregate fin
 
 `CompleteResult` may own RAM or temporary LMDB. `collect(limit)` is an additional conversion that either returns a fully owned collection or an error without replacing the caller's previous collection. A caller does not have to collect the entire result into RAM to consume it: `into_cursor(page_bytes)` **consumes** the result owner and transfers its sealed backing storage to one explicitly chunked cursor with completion identity and terminal framing. The old result handle is spent. No clone/shared-cursor ownership subsystem is needed in 1.0; abandoning the cursor closes its own storage after active access drains.
 
+This is paged **delivery after query completion**, not a claim of early-result execution streaming. Most application reads should produce a bounded task/dashboard/entity result via their typed predicates. Measure time to complete and time to first delivered page separately. A future lazy/ordered/top-k contract is a product decision, not something smuggled into an iterator name.
+
 Distinguish query completion from later delivery failure. A disk failure or cancellation while transmitting an already sealed result can interrupt chunk delivery; the cursor reports the delivered prefix and lack of terminal completion. It must not label that prefix the complete set. A plain `execute_collect` retains the stronger all-or-error returned-value contract. No API promises to make arbitrary future storage/transport reads infallible.
 
 Result disposal closes its scratch environment and releases its reserved resources. A user holding many results pays for many results; the pool cannot silently free an active result while exposing valid-looking handles. Owner closure/release checks follow the SDK lifecycle contract, not garbage-collector timing.
@@ -142,7 +149,7 @@ All gates below are **proposed, not run**. The old audit's passing test counts a
 | `Q-FALLBACK` | Optional kernel architecture | Force each optimized path, force no-cache cursor path, force RAM→LMDB scratch, and force optimization reservation failure; sets and errors agree |
 | `Q-RECUR` | Finite recursion/resource distinction | Long narrow chain, shallow wide frontier, cycles, empty base, cancellation every round, spill during seen/frontier transition, no duplicate/missing derivations |
 | `Q-GROUP` | Set aggregates and new sum law | Identity-bearing equal arguments, DNF/union duplicates, negative atoms, integer cancellation with intermediate overflow, float exact groups and empty-input rule |
-| `Q-TEMPORAL` | Retained interval semantics | Rays/ceiling/fixed bounds, overlapping/adjacent/disjoint pack, multiple scalar groups; disk endpoint sweep equals naive point/interval model |
+| `Q-TEMPORAL` | Generic exact interval semantics | Integer rays/ceiling/fixed bounds and dense float endpoints, overlapping/adjacent/disjoint pack, multiple scalar groups; disk/SIMD sweep equals the correct discrete or dense endpoint oracle |
 | `Q-LIFETIME` | PERF-002; SDK-007/013 | Held old snapshots/results plus repeated writes, trim, disposal and reopen; native owners/locks/scratch truly release |
 | `Q-FAIR` | PERF-005; SDK-010/011 | Slow tenant and large query do not indefinitely block another tenant; queue cancellation and worker limits observed; event-loop delay measured |
 | `Q-IR` | ASS-002 | Compact Boolean structure and bounded planning; optimized versus independent typed-tree evaluator compares both values and error outcomes |
