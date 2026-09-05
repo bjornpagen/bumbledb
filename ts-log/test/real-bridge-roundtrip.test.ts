@@ -14,7 +14,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
 import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
-import { ChangeSet, key, lower, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Exit, ManagedRuntime, Result } from "effect"
 import { Command } from "#command.ts"
 import { LocalHistory } from "#history.ts"
@@ -67,8 +68,8 @@ test("create → seal → submit(decided) → receipt → resolve after reopen, 
 				const rendered = yield* productionCodec.schemaIdentity(lower(Ledger), work)
 				assert.equal(rendered.schemaId, compiled.schemaId, "schema_file fingerprint == core compile fingerprint")
 				const tenant: DatabaseIdentity = {
-					databaseId: ok(DatabaseId.fromHex("ab".repeat(16))),
-					incarnationId: ok(IncarnationId.fromHex("cd".repeat(16))),
+					databaseId: ok(DatabaseId.parse("abababab-abab-abab-abab-abababababab")),
+					incarnationId: ok(IncarnationId.parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")),
 					schemaId: compiled.schemaId
 				}
 				const binding = { kind: "local", directory: dir, identity: tenant } as const
@@ -79,7 +80,7 @@ test("create → seal → submit(decided) → receipt → resolve after reopen, 
 						const history = yield* LocalHistory.create(binding, Ledger, {
 							...work,
 							creation: {
-								operationId: ok(OperationId.fromHex("e1".repeat(16))),
+								operationId: ok(OperationId.parse("e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1")),
 								artifact: new TextEncoder().encode(rendered.snapshot)
 							}
 						})
@@ -91,7 +92,7 @@ test("create → seal → submit(decided) → receipt → resolve after reopen, 
 								scope: history.identity,
 								id: {
 									receiptEpoch: ok(ReceiptEpoch.from(1n)),
-									requestId: ok(RequestId.fromHex("0b".repeat(16)))
+									requestId: ok(RequestId.parse("0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b"))
 								},
 								changes,
 								precondition: { kind: "blind" },
@@ -130,7 +131,10 @@ test("create → seal → submit(decided) → receipt → resolve after reopen, 
 				return true
 			})
 		)
-		assert.ok(Exit.isSuccess(exit), `round trip: ${String(exit)}`)
+		assert.ok(
+			Exit.isSuccess(exit),
+			`round trip: ${JSON.stringify(exit, (_, value) => (typeof value === "bigint" ? value.toString() : value))}`
+		)
 	} finally {
 		await Effect.runPromise(runtime.disposeEffect)
 		fs.rmSync(dir, { recursive: true, force: true })

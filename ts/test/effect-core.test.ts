@@ -17,16 +17,16 @@ import { Cause, Effect, Exit, Fiber, ManagedRuntime, Option } from "effect"
 import { ChangeSet } from "#changes.ts"
 import type { ApplyOutcome, CoreWitness, Db as DbValue, Snapshot } from "#db.ts"
 import { Db } from "#db.ts"
-import { Id128 } from "#id128.ts"
+import { str, uuid } from "#fields.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
-import { id128, str } from "#fields.ts"
 import { relation } from "#relation.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
 import { schema } from "#schema.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
+import type { Uuid } from "#uuid.ts"
 
 const attemptsFor = query(Learning).rule((r) => {
 	const { id, student, score, units, active } = v(Attempt)
@@ -40,9 +40,9 @@ function runtime() {
 	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
 }
 
-const newId = () => Effect.runPromise(Id128.random())
+const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
 
-function seeded(studentId: Id128, attemptId: Id128) {
+function seeded(studentId: Uuid, attemptId: Uuid) {
 	return Effect.gen(function* () {
 		const draft = yield* ChangeSet.builder(Learning, work)
 		yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
@@ -263,7 +263,7 @@ test("a foreign object where a ChangeSet is expected refuses BEFORE any native d
 test("a foreign-schema query template refuses typed at execute", async function foreignTemplate() {
 	const rt = runtime()
 	try {
-		const Widget = relation("Widget", { id: id128, name: str })
+		const Widget = relation("Widget", { id: uuid, name: str })
 		const Foreign: AnySchema = schema("Foreign", { Widget }, [])
 		const foreignQuery = query(Foreign).rule((r) => {
 			const { id, name } = v(Widget)
@@ -295,21 +295,22 @@ test("interruption surfaces in Cause, never as a manufactured outcome arm", asyn
 		// A forever-suspended program holding a real database: interruption
 		// tears the scope down (drain joins natively) and the Exit carries
 		// interruption in Cause — no DbError is invented for it.
+		const path = storeDir("interruption-cause")
+		const acquired = Promise.withResolvers<void>()
 		const program = Effect.scoped(
 			Effect.gen(function* () {
-				yield* Db.create(storeDir("interruption-cause"), Learning, work)
+				yield* Db.create(path, Learning, work)
+				acquired.resolve()
 				return yield* Effect.never
 			})
 		)
-		const fiber = await rt.runPromise(Effect.fork(program))
-		// Give acquisition a chance to genuinely start before interrupting.
-		await new Promise((resolve) => setTimeout(resolve, 25))
-		const exit = await rt.runPromise(Fiber.interrupt(fiber))
+		const fiber = rt.runFork(program)
+		await acquired.promise
+		await rt.runPromise(Fiber.interrupt(fiber))
+		const exit = await rt.runPromise(Fiber.await(fiber))
 		assert.ok(Exit.hasInterrupts(exit), "interruption is Cause, not a failure arm")
 		// The directory is reusable afterwards: the teardown joined.
-		await rt.runPromise(
-			Effect.scoped(Db.create(storeDir("interruption-cause-2"), Learning, work).pipe(Effect.asVoid))
-		)
+		await rt.runPromise(Effect.scoped(Db.open(path, Learning, work).pipe(Effect.asVoid)))
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}

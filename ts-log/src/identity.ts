@@ -1,26 +1,25 @@
 /**
  * Log-layer identity values: small owned immutable data, never handles.
- * `DatabaseId`/`IncarnationId`/`RequestId`/`OperationId` are Id128-backed
- * roles (canonical 32 lowercase hex); digests are full 32-byte roles
+ * `DatabaseId`/`IncarnationId`/`RequestId`/`OperationId` are Uuid-backed
+ * roles (canonical UUID); digests are full 32-byte roles
  * (64 lowercase hex). The distinct roles are nominal brands: an entity ID is
  * not a request ID, and neither is a history coordinate. Parsers here are
  * the bounded log boundary codecs for HTTP/session tokens — pure, `Result`-
- * returning, no I/O, no mint/generate; `SchemaId` and `Id128` remain
+ * returning, no I/O, no mint/generate; `SchemaId` and `Uuid` remain
  * core-owned imports. Retry uses the caller-supplied bytes again.
  */
-import type { Id128, SchemaId } from "@bjornpagen/bumbledb"
+import { type DbError, type SchemaId, Uuid } from "@bjornpagen/bumbledb"
 import { Result } from "effect"
-import type { DbError } from "@bjornpagen/bumbledb"
 import { invalidInput } from "#errors.ts"
 
 declare const databaseIdBrand: unique symbol
-export type DatabaseId = string & { readonly [databaseIdBrand]: typeof databaseIdBrand }
+export type DatabaseId = Uuid & { readonly [databaseIdBrand]: typeof databaseIdBrand }
 declare const incarnationIdBrand: unique symbol
-export type IncarnationId = string & { readonly [incarnationIdBrand]: typeof incarnationIdBrand }
+export type IncarnationId = Uuid & { readonly [incarnationIdBrand]: typeof incarnationIdBrand }
 declare const requestIdBrand: unique symbol
-export type RequestId = string & { readonly [requestIdBrand]: typeof requestIdBrand }
+export type RequestId = Uuid & { readonly [requestIdBrand]: typeof requestIdBrand }
 declare const operationIdBrand: unique symbol
-export type OperationId = string & { readonly [operationIdBrand]: typeof operationIdBrand }
+export type OperationId = Uuid & { readonly [operationIdBrand]: typeof operationIdBrand }
 declare const commandDigestBrand: unique symbol
 export type CommandDigest = string & { readonly [commandDigestBrand]: typeof commandDigestBrand }
 declare const decisionDigestBrand: unique symbol
@@ -97,8 +96,8 @@ function lowercaseHex(raw: string, length: number): boolean {
 	return true
 }
 
-function hex32(operation: string, raw: string): Result.Result<string, DbError> {
-	return lowercaseHex(raw, 32) ? Result.succeed(raw) : Result.fail(invalidInput(operation))
+function canonicalUuid(operation: string, raw: string): Result.Result<Uuid, DbError> {
+	return Uuid.isUuid(raw) ? Result.succeed(raw) : Result.fail(invalidInput(operation))
 }
 
 function hex64(operation: string, raw: string): Result.Result<string, DbError> {
@@ -119,49 +118,40 @@ function u64(operation: string, raw: string): Result.Result<bigint, DbError> {
 	return value <= U64_MAX ? Result.succeed(value) : Result.fail(invalidInput(operation))
 }
 
-/**
- * `Id128`'s canonical TypeScript value is its 32-lowercase-hex string
- * (chapter 35 V8 rules). This defensive re-check keeps the log's nominal
- * conversions total even for a hostile structural forgery.
- */
-function id128Hex(operation: string, id: Id128): Result.Result<string, DbError> {
-	return typeof id === "string" ? hex32(operation, id) : Result.fail(invalidInput(operation))
-}
-
 export const DatabaseId = {
-	fromHex(raw: string): Result.Result<DatabaseId, DbError> {
-		return Result.map(hex32("DatabaseId.fromHex", raw), (hex) => hex as DatabaseId)
+	parse(raw: string): Result.Result<DatabaseId, DbError> {
+		return Result.map(canonicalUuid("DatabaseId.parse", raw), (hex) => hex as DatabaseId)
 	},
-	from(id: Id128): Result.Result<DatabaseId, DbError> {
-		return Result.map(id128Hex("DatabaseId.from", id), (hex) => hex as DatabaseId)
+	from(id: Uuid): Result.Result<DatabaseId, DbError> {
+		return Result.map(canonicalUuid("DatabaseId.from", id), (hex) => hex as DatabaseId)
 	}
 } as const
 
 export const IncarnationId = {
-	fromHex(raw: string): Result.Result<IncarnationId, DbError> {
-		return Result.map(hex32("IncarnationId.fromHex", raw), (hex) => hex as IncarnationId)
+	parse(raw: string): Result.Result<IncarnationId, DbError> {
+		return Result.map(canonicalUuid("IncarnationId.parse", raw), (hex) => hex as IncarnationId)
 	},
-	from(id: Id128): Result.Result<IncarnationId, DbError> {
-		return Result.map(id128Hex("IncarnationId.from", id), (hex) => hex as IncarnationId)
+	from(id: Uuid): Result.Result<IncarnationId, DbError> {
+		return Result.map(canonicalUuid("IncarnationId.from", id), (hex) => hex as IncarnationId)
 	}
 } as const
 
 export const RequestId = {
 	/** The explicit pure nominal conversion over the core's canonical bytes. */
-	from(id: Id128): Result.Result<RequestId, DbError> {
-		return Result.map(id128Hex("RequestId.from", id), (hex) => hex as RequestId)
+	from(id: Uuid): Result.Result<RequestId, DbError> {
+		return Result.map(canonicalUuid("RequestId.from", id), (hex) => hex as RequestId)
 	},
-	fromHex(raw: string): Result.Result<RequestId, DbError> {
-		return Result.map(hex32("RequestId.fromHex", raw), (hex) => hex as RequestId)
+	parse(raw: string): Result.Result<RequestId, DbError> {
+		return Result.map(canonicalUuid("RequestId.parse", raw), (hex) => hex as RequestId)
 	}
 } as const
 
 export const OperationId = {
-	from(id: Id128): Result.Result<OperationId, DbError> {
-		return Result.map(id128Hex("OperationId.from", id), (hex) => hex as OperationId)
+	from(id: Uuid): Result.Result<OperationId, DbError> {
+		return Result.map(canonicalUuid("OperationId.from", id), (hex) => hex as OperationId)
 	},
-	fromHex(raw: string): Result.Result<OperationId, DbError> {
-		return Result.map(hex32("OperationId.fromHex", raw), (hex) => hex as OperationId)
+	parse(raw: string): Result.Result<OperationId, DbError> {
+		return Result.map(canonicalUuid("OperationId.parse", raw), (hex) => hex as OperationId)
 	}
 } as const
 
@@ -257,7 +247,7 @@ export function parseStateStamp(raw: string): Result.Result<StateStamp, DbError>
 	if (parts.length !== 2 || incarnationRaw === undefined || revisionRaw === undefined) {
 		return Result.fail(invalidInput(operation))
 	}
-	return Result.flatMap(hex32(operation, incarnationRaw), (incarnation) =>
+	return Result.flatMap(canonicalUuid(operation, incarnationRaw), (incarnation) =>
 		Result.map(u64(operation, revisionRaw), (dataRevision) => ({
 			incarnation: incarnation as IncarnationId,
 			dataRevision
@@ -281,8 +271,8 @@ export function parseDatabaseIdentity(raw: string): Result.Result<DatabaseIdenti
 	if (parts.length !== 3 || databaseRaw === undefined || incarnationRaw === undefined || schemaRaw === undefined) {
 		return Result.fail(invalidInput(operation))
 	}
-	return Result.flatMap(hex32(operation, databaseRaw), (databaseId) =>
-		Result.flatMap(hex32(operation, incarnationRaw), (incarnationId) =>
+	return Result.flatMap(canonicalUuid(operation, databaseRaw), (databaseId) =>
+		Result.flatMap(canonicalUuid(operation, incarnationRaw), (incarnationId) =>
 			Result.map(parseSchemaId(schemaRaw), (schemaId) => ({
 				databaseId: databaseId as DatabaseId,
 				incarnationId: incarnationId as IncarnationId,
@@ -319,7 +309,7 @@ export function parseCommandRef(raw: string): Result.Result<CommandRef, DbError>
 	return Result.flatMap(parseDatabaseIdentity(`${databaseRaw}:${incarnationRaw}:${schemaRaw}`), (identity) =>
 		Result.flatMap(u64(operation, epochRaw), (epochValue) =>
 			Result.flatMap(ReceiptEpoch.from(epochValue), (receiptEpoch) =>
-				Result.flatMap(RequestId.fromHex(requestRaw), (requestId) =>
+				Result.flatMap(RequestId.parse(requestRaw), (requestId) =>
 					Result.map(CommandDigest.fromHex(digestRaw), (digest) => ({
 						identity,
 						id: { receiptEpoch, requestId },

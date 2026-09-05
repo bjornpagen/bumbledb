@@ -1,5 +1,5 @@
 /** Exact-version internal bridge, shared by core and log. Not a public API. */
-import { native } from "#native.ts"
+
 import type {
 	DbHandle,
 	LogChainKind,
@@ -13,9 +13,9 @@ import type {
 	LogOutcomeWire,
 	LogSchemaHandle,
 	LogStateStamp,
-	OwnedHandle,
 	Violation
 } from "#native.ts"
+import { native } from "#native.ts"
 import type { SchemaSpec } from "#spec.ts"
 
 export interface RuntimeHandle {
@@ -116,15 +116,6 @@ export type LogTakeWire =
 			readonly digest: Uint8Array
 	  }
 
-export interface LogDecisionParts {
-	readonly identity: LogIdentity
-	readonly seq: bigint
-	readonly parent: LogDecisionStamp
-	readonly beforeState: LogStateStamp
-	readonly afterState: LogStateStamp
-	readonly outcome: LogOutcomeWire
-}
-
 export interface PolicyWire {
 	readonly inputBytes: bigint
 	readonly workingBytes: bigint
@@ -185,27 +176,64 @@ interface RuntimeNative {
 	 * Predelivery: no JS take; cursor stays on row1 so retry does not skip.
 	 */
 	runtimeArmPublicationCancel(runtime: RuntimeHandle): void
-	runtimeDirectoryAcquire(runtime: RuntimeHandle, policy: PolicyWire, path: string, callback: () => void): OperationHandle
+	runtimeDirectoryAcquire(
+		runtime: RuntimeHandle,
+		policy: PolicyWire,
+		path: string,
+		callback: () => void
+	): OperationHandle
 	runtimeDirectoryTake(operation: OperationHandle): DirectoryHandle
 	runtimeDirectoryBegin(owner: DirectoryHandle, policy: PolicyWire): OperationHandle
 	runtimeDirectoryCheck(operation: OperationHandle): void
 	runtimeDirectoryEnd(operation: OperationHandle): void
 	runtimeDirectoryClose(owner: DirectoryHandle, remove: boolean, callback: (report: CloseWire) => void): void
-	runtimeDirectoryDbOpen(owner: DirectoryHandle, policy: PolicyWire, childName: string, spec: SchemaSpec, create: boolean, callback: () => void): OperationHandle
+	runtimeDirectoryDbOpen(
+		owner: DirectoryHandle,
+		policy: PolicyWire,
+		childName: string,
+		spec: SchemaSpec,
+		create: boolean,
+		callback: () => void
+	): OperationHandle
 	runtimeDbTake(operation: OperationHandle): ManagedDbOutcome
 	runtimeManagedDbClose(db: DbHandle, callback: (report: CloseWire) => void): void
-	/** Managed publish: attach an admitted OwnedInstance to the directory owner. Take with `runtimeDbTake`. */
-	runtimeDirectoryPublish(owner: DirectoryHandle, policy: PolicyWire, childName: string, instance: OwnedHandle, callback: () => void): OperationHandle
 
 	// --- successor log grammar on the executor (charged hashing over
 	// whole canonical change payloads; C06 through C09) ---
-	runtimeLogCommandSeal(runtime: RuntimeHandle, schema: LogSchemaHandle, policy: PolicyWire, metadata: LogCommandMetadata, changes: Uint8Array, result: Uint8Array | null, limits: LogLimits, callback: () => void): OperationHandle
-	runtimeLogCommandParse(runtime: RuntimeHandle, schema: LogSchemaHandle, policy: PolicyWire, bytes: Uint8Array, limits: LogLimits, callback: () => void): OperationHandle
-	runtimeLogDecisionEncode(runtime: RuntimeHandle, policy: PolicyWire, parts: LogDecisionParts, commandBytes: Uint8Array, limits: LogLimits, callback: () => void): OperationHandle
-	runtimeLogDecisionDecode(runtime: RuntimeHandle, policy: PolicyWire, bytes: Uint8Array, parent: LogDecisionStamp | null, limits: LogLimits, callback: () => void): OperationHandle
+	runtimeLogCommandSeal(
+		runtime: RuntimeHandle,
+		schema: LogSchemaHandle,
+		policy: PolicyWire,
+		metadata: LogCommandMetadata,
+		changes: Uint8Array,
+		result: Uint8Array | null,
+		limits: LogLimits,
+		callback: () => void
+	): OperationHandle
+	runtimeLogCommandParse(
+		runtime: RuntimeHandle,
+		schema: LogSchemaHandle,
+		policy: PolicyWire,
+		bytes: Uint8Array,
+		limits: LogLimits,
+		callback: () => void
+	): OperationHandle
+	runtimeLogDecisionDecode(
+		runtime: RuntimeHandle,
+		policy: PolicyWire,
+		bytes: Uint8Array,
+		parent: LogDecisionStamp | null,
+		limits: LogLimits,
+		callback: () => void
+	): OperationHandle
 	runtimeLogTake(operation: OperationHandle): LogTakeWire
 	/** L14 mint: `Runtime::mint_repository_lock` stamps `NativeKind::RepositoryLock` at take. */
-	logRepositoryLockAcquire(runtime: RuntimeHandle, policy: PolicyWire, directory: string, callback: () => void): OperationHandle
+	logRepositoryLockAcquire(
+		runtime: RuntimeHandle,
+		policy: PolicyWire,
+		directory: string,
+		callback: () => void
+	): OperationHandle
 	logRepositoryLockTake(operation: OperationHandle): RepositoryLockHandle
 	logRepositoryLockRelease(owner: RepositoryLockHandle, callback: (report: CloseWire) => void): void
 }

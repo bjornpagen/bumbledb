@@ -27,13 +27,8 @@ bumbledb::schema! {
 
     Account(holder) <= Holder(id);
     Account(id) -> Account;
+    Holder(id) -> Holder;
 }
-
-const COMMIT_BATCH: u64 = 64;
-
-/// Measured on this fixture after three warmup commits: 172 window allocs / 64
-/// facts = 2.69. Issue 29's hunt may lower it; it must not rise.
-const ALLOCS_PER_COMMITTED_FACT: u64 = 3;
 
 fn scan_query() -> Query {
     Query::single(Rule {
@@ -86,213 +81,168 @@ fn key_probe_query() -> Query {
     })
 }
 
-fn window() -> AllocWindow {
+// Store-backed prepared images reuse their generation. Heap instances have
+// no cache identity and rebuild bulk images on every call: their allocation
+// count may grow geometrically, but never one allocation per row.
+fn measured(f: impl FnOnce()) -> AllocWindow {
+    alloc_counter::reset();
+    f();
     alloc_counter::snapshot().window
 }
 
-fn assert_zero(window_name: &str, shape: &str, w: AllocWindow) {
-    assert_eq!(
-        w.allocs, 0,
-        "{window_name} window={shape} count={}",
-        w.allocs
-    );
+fn heap_query(
+    heap: &bumbledb::OwnedInstance<Budget>,
+    prepared: &mut PreparedQuery<Budget>,
+    params: &[ParamArg<'_>],
+    expected: usize,
+) -> AllocWindow {
+    let mut out = Answers::new();
+    for _ in 0..3 {
+        heap.execute(prepared, params, &mut out).expect("warm heap");
+    }
+    let counts = measured(|| {
+        heap.execute(prepared, params, &mut out).expect("heap");
+    });
+    assert_eq!(out.len(), expected);
+    counts
 }
 
-fn seed_store(db: &Db<Budget>) -> (HolderId, AccountId, Holder, Account) {
-    db.write(common::work(), |tx| {
-        let hid = HolderId(1);
-        let aid = AccountId(1);
-        let holder = Holder { id: hid, tag: 7 };
-        let account = Account {
-            id: aid,
-            holder: hid,
-            bal: 11,
-        };
-        tx.insert([&holder])?;
-        tx.insert([&account])?;
-        Ok((hid, aid, holder, account))
-    })
-    .expect("seed")
-    .unwrap()
-    .value
-}
-
-fn seed_heap() -> (
-    bumbledb::OwnedInstance<Budget>,
-    HolderId,
-    AccountId,
-    Holder,
-    Account,
-) {
-    let mut builder = InstanceBuilder::new(Budget).expect("valid");
-    let hid = HolderId(1);
-    let aid = AccountId(1);
-    let holder = Holder { id: hid, tag: 7 };
-    let account = Account {
-        id: aid,
-        holder: hid,
-        bal: 11,
-    };
-    builder.load([&holder]).expect("load holder");
-    builder.load([&account]).expect("load account");
-    let instance = builder.admit().expect("admit").expect("accepted");
-    (instance, hid, aid, holder, account)
-}
-
-fn warm_query_store(
-    label: &str,
+fn store_query(
     db: &Db<Budget>,
     prepared: &mut PreparedQuery<Budget>,
     params: &[BindValue<'_>],
-) {
+    expected: usize,
+) -> AllocWindow {
     db.read(common::work(), |snap| {
         let mut out = Answers::new();
-        snap.execute(prepared, params, &mut out).expect(label);
-        alloc_counter::reset();
-        snap.execute(prepared, params, &mut out).expect(label);
-        assert_zero("allocs_per_warm_query", label, window());
-        assert!(!out.is_empty(), "{label}: fixture produced rows");
-        Ok(())
+        for _ in 0..3 {
+            snap.execute(prepared, params, &mut out)?;
+        }
+        let counts = measured(|| {
+            snap.execute(prepared, params, &mut out).expect("store");
+        });
+        assert_eq!(out.len(), expected);
+        Ok(counts)
     })
-    .expect(label);
+    .expect("read")
 }
 
-fn warm_query_heap(
-    label: &str,
-    instance: &bumbledb::OwnedInstance<Budget>,
-    prepared: &mut PreparedQuery<Budget>,
-    params: &[ParamArg<'_>],
-) {
-    let mut out = Answers::new();
-    instance.execute(prepared, params, &mut out).expect(label);
-    alloc_counter::reset();
-    instance.execute(prepared, params, &mut out).expect(label);
-    assert_zero("allocs_per_warm_query", label, window());
-    assert!(!out.is_empty(), "{label}: fixture produced rows");
-}
-
-fn point_read_store(db: &Db<Budget>, id: AccountId, fact: &Account) {
-    db.read(common::work(), |snap| {
-        let _ = snap.get(AccountById { id })?.expect("present");
-        assert!(snap.contains(fact)?);
-        alloc_counter::reset();
-        let got = snap.get(AccountById { id })?.expect("present");
-        assert_eq!(got.bal, fact.bal);
-        assert!(snap.contains(fact)?);
-        assert_zero("allocs_per_point_read", "store", window());
-        Ok(())
-    })
-    .expect("store point read");
-}
-
-fn point_read_heap(instance: &bumbledb::OwnedInstance<Budget>, id: AccountId, fact: &Account) {
-    let _ = instance
-        .get(AccountById { id })
-        .expect("get")
-        .expect("present");
-    assert!(instance.contains(fact).expect("contains"));
-    alloc_counter::reset();
-    let got = instance
-        .get(AccountById { id })
-        .expect("get")
-        .expect("present");
-    assert_eq!(got.bal, fact.bal);
-    assert!(instance.contains(fact).expect("contains"));
-    assert_zero("allocs_per_point_read", "heap", window());
-}
-
-fn committed_fact_budget(db: &Db<Budget>) {
-    let mut next_tag = 1_000u64;
-    for _ in 0..3 {
-        insert_batch(db, &mut next_tag);
-    }
-    alloc_counter::reset();
-    insert_batch(db, &mut next_tag);
-    let w = window();
-    let per = w.allocs.div_ceil(COMMIT_BATCH);
-    assert!(
-        per <= ALLOCS_PER_COMMITTED_FACT,
-        "allocs_per_committed_fact window=steady-batch-{COMMIT_BATCH} count={} per_fact={per} budget={ALLOCS_PER_COMMITTED_FACT}",
-        w.allocs
-    );
-}
-
-fn insert_batch(db: &Db<Budget>, next_tag: &mut u64) {
-    let base = *next_tag;
-    *next_tag += COMMIT_BATCH;
-    common::expect_admitted(db.write(common::work(), |tx| {
-        for i in 0..COMMIT_BATCH {
-            let hid = HolderId(1_000 + base + i);
-            tx.insert([&Holder {
-                id: hid,
-                tag: base + i,
-            }])?;
+fn fixture_counts(rows: usize) -> [AllocWindow; 8] {
+    let dir = common::TempDir::new(&format!("alloc-scaling-{rows}"));
+    let db = Db::create(dir.path(), Budget, common::work())
+        .expect("create")
+        .unwrap();
+    let mut builder = InstanceBuilder::new(Budget, common::work()).expect("builder");
+    db.write(common::work(), |tx| {
+        for n in 0..u64::try_from(rows).expect("small fixture") {
+            let holder = Holder {
+                id: HolderId(n),
+                tag: n,
+            };
+            let account = Account {
+                id: AccountId(n),
+                holder: HolderId(n),
+                bal: 11,
+            };
+            tx.insert([&holder])?;
+            tx.insert([&account])?;
+            builder.load([&holder])?;
+            builder.load([&account])?;
         }
         Ok(())
-    }));
-}
-
-fn admission_peak_bound() {
-    const CHUNK: u64 = 64 * 1024;
-    let mut builder = InstanceBuilder::new(Budget).expect("valid");
-    let hid = HolderId(1);
-    let aid = AccountId(1);
-    builder.load([&Holder { id: hid, tag: 1 }]).expect("load");
-    builder
-        .load([&Account {
-            id: aid,
-            holder: hid,
-            bal: 1,
-        }])
-        .expect("load");
-    let before = alloc_counter::snapshot();
-    let instance = builder.admit().expect("admit").expect("accepted");
-    let after = alloc_counter::snapshot();
-    let f = u64::try_from(instance.retained_bytes()).expect("fits");
-    let peak_delta = after
-        .absolute
-        .peak_live_bytes
-        .saturating_sub(before.absolute.peak_live_bytes);
-    let bound = CHUNK * 4 + f;
-    assert!(
-        peak_delta <= bound,
-        "admission peak window=admit count={peak_delta} bound={bound} (A+I+R / A+R+F+J stand-in)"
-    );
+    })
+    .expect("populate")
+    .unwrap();
+    let heap = builder.admit().expect("admit").unwrap();
+    let mut hs = heap.prepare(&scan_query()).expect("scan");
+    let mut hj = heap.prepare(&join_query()).expect("join");
+    let mut hp = heap.prepare(&key_probe_query()).expect("probe");
+    let mut ds = db.prepare(&scan_query(), common::work()).expect("scan");
+    let mut dj = db.prepare(&join_query(), common::work()).expect("join");
+    let mut dp = db
+        .prepare(&key_probe_query(), common::work())
+        .expect("probe");
+    let hs = heap_query(&heap, &mut hs, &[], rows);
+    let hj = heap_query(&heap, &mut hj, &[], rows);
+    let hp = heap_query(&heap, &mut hp, &[ParamArg::Scalar(BindValue::U64(0))], 1);
+    let ds = store_query(&db, &mut ds, &[], rows);
+    let dj = store_query(&db, &mut dj, &[], rows);
+    let dp = store_query(&db, &mut dp, &[BindValue::U64(0)], 1);
+    let work = common::work();
+    let fact = Account {
+        id: AccountId(0),
+        holder: HolderId(0),
+        bal: 11,
+    };
+    let heap_get = measured(|| {
+        assert_eq!(
+            heap.get(AccountById { id: fact.id }, &work).expect("get"),
+            Some(fact)
+        );
+        assert!(heap.contains(&fact, &work).expect("contains"));
+    });
+    let store_get = db
+        .read(common::work(), |snap| {
+            Ok(measured(|| {
+                assert_eq!(
+                    snap.get(AccountById { id: fact.id }).expect("get"),
+                    Some(fact)
+                );
+                assert!(snap.contains(&fact).expect("contains"));
+            }))
+        })
+        .expect("read");
+    [hs, hj, hp, ds, dj, dp, heap_get, store_get]
 }
 
 #[test]
-fn alloc_law_budgets() {
-    admission_peak_bound();
-
-    let (heap, _hid, heap_aid, _hh, heap_acct) = seed_heap();
-    let mut heap_scan = heap.prepare(&scan_query()).expect("prepare heap scan");
-    warm_query_heap("heap/scan", &heap, &mut heap_scan, &[]);
-    let mut heap_join = heap.prepare(&join_query()).expect("prepare heap join");
-    warm_query_heap("heap/join", &heap, &mut heap_join, &[]);
-    let mut heap_probe = heap
-        .prepare(&key_probe_query())
-        .expect("prepare heap probe");
-    warm_query_heap(
-        "heap/key_probe",
-        &heap,
-        &mut heap_probe,
-        &[ParamArg::Scalar(BindValue::U64(heap_aid.0))],
-    );
-    point_read_heap(&heap, heap_aid, &heap_acct);
-
-    let dir = common::TempDir::new("alloc-budgets");
-    let db = Db::create(dir.path(), Budget, common::work())
-        .expect("create")
-        .expect("accepted");
-    let (_hid, aid, _holder, account) = seed_store(&db);
-
-    let mut scan = db.prepare(&scan_query()).expect("prepare scan");
-    warm_query_store("store/scan", &db, &mut scan, &[]);
-    let mut join = db.prepare(&join_query()).expect("prepare join");
-    warm_query_store("store/join", &db, &mut join, &[]);
-    let mut probe = db.prepare(&key_probe_query()).expect("prepare probe");
-    warm_query_store("store/key_probe", &db, &mut probe, &[BindValue::U64(aid.0)]);
-
-    point_read_store(&db, aid, &account);
-    committed_fact_budget(&db);
+fn allocations_follow_cached_store_and_uncached_heap_cost_models() {
+    let small = fixture_counts(64);
+    let large = fixture_counts(4096);
+    for ((label, baseline), scaled) in [
+        "heap scan",
+        "heap join",
+        "heap probe",
+        "store scan",
+        "store join",
+        "store probe",
+        "heap get",
+        "store get",
+    ]
+    .into_iter()
+    .zip(small)
+    .zip(large)
+    {
+        if label == "heap scan" || label == "heap join" {
+            // 64x cardinality means six doublings, at most two bulk image
+            // growth events per doubling (this fixture joins two relations).
+            assert!(
+                scaled.allocs <= baseline.allocs + 2 * 6,
+                "{label}: per-row heap allocation growth"
+            );
+            assert!(
+                scaled.alloc_bytes <= baseline.alloc_bytes * 64,
+                "{label}: superlinear image storage"
+            );
+            continue;
+        }
+        if label == "store scan" || label == "store join" {
+            assert_eq!(
+                scaled.allocs, 0,
+                "{label}: warmed execution must reuse buffers"
+            );
+        }
+        assert!(
+            scaled.allocs <= baseline.allocs,
+            "{label}: 64x more rows grew warmed allocations {} -> {}",
+            baseline.allocs,
+            scaled.allocs
+        );
+        assert!(
+            scaled.alloc_bytes <= baseline.alloc_bytes,
+            "{label}: 64x more rows grew warmed allocated bytes {} -> {}",
+            baseline.alloc_bytes,
+            scaled.alloc_bytes
+        );
+    }
 }

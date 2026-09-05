@@ -39,8 +39,8 @@ use super::snapshot::OwnedSnapshot;
 use crate::canonical::RowError;
 use crate::schema::Schema;
 use crate::schema::judge::{
-    CandidateFacts, JudgeBudget, JudgeError, JudgedViolation, Judgment, judge_final_state_with_scratch,
-    store_fault, JudgeScratch,
+    CandidateFacts, JudgeBudget, JudgeError, JudgeScratch, JudgedViolation, Judgment,
+    judge_final_state_with_scratch, store_fault,
 };
 use crate::work::WorkContext;
 
@@ -71,7 +71,10 @@ pub enum VerifyCorruption {
     ForeignMembership { relation: RelationId, row: RowId },
     /// A determinant entry references no live row of its projection's
     /// relation.
-    DanglingDeterminant { projection: ProjectionId, row: RowId },
+    DanglingDeterminant {
+        projection: ProjectionId,
+        row: RowId,
+    },
     /// A determinant entry names a projection the compiled theory does not
     /// intern (auxiliary leftovers included — neither belongs in a store
     /// the production write path built).
@@ -79,10 +82,16 @@ pub enum VerifyCorruption {
     /// A live row lacks a schema-derived determinant entry under its
     /// recomputed routing — keyed reads and judgment enumeration would not
     /// see this row for that projection.
-    MissingDeterminant { projection: ProjectionId, row: RowId },
+    MissingDeterminant {
+        projection: ProjectionId,
+        row: RowId,
+    },
     /// A determinant entry's bucket disagrees with the row's recomputed
     /// routing for that projection.
-    ForeignDeterminant { projection: ProjectionId, row: RowId },
+    ForeignDeterminant {
+        projection: ProjectionId,
+        row: RowId,
+    },
     /// The stored per-relation row count disagrees with the counted rows.
     RowCountMismatch {
         relation: RelationId,
@@ -192,9 +201,11 @@ pub(crate) fn sweep(
             // engine's own projection convention and fingerprint, must be
             // present — index completeness is load-bearing for keyed reads
             // and judgment enumeration.
-            inner
-                .det
-                .emit_row(relation, row_bytes, work, &mut |projection, projected, tail| {
+            inner.det.emit_row(
+                relation,
+                row_bytes,
+                work,
+                &mut |projection, projected, tail| {
                     let routing = rows::routing_for_projected(inner, projection, projected)?;
                     let entry = keys::determinant_key(projection, &routing, tail, row);
                     let present = inner
@@ -209,7 +220,8 @@ pub(crate) fn sweep(
                         }));
                     }
                     Ok(())
-                })?;
+                },
+            )?;
         }
     }
 
@@ -264,38 +276,31 @@ pub(crate) fn sweep(
         for entry in range {
             work.step(1)?;
             let (key, _) = entry.map_err(StoreError::from_heed)?;
-            if key.len() < keys::DETERMINANT_KEY_MIN_LEN || key.first() != Some(&keys::TAG_DETERMINANT) {
+            if key.len() < keys::DETERMINANT_KEY_MIN_LEN
+                || key.first() != Some(&keys::TAG_DETERMINANT)
+            {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
                     what: "determinant key width",
                 }));
                 continue;
             }
-            let projection = match keys::projection_of_determinant_key(key) {
-                Ok(id) => id,
-                Err(_) => {
-                    findings.push(corrupt(VerifyCorruption::MalformedKey {
-                        what: "determinant key width",
-                    }));
-                    continue;
-                }
+            let Ok(projection) = keys::projection_of_determinant_key(key) else {
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "determinant key width",
+                }));
+                continue;
             };
-            let row = match keys::row_id_from_determinant_key(key) {
-                Ok(id) => id,
-                Err(_) => {
-                    findings.push(corrupt(VerifyCorruption::MalformedKey {
-                        what: "determinant key width",
-                    }));
-                    continue;
-                }
+            let Ok(row) = keys::row_id_from_determinant_key(key) else {
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "determinant key width",
+                }));
+                continue;
             };
-            let stored_payload = match keys::payload_of_determinant_key(key) {
-                Ok(payload) => payload,
-                Err(_) => {
-                    findings.push(corrupt(VerifyCorruption::MalformedKey {
-                        what: "determinant routing",
-                    }));
-                    continue;
-                }
+            let Ok(stored_payload) = keys::payload_of_determinant_key(key) else {
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "determinant routing",
+                }));
+                continue;
             };
             let Some(compiled) = inner.det.projection(projection) else {
                 findings.push(corrupt(VerifyCorruption::UnknownDeterminantProjection {
@@ -325,8 +330,7 @@ pub(crate) fn sweep(
                 }
                 Ok(decoded) => {
                     let values = compiled.scalar_values(decoded.values());
-                    let projected =
-                        super::det_index::determinant_bytes(compiled, &values, work)?;
+                    let projected = super::det_index::determinant_bytes(compiled, &values, work)?;
                     let expected = rows::routing_for_projected(inner, projection, &projected)?;
                     let tail = compiled.interval_tail_bytes(decoded.values());
                     let mut expected_payload = expected;
@@ -532,6 +536,7 @@ pub(crate) fn sweep(
         }
         Err(JudgeError::Work(error)) => return Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => return Err(error),
+        Err(JudgeError::Compile(error)) => return Err(StoreError::Compile(error)),
         Err(JudgeError::UndefinedDuration { statement }) => {
             return Err(StoreError::JudgeRefused {
                 statement,

@@ -1,8 +1,8 @@
 use super::{Answer, AnswerValue, Answers, Cell, ResolveMemo, ValueType};
 
 use crate::error::Result;
-use crate::image::intern::InternerHandle;
 use crate::image::NonresidentTextStore;
+use crate::image::intern::InternerHandle;
 use bumbledb_theory::Interval;
 use bumbledb_theory::schema::IntervalElement;
 
@@ -52,7 +52,7 @@ impl Answers {
             Cell::U64(v) => AnswerValue::U64(v),
             Cell::I64(v) => AnswerValue::I64(v),
             Cell::F64(v) => AnswerValue::F64(v),
-            Cell::Id128(v) => AnswerValue::Id128(v),
+            Cell::Uuid(v) => AnswerValue::Uuid(v),
 
             Cell::String { start, len } => AnswerValue::String(&self.text[start..start + len]),
             Cell::FixedBytes { start, len } => {
@@ -79,7 +79,7 @@ impl Answers {
             AnswerValue::U64(v) => Cell::U64(*v),
             AnswerValue::I64(v) => Cell::I64(*v),
             AnswerValue::F64(v) => Cell::F64(*v),
-            AnswerValue::Id128(v) => Cell::Id128(*v),
+            AnswerValue::Uuid(v) => Cell::Uuid(*v),
             AnswerValue::String(text) => {
                 let start = self.text.len();
                 self.text.push_str(text);
@@ -116,8 +116,8 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
-            ValueType::Id128 => {
-                unreachable!("id128 finds take the two-word path (id128_cell)")
+            ValueType::Uuid => {
+                unreachable!("uuid finds take the two-word path (uuid_cell)")
             }
             ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")
@@ -127,11 +127,11 @@ impl Answers {
 
     /// An application-owned identity from its two big-endian column words
     /// (verbatim bytes: byte order IS the value's one total order).
-    pub(super) fn id128_cell(hi: u64, lo: u64) -> Cell {
+    pub(super) fn uuid_cell(hi: u64, lo: u64) -> Cell {
         let mut bytes = [0u8; 16];
         bytes[..8].copy_from_slice(&hi.to_be_bytes());
         bytes[8..].copy_from_slice(&lo.to_be_bytes());
-        Cell::Id128(bumbledb_theory::Id128::from_bytes(bytes))
+        Cell::Uuid(bumbledb_theory::Uuid::from_bytes(bytes))
     }
 
     pub(super) fn fixed_bytes_cell(&mut self, len: u16, words: &[u64]) -> Cell {
@@ -200,8 +200,8 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
-            ValueType::Id128 => {
-                unreachable!("id128 finds take the two-word path (id128_cell)")
+            ValueType::Uuid => {
+                unreachable!("uuid finds take the two-word path (uuid_cell)")
             }
             ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")

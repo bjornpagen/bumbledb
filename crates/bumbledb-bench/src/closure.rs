@@ -246,7 +246,7 @@ pub fn load_stores_sized(
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
     let db = mode.create(&dir.join("db"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, rel))
                 .map(bumbledb::MutationReport::changed)
         })
@@ -285,7 +285,7 @@ pub fn verify_family(
 ) -> Result<(), String> {
     let query = (family.query)();
     let mut prepared = db
-        .prepare(&query)
+        .prepare(&query, crate::harness::bench_work())
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .signature()
@@ -300,8 +300,10 @@ pub fn verify_family(
     let mut buffer = Answers::new();
     for draw in draws {
         let args = param_args(draw);
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("{}: execute: {e:?}", family.name))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("{}: execute: {e:?}", family.name))?;
         let ours = compare::from_answers(&buffer, &types);
         let theirs = compare::from_sqlite(&mut stmt, &slots, draw, &types)
             .map_err(|e| format!("{}: mirror: {e}", family.name))?;
@@ -347,14 +349,16 @@ pub fn bench_families(
 
         let query = (family.query)();
         let mut prepared = db
-            .prepare(&query)
+            .prepare(&query, crate::harness::bench_work())
             .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
         let mut rotation = Rotation::new(draws.clone());
         let mut buffer = Answers::new();
         let mut run_ours = |prepared: &mut bumbledb::PreparedQuery<Reachability>| {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(prepared, &args, &mut buffer))
-                .map_err(|e| format!("execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
         let modes = Modes {

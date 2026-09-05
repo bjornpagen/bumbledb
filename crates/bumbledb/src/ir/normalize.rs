@@ -204,10 +204,10 @@ impl SlotWidth {
     #[must_use]
     pub fn of(value_type: &ValueType) -> Self {
         match value_type {
-            // Intervals are two order words; `Id128` is sixteen exact
+            // Intervals are two order words; `Uuid` is sixteen exact
             // identity bytes — two big-endian words, byte order = total
             // order (the bytes<16> layout, nominal name).
-            ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Id128 => {
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Uuid => {
                 Self::TWO
             }
             ValueType::FixedBytes { len } => Self(

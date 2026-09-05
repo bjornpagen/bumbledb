@@ -10,14 +10,14 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
-import { key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import type { NativeRuntime } from "@bjornpagen/bumbledb"
+import { key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
 import { ProtocolError } from "#errors.ts"
-import { makeGenerator } from "#migrations/generate.ts"
 import { readBounded, writeDerived, writeImmutable, writeManifest } from "#migrations/fsops.ts"
+import { makeGenerator } from "#migrations/generate.ts"
 import { readRepository } from "#migrations/repo.ts"
-import { scriptedCodec, scriptedExclusion, withStubRuntime, WORK } from "#test/migrations-double.ts"
+import { scriptedCodec, scriptedExclusion, WORK, withStubRuntime } from "#test/migrations-double.ts"
 import { App0, App1, evolution1, Note0 } from "#test/migrations-example.ts"
 
 const gen = makeGenerator(scriptedCodec(), scriptedExclusion())
@@ -58,7 +58,10 @@ describe("drift, fork and tamper refuse before writes", function suite() {
 		const edited = text.replace('"bool": false', '"bool": true')
 		assert.notEqual(edited, text, "the fixture edit must hit the literal")
 		await writeFile(planPath, edited, "utf8")
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })),
+			"MigrationDrift"
+		)
 		// Generation refuses on the same recomputation, before any write.
 		expectRefusal(
 			await runExit(gen.generateMigrations({ schema: App1, repository: { directory }, work: WORK })),
@@ -77,7 +80,10 @@ describe("drift, fork and tamper refuse before writes", function suite() {
 		assert.ok(first !== undefined)
 		first.planDigest = first.planDigest.split("").reverse().join("")
 		await writeFile(manifestPath, `${JSON.stringify(tree, null, "\t")}\n`, "utf8")
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })),
+			"MigrationDrift"
+		)
 	})
 
 	test("reordered manifest entries refuse as a broken chain", async function reorder() {
@@ -87,30 +93,49 @@ describe("drift, fork and tamper refuse before writes", function suite() {
 		const tree = JSON.parse(await readFile(manifestPath, "utf8")) as { entries: unknown[] }
 		tree.entries.reverse()
 		await writeFile(manifestPath, `${JSON.stringify(tree, null, "\t")}\n`, "utf8")
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })),
+			"MigrationDrift"
+		)
 	})
 
 	test("a missing recorded snapshot or plan file is drift, not a fresh start", async function missing() {
 		const directory = await repoDir()
 		await history(directory)
 		await rm(path.join(directory, "meta", "0001.schema.json"))
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })),
+			"MigrationDrift"
+		)
 		const second = await repoDir()
 		await history(second)
 		await rm(path.join(second, "0000-initialize.plan.json"))
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory: second }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory: second }, work: WORK })),
+			"MigrationDrift"
+		)
 		const third = await repoDir()
 		await history(third)
 		await rm(path.join(third, "meta", "base.schema.json"))
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory: third }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory: third }, work: WORK })),
+			"MigrationDrift"
+		)
 	})
 
 	test("same-process duplicate generation refuses while the first holds exclusion", async function sameProcess() {
 		const directory = await repoDir()
-		const held = await run(scriptedExclusion().acquire("test", directory, WORK))
-		const busy = await runExit(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
-		expectRefusal(busy, "MigrationRepository")
-		await run(held.release)
+		await run(
+			Effect.scoped(
+				Effect.gen(function* () {
+					yield* scriptedExclusion().acquire("test", directory, WORK)
+					const busy = yield* Effect.exit(
+						gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK })
+					)
+					expectRefusal(busy, "MigrationRepository")
+				})
+			)
+		)
 		const first = await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
 		assert.equal(first.status, "generated")
 	})
@@ -119,7 +144,10 @@ describe("drift, fork and tamper refuse before writes", function suite() {
 		const directory = await repoDir()
 		await history(directory)
 		await writeFile(path.join(directory, "0007-imposter.plan.json"), "{}\n", "utf8")
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK })),
+			"MigrationDrift"
+		)
 	})
 
 	test("a forked twin repository cannot lend its recorded plan bytes", async function fork() {
@@ -136,7 +164,10 @@ describe("drift, fork and tamper refuse before writes", function suite() {
 		// Transplant B's 0001 plan into A under A's recorded name.
 		const foreign = await readFile(path.join(b, "0001-create-extra.plan.json"), "utf8")
 		await writeFile(path.join(a, "0001-note.plan.json"), foreign, "utf8")
-		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory: a }, work: WORK })), "MigrationDrift")
+		expectRefusal(
+			await runExit(gen.checkMigrations({ schema: App1, repository: { directory: a }, work: WORK })),
+			"MigrationDrift"
+		)
 	})
 
 	test("readRepository reports interrupted next-sequence drafts and refuses partial chains", async function drafts() {

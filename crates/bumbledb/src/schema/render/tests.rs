@@ -279,7 +279,7 @@ fn declared_rendering_matches_sealed_rendering() {
 #[test]
 fn schema_error_diagnostics_render_the_offending_statement() {
     let mut declaration = example();
-    declaration.statements.remove(4); // drop `Roster(worker) -> Roster`
+    declaration.statements.remove(6); // drop `Roster(worker) -> Roster`
     let err = declaration
         .clone()
         .validate()

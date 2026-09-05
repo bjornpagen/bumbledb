@@ -6,7 +6,7 @@ bumbledb::schema! {
     pub Grades;
 
     relation Attempt {
-        id: id128 as AttemptId,
+        id: uuid as AttemptId,
         units: u64,
         score: f64,
     }

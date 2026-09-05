@@ -17,8 +17,8 @@
  */
 import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
 import { native } from "#native.ts"
-import type { CloseWire, OperationHandle, PolicyWire, RuntimeHandle } from "#runtime-native.ts"
 import type { CellValue } from "#rows.ts"
+import type { CloseWire, OperationHandle, PolicyWire, RuntimeHandle } from "#runtime-native.ts"
 import type { SchemaSpec } from "#spec.ts"
 
 export interface SnapshotHandle {
@@ -46,7 +46,9 @@ export interface WitnessWire {
 	readonly generation: bigint
 }
 
-export type ExpectedWire = { readonly kind: "any" } | { readonly kind: "exact"; readonly store: string; readonly generation: bigint }
+export type ExpectedWire =
+	| { readonly kind: "any" }
+	| { readonly kind: "exact"; readonly store: string; readonly generation: bigint }
 
 export type ApplyOutcomeWire =
 	| { readonly tag: "accepted"; readonly witness: WitnessWire }
@@ -81,7 +83,12 @@ export interface MutationReportWire {
 
 interface DbBridge {
 	/** Charged schema admission/compilation; take yields detached descriptor data. */
-	runtimeSchemaCompile(runtime: RuntimeHandle, policy: PolicyWire, spec: SchemaSpec, callback: () => void): OperationHandle
+	runtimeSchemaCompile(
+		runtime: RuntimeHandle,
+		policy: PolicyWire,
+		spec: SchemaSpec,
+		callback: () => void
+	): OperationHandle
 	runtimeSchemaTake(operation: OperationHandle): SealedDescriptor
 
 	/** Coherent owned snapshot acquisition off a managed database. */
@@ -221,8 +228,18 @@ interface DbBridge {
 	 * cancellable operation. Neither verb opens, initializes, freezes or
 	 * migrates a database.
 	 */
-	runtimeMigrationSchema(runtime: RuntimeHandle, policy: PolicyWire, spec: SchemaSpec, callback: () => void): OperationHandle
-	runtimeMigrationRead(runtime: RuntimeHandle, policy: PolicyWire, request: Uint8Array, callback: () => void): OperationHandle
+	runtimeMigrationSchema(
+		runtime: RuntimeHandle,
+		policy: PolicyWire,
+		spec: SchemaSpec,
+		callback: () => void
+	): OperationHandle
+	runtimeMigrationRead(
+		runtime: RuntimeHandle,
+		policy: PolicyWire,
+		request: Uint8Array,
+		callback: () => void
+	): OperationHandle
 }
 
 // The fresh-addon roster test pins this private declaration exactly as it

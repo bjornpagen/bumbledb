@@ -364,7 +364,7 @@ fn gate(
 ) -> Result<(Translated, Vec<ValueType>), String> {
     let query = read_query();
     let mut prepared = db
-        .prepare(&query)
+        .prepare(&query, crate::harness::bench_work())
         .map_err(|e| format!("crud/crud_read_point [{}]: prepare: {e:?}", lane.label()))?;
     let types: Vec<ValueType> = prepared
         .signature()
@@ -376,8 +376,10 @@ fn gate(
         .map_err(|e| format!("crud/crud_read_point [{}]: {e}", lane.label()))?;
     for (i, params) in ops::read_keys(seed, sizes).iter().enumerate() {
         let mut buffer = Answers::new();
-        db.read(|snap| snap.execute(&mut prepared, &bind_values(params), &mut buffer))
-            .map_err(|e| format!("crud/crud_read_point [{}]: execute: {e:?}", lane.label()))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &bind_values(params), &mut buffer)
+        })
+        .map_err(|e| format!("crud/crud_read_point [{}]: execute: {e:?}", lane.label()))?;
         let ours = compare::from_answers(&buffer, &types);
         let args: Vec<crate::naive::ParamValue> = params
             .iter()
@@ -414,14 +416,16 @@ fn read_point_ours(
 ) -> Result<Measurement, String> {
     let query = read_query();
     let mut prepared = db
-        .prepare(&query)
+        .prepare(&query, crate::harness::bench_work())
         .map_err(|e| format!("crud_read_point: prepare: {e:?}"))?;
     let mut rotation = Rotation::new(ops::read_keys(seed, sizes));
     let mut buffer = Answers::new();
     harness::measure(proto, || {
         let params = bind_values(rotation.next_set());
-        db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
-            .map_err(|e| format!("crud_read_point: execute: {e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &params, &mut buffer)
+        })
+        .map_err(|e| format!("crud_read_point: execute: {e:?}"))?;
         Ok(buffer.len() as u64)
     })
 }

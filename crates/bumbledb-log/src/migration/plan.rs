@@ -184,7 +184,7 @@ const VALUE_STRING: u8 = 4;
 const VALUE_FIXED_BYTES: u8 = 5;
 const VALUE_INTERVAL_U64: u8 = 6;
 const VALUE_INTERVAL_I64: u8 = 7;
-const VALUE_ID128: u8 = 8;
+const VALUE_UUID: u8 = 8;
 const VALUE_INTERVAL_F64: u8 = 9;
 
 /// Encode the canonical plan frame — the exact bytes [`plan_digest`] hashes.
@@ -352,8 +352,8 @@ fn put_value(out: &mut Frame, value: &Value) -> Result<(), FrameError> {
             out.bytes(&interval.start().to_be_bytes())?;
             out.bytes(&interval.end().to_be_bytes())?;
         }
-        Value::Id128(id) => {
-            out.tag(VALUE_ID128)?;
+        Value::Uuid(id) => {
+            out.tag(VALUE_UUID)?;
             out.bytes(id.as_bytes())?;
         }
         Value::IntervalF64(interval) => {
@@ -561,7 +561,7 @@ fn read_value(input: &mut Reader<'_>, cap: usize) -> Result<Value, PlanError> {
                 bumbledb::Interval::new(start, end).ok_or(PlanError::Shape("interval"))?,
             )
         }
-        (_, VALUE_ID128) => Value::Id128(bumbledb::Id128::from_bytes(input.array()?)),
+        (_, VALUE_UUID) => Value::Uuid(bumbledb::Uuid::from_bytes(input.array()?)),
         (_, VALUE_INTERVAL_F64) => {
             let start = bumbledb::F64::from_canonical_be_bytes(input.array()?)
                 .map_err(|_| PlanError::Shape("noncanonical f64"))?;

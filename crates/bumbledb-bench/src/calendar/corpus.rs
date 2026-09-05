@@ -42,7 +42,7 @@ pub fn load_bumbledb_sized(
     let mut facts = 0u64;
     for rel in ORDER {
         facts += db
-            .write(|tx| {
+            .write(crate::harness::bench_work(), |tx| {
                 tx.insert_dyn(rel, relation_rows_sized(cfg, sizes, rel))
                     .map(bumbledb::MutationReport::changed)
             })?
@@ -70,7 +70,7 @@ fn flush(
     if pending.is_empty() {
         return Ok(0);
     }
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for (rel, row) in pending.iter() {
             tx.insert_dyn(*rel, [row])?;
         }
@@ -133,7 +133,9 @@ pub fn assert_loaded_equal(db: &Db<Scheduling>, conn: &Connection, cfg: GenConfi
         let rel = RelationId(rel);
         let name = schema.relation(rel).name();
         let ours = db
-            .read(|snap| Ok(snap.scan(rel)?.count()))
+            .read(crate::harness::bench_work(), |snap| {
+                Ok(snap.scan(rel)?.count())
+            })
             .expect("scan counts");
         let theirs: u64 = conn
             .query_row(&format!("SELECT COUNT(*) FROM \"{name}\""), [], |row| {

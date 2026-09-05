@@ -11,7 +11,7 @@ mod support;
 use std::sync::Arc;
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::history::authority::{
     Activation, DeletedReason, HeadAuthority, Lifecycle, decode_control,
@@ -57,7 +57,7 @@ fn insert_note(history: &LocalHistory<SchemaDescriptor>, id: u64, body: &str, re
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -86,7 +86,7 @@ fn submit_refuses_frozen(history: &LocalHistory<SchemaDescriptor>, request: u8) 
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -700,7 +700,8 @@ fn wrong_and_stale_activation_references_refuse() {
 
     // The control on disk carries the one-time activation marker.
     let namespace = TargetNamespace::new(&root.join("targets"), incarnation(0xec)).unwrap();
-    let target: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), tagged_schema(), work()).unwrap();
+    let target: Db<SchemaDescriptor> =
+        Db::open(&namespace.target_dir(), tagged_schema(), work()).unwrap();
     let mut control = None;
     target
         .read(work(), |read| {

@@ -10,7 +10,9 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import type { AnySchema } from "@bjornpagen/bumbledb"
 import { CloseFailure } from "@bjornpagen/bumbledb"
-import { Effect, Exit } from "effect"
+import type { OperationHandle } from "@bjornpagen/bumbledb/internal/log"
+import { Effect, Exit, Fiber } from "effect"
+import { certaintyOperation, logOperation } from "#bridge.ts"
 import { makeLogMachine } from "#machine.ts"
 import type { TerminalReceipt } from "#outcome.ts"
 import type { CommandInput } from "#surface.ts"
@@ -36,10 +38,59 @@ const outstanding = {
 	retained: 1n,
 	owners: 1n,
 	databases: 1n,
+	natives: 1n,
 	inputBytes: 0n,
 	workingBytes: 64n,
 	scratchBytes: 0n,
 	resultBytes: 0n
+}
+
+for (const certainty of [false, true]) {
+	test(`interrupted ${certainty ? "certainty" : "ordinary"} operation retains interruption and drain failure`, async () => {
+		let dispatched!: () => void
+		const ready = new Promise<void>((resolve) => {
+			dispatched = resolve
+		})
+		let complete!: () => void
+		let drained = false
+		let taken = false
+		const lease = {} as OperationHandle
+		const start = (callback: () => void) => {
+			complete = callback
+			dispatched()
+			return lease
+		}
+		const take = () => {
+			taken = true
+			return 1
+		}
+		const cancel = (_lease: OperationHandle, callback: (report: { kind: "failed" }) => void) => {
+			drained = true
+			callback({ kind: "failed" })
+		}
+		const operation = certainty
+			? certaintyOperation(
+					"test",
+					cancel,
+					start,
+					take,
+					(value) => value,
+					() => 0,
+					() => 0
+				)
+			: logOperation("test", cancel, start, take, (value) => value)
+		const fiber = Effect.runFork(operation)
+		await ready
+		await Effect.runPromise(Fiber.interrupt(fiber))
+		const exit = await Effect.runPromise(Fiber.await(fiber))
+		assert.ok(drained)
+		assert.ok(Exit.hasInterrupts(exit))
+		assert.ok(Exit.hasDies(exit))
+		const defect = Exit.findDefect(exit)
+		assert.ok(defect._tag === "Success" && defect.success instanceof CloseFailure)
+		complete()
+		assert.equal(taken, false, "late completion must not adopt a cancelled payload")
+	})
 }
 
 function plannedSeal(double: ReturnType<typeof makeWireDouble>, machine: ReturnType<typeof makeLogMachine>) {
@@ -144,7 +195,7 @@ describe("known receipt, then finalizer defect", function suite() {
 	test("a snapshot's failed close is a finalizer defect too", async function snapshotClose() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
-		double.planClose("logSnapshotClose", { kind: "failed" })
+		double.planClose("runtimeSnapshotClose", { kind: "failed" })
 
 		const exit = await Effect.runPromiseExit(
 			provideRuntime(
@@ -156,7 +207,6 @@ describe("known receipt, then finalizer defect", function suite() {
 							result: {
 								verb: "snapshot",
 								snapshot: { __snapshot: true },
-								core: { __core: true },
 								provenance: {
 									identity: handleWire().meta.identity,
 									decision: receiptWire.decisionAt,

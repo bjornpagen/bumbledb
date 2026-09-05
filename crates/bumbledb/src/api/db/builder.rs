@@ -26,9 +26,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use crate::canonical::DecodedRow;
 use crate::error::{Admission, DynIdError, Error, Result};
 use crate::ir::Value;
-use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
+use crate::schema::judge::{CandidateFacts, JudgeBudget, Judgment, judge_complete};
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
@@ -63,7 +64,8 @@ impl<S: Theory> InstanceBuilder<S> {
     /// Schema validation or stopped work.
     pub fn new(theory: S, work: WorkContext) -> Result<Self> {
         let schema = Arc::new(theory.descriptor().validate()?);
-        work.checkpoint().map_err(|e| Error::from_store(crate::storage::store::StoreError::Work(e)))?;
+        work.checkpoint()
+            .map_err(|e| Error::from_store(crate::storage::store::StoreError::Work(e)))?;
         let closed = Arc::new(ClosedRows::build(schema.as_ref(), &work)?);
         Ok(Self {
             schema,
@@ -351,23 +353,7 @@ impl<S> InstanceBuilder<S> {
         relation: RelationId,
         key: StatementId,
         key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into(relation, key, key_values, &mut out)?
-            .then_some(out))
-    }
-
-    /// # Errors
-    /// Shape refusals.
-    pub fn get_dyn_into(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-    ) -> Result<bool> {
-        out.clear();
+    ) -> Result<Option<DecodedRow>> {
         self.refuse_poisoned()?;
         let (_, statement) = get_path::key_statement_of(self.schema.as_ref(), relation, key)?;
         get_path::check_key_shape(
@@ -377,25 +363,25 @@ impl<S> InstanceBuilder<S> {
             key_values,
         )?;
         if let Some(rows) = self.closed.get(relation) {
-            return Ok(
-                match get_path::closed_row_by_key(rows, statement, key_values) {
-                    Some(row) => {
-                        out.extend(row.values.iter().cloned());
-                        true
-                    }
-                    None => false,
-                },
-            );
+            return get_path::closed_row_by_key(rows, statement, key_values)
+                .map(|row| {
+                    crate::canonical::decode(
+                        self.schema.relation(relation).fields(),
+                        &row.canonical,
+                        &self.work,
+                    )
+                    .map_err(row_error)
+                })
+                .transpose();
         }
         match self.find_by_key(relation, &statement.projection, key_values)? {
             Some(bytes) => {
                 let fields = self.schema.relation(relation).fields();
-                let decoded =
-                    crate::canonical::decode(fields, bytes, &self.work).map_err(row_error)?;
-                out.extend(decoded.values);
-                Ok(true)
+                crate::canonical::decode(fields, bytes, &self.work)
+                    .map(Some)
+                    .map_err(row_error)
             }
-            None => Ok(false),
+            None => Ok(None),
         }
     }
 
@@ -411,7 +397,7 @@ impl<S> InstanceBuilder<S> {
         };
         for row in rows {
             let decoded = crate::canonical::decode(fields, row, &self.work).map_err(row_error)?;
-            if get_path::projection_matches(&decoded.values, projection, key_values) {
+            if get_path::projection_matches(decoded.values(), projection, key_values) {
                 return Ok(Some(row));
             }
         }
@@ -424,18 +410,9 @@ impl<S> InstanceBuilder<S> {
     /// `TransactionPoisoned` after a partial apply; judge refusals.
     pub fn admit(self) -> Result<Admission<OwnedInstance<S>>> {
         self.refuse_poisoned()?;
-        let mut state = MapState::new();
-        for (relation, rows) in &self.staged {
-            let fields = self.schema.relation(*relation).fields();
-            for row in rows {
-                let decoded =
-                    crate::canonical::decode(fields, row, &self.work).map_err(row_error)?;
-                state.insert(*relation, decoded.values);
-            }
-        }
-        match judge_final_state(
+        match judge_complete(
             self.schema.as_ref(),
-            &state,
+            &self,
             &self.work,
             JudgeBudget::default(),
         )
@@ -457,5 +434,26 @@ impl<S> InstanceBuilder<S> {
                     .collect(),
             ))),
         }
+    }
+}
+
+impl<S> CandidateFacts for InstanceBuilder<S> {
+    type Error = Error;
+
+    fn visit_rows(
+        &self,
+        relation: RelationId,
+        visit: &mut dyn FnMut(&[Value]) -> Result<bool>,
+    ) -> Result<()> {
+        let fields = self.schema.relation(relation).fields();
+        if let Some(rows) = self.staged.get(&relation) {
+            for bytes in rows {
+                let row = crate::canonical::decode(fields, bytes, &self.work).map_err(row_error)?;
+                if !visit(row.values())? {
+                    break;
+                }
+            }
+        }
+        Ok(())
     }
 }

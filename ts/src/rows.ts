@@ -6,7 +6,7 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * order = ordinal ids); the read side decodes owned rows back to named
  * objects of BARE structural values. This module is the one fact⇄row
  * projector. It covers the COMPLETE successor value roster: bool, u64, i64,
- * f64, id128, str, bytes<N>, discrete intervals and dense float intervals,
+ * f64, uuid, str, bytes<N>, discrete intervals and dense float intervals,
  * plus the closed-handle bijection (name ⇄ declaration-order row id).
  *
  * Cells here are OWNED plain host values; the native boundary re-judges
@@ -18,16 +18,16 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  */
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { isFloatIntervalValue, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
-import { Id128 } from "#id128.ts"
 import type { AnyRelation, Fact, RelationData } from "#relation.ts"
+import { Uuid } from "#uuid.ts"
 
 /** Converter-granularity host cell wall (64 KiB). One oversize cell refuses. */
 const HOST_CELL_MAX = 65536n
 
 /**
  * One owned cell at the private bridge boundary. The declared sealed field
- * type disambiguates the union: `string` is text, an `id128` in its
- * canonical 32-lowercase-hex spelling (chapter 35), or a closed handle
+ * type disambiguates the union: `string` is text, an `uuid` in its
+ * canonical hyphenated UUID spelling (chapter 35), or a closed handle
  * before lowering (closed handles cross as `bigint` row ids),
  * `Uint8Array` is `bytes<N>`, `{ start, end }` bigints are a discrete
  * interval and numbers a dense float interval.
@@ -182,12 +182,12 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 			}
 			return value
 		}
-		case "id128": {
-			if (!Id128.isId128(value)) {
-				throw literalShapeError(context, "an Id128 (32 lowercase hex characters)", value)
+		case "uuid": {
+			if (!Uuid.isUuid(value)) {
+				throw literalShapeError(context, "a UUID (canonical UUID text)", value)
 			}
-			// Chapter 35: id128 crosses the bridge as the canonical
-			// 32-lowercase-hex STRING (the native marshal's spelling),
+			// Chapter 35: uuid crosses the bridge as the canonical
+			// canonical hyphenated UUID STRING (the native marshal's spelling),
 			// never as sixteen raw bytes.
 			return value
 		}
@@ -319,13 +319,13 @@ function decodeCell(context: string, field: AnyField, cell: unknown): unknown {
 			}
 			return cell
 		}
-		case "id128": {
-			// The native renderer spells id128 as the canonical
-			// 32-lowercase-hex string (marshal.rs `id128_hex`); the read
+		case "uuid": {
+			// The native renderer spells uuid as the canonical
+			// canonical hyphenated UUID string (marshal.rs `uuid_hex`); the read
 			// side revalidates the spelling and keeps the string value.
-			if (!Id128.isId128(cell)) {
+			if (!Uuid.isUuid(cell)) {
 				throw new SdkInvariantError({
-					message: `${context}: expected an id128 cell (32 lowercase hex characters)`
+					message: `${context}: expected an uuid cell (canonical UUID text)`
 				})
 			}
 			return cell

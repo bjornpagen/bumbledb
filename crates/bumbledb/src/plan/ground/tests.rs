@@ -18,10 +18,10 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn fresh(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
+fn id_key(relation: u32) -> StatementDescriptor {
+    StatementDescriptor::Functionality {
+        relation: RelationId(relation),
+        projection: Box::from([FieldId(0)]),
     }
 }
 
@@ -76,8 +76,8 @@ fn participating_stats(normalized: &NormalizedQuery) -> Vec<OccStats> {
         .collect()
 }
 
-/// Posting(id fresh, account u64, amount i64); Account(id fresh, name str);
-/// Posting(account) <= Account(id) — statement 2 after the two fresh auto-keys.
+/// Posting(id u64, account u64, amount i64); Account(id u64, name str);
+/// Posting(account) <= Account(id) — statement 2 after the two declared keys.
 fn walk_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -85,7 +85,7 @@ fn walk_schema() -> Schema {
                 extension: None,
                 name: "Posting".into(),
                 fields: vec![
-                    fresh("id"),
+                    field("id", ValueType::U64),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                 ],
@@ -93,10 +93,17 @@ fn walk_schema() -> Schema {
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
-                fields: vec![fresh("id"), field("name", ValueType::String)],
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("name", ValueType::String),
+                ],
             },
         ],
-        statements: vec![containment((0, &[1], &[]), (1, &[0], &[]))],
+        statements: vec![
+            id_key(0),
+            id_key(1),
+            containment((0, &[1], &[]), (1, &[0], &[])),
+        ],
     }
     .validate()
     .expect("valid fixture")
@@ -152,17 +159,17 @@ fn the_off_switch_bypasses_the_rewrite() {
     );
 }
 
-/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate i64) with
+/// Grading(id u64, kind u64 — 0 = Det); Det(grading u64, rate i64) with
 /// Det(grading) -> Det; the discriminated-union pair `Grading(id | kind == 0)
 /// == Det(grading)` written as its two containments — statements 2 and 3 after
-/// Grading's auto-key (0) and the declared key (1).
+/// Grading's declared key (0) and the declared key (1).
 fn du_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -174,6 +181,7 @@ fn du_schema() -> Schema {
             },
         ],
         statements: vec![
+            id_key(0),
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
@@ -226,20 +234,23 @@ fn chain_schema() -> Schema {
             RelationDescriptor {
                 extension: None,
                 name: "A".into(),
-                fields: vec![fresh("id"), field("b_ref", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("b_ref", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "B".into(),
-                fields: vec![fresh("id"), field("c_ref", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("c_ref", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "C".into(),
-                fields: vec![fresh("id")],
+                fields: vec![field("id", ValueType::U64)],
             },
         ],
         statements: vec![
+            id_key(0),
+            id_key(1),
+            id_key(2),
             containment((0, &[1], &[]), (1, &[0], &[])),
             containment((1, &[1], &[]), (2, &[0], &[])),
         ],
@@ -377,7 +388,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
                 extension: None,
                 name: "Posting".into(),
                 fields: vec![
-                    fresh("id"),
+                    field("id", ValueType::U64),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                 ],
@@ -385,7 +396,10 @@ fn a_negated_atom_referencing_the_target_refuses() {
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
-                fields: vec![fresh("id"), field("name", ValueType::String)],
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("name", ValueType::String),
+                ],
             },
             RelationDescriptor {
                 extension: None,
@@ -393,7 +407,11 @@ fn a_negated_atom_referencing_the_target_refuses() {
                 fields: vec![field("name", ValueType::String)],
             },
         ],
-        statements: vec![containment((0, &[1], &[]), (1, &[0], &[]))],
+        statements: vec![
+            id_key(0),
+            id_key(1),
+            containment((0, &[1], &[]), (1, &[0], &[])),
+        ],
     }
     .validate()
     .expect("valid fixture");
@@ -435,12 +453,12 @@ fn a_membership_point_sourced_from_the_target_refuses() {
             RelationDescriptor {
                 extension: None,
                 name: "Ledger".into(),
-                fields: vec![fresh("id"), field("acct", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("acct", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "Acct".into(),
-                fields: vec![fresh("id"), field("ts", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("ts", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -456,7 +474,11 @@ fn a_membership_point_sourced_from_the_target_refuses() {
                 ],
             },
         ],
-        statements: vec![containment((0, &[1], &[]), (1, &[0], &[]))],
+        statements: vec![
+            id_key(0),
+            id_key(1),
+            containment((0, &[1], &[]), (1, &[0], &[])),
+        ],
     }
     .validate()
     .expect("valid fixture");
@@ -502,7 +524,7 @@ fn a_missing_source_selection_refuses() {
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -511,6 +533,7 @@ fn a_missing_source_selection_refuses() {
             },
         ],
         statements: vec![
+            id_key(0),
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
@@ -731,7 +754,7 @@ fn distinct_bodies_refuse_subsumption() {
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,

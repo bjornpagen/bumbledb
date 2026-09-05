@@ -8,11 +8,11 @@
 //! - `Capability { runtime, worker, kind, id, generation }` is the only token.
 //! - `RegistryAdmission::admit` reserves count/bytes then installs on a worker.
 //! - `Runtime::submit_payload` / `SnapshotSession::submit` borrow one entry.
-//! - `Runtime::close_resource` is the joined close; it cannot QueueFull.
+//! - `Runtime::close_resource` is the joined close; it cannot `QueueFull`.
 //! - `DraftPayload` persists [`registry_draft::DraftLedger`].
 //! - `Output::Page` / `Rows` carry [`super::QueuedOutput`]. No `Cursor.pending`.
 //! - Lock handles mint with `NativeKind::RepositoryLock`.
-//! - `with_payload`, `RetainedGuard`, and JS-driven WriterSession are gone.
+//! - `with_payload`, `RetainedGuard`, and JS-driven `WriterSession` are gone.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -107,9 +107,9 @@ pub(crate) enum Payload {
         schema: Arc<bumbledb::schema::Schema>,
         fingerprint: String,
     },
-    /// Kernel repository exclusion. Capability.kind is RepositoryLock.
+    /// Kernel repository exclusion. Capability.kind is `RepositoryLock`.
     RepositoryLock {
-        lock: bumbledb_log::store::fence::RepositoryLock,
+        _lock: bumbledb_log::store::fence::RepositoryLock,
     },
 }
 
@@ -138,10 +138,6 @@ impl NativeRegistry {
             next_worker: AtomicU32::new(0),
             routes: Mutex::new(BTreeMap::new()),
         }
-    }
-
-    pub(crate) fn runtime_id(&self) -> u64 {
-        self.runtime
     }
 
     fn routes(&self) -> MutexGuard<'_, BTreeMap<(NativeKind, u64), Route>> {
@@ -202,35 +198,12 @@ impl NativeRegistry {
     /// Drops a route that was reserved but never installed. No tombstone.
     pub(crate) fn rollback_route(&self, cap: Capability) -> Option<u64> {
         let mut routes = self.routes();
-        let Some(route) = routes.remove(&(cap.kind, cap.id)) else {
-            return None;
-        };
+        let route = routes.remove(&(cap.kind, cap.id))?;
         if route.generation != cap.generation {
-            routes.insert(
-                (cap.kind, cap.id),
-                route,
-            );
+            routes.insert((cap.kind, cap.id), route);
             return None;
         }
         Some(route.bytes)
-    }
-
-    pub(crate) fn lookup(&self, cap: Capability) -> Result<ResourceHeader, RuntimeError> {
-        self.check(cap)?;
-        let routes = self.routes();
-        let route = routes
-            .get(&(cap.kind, cap.id))
-            .ok_or(RuntimeError::ClosedHandle)?;
-        if route.generation != cap.generation {
-            return Err(RuntimeError::ClosedHandle);
-        }
-        Ok(ResourceHeader {
-            runtime: self.runtime,
-            worker: route.worker,
-            kind: cap.kind,
-            id: cap.id,
-            generation: route.generation,
-        })
     }
 
     pub(crate) fn state(&self, cap: Capability) -> Result<ResourceState, RuntimeError> {
@@ -307,39 +280,12 @@ impl NativeRegistry {
     /// Removes a drained route. No tombstone remains.
     pub(crate) fn release(&self, cap: Capability) -> Option<u64> {
         let mut routes = self.routes();
-        let Some(route) = routes.remove(&(cap.kind, cap.id)) else {
-            return None;
-        };
+        let route = routes.remove(&(cap.kind, cap.id))?;
         if route.generation != cap.generation {
             routes.insert((cap.kind, cap.id), route);
             return None;
         }
         Some(route.bytes)
-    }
-
-    pub(crate) fn bytes(&self, cap: Capability) -> Result<u64, RuntimeError> {
-        self.check(cap)?;
-        let routes = self.routes();
-        let route = routes
-            .get(&(cap.kind, cap.id))
-            .ok_or(RuntimeError::ClosedHandle)?;
-        if route.generation != cap.generation {
-            return Err(RuntimeError::ClosedHandle);
-        }
-        Ok(route.bytes)
-    }
-
-    pub(crate) fn add_bytes(&self, cap: Capability, extra: u64) -> Result<(), RuntimeError> {
-        self.check(cap)?;
-        let mut routes = self.routes();
-        let route = routes
-            .get_mut(&(cap.kind, cap.id))
-            .ok_or(RuntimeError::ClosedHandle)?;
-        if route.generation != cap.generation || route.close {
-            return Err(RuntimeError::ClosedHandle);
-        }
-        route.bytes = route.bytes.saturating_add(extra);
-        Ok(())
     }
 
     /// Idempotent join: the row is gone (drained) or already closing with
@@ -354,13 +300,7 @@ impl NativeRegistry {
             .is_none_or(|route| route.generation != cap.generation)
     }
 
-    pub(crate) fn live_count(&self) -> usize {
-        self.routes()
-            .values()
-            .filter(|route| route.state != ResourceState::Closing)
-            .count()
-    }
-
+    #[cfg(test)]
     pub(crate) fn route_count(&self) -> usize {
         self.routes().len()
     }
@@ -429,7 +369,6 @@ pub(crate) mod registry_draft {
 
     pub(crate) struct DraftPayload {
         pub schema: Arc<bumbledb::schema::Schema>,
-        pub sealed: Arc<crate::Sealed>,
         pub pending: Vec<PendingChange>,
         pub used_input: u64,
         pub used_rows: u64,
@@ -450,7 +389,7 @@ impl RegistryAdmission {
     /// Reserves handle/byte capacity and returns the capability immediately.
     /// Same-worker install is local; JS/cross-worker install is async
     /// (capability first, table insert later). A failed enqueue rolls the
-    /// route back — no ready_rx, no thread-join.
+    /// route back — no `ready_rx`, no thread-join.
     pub(crate) fn admit(
         runtime: Arc<Runtime>,
         kind: NativeKind,
@@ -469,11 +408,8 @@ impl RegistryAdmission {
         self.cap
     }
 
-    pub(crate) fn grow(&self, bytes: u64) -> Result<(), RuntimeError> {
-        self.runtime.grow_native_route(self.cap, bytes)
-    }
-
     /// Coalesced close: existing admitted obligation, not a new job.
+    #[cfg(test)]
     pub(crate) fn request_close(&self) -> Result<CloseDrain, RuntimeError> {
         self.runtime.request_resource_close(self.cap)
     }

@@ -1,9 +1,9 @@
 //! Construction of an empty [`ImageCache`], shaped by its schema.
 use crate::schema::Schema;
-use crate::work::{CacheLedger, CachePolicy};
 use crate::work::cache::GenerationProtocol;
+use crate::work::{CacheLedger, CachePolicy};
 
-use super::{ImageCache, RelationSlot, stats};
+use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
     /// One database-owned cache: shared across prepared programs on the
@@ -16,13 +16,13 @@ impl ImageCache {
                 .iter()
                 .map(|relation| RelationSlot::for_store(relation.body()))
                 .collect(),
-            counters: stats::CacheCounters::new(),
             protocol: GenerationProtocol::new(cache.clone()),
             cache,
         }
     }
 
-    /// Test and transitional constructor: unbounded cache retention.
+    /// Test constructor: production callers supply cache policy.
+    #[cfg(test)]
     #[must_use]
     pub fn new(schema: &Schema) -> Self {
         Self::with_cache(schema, CacheLedger::unbounded())

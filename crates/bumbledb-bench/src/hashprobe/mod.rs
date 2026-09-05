@@ -8,7 +8,7 @@
 //! - the representative canonical-input corpus ([`inputs`]),
 //! - the BLAKE3-full / BLAKE3-truncated-16 / AEGIS-128L-MAC candidate probe
 //!   with one-shot/streaming equivalence and timing ([`probe`], HASH-04),
-//! - known-answer-test loading; a missing AEGIS vector file is **NotRun**,
+//! - known-answer-test loading; a missing AEGIS vector file is **`NotRun`**,
 //!   never a silent pass and never a required 1.0 cell,
 //! - the forced-collision workload schedules for HASH-02 ([`collision`]).
 //!
@@ -47,7 +47,7 @@ pub enum HashRole {
     /// always followed by full-key comparison with bounded work. Never
     /// persisted, never a commitment, never cryptographic.
     TransientRouting,
-    /// Application-owned 16-byte Id128. Not a content hash and not proof of
+    /// Application-owned 16-byte Uuid. Not a content hash and not proof of
     /// database-issued uniqueness; duplicate IDs follow ordinary schema laws.
     ApplicationId,
 }

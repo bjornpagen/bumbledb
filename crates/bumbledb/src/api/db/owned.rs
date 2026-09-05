@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::Answers;
 use crate::ParamArg;
 use crate::PreparedQuery;
+use crate::canonical::DecodedRow;
 use crate::error::{DynIdError, Result};
 use crate::image::cache::ImageCache;
 use crate::ir::{Query, Value};
@@ -139,21 +140,22 @@ impl<S> OwnedInstance<S> {
     /// # Errors
     /// Unknown relation, or a malformed admitted row (unreachable through
     /// admission).
-    pub fn scan<'a>(&'a self, rel: RelationId, work: &'a WorkContext) -> Result<impl Iterator<Item = Result<Vec<Value>>> + 'a> {
+    pub fn scan<'a>(
+        &'a self,
+        rel: RelationId,
+        work: &'a WorkContext,
+    ) -> Result<impl Iterator<Item = Result<DecodedRow>> + 'a> {
         let Some(relation) = self.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
         if let Some(rows) = self.closed.get(rel) {
-            return Ok(ScanRows::Closed(
-                rows.iter().map(|row| Ok(row.values.to_vec())),
-            ));
+            return Ok(ScanRows::Closed(rows.iter().map(move |row| {
+                crate::canonical::decode(fields, &row.canonical, work).map_err(row_error)
+            })));
         }
         Ok(ScanRows::Heap(self.relation_rows(rel).iter().map(
-            move |row| {
-                let decoded = crate::canonical::decode(fields, row, &work).map_err(row_error)?;
-                Ok(decoded.values)
-            },
+            move |row| crate::canonical::decode(fields, row, work).map_err(row_error),
         )))
     }
 
@@ -177,7 +179,11 @@ impl<S> OwnedInstance<S> {
 
     /// # Errors
     /// Shape refusals.
-    pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F, work: &WorkContext) -> Result<bool> {
+    pub fn contains<'f, F: Fact<'f, Schema = S>>(
+        &self,
+        fact: &F,
+        work: &WorkContext,
+    ) -> Result<bool> {
         let mut values = Vec::new();
         fact.append_values(&mut values)?;
         self.contains_values(F::RELATION, &values, work)
@@ -185,11 +191,21 @@ impl<S> OwnedInstance<S> {
 
     /// # Errors
     /// Shape refusals.
-    pub fn contains_dyn(&self, rel: RelationId, values: &[Value], work: &WorkContext) -> Result<bool> {
+    pub fn contains_dyn(
+        &self,
+        rel: RelationId,
+        values: &[Value],
+        work: &WorkContext,
+    ) -> Result<bool> {
         self.contains_values(rel, values, work)
     }
 
-    fn contains_values(&self, relation: RelationId, values: &[Value], work: &WorkContext) -> Result<bool> {
+    fn contains_values(
+        &self,
+        relation: RelationId,
+        values: &[Value],
+        work: &WorkContext,
+    ) -> Result<bool> {
         if let Some(rows) = self.closed.get(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
@@ -206,7 +222,11 @@ impl<S> OwnedInstance<S> {
         clippy::needless_pass_by_value,
         reason = "the public get takes Key by value to match ReadInstance::get"
     )]
-    pub fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K, work: &WorkContext) -> Result<Option<K::Fact>> {
+    pub fn get<'a, K: Key<'a, Schema = S>>(
+        &'a self,
+        key: K,
+        work: &WorkContext,
+    ) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'a>>::RELATION;
         let (_, statement) =
             get_path::key_statement_of(self.schema.as_ref(), relation, K::STATEMENT)?;
@@ -238,24 +258,7 @@ impl<S> OwnedInstance<S> {
         key: StatementId,
         key_values: &[Value],
         work: &WorkContext,
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into(relation, key, key_values, &mut out, work)?
-            .then_some(out))
-    }
-
-    /// # Errors
-    /// Shape refusals.
-    pub fn get_dyn_into(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-        work: &WorkContext,
-    ) -> Result<bool> {
-        out.clear();
+    ) -> Result<Option<DecodedRow>> {
         let (_, statement) = get_path::key_statement_of(self.schema.as_ref(), relation, key)?;
         get_path::check_key_shape(
             self.schema.as_ref(),
@@ -264,24 +267,25 @@ impl<S> OwnedInstance<S> {
             key_values,
         )?;
         if let Some(rows) = self.closed.get(relation) {
-            return Ok(
-                match get_path::closed_row_by_key(rows, statement, key_values) {
-                    Some(row) => {
-                        out.extend(row.values.iter().cloned());
-                        true
-                    }
-                    None => false,
-                },
-            );
+            return get_path::closed_row_by_key(rows, statement, key_values)
+                .map(|row| {
+                    crate::canonical::decode(
+                        self.schema.relation(relation).fields(),
+                        &row.canonical,
+                        work,
+                    )
+                    .map_err(row_error)
+                })
+                .transpose();
         }
         match self.find_by_key(relation, &statement.projection, key_values, work)? {
             Some(bytes) => {
                 let fields = self.schema.relation(relation).fields();
-                let decoded = crate::canonical::decode(fields, bytes, work).map_err(row_error)?;
-                out.extend(decoded.values);
-                Ok(true)
+                crate::canonical::decode(fields, bytes, work)
+                    .map(Some)
+                    .map_err(row_error)
             }
-            None => Ok(false),
+            None => Ok(None),
         }
     }
 
@@ -307,7 +311,7 @@ impl<S> OwnedInstance<S> {
         let fields = self.schema.relation(relation).fields();
         for row in self.relation_rows(relation) {
             let decoded = crate::canonical::decode(fields, row, work).map_err(row_error)?;
-            if get_path::projection_matches(&decoded.values, projection, key_values) {
+            if get_path::projection_matches(decoded.values(), projection, key_values) {
                 return Ok(Some(row));
             }
         }

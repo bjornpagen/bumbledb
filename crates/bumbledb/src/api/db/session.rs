@@ -17,8 +17,8 @@
 use std::marker::PhantomData;
 
 use super::{Db, ReadFrame};
-use crate::storage::GenerationId;
 use crate::schema::judge::LawfulParent;
+use crate::storage::GenerationId;
 use crate::storage::store::{
     self, HostChanges, HostSealError, SchemaJudge, StoreError, UnindexedRows,
 };
@@ -221,10 +221,13 @@ impl<S> ReadFrame<'_, S> {
     /// The bytes and application rows borrow the same committed snapshot.
     #[doc(hidden)]
     pub fn integration_host_record(&self, key: &[u8]) -> Result<Option<&[u8]>, HostSealError> {
-        self.owner.snapshot.host_record(key).map_err(|error| match error {
-            StoreError::HostKey(fault) => crate::storage::store::host::seal_error_of(fault),
-            other => HostSealError::Storage(Error::from_store(other)),
-        })
+        self.owner
+            .snapshot
+            .host_record(key)
+            .map_err(|error| match error {
+                StoreError::HostKey(fault) => crate::storage::store::host::seal_error_of(fault),
+                other => HostSealError::Storage(Error::from_store(other)),
+            })
     }
 
     /// Visit every committed host record whose key starts with `prefix`, in

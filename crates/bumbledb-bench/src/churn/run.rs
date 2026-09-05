@@ -132,7 +132,7 @@ pub fn run_spec(
             }
             let generation = ours
                 .db
-                .generation()
+                .generation(crate::harness::bench_work())
                 .map_err(|e| format!("churn sample generation: {e:?}"))?
                 .value();
             ours_samples.push(SamplePoint {
@@ -142,7 +142,7 @@ pub fn run_spec(
                 maintenance_ns: 0,
                 disk_bytes: ours
                     .db
-                    .disk_size()
+                    .disk_size(crate::harness::bench_work())
                     .map_err(|e| format!("churn sample disk size: {e:?}"))?,
                 counters: Counters::Ours {
                     generation,

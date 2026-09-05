@@ -15,7 +15,7 @@
  *   node --experimental-strip-types scripts/init-tenant.ts \
  *     hosted <tenantId> <operationIdHex> <databaseIdHex> <incarnationIdHex>
  *
- * The three Id128s are the STABLE CREATION IDENTITY (chapter 30): the
+ * The three Uuids are the STABLE CREATION IDENTITY (chapter 30): the
  * operator mints them once, records them with the tenant, and reuses them
  * on every retry — a lost response re-runs with the same identity and
  * resolves to the same initialization, never a second database. The
@@ -24,7 +24,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { Id128, NativeRuntime } from "@bjornpagen/bumbledb"
+import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
 import type { DatabaseIdentity, HistoryBinding } from "@bjornpagen/bumbledb-log"
 import { DatabaseId, IncarnationId, OperationId, parseSchemaId, renderDatabaseIdentity } from "@bjornpagen/bumbledb-log"
 import { decodeRuntimeContract, initialize } from "@bjornpagen/bumbledb-log/migrations"
@@ -35,13 +35,13 @@ import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
 
 const MIGRATIONS_DIR = generatedDirectory()
 
-function id128Of(name: string, hex: string | undefined): Id128 {
+function uuidOf(name: string, hex: string | undefined): Uuid {
 	if (hex === undefined) {
-		throw new Error(`${name} is required (32 lowercase hex characters)`)
+		throw new Error(`${name} is required (canonical UUID text)`)
 	}
-	const parsed = Id128.fromHex(hex)
+	const parsed = Uuid.parse(hex)
 	if (Result.isFailure(parsed)) {
-		throw new Error(`${name} must be 32 lowercase hex characters, got ${hex}`)
+		throw new Error(`${name} must be canonical UUID text, got ${hex}`)
 	}
 	return parsed.success
 }
@@ -60,9 +60,9 @@ async function main(): Promise<void> {
 		process.exitCode = 2
 		return
 	}
-	const operationId = unwrap("operation id", OperationId.from(id128Of("operation id", operationHex)))
-	const databaseId = unwrap("database id", DatabaseId.from(id128Of("database id", databaseHex)))
-	const incarnationId = unwrap("incarnation id", IncarnationId.from(id128Of("incarnation id", incarnationHex)))
+	const operationId = unwrap("operation id", OperationId.from(uuidOf("operation id", operationHex)))
+	const databaseId = unwrap("database id", DatabaseId.from(uuidOf("database id", databaseHex)))
+	const incarnationId = unwrap("incarnation id", IncarnationId.from(uuidOf("incarnation id", incarnationHex)))
 
 	const plans = loadGeneratedMigrations(MIGRATIONS_DIR)
 

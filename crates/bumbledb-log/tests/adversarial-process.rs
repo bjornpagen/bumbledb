@@ -50,9 +50,10 @@ use bumbledb_log::history::{Condition, TerminalOutcome};
 use bumbledb_log::manifest::{GcPhase, RootKind, RootPolicy};
 use bumbledb_log::recovery::{self, materialization_path};
 use bumbledb_log::store::fs::{FsError, FsStore, Inject, Phase};
+use bumbledb_log::store::receive::{ReceivedBody, ReceivedHead, ReceivingStore, TransportContext};
 use bumbledb_log::store::{
-    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectKind, ObjectRead,
-    ObjectRef, PutOutcome, ReceiveLimits, TransportContext, get_verified, put_verified,
+    ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, ObjectKind, ObjectRef, PutOutcome,
+    ReceiveLimits, get_verified, put_verified,
 };
 use bumbledb_log::writer::{HostedHistory, LocalHistory, ResolveOutcome};
 
@@ -217,10 +218,6 @@ impl ParkAtFirstChunkGet {
 impl ConditionalStore for ParkAtFirstChunkGet {
     type Error = FsError;
 
-    fn read_head(&self, head_key: &str) -> Result<HeadRead, FsError> {
-        self.inner.read_head(head_key)
-    }
-
     fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, FsError> {
         self.inner.create_head(head_key, body)
     }
@@ -238,7 +235,25 @@ impl ConditionalStore for ParkAtFirstChunkGet {
         self.inner.put_object(key, body)
     }
 
-    fn get_object(&self, key: &str) -> Result<ObjectRead, FsError> {
+    fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, FsError> {
+        self.inner.list_objects(prefix, after)
+    }
+
+    fn delete_object(&self, key: &str) -> Result<(), FsError> {
+        self.inner.delete_object(key)
+    }
+}
+
+impl ReceivingStore for ParkAtFirstChunkGet {
+    fn receive_head(&self, key: &str, ctx: TransportContext<'_>) -> Result<ReceivedHead, FsError> {
+        self.inner.receive_head(key, ctx)
+    }
+
+    fn receive_object(
+        &self,
+        key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedBody, FsError> {
         if key.contains("/chunk/") && !self.tripped.swap(true, Ordering::SeqCst) {
             println!("CHUNKPARK");
             let _ = std::io::stdout().flush();
@@ -249,15 +264,14 @@ impl ConditionalStore for ParkAtFirstChunkGet {
                 .expect("parent gate line");
             assert_eq!(line.trim(), "GO", "the parent resumes the gate with GO");
         }
-        self.inner.get_object(key)
+        self.inner.receive_object(key, ctx)
     }
+}
 
-    fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, FsError> {
-        self.inner.list_objects(prefix, after)
-    }
-
-    fn delete_object(&self, key: &str) -> Result<(), FsError> {
-        self.inner.delete_object(key)
+fn completed<T: std::fmt::Debug>(outcome: bumbledb_log::certainty::AdminCertainty<T>) -> T {
+    match outcome {
+        bumbledb_log::certainty::AdminCertainty::Completed { value } => value,
+        other => panic!("administrative transition did not complete: {other:?}"),
     }
 }
 
@@ -620,7 +634,7 @@ fn a_kill_mid_sweep_resumes_to_a_converged_collection() {
         }
     };
     assert!(report.finished, "the resumed sweep converges");
-    let (head, _) = read_live_head(&store, "t", HEAD_CAP).expect("head reads");
+    let (head, _) = read_live_head(&store, "t", HEAD_CAP, &work()).expect("head reads");
     assert!(
         matches!(head.gc, GcPhase::Idle),
         "collection state returns to Idle"
@@ -798,7 +812,7 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     )
     .expect("first checkpoint publishes");
     // Register the hydration hold against the exact current closure.
-    let held = admin::add_named_root_hosted(
+    let held = completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x71),
@@ -808,8 +822,7 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("hydration hold registers");
+    ));
     assert_eq!(held.kind, RootKind::HydrationHold);
     assert_eq!(
         Some(held.recovery),
@@ -876,10 +889,15 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     // The revocation: release the hold (the report names the exact lost
     // recovery capability), then a later collection reclaims the closure out
     // from under both frozen hydrates.
-    let released =
-        admin::release_named_root_hosted(&store, "t", op(0x71), false, HEAD_CAP, &work())
-            .expect("release runs")
-            .expect("the hold existed");
+    let released = completed(admin::release_named_root_hosted(
+        &store,
+        "t",
+        op(0x71),
+        false,
+        HEAD_CAP,
+        &work(),
+    ))
+    .expect("the hold existed");
     assert_eq!(
         released.recovery.checkpoint,
         Some(pinned_manifest),

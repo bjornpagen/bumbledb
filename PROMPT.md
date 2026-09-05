@@ -1,3 +1,0 @@
-Implement the complete convergence packet in [final-solution/PROMPT.md](final-solution/PROMPT.md). Read the packet before dispatching; [work units](final-solution/60-cursor-execution.md) define exclusive parallel scopes, [contracts](final-solution/61-interface-contracts.md) define pipelined handoffs, and [acceptance](final-solution/70-test-and-release-gates.md) rejects superficial fixes.
-
-No tests/builds/typechecks during the swarm. No interim commits. Final post-retirement qualification and one integrated commit follow [the handoff contract](final-solution/90-evidence-and-retirement.md). Missing mandatory evidence is unqualified, never green.

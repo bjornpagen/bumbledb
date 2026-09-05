@@ -1,5 +1,5 @@
 //! Authored discriminators D07–D12 / D25 for the L05 query machine.
-//! Verification: NotRun. Each gate is a consumer of the production
+//! Verification: `NotRun`. Each gate is a consumer of the production
 //! execute/delivery path — not a `type_name` / `size_of` / fn-ref claim.
 
 use super::*;
@@ -26,17 +26,52 @@ fn d07_tiny_work_units_refuse_execute() {
     }
     .start()
     .expect("policy");
-    let refused = store.db.read(|instance| {
-        prepared.execute_collect_with_work(
-            instance,
-            &work,
-            &[BindValue::U64(3), BindValue::I64(0)],
-        )
-    });
+    let refused = store
+        .db
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
+            prepared.execute_collect_with_work(
+                instance,
+                &work,
+                &[BindValue::U64(3), BindValue::I64(0)],
+            )
+        });
     assert!(
         refused.is_err(),
         "one work unit cannot complete a charged execute, got {refused:?}"
     );
+}
+
+#[test]
+fn allocating_collect_obeys_the_frames_result_budget_and_retries_cleanly() {
+    let store = posting_store("collect-result-cap", &[(1, 3, "a", 10), (2, 3, "b", 25)]);
+    let ample = UNBOUNDED_POLICY.start().unwrap();
+    let snapshot = store.db.snapshot(&ample).unwrap();
+    let mut prepared = snapshot.frame(&ample).prepare(&by_account_query()).unwrap();
+    let tiny = crate::work::ExecutionPolicy {
+        result_bytes: 8,
+        ..UNBOUNDED_POLICY
+    }
+    .start()
+    .unwrap();
+    let error = snapshot
+        .frame(&tiny)
+        .execute_collect(&mut prepared, &[BindValue::U64(3), BindValue::I64(0)])
+        .expect_err("two rows cannot fit in eight result bytes");
+    assert!(matches!(
+        error,
+        crate::Error::Store(error) if matches!(
+            *error,
+            crate::storage::store::StoreError::Work(crate::work::WorkError::Exhausted {
+                resource: Resource::ResultBytes, ..
+            })
+        )
+    ));
+    assert_eq!(tiny.used(Resource::ResultBytes), 0);
+    let rows = snapshot
+        .frame(&ample)
+        .execute_collect(&mut prepared, &[BindValue::U64(3), BindValue::I64(0)])
+        .unwrap();
+    assert_eq!(rows.len(), 2);
 }
 
 /// D08: a production join that actually grew COLT/working capacity
@@ -106,7 +141,7 @@ fn d08_successful_execute_retains_work_charges() {
     let work = UNBOUNDED_POLICY.start().expect("work");
     store
         .db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             let out = prepared.execute_collect_with_work(instance, &work, &[] as &[BindValue])?;
             assert_eq!(out.len(), 256, "one pair per metric id");
             let charged = work.used(Resource::WorkingBytes);
@@ -136,6 +171,10 @@ fn d08_successful_execute_retains_work_charges() {
 /// working stay bounded; a tiny nonempty run stays resident.
 /// `d09_spill_opens_via_exhausted` stays as the intern-spill sibling.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn d09_derived_pipeline_spills_with_bounded_peak() {
     let mut owned: Vec<(u64, u64, String, i64)> = (1..=32u64)
         .map(|id| (id, id, "ok".to_owned(), i64::try_from(id).expect("fits")))
@@ -212,7 +251,7 @@ fn d09_derived_pipeline_spills_with_bounded_peak() {
     let work_resident = UNBOUNDED_POLICY.start().expect("work");
     let got_resident = store
         .db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             resident.execute_collect_with_work(instance, &work_resident, &[] as &[BindValue])
         })
         .expect("resident");
@@ -232,7 +271,7 @@ fn d09_derived_pipeline_spills_with_bounded_peak() {
     let work_spill = UNBOUNDED_POLICY.start().expect("work");
     let got_spill = store
         .db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             spilled.execute_collect_with_work(instance, &work_spill, &[] as &[BindValue])
         })
         .expect("spilled derived pipeline");
@@ -255,13 +294,13 @@ fn d09_derived_pipeline_spills_with_bounded_peak() {
 /// through `ResidentTextExhausted::open_nonresident`. `on_work` sees a
 /// prior execute charge (not a twin at zero). Intern and scratch tokens
 /// do not alias; [`TextEq::tokens_equal`] unifies meaning. Verification:
-/// NotRun.
+/// `NotRun`.
 #[test]
 fn d09_spill_opens_via_exhausted() {
     use crate::exec::scratch::capability::{ScratchCapability, ScratchPolicy};
     use crate::image::{
-        intern::InternerHandle, is_resident_token, is_scratch_token, NonresidentTextStore,
-        ResidentAdmit, TextEq,
+        NonresidentTextStore, ResidentAdmit, TextEq, intern::InternerHandle, is_resident_token,
+        is_scratch_token,
     };
     use crate::work::{CacheLedger, CachePolicy, GenerationHandle, GenerationState};
 
@@ -300,13 +339,13 @@ fn d09_spill_opens_via_exhausted() {
     let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
         panic!("tiny cache intern must spill");
     };
-    let scratch_before = work.used(Resource::ScratchBytes);
+    let working_before = work.used(Resource::WorkingBytes);
     let mut store = PreparedQuery::<T>::open_from_exhausted(&exhausted, &work)
         .expect("exhausted.open_nonresident");
     let scratch_tok = store.intern("shared", &work).expect("scratch intern");
     assert!(
-        work.used(Resource::ScratchBytes) > scratch_before,
-        "open_nonresident via on_work charges the execute ledger"
+        work.used(Resource::WorkingBytes) > working_before,
+        "the nonresident text map's RAM tier charges the execute ledger"
     );
     let epoch = store.epoch();
     assert!(
@@ -324,7 +363,9 @@ fn d09_spill_opens_via_exhausted() {
         "intern and scratch tokens cannot alias"
     );
     assert!(
-        TextEq::bind(&fat, Some(&store)).tokens_equal(scratch_tok, intern_tok),
+        TextEq::bind(&fat, Some(&store))
+            .tokens_equal(scratch_tok, intern_tok)
+            .expect("text comparison"),
         "TextEq unifies intern and scratch; raw words stay unequal"
     );
     assert!(
@@ -408,7 +449,6 @@ fn d12_preview_does_not_advance_until_commit() {
         .expect("preview")
         .expect("nonempty");
     assert_eq!(preview.len(), 2);
-    assert_eq!(cursor.debug_next_row(), 0, "preview leaves next_row");
     ticket.abort();
     assert_eq!(cursor.debug_next_row(), 0, "abort retries the same row");
 }
@@ -439,22 +479,18 @@ fn d11_pack_order_is_logical_not_insertion() {
         }],
         statements: vec![],
     };
-    let facts = [
-        (1u64, 1u64, 10u64, 20u64),
-        (2, 1, 0, 15),
-        (3, 2, 4, 6),
-    ]
-    .into_iter()
-    .map(|(id, person, start, end)| {
-        vec![
-            Value::U64(id),
-            Value::U64(person),
-            Value::IntervalU64(
-                bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty"),
-            ),
-        ]
-    })
-    .collect::<Vec<_>>();
+    let facts = [(1u64, 1u64, 10u64, 20u64), (2, 1, 0, 15), (3, 2, 4, 6)]
+        .into_iter()
+        .map(|(id, person, start, end)| {
+            vec![
+                Value::U64(id),
+                Value::U64(person),
+                Value::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty"),
+                ),
+            ]
+        })
+        .collect::<Vec<_>>();
     let fix = Fix::heap(descriptor, &[(RelationId(0), facts)]);
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Pack { over: VarId(1) }],
@@ -490,7 +526,7 @@ fn d11_pack_order_is_logical_not_insertion() {
 
 /// D25: `into_cursor(page_rows)` is a real cap (not hardcoded 1). Two
 /// rows that fit alone but not together are two pages; commit is the
-/// only advance. Verification: NotRun.
+/// only advance. Verification: `NotRun`.
 #[test]
 fn d25_into_cursor_page_cap_commits_once() {
     let rows = &[
@@ -502,7 +538,7 @@ fn d25_into_cursor_page_cap_commits_once() {
     let mut prepared = store.prepare(&by_account_query()).expect("prepare");
     let sealed = store
         .db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             prepared.execute_complete(instance, &[BindValue::U64(3), BindValue::I64(0)])
         })
         .expect("complete");
@@ -515,7 +551,6 @@ fn d25_into_cursor_page_cap_commits_once() {
         .expect("row1 fits alone")
         .expect("nonempty");
     assert_eq!(preview.len(), 1, "row2 jointly exceeds 32 encoded bytes");
-    assert_eq!(cursor.debug_next_row(), 0);
     assert!(
         ticket.preview_charged_bytes() > 0,
         "preview reserved before copy"

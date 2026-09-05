@@ -359,17 +359,21 @@ mod tests {
     fn keyed_get_returns_the_exact_fact() {
         let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-exact");
         let _ = std::fs::remove_dir_all(&dir);
-        let db = bumbledb::Db::create(&dir, bumbledb::Theory::descriptor(Points))
-            .expect("create")
-            .expect("accepted");
+        let db = bumbledb::Db::create(
+            &dir,
+            bumbledb::Theory::descriptor(Points),
+            crate::harness::bench_work(),
+        )
+        .expect("create")
+        .expect("accepted");
         let seed = 7;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(ids::BUCKET, (0..BUCKETS_SMOKE).map(bucket_row))
                 .map(bumbledb::MutationReport::changed)
         })
         .expect("buckets")
         .unwrap();
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(
                 ids::DOC,
                 (0..DOCS_SMOKE).map(|i| doc_row_sized(seed, i, BUCKETS_SMOKE)),
@@ -382,14 +386,18 @@ mod tests {
         for i in [0u64, 3, DOCS_SMOKE - 1] {
             let key = Value::String(format!("doc/{i:08x}").into());
             let fact = db
-                .read(|snap| snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&key)))
+                .read(crate::harness::bench_work(), |snap| {
+                    snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&key))
+                })
                 .expect("get_dyn")
                 .expect("a loaded key is a hit");
-            assert_eq!(fact, doc_row_sized(seed, i, BUCKETS_SMOKE));
+            assert_eq!(&*fact, doc_row_sized(seed, i, BUCKETS_SMOKE).as_slice());
         }
         let miss = Value::String("doc/never-a-key".into());
         let absent = db
-            .read(|snap| snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&miss)))
+            .read(crate::harness::bench_work(), |snap| {
+                snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&miss))
+            })
             .expect("get_dyn");
         assert!(absent.is_none(), "a never-interned key proves the miss");
         drop(db);

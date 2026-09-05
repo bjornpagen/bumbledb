@@ -2,8 +2,8 @@
 //! Callers stream rows here; they do not collect a whole-stage `Vec`.
 
 use super::{
-    charge, entry_retained, work_error, ScratchMapId, ScratchRelation, ScratchWriteBatch,
-    SPILL_BATCH,
+    SPILL_BATCH, ScratchMapId, ScratchRelation, ScratchWriteBatch, charge, entry_retained,
+    work_error,
 };
 use crate::error::Result;
 use crate::work::ByteReservation;
@@ -44,7 +44,7 @@ impl<'a> ScratchAppend<'a> {
     pub fn append(&mut self, map: ScratchMapId, key: &[u8], value: &[u8]) -> Result<()> {
         self.reserve_staging(entry_retained(key, value))?;
         self.batch.put(map, key, value)?;
-        if self.batch.pending_entries() as usize >= SPILL_BATCH {
+        if self.batch.pending_entries() >= i64::from(SPILL_BATCH) {
             self.flush()?;
         }
         Ok(())
@@ -71,7 +71,7 @@ impl<'a> ScratchAppend<'a> {
     }
 
     fn flush(&mut self) -> Result<()> {
-        let batch = std::mem::replace(&mut self.batch, ScratchWriteBatch::new());
+        let batch = std::mem::take(&mut self.batch);
         let result = if batch.pending_entries() == 0 {
             Ok(())
         } else {

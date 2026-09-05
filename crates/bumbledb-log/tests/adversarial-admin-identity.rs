@@ -17,7 +17,7 @@ mod lane_support;
 use std::sync::Arc;
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{Db, Id128, RelationId, Value};
+use bumbledb::{Db, RelationId, Uuid};
 use bumbledb_log::admin::{
     AdminError, apply_hosted_retirement_locally, capture_local_parent, local_authority,
     rotate_receipts_hosted, rotate_receipts_local, verify_hosted_identity, verify_local_identity,
@@ -65,8 +65,8 @@ where
 {
     let db = fresh_db(tag);
     let identity = DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([db_seed; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([inc_seed; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([db_seed; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([inc_seed; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(db.schema()),
     };
     let history = LocalHistory::create(
@@ -145,7 +145,11 @@ where
 #[allow(clippy::type_complexity)]
 fn snapshot_local(
     db: &Db<SchemaDescriptor>,
-) -> (Vec<(Vec<u8>, Vec<u8>)>, Option<Vec<u8>>, Vec<Vec<Value>>) {
+) -> (
+    Vec<(Vec<u8>, Vec<u8>)>,
+    Option<Vec<u8>>,
+    Vec<bumbledb::canonical::DecodedRow>,
+) {
     let mut records = Vec::new();
     let mut attachment = None;
     let mut facts = Vec::new();
@@ -192,7 +196,7 @@ fn hosted_gate_refuses_every_foreign_identity_dimension_and_bytes_are_unchanged(
 
     // Same schema, different DATABASE (the same-schema-tenant confusion).
     let mut foreign_db = identity;
-    foreign_db.database_id = DatabaseId::from_core(Id128::from_bytes([0x99; 16]));
+    foreign_db.database_id = DatabaseId::from_core(Uuid::from_bytes([0x99; 16]));
     assert_identity_refusal(
         verify_hosted_identity(&store, "t", foreign_db, HEAD_CAP, &work()),
         "database",
@@ -200,7 +204,7 @@ fn hosted_gate_refuses_every_foreign_identity_dimension_and_bytes_are_unchanged(
 
     // Same database NAME, different INCARNATION (rebirth / stale binding).
     let mut stale = identity;
-    stale.incarnation_id = IncarnationId::from_core(Id128::from_bytes([0x77; 16]));
+    stale.incarnation_id = IncarnationId::from_core(Uuid::from_bytes([0x77; 16]));
     assert_identity_refusal(
         verify_hosted_identity(&store, "t", stale, HEAD_CAP, &work()),
         "incarnation",
@@ -221,7 +225,8 @@ fn hosted_gate_refuses_every_foreign_identity_dimension_and_bytes_are_unchanged(
     );
 
     // The exact identity passes and returns the loaded authority head.
-    let head = verify_hosted_identity(&store, "t", identity, HEAD_CAP, &work()).expect("exact identity");
+    let head =
+        verify_hosted_identity(&store, "t", identity, HEAD_CAP, &work()).expect("exact identity");
     assert_eq!(head.control.identity, identity);
 }
 
@@ -250,7 +255,8 @@ where
 
     // The same request aimed at ITS OWN tenant validates and then mutates —
     // the gate blocks only cross-tenant aim, never legitimate maintenance.
-    verify_hosted_identity(store, "a", identity_a, HEAD_CAP, &work()).expect("own tenant validates");
+    verify_hosted_identity(store, "a", identity_a, HEAD_CAP, &work())
+        .expect("own tenant validates");
     assert!(
         matches!(
             rotate_receipts_hosted(
@@ -292,8 +298,8 @@ fn hosted_gate_valid_identity_wrong_prefix_refuses_on_fs_store() {
 fn local_gate_refuses_foreign_identities_and_the_tenant_stays_byte_unchanged() {
     let db = fresh_db("lg-local");
     let identity = DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0x61; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0x62; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0x61; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0x62; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(db.schema()),
     };
     let history = LocalHistory::create(
@@ -312,7 +318,7 @@ fn local_gate_refuses_foreign_identities_and_the_tenant_stays_byte_unchanged() {
     // Same schema, different database: another tenant's directory paired
     // with a perfectly valid — but foreign — identity.
     let mut foreign = identity;
-    foreign.database_id = DatabaseId::from_core(Id128::from_bytes([0x98; 16]));
+    foreign.database_id = DatabaseId::from_core(Uuid::from_bytes([0x98; 16]));
     match verify_local_identity(&db, foreign, LIMITS.envelope_bytes) {
         Err(AdminError::Identity(mismatch)) => assert_eq!(mismatch.dimension(), "database"),
         other => panic!("expected identity refusal, got {other:?}"),
@@ -321,7 +327,7 @@ fn local_gate_refuses_foreign_identities_and_the_tenant_stays_byte_unchanged() {
     // Stale binding: the old incarnation after a restore/migration reborn
     // this database under a new one.
     let mut stale = identity;
-    stale.incarnation_id = IncarnationId::from_core(Id128::from_bytes([0x63; 16]));
+    stale.incarnation_id = IncarnationId::from_core(Uuid::from_bytes([0x63; 16]));
     match verify_local_identity(&db, stale, LIMITS.envelope_bytes) {
         Err(AdminError::Identity(mismatch)) => assert_eq!(mismatch.dimension(), "incarnation"),
         other => panic!("expected identity refusal, got {other:?}"),
@@ -375,9 +381,9 @@ fn local_gate_refuses_foreign_identities_and_the_tenant_stays_byte_unchanged() {
 #[test]
 fn stale_binding_after_reincarnation_refuses_against_the_new_incarnation() {
     // The pre-restore lineage: database D, incarnation I1.
-    let database = DatabaseId::from_core(Id128::from_bytes([0x71; 16]));
-    let old_incarnation = IncarnationId::from_core(Id128::from_bytes([0x72; 16]));
-    let new_incarnation = IncarnationId::from_core(Id128::from_bytes([0xdd; 16]));
+    let database = DatabaseId::from_core(Uuid::from_bytes([0x71; 16]));
+    let old_incarnation = IncarnationId::from_core(Uuid::from_bytes([0x72; 16]));
+    let new_incarnation = IncarnationId::from_core(Uuid::from_bytes([0xdd; 16]));
 
     // The post-restore/post-migration materialization: the SAME database,
     // reborn under incarnation I2 in its own directory.
@@ -434,7 +440,11 @@ fn hosted_retirement_apply_refuses_stale_captured_decision() {
     let authority = local_authority(&db, LIMITS.envelope_bytes).expect("local authority");
     let mut captured = capture_local_parent(&authority).expect("live parent");
     captured.decision.seq = captured.decision.seq.saturating_sub(1);
-    let new_control = authority.retire_receipts(1).expect("retire frontier");
+    let new_control = authority
+        .rotate_receipts(bumbledb_log::history::ReceiptEpoch::new(2).unwrap())
+        .expect("rotate epoch")
+        .retire_receipts(1)
+        .expect("retire frontier");
     let outcome = apply_hosted_retirement_locally(
         &db,
         &new_control,
@@ -457,7 +467,11 @@ fn hosted_retirement_apply_refuses_newer_control_at_the_same_decision() {
     let authority = local_authority(&db, LIMITS.envelope_bytes).expect("local authority");
     let mut captured = capture_local_parent(&authority).expect("live parent");
     captured.revision = HeadRevision(captured.revision.0.saturating_sub(1));
-    let new_control = authority.retire_receipts(1).expect("retire frontier");
+    let new_control = authority
+        .rotate_receipts(bumbledb_log::history::ReceiptEpoch::new(2).unwrap())
+        .expect("rotate epoch")
+        .retire_receipts(1)
+        .expect("retire frontier");
     let outcome = apply_hosted_retirement_locally(
         &db,
         &new_control,

@@ -38,6 +38,12 @@ pub use bumbledb_theory::schema::{
 
 pub use bumbledb_theory::schema::{ValueMismatch, value_matches};
 
+pub use compiled::{
+    CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
+    LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES, ProjectionBinding, ProjectionId, ProjectionInternKey,
+    VisitControl, VisitOutcome, encode_scalar_group,
+};
+pub use judge::{LawfulParent, judge_complete, judge_incremental};
 pub use manifest::{
     FieldManifest, Manifest, ManifestDescriptor, RelationManifest, RowManifest, StatementManifest,
 };
@@ -47,12 +53,6 @@ pub use spec::{
     RelationSpec, RowSpec, SchemaSpec, SchemaSpecError, SideSpec, SpecIssue, StatementSpec,
     WeightSpec,
 };
-pub use compiled::{
-    CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
-    LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES, ProjectionBinding, ProjectionId, ProjectionInternKey,
-    VisitControl, VisitOutcome, encode_scalar_group,
-};
-pub use judge::{LawfulParent, judge_complete, judge_incremental};
 pub use validate::ValidateDescriptor;
 
 /// Witness index into [`Schema::keys`] — minted only by validation.
@@ -523,15 +523,6 @@ pub struct CapacityStatement {
     pub hi: SealedBound,
     pub source: Side,
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "compiled capacity plan read by the recorded C03/C05 \
-                      acceleration follow-up (implementation/packets/P02.md); \
-                      the obligation-roster tests classify through it"
-        )
-    )]
     pub(crate) enforcement: CapacityEnforcement,
 
     #[expect(

@@ -77,7 +77,7 @@ fn unknown_commands_and_arguments_refuse_with_usage_and_do_nothing() {
     // A malformed operation ID refuses before any backend work.
     let (ok, _, err) = duty(&fs_args(root_str(&root), &["gc", "--op", "not-hex"]));
     assert!(!ok);
-    assert!(err.contains("32 hex characters"), "{err}");
+    assert!(err.contains("invalid UUID"), "{err}");
 }
 
 #[test]
@@ -110,8 +110,8 @@ fn status_renders_the_bounded_redacted_report() {
 fn gc_roots_backup_verify_and_erase_arms_run_the_real_operations() {
     let (root, _store) = fixture("duty-ops");
     let root_text = root_str(&root).to_string();
-    let op_hex = "000000000000000000000000000000aa";
-    let root_id = "000000000000000000000000000000bb";
+    let op_hex = "00000000-0000-0000-0000-0000000000aa";
+    let root_id = "00000000-0000-0000-0000-0000000000bb";
     // root-add / root-release.
     let (ok, out, err) = duty(&fs_args(
         &root_text,
@@ -184,7 +184,7 @@ fn gc_roots_backup_verify_and_erase_arms_run_the_real_operations() {
     ));
     assert!(ok, "{err}");
     assert!(out.contains("released root"), "{out}");
-    let erase_op = "000000000000000000000000000000cc";
+    let erase_op = "00000000-0000-0000-0000-0000000000cc";
     let (ok, out, err) = duty(&fs_args(&root_text, &["erase", "--op", erase_op]));
     assert!(ok, "{err}");
     assert!(out.contains("tombstone retained true"), "{out}");
@@ -219,13 +219,13 @@ fn gc_roots_backup_verify_and_erase_arms_run_the_real_operations() {
 /// readiness. Verification: `NotRun`.
 #[test]
 fn duty_has_no_restore_or_import_command_those_stay_on_charged_library_verbs() {
-    let (ok, _, err) = duty(&["restore"]);
+    let (ok, _, err) = duty(&["restore", "--prefix", "tenant"]);
     assert!(!ok);
     assert!(err.contains("unknown command"), "{err}");
-    let (ok, _, err) = duty(&["import"]);
+    let (ok, _, err) = duty(&["import", "--prefix", "tenant"]);
     assert!(!ok);
     assert!(err.contains("unknown command"), "{err}");
-    let (ok, _, err) = duty(&["walk"]);
+    let (ok, _, err) = duty(&["walk", "--prefix", "tenant"]);
     assert!(!ok);
     assert!(err.contains("unknown command"), "{err}");
 }

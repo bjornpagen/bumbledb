@@ -211,7 +211,7 @@ fn distinct_of(
     rows: u64,
 ) -> crate::error::Result<u64> {
     let descriptor = schema.relation(relation);
-    let keyed = schema.compiled_theory().ok().is_some_and(|theory| {
+    let keyed = schema.compiled_theory().is_ok_and(|theory| {
         theory.key_projections_of(relation).iter().any(|id| {
             matches!(
                 theory.distinctness_witness(*id),

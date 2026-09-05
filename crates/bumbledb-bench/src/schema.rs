@@ -190,7 +190,7 @@ mod tests {
     fn the_fingerprint_is_pinned() {
         assert_eq!(
             fingerprint_hex(),
-            "63fcf387c3497c42530d91790cd16ec46f843c2bfc7efac2a57443fb2d1cf635",
+            "e89545c6f681d66b89e8869c0584e3117c705c9dcad89e0a3b26f9b18199822b",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
         );
     }

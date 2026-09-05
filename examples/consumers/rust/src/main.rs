@@ -1,5 +1,5 @@
 //! Packed Rust core consumer (D07/D22): the shared `Learning` schema,
-//! ordinary RAII, application-owned `Id128` values generated once before
+//! ordinary RAII, application-owned `Uuid` values generated once before
 //! sealing, typed nominal entity IDs, grouped exact float aggregates,
 //! `use`-composition of a reusable typed query template, and a witnessed
 //! read/modify/write against the same store.
@@ -17,16 +17,16 @@ use std::time::Duration;
 
 use bumbledb::{
     Admission, ApplyExpected, ApplyOutcome, BindValue, ChangeSet, ChangeSetBuilder, CloseReport,
-    Db, ExecutionPolicy, F64, Fact, Id128, Interval, WorkContext, start_operation,
+    Db, ExecutionPolicy, F64, Fact, Interval, Uuid, WorkContext, start_operation,
 };
 
 bumbledb::schema! {
     pub Learning;
 
-    relation Student { id: id128 as StudentId, name: str, budget: u64 }
+    relation Student { id: uuid as StudentId, name: str, budget: u64 }
     relation Attempt {
-        id: id128 as AttemptId,
-        student: id128 as StudentId,
+        id: uuid as AttemptId,
+        student: uuid as StudentId,
         score: f64,
         units: u64,
         active: interval<i64>,
@@ -96,14 +96,22 @@ fn outcome_name(outcome: &ApplyOutcome) -> &'static str {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = std::env::temp_dir().join(format!("bumbledb-consumer-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let dir =
+        std::env::temp_dir().join(format!("bumbledb-consumer-{}-{nonce}", std::process::id()));
     let work = work();
 
-    let student_id = StudentId(Id128::from_bytes(*b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"));
-    let attempt_id = AttemptId(Id128::from_bytes(*b"\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20"));
-    let second_attempt = AttemptId(Id128::from_bytes(*b"\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30"));
+    let student_id = StudentId(Uuid::from_bytes(
+        *b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10",
+    ));
+    let attempt_id = AttemptId(Uuid::from_bytes(
+        *b"\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20",
+    ));
+    let second_attempt = AttemptId(Uuid::from_bytes(
+        *b"\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30",
+    ));
 
     let db = match Db::create(&dir, Learning, work.clone())? {
         Admission::Accepted(db) => db,
@@ -162,16 +170,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let snapshot = db.snapshot(&work)?;
         let frame = snapshot.frame(&work);
         let mut attempts = frame.prepare(&attempts_for)?;
-        let rows = frame.execute_collect(&mut attempts, &[BindValue::Id128(student_id.0)])?;
+        let rows = frame.execute_collect(&mut attempts, &[BindValue::Uuid(student_id.0)])?;
         let mut summary = frame.prepare(&student_summary)?;
         let summaries = frame.execute_collect(&mut summary, &[] as &[BindValue])?;
         let previous = snapshot
-            .get(attempt_id, &work)?
+            .get(AttemptById { id: attempt_id }, &work)?
             .expect("the inserted attempt exists");
         (rows, summaries, previous, snapshot.witness())
     };
-    assert_eq!(rows.len(), 2, "both attempts are visible through the template");
-    assert_eq!(summaries.len(), 1, "one student, one exact grouped summary row");
+    assert_eq!(
+        rows.len(),
+        2,
+        "both attempts are visible through the template"
+    );
+    assert_eq!(
+        summaries.len(),
+        1,
+        "one student, one exact grouped summary row"
+    );
 
     // Tiny delivery work is a fresh frame budget: it does not inherit the snapshot.
     let tiny = tiny_delivery();
@@ -180,7 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut oversized = frame.prepare(&attempts_for)?;
     assert!(
         frame
-            .execute_collect(&mut oversized, &[BindValue::Id128(student_id.0)])
+            .execute_collect(&mut oversized, &[BindValue::Uuid(student_id.0)])
             .is_err(),
         "D07: a result-bytes cap of 8 must refuse a two-row collect"
     );
@@ -202,7 +218,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let third = AttemptId(Id128::from_bytes(*b"\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40"));
+    let third = AttemptId(Uuid::from_bytes(
+        *b"\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40",
+    ));
     let mut over = ChangeSet::builder(db.schema(), work.clone());
     insert_fact(
         &mut over,
@@ -230,7 +248,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    match db.close() {
+    match db.close(&work) {
         CloseReport::Closed => {}
         CloseReport::Incomplete {
             live_transactions, ..

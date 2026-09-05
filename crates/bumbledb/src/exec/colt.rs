@@ -307,6 +307,7 @@ impl Colt {
     /// trigger can fire from join growth. The `Arc`'d image is excluded:
     /// the image build charged its slabs; the view's survivor positions
     /// (this colt's owned copy) are included.
+    #[cfg(test)]
     #[must_use]
     pub fn retained_bytes(&self) -> usize {
         use std::mem::size_of;
@@ -329,6 +330,7 @@ impl Colt {
             + self.scratch.capacity() * size_of::<u64>()
             + self.stage_keys.capacity() * size_of::<u64>()
             + self.stage_positions.capacity() * size_of::<u32>()
+            + self.charges.capacity() * size_of::<crate::work::ByteReservation>()
     }
 
     /// Install this operation's ledger. Retained pool charges stay with
@@ -338,42 +340,11 @@ impl Colt {
         self.work = work.cloned();
     }
 
-    pub(crate) fn bind_work(&mut self, work: Option<&crate::work::WorkContext>) {
-        self.bind(work);
-    }
-
     pub(crate) fn charged_bytes(&self) -> u64 {
-        self.charges.iter().map(crate::work::ByteReservation::bytes).sum()
-    }
-
-    /// Charge only bytes that grow a pool's capacity. Reusing a retained
-    /// slot is free — reset/truncate must not drop reservations while the
-    /// allocation remains.
-    fn admit_bytes(&mut self, extra: usize) -> Result<(), crate::work::WorkError> {
-        if extra == 0 {
-            return Ok(());
-        }
-        let Some(work) = &self.work else {
-            return Ok(());
-        };
-        let charge = work.reserve(crate::work::ByteKind::Working, extra as u64)?;
-        self.charges.push(charge);
-        Ok(())
-    }
-
-    fn admit_needed<T>(
-        &mut self,
-        capacity: usize,
-        needed: usize,
-    ) -> Result<(), crate::work::WorkError> {
-        if needed <= capacity {
-            return Ok(());
-        }
-        self.admit_bytes(
-            needed
-                .saturating_sub(capacity)
-                .saturating_mul(std::mem::size_of::<T>()),
-        )
+        self.charges
+            .iter()
+            .map(crate::work::ByteReservation::bytes)
+            .sum()
     }
 
     fn poll_force_batch(&self, units: usize) -> Result<(), crate::work::WorkError> {
@@ -404,10 +375,55 @@ impl Colt {
     }
 }
 
-fn reserve_exact_for<T>(vec: &mut Vec<T>, needed: usize) {
-    if needed > vec.capacity() {
-        vec.reserve_exact(needed.saturating_sub(vec.len()));
+/// Admit and allocate one geometric pool growth together. A failed later
+/// pool cannot leave a charge for an allocation we never made. Successful
+/// capacity survives truncation/reset, so its reservation does too.
+fn reserve_pool<T>(
+    needed: usize,
+    vec: &mut Vec<T>,
+    work: Option<&crate::work::WorkContext>,
+    charges: &mut Vec<crate::work::ByteReservation>,
+) -> Result<(), crate::work::WorkError> {
+    use crate::work::{ByteKind, ByteReservation, Resource, WorkError};
+
+    if needed <= vec.capacity() {
+        return Ok(());
     }
+    let capacity = needed.max(vec.capacity().saturating_mul(2)).max(8);
+    let bytes = capacity
+        .saturating_sub(vec.capacity())
+        .saturating_mul(std::mem::size_of::<T>()) as u64;
+    let refusal = || WorkError::Exhausted {
+        resource: Resource::WorkingBytes,
+        used: work.map_or(0, |work| work.used(Resource::WorkingBytes)),
+        requested: bytes,
+        limit: work.map_or(u64::MAX, |work| work.limit(Resource::WorkingBytes)),
+    };
+    let charge = work
+        .map(|work| work.reserve(ByteKind::Working, bytes))
+        .transpose()?;
+    if let Some(work) = work {
+        // Pay for the reservation directory as well as the pools. The
+        // new directory holds its own charge and the pending pool charge.
+        if charges.len() == charges.capacity() {
+            let capacity = charges
+                .len()
+                .saturating_add(2)
+                .max(charges.capacity().saturating_mul(2));
+            let bytes = (capacity - charges.capacity()) * std::mem::size_of::<ByteReservation>();
+            let directory = work.reserve(ByteKind::Working, bytes as u64)?;
+            charges
+                .try_reserve_exact(capacity - charges.len())
+                .map_err(|_| refusal())?;
+            charges.push(directory);
+        }
+    }
+    vec.try_reserve_exact(capacity - vec.len())
+        .map_err(|_| refusal())?;
+    if let Some(charge) = charge {
+        charges.push(charge);
+    }
+    Ok(())
 }
 
 mod append_child;

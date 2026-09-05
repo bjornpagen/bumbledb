@@ -12,7 +12,7 @@ export const allNotes = query(App).rule((r) => {
 	return r.match(Note, { id, text, pinned }).find({ id, text, pinned })
 })
 
-/** One note by id, full row shape; parameters infer `{ id: Id128 }`. */
+/** One note by id, full row shape; parameters infer `{ id: Uuid }`. */
 export const noteById = query(App).rule((r) => {
 	const { id, text, pinned } = v(Note)
 	return r

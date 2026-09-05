@@ -240,7 +240,7 @@ pub(super) fn run_calendar_naive<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
 
     let naive_dir = cfg.out_dir.join("cal-naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
-    let db = Db::create(&naive_dir, Scheduling)
+    let db = Db::create(&naive_dir, Scheduling, crate::harness::bench_work())
         .expect("create calendar naive-slice store")
         .expect("accepted");
 

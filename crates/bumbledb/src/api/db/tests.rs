@@ -114,12 +114,12 @@ fn entry_row(name: &str, amount: i64) -> Vec<Value> {
     vec![Value::String(name.into()), Value::I64(amount)]
 }
 
-fn work() -> WorkContext {
+fn operation() -> WorkContext {
     super::test_operation().expect("work")
 }
 
 fn create(dir: &TempDir) -> Db<Ledger> {
-    Db::create(dir.path(), Ledger, work())
+    Db::create(dir.path(), Ledger, operation())
         .expect("create")
         .expect("empty theory admits")
 }
@@ -146,7 +146,7 @@ fn the_three_write_lanes_produce_identical_stores() {
         },
     ];
     typed
-        .write(work(), |tx| {
+        .write(operation(), |tx| {
             let report = tx.insert(facts.iter())?;
             assert_eq!(report.submitted(), 2);
             assert_eq!(report.changed(), 2);
@@ -156,7 +156,7 @@ fn the_three_write_lanes_produce_identical_stores() {
         .unwrap();
 
     dynamic
-        .write(work(), |tx| {
+        .write(operation(), |tx| {
             tx.insert_dyn(ENTRY, [entry_row("alpha", 3), entry_row("beta", -7)])
                 .map(|_| ())
         })
@@ -171,13 +171,18 @@ fn the_three_write_lanes_produce_identical_stores() {
     )
     .expect("shape proof");
     accepted
-        .write(work(), |tx| tx.insert_accepted(&collection).map(|_| ()))
+        .write(operation(), |tx| {
+            tx.insert_accepted(&collection).map(|_| ())
+        })
         .expect("write")
         .unwrap();
 
-    let digest = typed.catalog_digest().expect("digest");
-    assert_eq!(digest, dynamic.catalog_digest().expect("digest"));
-    assert_eq!(digest, accepted.catalog_digest().expect("digest"));
+    let digest = typed.catalog_digest(operation()).expect("digest");
+    assert_eq!(digest, dynamic.catalog_digest(operation()).expect("digest"));
+    assert_eq!(
+        digest,
+        accepted.catalog_digest(operation()).expect("digest")
+    );
 }
 
 #[test]
@@ -192,7 +197,7 @@ fn accepted_collection_is_send() {
 fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
     let dir = TempDir::new("db-typo-delete");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.insert([&Entry {
             name: "kept",
             amount: 1,
@@ -201,8 +206,8 @@ fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
     })
     .expect("write")
     .unwrap();
-    let before = db.generation(work()).expect("generation");
-    db.write(work(), |tx| {
+    let before = db.generation(operation()).expect("generation");
+    db.write(operation(), |tx| {
         let report = tx.delete([&Entry {
             name: "absent",
             amount: 9,
@@ -214,9 +219,10 @@ fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
     .expect("write")
     .unwrap();
     // A no-op command does not move the generation (G06 remainder).
-    assert_eq!(db.generation(work()).expect("generation"), before);
+    assert_eq!(db.generation(operation()).expect("generation"), before);
     assert_eq!(
-        db.read(work(), |snap| snap.count(ENTRY)).expect("count"),
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
         1,
         "the typo delete deleted nothing"
     );
@@ -227,7 +233,7 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
     let dir = TempDir::new("db-text-gone");
     {
         let db = create(&dir);
-        db.write(work(), |tx| {
+        db.write(operation(), |tx| {
             tx.insert([
                 &Entry {
                     name: "resident",
@@ -242,7 +248,7 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
         })
         .expect("write")
         .unwrap();
-        db.write(work(), |tx| {
+        db.write(operation(), |tx| {
             tx.delete([&Entry {
                 name: "ephemeral",
                 amount: 2,
@@ -252,7 +258,7 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
         .expect("write")
         .unwrap();
         assert!(
-            !db.read(work(), |snap| snap.contains(&Entry {
+            !db.read(operation(), |snap| snap.contains(&Entry {
                 name: "ephemeral",
                 amount: 2
             }))
@@ -262,11 +268,12 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
     // Reopen: canonical rows own their text inline; the deleted tuple left
     // no independently live text entry anywhere (ENG-006: no dictionary
     // namespace even exists in the store).
-    let db = Db::open(dir.path(), Ledger, work()).expect("open");
-    let rows: Vec<Vec<Value>> = db
-        .read(work(), |snap| snap.scan(ENTRY)?.collect::<Result<_>>())
+    let db = Db::open(dir.path(), Ledger, operation()).expect("open");
+    let rows: Vec<crate::canonical::DecodedRow> = db
+        .read(operation(), |snap| snap.scan(ENTRY)?.collect::<Result<_>>())
         .expect("scan");
-    assert_eq!(rows, vec![entry_row("resident", 1)]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].values(), entry_row("resident", 1));
 }
 
 // --- Point reads: own writes, committed fall-through, typed errors. ---
@@ -275,20 +282,20 @@ fn deleted_text_is_unreachable_after_delete_and_reopen() {
 fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     let dir = TempDir::new("db-own-writes");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.insert_dyn(ENTRY, [entry_row("alpha", 3)])?;
         // The write's own final-state view answers like a later reader.
         let row = tx
             .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())])?
             .expect("own write visible");
-        assert_eq!(row, entry_row("alpha", 3));
+        assert_eq!(row.values(), entry_row("alpha", 3));
         // Replacement inside the same command: delete + insert, either order.
         tx.delete_dyn(ENTRY, [entry_row("alpha", 3)])?;
         tx.insert_dyn(ENTRY, [entry_row("alpha", 5)])?;
         let row = tx
             .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())])?
             .expect("replacement visible");
-        assert_eq!(row, entry_row("alpha", 5));
+        assert_eq!(row.values(), entry_row("alpha", 5));
         assert!(tx.contains_dyn(ENTRY, &entry_row("alpha", 5))?);
         assert!(!tx.contains_dyn(ENTRY, &entry_row("alpha", 3))?);
         Ok(())
@@ -296,19 +303,23 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
     .expect("write")
     .unwrap();
     let row = db
-        .read(work(), |snap| snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())]))
+        .read(operation(), |snap| {
+            snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())])
+        })
         .expect("read")
         .expect("committed");
-    assert_eq!(row, entry_row("alpha", 5));
+    assert_eq!(row.values(), entry_row("alpha", 5));
 }
 
 #[test]
 fn get_with_work_charges_the_supplied_operation_budget() {
     let dir = TempDir::new("db-get-with-work");
     let db = create(&dir);
-    db.write(work(), |tx| tx.insert_dyn(ENTRY, [entry_row("budget", 1)]).map(|_| ()))
-        .expect("write")
-        .unwrap();
+    db.write(operation(), |tx| {
+        tx.insert_dyn(ENTRY, [entry_row("budget", 1)]).map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
     let work = ExecutionPolicy {
         input_bytes: 1 << 20,
         working_bytes: 1 << 20,
@@ -323,33 +334,34 @@ fn get_with_work_charges_the_supplied_operation_budget() {
     let hit = db
         .read(work, |snap| {
             let before = snap.work().used(Resource::WorkUnits);
-            let hit = snap.get_dyn_into_with_work(
+            let hit = snap.get_dyn_with_work(
                 ENTRY,
                 ENTRY_NAME_KEY,
                 &[Value::String("budget".into())],
-                &mut Vec::new(),
                 snap.work(),
             )?;
             assert!(snap.work().used(Resource::WorkUnits) > before);
             Ok(hit)
         })
         .expect("read");
-    assert!(hit);
+    assert!(hit.is_some());
 }
 
 #[test]
 fn get_dyn_falls_through_to_committed_state() {
     let dir = TempDir::new("db-fall-through");
     let db = create(&dir);
-    db.write(work(), |tx| tx.insert_dyn(ENTRY, [entry_row("base", 10)]).map(|_| ()))
-        .expect("write")
-        .unwrap();
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
+        tx.insert_dyn(ENTRY, [entry_row("base", 10)]).map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    db.write(operation(), |tx| {
         // Nothing pending for "base": the read falls through to committed.
         let row = tx
             .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("base".into())])?
             .expect("committed row visible");
-        assert_eq!(row, entry_row("base", 10));
+        assert_eq!(row.values(), entry_row("base", 10));
         // A pending delete hides the committed row from this view.
         tx.delete_dyn(ENTRY, [entry_row("base", 10)])?;
         assert!(
@@ -361,7 +373,8 @@ fn get_dyn_falls_through_to_committed_state() {
     })
     .expect_err("deliberate abort");
     assert!(
-        db.read(work(), |snap| snap.contains_dyn(ENTRY, &entry_row("base", 10)))
+        db.read(operation(), |snap| snap
+            .contains_dyn(ENTRY, &entry_row("base", 10)))
             .expect("read"),
         "the aborted delete never reached storage"
     );
@@ -371,7 +384,7 @@ fn get_dyn_falls_through_to_committed_state() {
 fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     let dir = TempDir::new("db-mis-shaped");
     let db = create(&dir);
-    db.read(work(), |snap| {
+    db.read(operation(), |snap| {
         // Unknown relation.
         let unknown = RelationId(77);
         assert!(matches!(
@@ -414,7 +427,7 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
 fn typed_get_borrows_decoded_text_from_the_lease() {
     let dir = TempDir::new("db-typed-get");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.insert([&Entry {
             name: "gamma",
             amount: 4,
@@ -423,7 +436,7 @@ fn typed_get_borrows_decoded_text_from_the_lease() {
     })
     .expect("write")
     .unwrap();
-    db.read(work(), |snap| {
+    db.read(operation(), |snap| {
         let fact = snap.get(EntryName("gamma"))?.expect("present");
         assert_eq!(
             fact,
@@ -452,7 +465,7 @@ fn typed_get_borrows_decoded_text_from_the_lease() {
 fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
     let dir = TempDir::new("db-key-conflict");
     let db = create(&dir);
-    let violations = expect_rejected(db.write(work(), |tx| {
+    let violations = expect_rejected(db.write(operation(), |tx| {
         tx.insert([
             &Entry {
                 name: "shared",
@@ -481,15 +494,19 @@ fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
         "both conflicting rows cited, got {cited:?}"
     );
     // The losing candidate is invisible: nothing was committed.
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 0);
-    assert_eq!(db.generation(work()).expect("generation").value(), 0);
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        0
+    );
+    assert_eq!(db.generation(operation()).expect("generation").value(), 0);
 }
 
 #[test]
 fn a_conflict_with_a_committed_row_rejects_and_preserves_it() {
     let dir = TempDir::new("db-committed-conflict");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.insert([&Entry {
             name: "holder",
             amount: 1,
@@ -498,7 +515,7 @@ fn a_conflict_with_a_committed_row_rejects_and_preserves_it() {
     })
     .expect("write")
     .unwrap();
-    let violations = expect_rejected(db.write(work(), |tx| {
+    let violations = expect_rejected(db.write(operation(), |tx| {
         tx.insert([&Entry {
             name: "holder",
             amount: 2,
@@ -507,17 +524,19 @@ fn a_conflict_with_a_committed_row_rejects_and_preserves_it() {
     }));
     assert_eq!(violations.len(), 1);
     let row = db
-        .read(work(), |snap| snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("holder".into())]))
+        .read(operation(), |snap| {
+            snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("holder".into())])
+        })
         .expect("read")
         .expect("incumbent survives");
-    assert_eq!(row, entry_row("holder", 1));
+    assert_eq!(row.values(), entry_row("holder", 1));
 }
 
 #[test]
 fn replacement_in_one_command_is_judged_as_final_state() {
     let dir = TempDir::new("db-replacement");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.insert([&Entry {
             name: "acct",
             amount: 1,
@@ -528,7 +547,7 @@ fn replacement_in_one_command_is_judged_as_final_state() {
     .unwrap();
     // delete(old) + insert(new) with one key: the final state holds one
     // row, so the key law admits — no transient-order refusal exists.
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.delete([&Entry {
             name: "acct",
             amount: 1,
@@ -542,17 +561,19 @@ fn replacement_in_one_command_is_judged_as_final_state() {
     .expect("write")
     .unwrap();
     let row = db
-        .read(work(), |snap| snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("acct".into())]))
+        .read(operation(), |snap| {
+            snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("acct".into())])
+        })
         .expect("read")
         .expect("replaced");
-    assert_eq!(row, entry_row("acct", 2));
+    assert_eq!(row.values(), entry_row("acct", 2));
 }
 
 #[test]
 fn apply_and_owned_snapshot_are_the_public_path() {
     let dir = TempDir::new("db-apply-snap");
     let db = create(&dir);
-    let work = work();
+    let work = operation();
     let mut builder = ChangeSet::builder(db.schema(), work.clone());
     builder
         .insert(ENTRY, &entry_row("snap", 1))
@@ -563,15 +584,20 @@ fn apply_and_owned_snapshot_are_the_public_path() {
         .expect("apply")
     {
         super::ApplyOutcome::Accepted { .. } => {}
-        other => panic!("expected Accepted, got {other:?}"),
+        _ => panic!("expected Accepted"),
     }
     let pin = db.snapshot(&work).expect("pin");
     assert_eq!(pin.count(ENTRY).expect("count"), 1);
-    assert_eq!(pin.generation().value(), db.generation(work.clone()).expect("gen").value());
+    assert_eq!(
+        pin.generation().value(),
+        db.generation(work.clone()).expect("gen").value()
+    );
     let frame = pin.frame(&work);
-    assert!(frame
-        .contains_dyn(ENTRY, &entry_row("snap", 1))
-        .expect("contains"));
+    assert!(
+        frame
+            .contains_dyn(ENTRY, &entry_row("snap", 1))
+            .expect("contains")
+    );
     let witness = pin.witness();
     let empty = ChangeSet::builder(db.schema(), work.clone())
         .finish()
@@ -584,7 +610,7 @@ fn apply_and_owned_snapshot_are_the_public_path() {
         super::ApplyOutcome::InvariantRejected { .. } => {
             panic!("empty delta under a lawful parent is not invariant rejection")
         }
-        other => panic!("expected NoChange, got {other:?}"),
+        _ => panic!("expected NoChange"),
     }
 }
 
@@ -598,10 +624,12 @@ fn apply_and_owned_snapshot_are_the_public_path() {
 fn write_from_borrows_a_cloneable_witness() {
     let dir = TempDir::new("db-witness");
     let db = create(&dir);
-    let witness = db.read(work(), |snap| snap.witness()).expect("witness");
+    let witness = db
+        .read(operation(), |snap| snap.witness())
+        .expect("witness");
     let again = witness.clone();
     let outcome = db
-        .write_from(&witness, |tx| {
+        .write_from(operation(), &witness, |tx| {
             tx.insert([&Entry {
                 name: "w",
                 amount: 1,
@@ -612,7 +640,7 @@ fn write_from_borrows_a_cloneable_witness() {
     assert!(matches!(outcome, crate::ConditionalWrite::Accepted(_)));
     // The clone is now stale: the compare answers Moved, not an error.
     let moved = db
-        .write_from(&again, |tx| {
+        .write_from(operation(), &again, |tx| {
             tx.insert([&Entry {
                 name: "x",
                 amount: 2,
@@ -621,7 +649,11 @@ fn write_from_borrows_a_cloneable_witness() {
         })
         .expect("write");
     assert!(matches!(moved, crate::ConditionalWrite::Moved { .. }));
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 1);
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        1
+    );
 }
 
 #[test]
@@ -634,9 +666,9 @@ fn write_from_rejects_a_foreign_witness() {
     let b_dir = TempDir::new("db-foreign-witness-b");
     let a = create(&a_dir);
     let b = create(&b_dir);
-    let foreign = b.read(work(), |snap| snap.witness()).expect("witness");
+    let foreign = b.read(operation(), |snap| snap.witness()).expect("witness");
     let err = a
-        .write_from(&foreign, |tx| {
+        .write_from(operation(), &foreign, |tx| {
             tx.insert([&Entry {
                 name: "n",
                 amount: 1,
@@ -645,7 +677,7 @@ fn write_from_rejects_a_foreign_witness() {
         })
         .expect_err("foreign witness refused");
     assert!(matches!(err, Error::ForeignWitness), "{err:?}");
-    assert_eq!(a.generation(work()).expect("generation").value(), 0);
+    assert_eq!(a.generation(operation()).expect("generation").value(), 0);
 }
 
 // --- Poisoning and refusal boundaries. ---
@@ -654,7 +686,7 @@ fn write_from_rejects_a_foreign_witness() {
 fn a_shape_failure_does_not_poison_a_clean_write() {
     let dir = TempDir::new("db-clean-shape-fail");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         // A mis-shaped dyn insert refuses before anything is staged.
         assert!(tx.insert_dyn(ENTRY, [vec![Value::U64(1)]]).is_err());
         // The transaction is still usable: nothing had applied.
@@ -662,7 +694,11 @@ fn a_shape_failure_does_not_poison_a_clean_write() {
     })
     .expect("write")
     .unwrap();
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 1);
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        1
+    );
 }
 
 #[test]
@@ -670,7 +706,7 @@ fn poison_preserves_the_original_error_after_an_applied_prefix() {
     let dir = TempDir::new("db-poison");
     let db = create(&dir);
     let err = db
-        .write(work(), |tx| {
+        .write(operation(), |tx| {
             tx.insert_dyn(ENTRY, [entry_row("applied", 1)])?;
             // Now a later collection fails its shape check: the transaction
             // poisons (a prefix already entered the delta).
@@ -686,14 +722,18 @@ fn poison_preserves_the_original_error_after_an_applied_prefix() {
         })
         .expect_err("poisoned write refuses commit");
     assert!(matches!(err, Error::TransactionPoisoned { .. }), "{err:?}");
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 0);
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        0
+    );
 }
 
 #[test]
 fn an_empty_write_commits_without_moving_the_generation() {
     let dir = TempDir::new("db-empty-write");
     let db = create(&dir);
-    let committed = db.write(work(), |_tx| Ok(42)).expect("write").unwrap();
+    let committed = db.write(operation(), |_tx| Ok(42)).expect("write").unwrap();
     assert_eq!(committed.value, 42);
     assert_eq!(committed.generation.value(), 0);
 }
@@ -703,11 +743,11 @@ fn a_reentrant_write_is_refused_typed_not_deadlocked() {
     let dir = TempDir::new("db-reentrant");
     let db = create(&dir);
     let err = db
-        .write(work(), |_outer| {
+        .write(operation(), |_outer| {
             // The transitional surface panicked here; the successor refuses
             // with the store's typed reentrancy error (same safety intent,
             // now an answer instead of an abort).
-            match db.write(work(), |_inner| Ok(())) {
+            match db.write(operation(), |_inner| Ok(())) {
                 Err(error) => Err::<(), _>(error),
                 Ok(_) => panic!("nested write must not run"),
             }
@@ -754,48 +794,51 @@ impl crate::Theory for Currencies {
 #[test]
 fn writes_to_a_closed_relation_are_refused_before_the_delta() {
     let dir = TempDir::new("db-closed-write");
-    let db = Db::create(dir.path(), Currencies)
+    let db = Db::create(dir.path(), Currencies, operation())
         .expect("create")
         .expect("accepted");
-    let insert = db.write(work(), |tx| tx.insert_dyn(CURRENCY, [&[Value::U64(9)]]).map(|_| ()));
+    let insert = db.write(operation(), |tx| {
+        tx.insert_dyn(CURRENCY, [&[Value::U64(9)]]).map(|_| ())
+    });
     assert!(matches!(
         insert,
         Err(Error::ClosedRelationWrite { relation }) if relation == CURRENCY
     ));
     // A closure that swallows the refusal commits empty: the generation
     // never moves and the store stays rowless.
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         let _ = tx.delete_dyn(CURRENCY, [&[Value::U64(0), Value::U64(2)]]);
         Ok(())
     })
     .expect("write")
     .unwrap();
-    assert_eq!(db.generation(work()).expect("generation").value(), 0);
+    assert_eq!(db.generation(operation()).expect("generation").value(), 0);
 }
 
 #[test]
 fn closed_point_reads_resolve_against_the_extension() {
     let dir = TempDir::new("db-closed-read");
-    let db = Db::create(dir.path(), Currencies)
+    let db = Db::create(dir.path(), Currencies, operation())
         .expect("create")
         .expect("accepted");
     // The auto-materialized handle key is the first statement.
     let key = StatementId(0);
-    db.read(work(), |snap| {
+    db.read(operation(), |snap| {
         assert_eq!(snap.count(CURRENCY)?, 2);
         let usd = snap
             .get_dyn(CURRENCY, key, &[Value::U64(0)])?
             .expect("sealed row");
-        assert_eq!(usd, vec![Value::U64(0), Value::U64(2)]);
+        assert_eq!(usd.values(), &[Value::U64(0), Value::U64(2)]);
         assert!(snap.contains_dyn(CURRENCY, &[Value::U64(1), Value::U64(2)])?);
         assert!(!snap.contains_dyn(CURRENCY, &[Value::U64(1), Value::U64(3)])?);
-        let rows: Vec<Vec<Value>> = snap.scan(CURRENCY)?.collect::<Result<_>>()?;
+        let rows: Vec<crate::canonical::DecodedRow> =
+            snap.scan(CURRENCY)?.collect::<Result<_>>()?;
         assert_eq!(rows.len(), 2);
         Ok(())
     })
     .expect("read");
     // The same answers inside a write transaction's view.
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         assert!(tx.contains_dyn(CURRENCY, &[Value::U64(0), Value::U64(2)])?);
         assert!(
             tx.get_dyn(CURRENCY, key, &[Value::U64(1)])?.is_some(),
@@ -811,7 +854,7 @@ fn closed_point_reads_resolve_against_the_extension() {
 
 #[test]
 fn a_builder_admits_judged_content_and_publishes_it() {
-    let mut builder = InstanceBuilder::new(Ledger, work()).expect("builder");
+    let mut builder = InstanceBuilder::new(Ledger, operation()).expect("builder");
     builder
         .load([&Entry {
             name: "alpha",
@@ -847,9 +890,9 @@ fn a_builder_admits_judged_content_and_publishes_it() {
     // Publication: the durable copy carries exactly the admitted content.
     let dir = TempDir::new("db-from-instance");
     let path = dir.path().join("published");
-    let db = Db::from_instance(&path, &instance, work()).expect("publish");
+    let db = Db::from_instance(&path, &instance, operation()).expect("publish");
     assert_eq!(
-        db.catalog_digest().expect("digest"),
+        db.catalog_digest(operation()).expect("digest"),
         instance.catalog_digest().expect("digest"),
         "the replication oracle agrees across backends"
     );
@@ -857,7 +900,7 @@ fn a_builder_admits_judged_content_and_publishes_it() {
 
 #[test]
 fn a_builder_rejection_is_the_same_complete_verdict() {
-    let mut builder = InstanceBuilder::new(Ledger, work()).expect("builder");
+    let mut builder = InstanceBuilder::new(Ledger, operation()).expect("builder");
     builder
         .load([
             &Entry {
@@ -880,7 +923,7 @@ fn a_builder_rejection_is_the_same_complete_verdict() {
 
 #[test]
 fn builder_deletes_are_set_arithmetic_from_empty() {
-    let mut builder = InstanceBuilder::new(Ledger, work()).expect("builder");
+    let mut builder = InstanceBuilder::new(Ledger, operation()).expect("builder");
     let report = builder
         .load_dyn(ENTRY, [entry_row("a", 1), entry_row("b", 2)])
         .expect("load");
@@ -893,7 +936,7 @@ fn builder_deletes_are_set_arithmetic_from_empty() {
     assert_eq!(instance.count(ENTRY).expect("count"), 1);
     assert!(
         instance
-            .contains_dyn(ENTRY, &entry_row("b", 2))
+            .contains_dyn(ENTRY, &entry_row("b", 2), &operation())
             .expect("contains")
     );
 }
@@ -913,7 +956,7 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
     )
     .expect("internally consistent");
     let err = db
-        .write(work(), |tx| tx.insert_accepted(&narrow).map(|_| ()))
+        .write(operation(), |tx| tx.insert_accepted(&narrow).map(|_| ()))
         .expect_err("foreign arity refused at apply");
     assert!(matches!(
         err,
@@ -937,7 +980,7 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
     )
     .expect("internally consistent");
     let err = db
-        .write(work(), |tx| tx.insert_accepted(&foreign).map(|_| ()))
+        .write(operation(), |tx| tx.insert_accepted(&foreign).map(|_| ()))
         .expect_err("foreign types refused at apply");
     assert!(matches!(
         err,
@@ -952,7 +995,11 @@ fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
         )
         .is_err()
     );
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 0);
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        0
+    );
 }
 
 #[test]
@@ -966,7 +1013,7 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
         [entry_row("a", 1), entry_row("a", 1), entry_row("b", 2)],
     )
     .expect("shape proof");
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         let report = tx.insert_accepted(&rows)?;
         assert_eq!((report.submitted(), report.changed()), (3, 2));
         let report = tx.delete_accepted(&rows)?;
@@ -975,9 +1022,13 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
     })
     .expect("write")
     .unwrap();
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 0);
     assert_eq!(
-        db.generation(work()).expect("generation").value(),
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        0
+    );
+    assert_eq!(
+        db.generation(operation()).expect("generation").value(),
         0,
         "insert and delete of the same rows is one no-op command"
     );
@@ -989,7 +1040,7 @@ fn accepted_reports_are_exact_and_delete_never_mints() {
 fn compact_copies_content_host_records_and_generation_coherently() {
     let dir = TempDir::new("db-compact");
     let db = create(&dir);
-    db.write(work(), |tx| {
+    db.write(operation(), |tx| {
         tx.insert([&Entry {
             name: "kept",
             amount: 1,
@@ -1022,16 +1073,19 @@ fn compact_copies_content_host_records_and_generation_coherently() {
         let commit = sealed.commit().expect("commit");
         assert!(commit.changed, "host mutation advances the generation once");
     }
-    let generation = db.generation(work()).expect("generation");
+    let generation = db.generation(operation()).expect("generation");
     let dest = dir.path().join("compacted");
-    db.compact(&dest, work()).expect("compact");
-    let copy = Db::open(&dest, Ledger, work()).expect("open copy");
+    db.compact(&dest, operation()).expect("compact");
+    let copy = Db::open(&dest, Ledger, operation()).expect("open copy");
     assert_eq!(
-        copy.catalog_digest().expect("digest"),
-        db.catalog_digest().expect("digest")
+        copy.catalog_digest(operation()).expect("digest"),
+        db.catalog_digest(operation()).expect("digest")
     );
-    assert_eq!(copy.generation(work()).expect("generation"), generation);
-    copy.read(work(), |snap| {
+    assert_eq!(
+        copy.generation(operation()).expect("generation"),
+        generation
+    );
+    copy.read(operation(), |snap| {
         assert_eq!(
             snap.integration_host_record(b"receipt/1").expect("record"),
             Some(b"decided".as_slice())
@@ -1086,8 +1140,12 @@ fn a_rejected_integration_candidate_retains_the_session() {
         .expect("seal");
     sealed.commit().expect("commit");
     drop(session);
-    assert_eq!(db.read(work(), |snap| snap.count(ENTRY)).expect("count"), 0);
-    db.read(work(), |snap| {
+    assert_eq!(
+        db.read(operation(), |snap| snap.count(ENTRY))
+            .expect("count"),
+        0
+    );
+    db.read(operation(), |snap| {
         assert!(
             snap.integration_host_record(b"receipt/rejected")
                 .expect("record")
@@ -1100,12 +1158,12 @@ fn a_rejected_integration_candidate_retains_the_session() {
 
 /// Incremental apply on an admitted store: a lawful insert commits, a
 /// key conflict is `InvariantRejected`, and the snapshot still sees only
-/// the admitted row. Verification NotRun.
+/// the admitted row. Verification `NotRun`.
 #[test]
 fn apply_conflict_is_invariant_rejected_after_accepted_write() {
     let dir = TempDir::new("db-apply-invariant");
     let db = create(&dir);
-    let work = work();
+    let work = operation();
     let accepted = {
         let mut builder = ChangeSet::builder(db.schema(), work.clone());
         builder
@@ -1145,36 +1203,35 @@ fn apply_conflict_is_invariant_rejected_after_accepted_write() {
     }
     let pin = db.snapshot(&work).expect("pin");
     assert_eq!(pin.count(ENTRY).expect("count"), 1);
-    assert!(pin
-        .frame(&work)
-        .contains_dyn(ENTRY, &entry_row("acct", 1))
-        .expect("winner remains"));
+    assert!(
+        pin.frame(&work)
+            .contains_dyn(ENTRY, &entry_row("acct", 1))
+            .expect("winner remains")
+    );
 }
 
 /// `cache.acquire()` is the pin. There is no `pin_generation`.
-/// Verification NotRun.
+/// Verification `NotRun`.
 #[test]
 fn owned_read_pin_is_cache_acquire() {
     let dir = TempDir::new("db-owned-read-pin");
     let db = create(&dir);
     let pin = db.owned_read().expect("pin");
-    let acquired = db.cache().acquire();
+    let acquired = db.cache.acquire();
     assert_eq!(pin.pin.identity(), acquired.identity());
     assert_eq!(pin.generation_handle().identity(), acquired.identity());
 }
 
 /// After apply, the owned pin's frame reads the row, collects the scan,
-/// and close stays Incomplete until the pin drops. Verification NotRun.
+/// and close stays Incomplete until the pin drops. Verification `NotRun`.
 #[test]
 fn owned_read_frame_reads_applied_row_and_close_waits() {
     let dir = TempDir::new("db-owned-frame");
     let db = create(&dir);
-    let work = work();
+    let work = operation();
     let changes = {
         let mut builder = ChangeSet::builder(db.schema(), work.clone());
-        builder
-            .insert(ENTRY, &entry_row("pin", 4))
-            .expect("insert");
+        builder.insert(ENTRY, &entry_row("pin", 4)).expect("insert");
         builder.finish().expect("seal")
     };
     match db
@@ -1209,25 +1266,23 @@ fn owned_read_frame_reads_applied_row_and_close_waits() {
     let handle = pin.generation_handle();
     assert_eq!(handle.identity(), pin.pin.identity());
     let frame = pin.frame(&work);
-    assert!(frame
-        .contains_dyn(ENTRY, &entry_row("pin", 4))
-        .expect("contains"));
-    let mut out = Vec::new();
-    assert!(frame
-        .get_dyn_into(
-            ENTRY,
-            ENTRY_NAME_KEY,
-            &[Value::String("pin".into())],
-            &mut out
-        )
-        .expect("get"));
-    assert_eq!(out, entry_row("pin", 4));
-    let scanned: Vec<Vec<Value>> = frame
+    assert!(
+        frame
+            .contains_dyn(ENTRY, &entry_row("pin", 4))
+            .expect("contains")
+    );
+    let out = frame
+        .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("pin".into())])
+        .expect("get")
+        .expect("pin row");
+    assert_eq!(out.values(), entry_row("pin", 4));
+    let scanned: Vec<crate::canonical::DecodedRow> = frame
         .scan(ENTRY)
         .expect("scan")
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<Result<Vec<_>>>()
         .expect("rows");
-    assert_eq!(scanned, vec![entry_row("pin", 4)]);
+    assert_eq!(scanned.len(), 1);
+    assert_eq!(scanned[0].values(), entry_row("pin", 4));
     let query = crate::ir::Query::single(crate::ir::Rule {
         finds: vec![
             crate::ir::FindTerm::Var(crate::ir::VarId(0)),
@@ -1254,12 +1309,14 @@ fn owned_read_frame_reads_applied_row_and_close_waits() {
         .execute_collect_owned(&pin, &work, &[] as &[crate::ParamArg])
         .expect("collect");
     assert_eq!(answers.len(), 1);
-    match db.close() {
+    let close_work = operation();
+    close_work.cancel();
+    match db.close(&close_work) {
         crate::CloseReport::Incomplete {
             live_transactions, ..
         } => assert!(live_transactions >= 1),
         crate::CloseReport::Closed => panic!("close cannot complete under a live pin"),
     }
     drop(pin);
-    assert_eq!(db.close(), crate::CloseReport::Closed);
+    assert_eq!(db.close(&work), crate::CloseReport::Closed);
 }

@@ -11,7 +11,6 @@ use heed::{RoTxn, RwTxn};
 use super::candidate::RowIndexer;
 use super::det_index;
 use super::error::{StoreCorruption, StoreError, StoreResult};
-use super::fingerprint::FP_LEN;
 use super::format::{self, K_NEXT_ROW_ID, RowId};
 use super::keys;
 use super::store_env::{StoreInner, map_txn_error};
@@ -96,15 +95,12 @@ fn routing_bytes(
     projection: ProjectionId,
     projected: &[u8],
     encoding: KeyEncoding,
-) -> StoreResult<Vec<u8>> {
+) -> Vec<u8> {
     match encoding {
-        KeyEncoding::ExactBounded { .. } => Ok(projected.to_vec()),
-        KeyEncoding::FingerprintBucket => Ok(det_index::fingerprint_routing(
-            inner.fingerprinter,
-            projection,
-            projected,
-        )
-        .to_vec()),
+        KeyEncoding::ExactBounded { .. } => projected.to_vec(),
+        KeyEncoding::FingerprintBucket => {
+            det_index::fingerprint_routing(inner.fingerprinter, projection, projected).to_vec()
+        }
     }
 }
 
@@ -130,7 +126,7 @@ fn determinant_entries<I: RowIndexer + ?Sized>(
                 .det
                 .projection(projection)
                 .ok_or(StoreError::ForeignSchema)?;
-            let routing = routing_bytes(inner, projection, projected, compiled.encoding)?;
+            let routing = routing_bytes(inner, projection, projected, compiled.encoding);
             entries.push(DeterminantEntry {
                 projection,
                 routing,
@@ -142,7 +138,7 @@ fn determinant_entries<I: RowIndexer + ?Sized>(
         work.step(1)?;
         let compiled = inner.det.projection(projection);
         let encoding = compiled.map_or(KeyEncoding::FingerprintBucket, |item| item.encoding);
-        let routing = routing_bytes(inner, projection, projected, encoding)?;
+        let routing = routing_bytes(inner, projection, projected, encoding);
         entries.push(DeterminantEntry {
             projection,
             routing,
@@ -192,7 +188,7 @@ pub(crate) fn determinant_bucket_ids(
         .det
         .projection(projection)
         .ok_or(StoreError::ForeignSchema)?;
-    let routing = routing_bytes(inner, projection, projected, compiled.encoding)?;
+    let routing = routing_bytes(inner, projection, projected, compiled.encoding);
     let mut ids = Vec::new();
     visit_determinant_bucket(inner, txn, projection, &routing, work, &mut |id| {
         ids.push(id);
@@ -281,13 +277,8 @@ pub(crate) fn insert_row<I: RowIndexer + ?Sized>(
             .data
             .put(
                 txn,
-                keys::determinant_key(
-                    entry.projection,
-                    &entry.routing,
-                    entry.tail.as_deref(),
-                    id,
-                )
-                .as_slice(),
+                keys::determinant_key(entry.projection, &entry.routing, entry.tail.as_deref(), id)
+                    .as_slice(),
                 &[],
             )
             .map_err(map_txn_error)?;
@@ -323,13 +314,8 @@ pub(crate) fn remove_row<I: RowIndexer + ?Sized>(
             .data
             .delete(
                 txn,
-                keys::determinant_key(
-                    entry.projection,
-                    &entry.routing,
-                    entry.tail.as_deref(),
-                    id,
-                )
-                .as_slice(),
+                keys::determinant_key(entry.projection, &entry.routing, entry.tail.as_deref(), id)
+                    .as_slice(),
             )
             .map_err(map_txn_error)?;
     }
@@ -363,5 +349,10 @@ pub(crate) fn routing_for_projected(
         .det
         .projection(projection)
         .ok_or(StoreError::ForeignSchema)?;
-    routing_bytes(inner, projection, projected, compiled.encoding)
+    Ok(routing_bytes(
+        inner,
+        projection,
+        projected,
+        compiled.encoding,
+    ))
 }

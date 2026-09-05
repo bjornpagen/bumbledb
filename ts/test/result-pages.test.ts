@@ -18,26 +18,26 @@
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Cause, Effect, Exit, Fiber, ManagedRuntime, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, ManagedRuntime, Stream } from "effect"
 import { ChangeSet } from "#changes.ts"
-import { internalResult, type CompleteResult } from "#result.ts"
 import { drainClose } from "#close.ts"
-import { dbNative } from "#db-native.ts"
 import { Db } from "#db.ts"
-import { Id128 } from "#id128.ts"
+import { dbNative } from "#db-native.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
-import { deliveryResultBytes, nativeOperationWith, policyWire, NativeRuntime, runtimeHandle } from "#runtime.ts"
-import { runtimeNative } from "#runtime-native.ts"
+import { type CompleteResult, internalResult } from "#result.ts"
+import { deliveryResultBytes, NativeRuntime, nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
+import { runtimeNative } from "#runtime-native.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
+import type { Uuid } from "#uuid.ts"
 
 const allAttempts = query(Learning).rule((r) => {
 	const { id, student, score, units, active } = v(Attempt)
 	return r.match(Attempt, { id, student, score, units, active }).find({ id, score })
 })
 
-type Row = { readonly id: Id128; readonly score: number }
+type Row = { readonly id: Uuid; readonly score: number }
 
 function runtime() {
 	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
@@ -47,12 +47,12 @@ function runtime() {
 function seededResult(tag: string, count: number) {
 	return Effect.gen(function* () {
 		const db = yield* Db.create(storeDir(tag), Learning, work)
-		const studentId = yield* Id128.random()
+		const studentId = yield* Effect.sync(() => crypto.randomUUID())
 		const draft = yield* ChangeSet.builder(Learning, work)
 		yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 1000n }])
 		const rows = []
 		for (let index = 0; index < count; index += 1) {
-			const id = yield* Id128.random()
+			const id = yield* Effect.sync(() => crypto.randomUUID())
 			rows.push({
 				id,
 				student: studentId,
@@ -259,11 +259,15 @@ test("interrupting a page consumer drains the cursor and reports interruption in
 			Effect.scoped(
 				Effect.gen(function* () {
 					const { result } = yield* seededResult("interrupt-drains", 40)
-					const fiber = yield* Effect.fork(
-						Stream.runForEach(result.pages({ pageBytes: 128n }, work), () => Effect.never)
+					const received = yield* Deferred.make<void>()
+					const fiber = yield* Effect.forkChild(
+						Stream.runForEach(result.pages({ pageBytes: 512n }, work), () =>
+							Deferred.succeed(received, undefined).pipe(Effect.andThen(Effect.never))
+						)
 					)
-					yield* Effect.sleep("50 millis")
-					const exit = yield* Fiber.interrupt(fiber)
+					yield* Deferred.await(received)
+					yield* Fiber.interrupt(fiber)
+					const exit = yield* Fiber.await(fiber)
 					assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
 				})
 			)
@@ -308,8 +312,9 @@ test("publication-boundary cancel delivers nothing; retry starts at row1 (D12/D2
 					const ids = new Set(retry.map((row) => row.id.toString()))
 					assert.equal(ids.size, 3, "row1, row2, row3 each appear once")
 
-					const fiber = yield* Effect.fork(result.collect({ maxBytes: work.resultBytes }, work))
-					const cancelled = yield* Fiber.interrupt(fiber)
+					const fiber = yield* Effect.forkChild(result.collect({ maxBytes: work.resultBytes }, work))
+					yield* Fiber.interrupt(fiber)
+					const cancelled = yield* Fiber.await(fiber)
 					assert.ok(Exit.hasInterrupts(cancelled), "Effect cancel joins; interruption is Cause")
 					const afterJoin = yield* result.collect({ maxBytes: work.resultBytes }, work)
 					assert.equal(afterJoin.length, 3, "joined cancel leaves the cursor on row1")
@@ -326,8 +331,9 @@ test("non-terminal cursor refusal does not take Page/Rows; same cursor retries a
 	const pageTake = dbNative.runtimePageTake
 	let takes = 0
 	dbNative.runtimePageTake = ((operation) => {
+		const page = pageTake.call(dbNative, operation)
 		takes += 1
-		return pageTake.call(dbNative, operation)
+		return page
 	}) as typeof pageTake
 	try {
 		await rt.runPromise(
@@ -346,9 +352,7 @@ test("non-terminal cursor refusal does not take Page/Rows; same cursor retries a
 							(taken) => taken
 						),
 						(taken) =>
-							drainClose("cursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)).pipe(
-								Effect.asVoid
-							)
+							drainClose("cursor.close", (callback) => dbNative.runtimeCursorClose(taken, callback)).pipe(Effect.asVoid)
 					)
 					runtimeNative.runtimeArmPublicationCancel(runtime)
 					const refused = yield* Effect.exit(
@@ -360,14 +364,14 @@ test("non-terminal cursor refusal does not take Page/Rows; same cursor retries a
 						)
 					)
 					assert.equal(refused._tag, "Failure", "predelivery cancel returns no page")
-					assert.equal(takes, 0, "abandoned Page/Rows must not be taken")
+					assert.equal(takes, 0, "the completion probe throws its refusal; no Page/Rows payload is adopted")
 					const retry = yield* nativeOperationWith(
 						"cursor.retry",
 						(callback) => dbNative.runtimeCursorNext(cursor, wire, callback),
 						dbNative.runtimePageTake,
 						(page) => page
 					)
-					assert.ok(retry !== null && retry.length >= 1, "same cursor is not poisoned; retry starts at row1")
+					assert.equal(retry?.length, 3, "same cursor retries all three rows without skipping")
 				})
 			)
 		)
@@ -384,10 +388,10 @@ test("two rows that fit alone but not together end a nonempty page; retry is not
 			Effect.scoped(
 				Effect.gen(function* () {
 					const { result } = yield* seededResult("joint-page", 3)
-					const pageBytes = 200n
+					const pageBytes = 300n
 					const first = yield* Stream.runCollect(Stream.take(result.pages({ pageBytes }, work), 1))
 					assert.equal(first.length, 1, "row1+row2 jointly overflow: first pull is a nonempty page")
-					assert.ok((first[0]?.length ?? 0) >= 1, "the first page keeps the fitting prefix")
+					assert.equal(first[0]?.length, 1, "exactly one row fits the page")
 				})
 			)
 		)

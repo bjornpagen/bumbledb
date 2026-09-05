@@ -145,14 +145,14 @@ fn the_lawful_twins_load_value_identical_at_tiny() {
 fn the_lawful_verdicts_agree_with_the_naive_model() {
     let dir = scratch("naive");
     let sizes = LawSizes::of(Scale::Tiny);
-    let db = Db::create(&dir, LawfulWorld)
+    let db = Db::create(&dir, LawfulWorld, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     let mut naive = NaiveDb::new(&LawfulWorld.descriptor());
 
     let mut seed = Delta::default();
     for rel in [ids::TASK, ids::STEER, ids::ATTEMPT, ids::STEER_SCOPE] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
                 .map(bumbledb::MutationReport::changed)
         })
@@ -323,14 +323,17 @@ fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
         |name: &str,
          engine: &dyn Fn() -> Result<Measurement, String>,
          sqlite: &dyn Fn() -> Result<Measurement, String>| {
-            let generation = db.generation().expect("generation");
+            let generation = db
+                .generation(crate::harness::bench_work())
+                .expect("generation");
             let before = counts(&conn);
             let ours = engine().unwrap_or_else(|e| panic!("{name} engine: {e}"));
             let theirs = sqlite().unwrap_or_else(|e| panic!("{name} sqlite: {e}"));
             assert_eq!(ours.work, 2, "{name}: one refusal per measured sample");
             assert_eq!(theirs.work, 2, "{name}: mirror work");
             assert_eq!(
-                db.generation().expect("generation"),
+                db.generation(crate::harness::bench_work())
+                    .expect("generation"),
                 generation,
                 "{name}: a refused commit must move nothing on the engine"
             );
@@ -371,11 +374,11 @@ fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
 fn the_rejection_shapes_cite_the_expected_violation_kinds() {
     let dir = scratch("citations");
     let sizes = LawSizes::of(Scale::Tiny);
-    let db = Db::create(&dir, LawfulWorld)
+    let db = Db::create(&dir, LawfulWorld, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     for rel in [ids::TASK, ids::STEER, ids::ATTEMPT, ids::STEER_SCOPE] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
                 .map(bumbledb::MutationReport::changed)
         })
@@ -390,7 +393,7 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
         &mut bumbledb::WriteTx<'_, LawfulWorld>,
     ) -> bumbledb::Result<()>|
      -> Vec<Cited> {
-        match db.write(|tx| violate(tx)) {
+        match db.write(crate::harness::bench_work(), |tx| violate(tx)) {
             Ok(bumbledb::Admission::Rejected(violations)) => {
                 differential::cited(&violations, db.schema())
             }

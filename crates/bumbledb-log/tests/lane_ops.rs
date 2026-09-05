@@ -54,15 +54,14 @@ fn ops01_status_fixtures_distinguish_every_condition_without_payloads() {
     let local = status_of_local(&mirror.authority());
     assert_eq!(local.condition, Condition::Ready);
     // Frozen: admission stops, status says so, retained stamps remain.
-    admin::hosted_result(admin::freeze_hosted(
+    lane_support::completed(admin::freeze_hosted(
         &store,
         "t",
         op(0x01),
         FreezeIntent::Erasure,
         HEAD_CAP,
         &work(),
-    ))
-    .expect("freeze");
+    ));
     let frozen = status_hosted(&store, "t", Some(tip), HEAD_CAP, &work());
     assert_eq!(frozen.condition, Condition::Frozen);
     assert!(
@@ -70,15 +69,14 @@ fn ops01_status_fixtures_distinguish_every_condition_without_payloads() {
         "a frozen tenant still reports its stamps"
     );
     // Deleted: tombstone, no live stamps invented.
-    admin::tombstone_hosted(
+    lane_support::completed(admin::tombstone_hosted(
         &store,
         "t",
         op(0x02),
         DeletedReason::Erasure,
         HEAD_CAP,
         &work(),
-    )
-    .expect("tombstone");
+    ));
     let deleted = status_hosted(&store, "t", None, HEAD_CAP, &work());
     assert_eq!(deleted.condition, Condition::Deleted);
     assert_eq!(deleted.decision, None);

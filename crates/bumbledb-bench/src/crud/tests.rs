@@ -244,7 +244,9 @@ fn the_delete_lane_refuses_a_missing_row() {
     };
     let rows = ops::delete_rows(SEED, sizes, 1);
     lanes::delete_bumbledb(&db, one, &rows).expect("the first delete bears");
-    let generation = db.generation().expect("generation");
+    let generation = db
+        .generation(crate::harness::bench_work())
+        .expect("generation");
     let err = lanes::delete_bumbledb(&db, one, &rows)
         .expect_err("the second delete of the same pool row must refuse");
     assert!(
@@ -252,7 +254,8 @@ fn the_delete_lane_refuses_a_missing_row() {
         "a refused delete is the Io sentinel (the message is not on the wire): {err}"
     );
     assert_eq!(
-        db.generation().expect("generation"),
+        db.generation(crate::harness::bench_work())
+            .expect("generation"),
         generation,
         "a refused delete must leave the store untouched"
     );

@@ -63,13 +63,9 @@ pub(super) fn densify(
                     .collect();
             let key_var_sets = match OccBind::of_occurrence(occurrence) {
                 OccBind::Finished(_) | OccBind::RecDelta(_) | OccBind::RecAcc(_) => Vec::new(),
-                OccBind::Edb(stored) => compiled_scalar_key_var_sets(
-                    schema,
-                    stored,
-                    occurrence,
-                    &pinned,
-                    &var_index,
-                ),
+                OccBind::Edb(stored) => {
+                    compiled_scalar_key_var_sets(schema, stored, occurrence, &pinned, &var_index)
+                }
             };
             OccInfo {
                 rows,
@@ -106,7 +102,7 @@ fn compiled_scalar_key_var_sets(
             }
             let projection = theory.projection(*id)?;
             let mut set = 0u128;
-            for field in projection.projection.iter() {
+            for field in &projection.projection {
                 if pinned.contains(field) {
                     continue;
                 }

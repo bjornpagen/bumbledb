@@ -37,16 +37,14 @@ pub(crate) mod result;
 mod run_join;
 pub(crate) mod source;
 mod text;
-pub(crate) use self::text::{decode_row, intern_admitted, owned_text, text_tokens_equal};
+pub(crate) use self::text::{decode_row, intern_admitted, owned_text};
 mod view_memo;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use self::build::{prepare_on, prepare_owned};
-pub use self::result::{
-    CompleteResult, DeliveryTicket, ResultCursor, ResultIdentity, ResultPage,
-};
+pub use self::result::{CompleteResult, DeliveryTicket, ResultCursor, ResultIdentity, ResultPage};
 
 /// One bound scalar payload: the bind surface's value vocabulary. Variable-width
 /// payloads are **borrowed** — the engine only hashes and probes them
@@ -67,7 +65,7 @@ pub enum BindValue<'a> {
     /// type). Only hashed into column words at bind; never interned.
     FixedBytes(&'a [u8]),
     /// An application-owned 128-bit identity: sixteen exact bytes.
-    Id128(bumbledb_theory::Id128),
+    Uuid(bumbledb_theory::Uuid),
     /// A half-open `[start, end)`.
     IntervalU64(u64, u64),
     /// A half-open `[start, end)`.
@@ -177,7 +175,7 @@ pub enum AnswerValue<'a> {
     /// A `bytes<N>` find: the value's N raw bytes.
     FixedBytes(&'a [u8]),
     /// An application-owned 128-bit identity find: sixteen exact bytes.
-    Id128(bumbledb_theory::Id128),
+    Uuid(bumbledb_theory::Uuid),
     /// An interval find, rematerialized through the checked host type
     /// (the stored `start < end` invariant makes the re-parse
     /// infallible — the comment lives at the materialization site).
@@ -198,7 +196,7 @@ enum Cell {
     U64(u64),
     I64(i64),
     F64(bumbledb_theory::F64),
-    Id128(bumbledb_theory::Id128),
+    Uuid(bumbledb_theory::Uuid),
     String { start: usize, len: usize },
     FixedBytes { start: usize, len: usize },
     IntervalU64(bumbledb_theory::Interval<u64>),
@@ -718,12 +716,6 @@ impl<S> PreparedQuery<S> {
     #[must_use]
     pub(crate) fn used_nonresident_text(&self) -> bool {
         self.used_nonresident_text
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn uncharged_copy_bytes(&self) -> usize {
-        self.resolve_memo.uncharged_copy_bytes()
     }
 
     fn visit_free_join(&self, mut visit: impl FnMut(&FreeJoinRule)) {

@@ -37,16 +37,24 @@ pub fn run_with_sql_override(
         cfg.corpus_gen.seed,
         cfg.corpus_gen.scale.label()
     );
-    let db = Db::create(&cfg.out_dir.join("db"), Ledger)
-        .expect("create store")
-        .expect("accepted");
+    let db = Db::create(
+        &cfg.out_dir.join("db"),
+        Ledger,
+        crate::harness::bench_work(),
+    )
+    .expect("create store")
+    .expect("accepted");
     corpus::load_bumbledb(&db, cfg.corpus_gen).expect("load bumbledb");
     let (conn, _) = corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.corpus_gen)
         .expect("load oracle");
     eprintln!("verify: loading the calendar corpus");
-    let cal_db = Db::create(&cfg.out_dir.join("cal-db"), crate::calendar::Scheduling)
-        .expect("create calendar store")
-        .expect("accepted");
+    let cal_db = Db::create(
+        &cfg.out_dir.join("cal-db"),
+        crate::calendar::Scheduling,
+        crate::harness::bench_work(),
+    )
+    .expect("create calendar store")
+    .expect("accepted");
     crate::calendar::corpus::load_bumbledb(&cal_db, cfg.corpus_gen).expect("load calendar");
     let (cal_conn, _) = crate::calendar::corpus::load_sqlite(
         &cfg.out_dir.join("cal-oracle.sqlite"),
@@ -224,7 +232,7 @@ pub(super) fn load_target_stores(
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
             target::ids::IMPORT_BATCH => {}
             _ => {
-                db.write(|tx| {
+                db.write(crate::harness::bench_work(), |tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
                         .map(bumbledb::MutationReport::changed)
                 })
@@ -252,7 +260,7 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: crate::corpus_gen::GenConfig) {
     let mut start = 0u64;
     while start < entries {
         let end = (start + CHUNK).min(entries);
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             for i in start..end {
                 let row = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
                 tx.insert_dyn(target::ids::JOURNAL_ENTRY, [&row])?;

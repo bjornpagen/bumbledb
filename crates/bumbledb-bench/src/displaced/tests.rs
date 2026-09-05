@@ -83,19 +83,23 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
         .create(&dir.join("db"), super::DisplacedWorld)
         .expect("create");
     for rel in [super::ids::HUB, super::ids::SPOKE] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, super::relation_rows(sizes, cfg.seed, rel))
                 .map(bumbledb::MutationReport::changed)
         })
         .expect("load")
         .expect("accepted");
     }
-    let mut prepared = db.prepare(&super::probe_query()).expect("prepare");
+    let mut prepared = db
+        .prepare(&super::probe_query(), crate::harness::bench_work())
+        .expect("prepare");
     let mut buffer = bumbledb::Answers::new();
     let mut traced_execute = || {
         obs::start_capture();
-        db.read(|snap| snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer))
-            .expect("execute");
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer)
+        })
+        .expect("execute");
         obs::finish_capture()
     };
 
@@ -160,13 +164,21 @@ fn the_folds_produce_their_group_masses() {
     let sizes = DispSizes::of(Scale::Tiny);
     let (db, _conn) = super::load_stores(&dir, cfg, StoreMode::Durable).expect("load");
     let mut buffer = bumbledb::Answers::new();
-    let mut prepared = db.prepare(&super::probe_query()).expect("prepare");
-    db.read(|snap| snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer))
-        .expect("execute");
+    let mut prepared = db
+        .prepare(&super::probe_query(), crate::harness::bench_work())
+        .expect("prepare");
+    db.read(crate::harness::bench_work(), |snap| {
+        snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer)
+    })
+    .expect("execute");
     assert_eq!(buffer.len() as u64, sizes.tags, "one group per tag");
-    let mut prepared = db.prepare(&super::stream_query()).expect("prepare");
-    db.read(|snap| snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer))
-        .expect("execute");
+    let mut prepared = db
+        .prepare(&super::stream_query(), crate::harness::bench_work())
+        .expect("prepare");
+    db.read(crate::harness::bench_work(), |snap| {
+        snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut buffer)
+    })
+    .expect("execute");
     assert_eq!(buffer.len(), 1, "the ungrouped fold");
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);

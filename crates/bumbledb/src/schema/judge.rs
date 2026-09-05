@@ -40,6 +40,9 @@ pub use grouped::{JudgeScratch, ScratchFault, store_fault};
 use citation::CitationTopK;
 use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, encode_value};
 
+/// Borrowed row visitation; false stops the walk without becoming an error.
+pub type RowVisitor<'a, E> = &'a mut (dyn FnMut(&[Value]) -> Result<bool, E> + 'a);
+
 /// One proposed final-state view: for every ORDINARY relation, the judge
 /// can visit each distinct proposed row (committed minus removed plus
 /// added), decoded to sealed-field-order values. Closed relations are not
@@ -64,7 +67,7 @@ pub trait CandidateFacts {
     fn visit_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        visit: RowVisitor<'_, Self::Error>,
     ) -> Result<(), Self::Error>;
 }
 
@@ -104,7 +107,7 @@ pub trait DeltaFacts: CandidateFacts {
     fn visit_added_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        visit: RowVisitor<'_, Self::Error>,
     ) -> Result<(), Self::Error>;
 
     /// Visit the delta's REMOVED rows of one relation (parent rows the
@@ -115,7 +118,7 @@ pub trait DeltaFacts: CandidateFacts {
     fn visit_removed_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        visit: RowVisitor<'_, Self::Error>,
     ) -> Result<(), Self::Error>;
 
     /// Bounded visitor over every row of one sealed key statement's
@@ -131,7 +134,7 @@ pub trait DeltaFacts: CandidateFacts {
         &self,
         statement: StatementId,
         determinant: &[Value],
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        visit: RowVisitor<'_, Self::Error>,
     ) -> Result<Option<()>, Self::Error>;
 
     /// Visit members of one compiled projection group. `determinant` is
@@ -144,7 +147,7 @@ pub trait DeltaFacts: CandidateFacts {
         &self,
         _projection: &CompiledProjection,
         _determinant: &[Value],
-        _visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        _visit: RowVisitor<'_, Self::Error>,
     ) -> Result<Option<()>, Self::Error> {
         Ok(None)
     }
@@ -178,7 +181,7 @@ impl CandidateFacts for MapState {
     fn visit_rows(
         &self,
         relation: RelationId,
-        visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        visit: RowVisitor<'_, Self::Error>,
     ) -> Result<(), Self::Error> {
         if let Some(rows) = self.relations.get(&relation) {
             for row in rows {
@@ -249,8 +252,12 @@ pub enum Judgment {
 pub enum JudgeError<E> {
     Work(WorkError),
     State(E),
-    UndefinedDuration { statement: StatementId },
-    MeasureOverflow { statement: StatementId },
+    UndefinedDuration {
+        statement: StatementId,
+    },
+    MeasureOverflow {
+        statement: StatementId,
+    },
     /// Compiled projection ids were exhausted. Not a semantic verdict.
     Compile(CompileError),
 }
@@ -389,6 +396,11 @@ pub fn judge_final_state_with_scratch<S: CandidateFacts>(
             // candidate state can change it.
             continue;
         }
+        let _span = crate::obs::span(match view {
+            StatementView::Key(..) => crate::obs::names::JUDGMENT_KEYS,
+            StatementView::Containment(..) => crate::obs::names::JUDGMENT_SOURCE,
+            StatementView::Capacity(..) => crate::obs::names::JUDGMENT_CAPACITIES,
+        });
         match view {
             StatementView::Key(_, statement) => judge.key(state, statement)?,
             StatementView::Containment(_, statement) => judge.containment(state, statement)?,
@@ -415,6 +427,8 @@ pub fn judge_final_state_with_scratch<S: CandidateFacts>(
 ///
 /// # Errors
 /// As [`judge_final_state`].
+/// # Panics
+/// If a sealed schema exceeds the u32 relation-ID representation.
 pub fn judge_final_state_delta_local<S: DeltaFacts>(
     schema: &Schema,
     state: &S,
@@ -442,6 +456,11 @@ pub fn judge_final_state_delta_local<S: DeltaFacts>(
     delta.sort_by_key(|&(id, _)| id);
     for view in theory.delta_local_statements(schema, &delta) {
         work.step(1)?;
+        let _span = crate::obs::span(match view {
+            StatementView::Key(..) => crate::obs::names::JUDGMENT_KEYS,
+            StatementView::Containment(..) => crate::obs::names::JUDGMENT_SOURCE,
+            StatementView::Capacity(..) => crate::obs::names::JUDGMENT_CAPACITIES,
+        });
         match view {
             StatementView::Key(_, statement) => {
                 if !judge.key_delta_local(state, statement)? {
@@ -514,16 +533,12 @@ impl<E> Judge<'_, '_, E> {
         }
         let mut seq = 0u64;
         let mut smuggled = None;
-        let judge = self as *mut Self;
         let walked = state.visit_rows(relation, &mut |row| {
-            // Safety: `visit_rows` only borrows `state` and invokes this
-            // callback; it does not alias `Judge`.
-            let judge = unsafe { &mut *judge };
-            if let Err(error) = judge.work.step(1) {
+            if let Err(error) = self.work.step(1) {
                 smuggled = Some(JudgeError::Work(error));
                 return Ok(false);
             }
-            match visit(judge, seq, row) {
+            match visit(self, seq, row) {
                 Ok(keep) => {
                     seq += 1;
                     Ok(keep)
@@ -550,16 +565,12 @@ impl<E> Judge<'_, '_, E> {
         mut visit: impl FnMut(&mut Self, &[Value]) -> Result<bool, JudgeError<E>>,
     ) -> Result<Option<()>, JudgeError<E>> {
         let mut smuggled = None;
-        let judge = self as *mut Self;
         let indexed = state.visit_compiled_group(compiled, determinant, &mut |row| {
-            // Safety: `visit_compiled_group` only borrows `state` and
-            // invokes this callback; it does not alias `Judge`.
-            let judge = unsafe { &mut *judge };
-            if let Err(error) = judge.work.step(1) {
+            if let Err(error) = self.work.step(1) {
                 smuggled = Some(JudgeError::Work(error));
                 return Ok(false);
             }
-            match visit(judge, row) {
+            match visit(self, row) {
                 Ok(keep) => Ok(keep),
                 Err(error) => {
                     smuggled = Some(error);
@@ -627,7 +638,7 @@ impl<E> Judge<'_, '_, E> {
             }
         }
         let mut seen = self.grouped();
-        let mut groups = Vec::new();
+        let mut groups: Vec<Vec<Value>> = Vec::new();
         let mut det = Vec::new();
         let mut walk_error = None;
         state
@@ -659,7 +670,9 @@ impl<E> Judge<'_, '_, E> {
         let mut pending = self.pending(statement.id, StatementKind::Functionality);
         for determinant in &groups {
             let indexed = match interval_field {
-                None => self.key_group_scalar(state, statement, relation, determinant, &mut pending)?,
+                None => {
+                    self.key_group_scalar(state, statement, relation, determinant, &mut pending)?
+                }
                 Some(tail) => self.key_group_pointwise(
                     state,
                     statement,
@@ -791,13 +804,9 @@ impl<E> Judge<'_, '_, E> {
                     }
                 },
             };
-            if take {
-                let judge = self as *mut Self;
-                let judge = unsafe { &mut *judge };
-                if let Err(error) = judge.offer(pending, relation, values) {
-                    walk_error = Some(error);
-                    return Ok(false);
-                }
+            if take && let Err(error) = self.offer(pending, relation, values) {
+                walk_error = Some(error);
+                return Ok(false);
             }
             Ok(true)
         }) {
@@ -1081,11 +1090,6 @@ impl<E> Judge<'_, '_, E> {
         })
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the two capacity passes over source and target are one \
-                  linear judgment table"
-    )]
     fn capacity<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1174,7 +1178,7 @@ impl<E> Judge<'_, '_, E> {
                 // target order (P00-confirmed witness rule).
                 pending.measure = Some(total);
                 violating.put(&group, &[u8::from(above)])?;
-                judge.offer(pending, statement.target.relation, row)?;
+                judge.offer(&mut pending, statement.target.relation, row)?;
             }
             Ok(true)
         })?;
@@ -1186,7 +1190,7 @@ impl<E> Judge<'_, '_, E> {
                 group.clear();
                 encode_projection(&statement.source, row, None, &mut group);
                 if violating.contains(&group)? {
-                    judge.offer(pending, statement.source.relation, row)?;
+                    judge.offer(&mut pending, statement.source.relation, row)?;
                 }
                 Ok(true)
             })?;
@@ -1221,7 +1225,7 @@ impl<E> Judge<'_, '_, E> {
         let target_compiled = theory.target_projection(statement.id);
         let mut affected = self.grouped();
         let mut determinants = Vec::new();
-        self.mark_delta_groups(
+        Self::mark_delta_groups(
             state,
             statement.source.relation,
             &statement.source,
@@ -1231,7 +1235,7 @@ impl<E> Judge<'_, '_, E> {
             &mut affected,
             &mut determinants,
         )?;
-        self.mark_delta_groups(
+        Self::mark_delta_groups(
             state,
             statement.target.relation,
             &statement.target,
@@ -1301,6 +1305,10 @@ impl<E> Judge<'_, '_, E> {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn containment_scalar_compiled<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1314,13 +1322,7 @@ impl<E> Judge<'_, '_, E> {
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
         if let Some(sample) = determinants.first()
-            && !self.compiled_indexes_live(
-                state,
-                theory,
-                source_binding,
-                target_binding,
-                sample,
-            )?
+            && !Self::compiled_indexes_live(state, theory, source_binding, target_binding, sample)?
         {
             return Ok(false);
         }
@@ -1330,12 +1332,18 @@ impl<E> Judge<'_, '_, E> {
             key.clear();
             encode_values(det, &mut key);
             if let Some(compiled) = target_compiled {
-                match self.visit_indexed_group(state, compiled, target_binding, det, |_judge, row| {
-                    if satisfies(&statement.target, row) {
-                        witnesses.put(&key, &[])?;
-                    }
-                    Ok(true)
-                })? {
+                match self.visit_indexed_group(
+                    state,
+                    compiled,
+                    target_binding,
+                    det,
+                    |_judge, row| {
+                        if satisfies(&statement.target, row) {
+                            witnesses.put(&key, &[])?;
+                        }
+                        Ok(true)
+                    },
+                )? {
                     Some(()) => {}
                     None => return Ok(false),
                 }
@@ -1354,15 +1362,21 @@ impl<E> Judge<'_, '_, E> {
             encode_values(det, &mut key);
             let missing = !witnesses.contains(&key)?;
             if let Some(compiled) = source_compiled {
-                match self.visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
-                    if missing && satisfies(&statement.source, row) {
-                        pending.violated = true;
-                        judge.offer(pending, statement.source.relation, row)?;
-                    }
-                    Ok(true)
-                })? {
+                match self.visit_indexed_group(
+                    state,
+                    compiled,
+                    source_binding,
+                    det,
+                    |judge, row| {
+                        if missing && satisfies(&statement.source, row) {
+                            pending.violated = true;
+                            judge.offer(pending, statement.source.relation, row)?;
+                        }
+                        Ok(true)
+                    },
+                )? {
                     Some(()) => {}
-                    None => return Ok(false);
+                    None => return Ok(false),
                 }
             } else {
                 self.offer_unindexed_unsatisfied(
@@ -1379,6 +1393,10 @@ impl<E> Judge<'_, '_, E> {
         Ok(true)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn containment_pointwise_compiled<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1393,29 +1411,29 @@ impl<E> Judge<'_, '_, E> {
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
         if let Some(sample) = determinants.first()
-            && !self.compiled_indexes_live(
-                state,
-                theory,
-                source_binding,
-                target_binding,
-                sample,
-            )?
+            && !Self::compiled_indexes_live(state, theory, source_binding, target_binding, sample)?
         {
             return Ok(false);
         }
         for det in determinants {
             let mut spans = self.grouped();
             if let Some(compiled) = target_compiled {
-                match self.visit_indexed_group(state, compiled, target_binding, det, |_judge, row| {
-                    if satisfies(&statement.target, row) {
-                        let span_value =
-                            &row[usize::from(statement.target.projection[position].0)];
-                        let (start, end) = interval_order_words(span_value)
-                            .expect("positional typing pairs interval positions");
-                        spans.put(&span_key(0, start, end, 0), &[])?;
-                    }
-                    Ok(true)
-                })? {
+                match self.visit_indexed_group(
+                    state,
+                    compiled,
+                    target_binding,
+                    det,
+                    |_judge, row| {
+                        if satisfies(&statement.target, row) {
+                            let span_value =
+                                &row[usize::from(statement.target.projection[position].0)];
+                            let (start, end) = interval_order_words(span_value)
+                                .expect("positional typing pairs interval positions");
+                            spans.put(&span_key(0, start, end, 0), &[])?;
+                        }
+                        Ok(true)
+                    },
+                )? {
                     Some(()) => {}
                     None => return Ok(false),
                 }
@@ -1424,8 +1442,7 @@ impl<E> Judge<'_, '_, E> {
                     if satisfies(&statement.target, row)
                         && CompiledTheory::group_key(target_binding, row).as_slice() == det
                     {
-                        let span_value =
-                            &row[usize::from(statement.target.projection[position].0)];
+                        let span_value = &row[usize::from(statement.target.projection[position].0)];
                         let (start, end) = interval_order_words(span_value)
                             .expect("positional typing pairs interval positions");
                         spans.put(&span_key(0, start, end, 0), &[])?;
@@ -1438,22 +1455,28 @@ impl<E> Judge<'_, '_, E> {
             let mut found_key = Vec::new();
             let mut found_value = Vec::new();
             if let Some(compiled) = source_compiled {
-                match self.visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
-                    if !satisfies(&statement.source, row) {
-                        return Ok(true);
-                    }
-                    if !run_covers(
-                        0,
-                        &row[usize::from(statement.source.projection[position].0)],
-                        &mut runs,
-                        &mut found_key,
-                        &mut found_value,
-                    )? {
-                        pending.violated = true;
-                        judge.offer(pending, statement.source.relation, row)?;
-                    }
-                    Ok(true)
-                })? {
+                match self.visit_indexed_group(
+                    state,
+                    compiled,
+                    source_binding,
+                    det,
+                    |judge, row| {
+                        if !satisfies(&statement.source, row) {
+                            return Ok(true);
+                        }
+                        if !run_covers(
+                            0,
+                            &row[usize::from(statement.source.projection[position].0)],
+                            &mut runs,
+                            &mut found_key,
+                            &mut found_value,
+                        )? {
+                            pending.violated = true;
+                            judge.offer(pending, statement.source.relation, row)?;
+                        }
+                        Ok(true)
+                    },
+                )? {
                     Some(()) => {}
                     None => return Ok(false),
                 }
@@ -1516,6 +1539,10 @@ impl<E> Judge<'_, '_, E> {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn containment_pointwise_affected<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1597,7 +1624,7 @@ impl<E> Judge<'_, '_, E> {
         let target_compiled = theory.target_projection(statement.id);
         let mut affected = self.grouped();
         let mut determinants = Vec::new();
-        self.mark_delta_groups(
+        Self::mark_delta_groups(
             state,
             statement.source.relation,
             &statement.source,
@@ -1607,7 +1634,7 @@ impl<E> Judge<'_, '_, E> {
             &mut affected,
             &mut determinants,
         )?;
-        self.mark_delta_groups(
+        Self::mark_delta_groups(
             state,
             statement.target.relation,
             &statement.target,
@@ -1646,6 +1673,11 @@ impl<E> Judge<'_, '_, E> {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn capacity_compiled<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1659,13 +1691,7 @@ impl<E> Judge<'_, '_, E> {
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
         if let Some(sample) = determinants.first()
-            && !self.compiled_indexes_live(
-                state,
-                theory,
-                source_binding,
-                target_binding,
-                sample,
-            )?
+            && !Self::compiled_indexes_live(state, theory, source_binding, target_binding, sample)?
         {
             return Ok(false);
         }
@@ -1675,12 +1701,18 @@ impl<E> Judge<'_, '_, E> {
             group.clear();
             encode_values(det, &mut group);
             if let Some(compiled) = source_compiled {
-                match self.visit_indexed_group(state, compiled, source_binding, det, |_judge, row| {
-                    if satisfies(&statement.source, row) {
-                        accumulate_capacity(&mut totals, statement, row, &group)?;
-                    }
-                    Ok(true)
-                })? {
+                match self.visit_indexed_group(
+                    state,
+                    compiled,
+                    source_binding,
+                    det,
+                    |_judge, row| {
+                        if satisfies(&statement.source, row) {
+                            accumulate_capacity(&mut totals, statement, row, &group)?;
+                        }
+                        Ok(true)
+                    },
+                )? {
                     Some(()) => {}
                     None => return Ok(false),
                 }
@@ -1700,19 +1732,25 @@ impl<E> Judge<'_, '_, E> {
             group.clear();
             encode_values(det, &mut group);
             if let Some(compiled) = target_compiled {
-                match self.visit_indexed_group(state, compiled, target_binding, det, |judge, row| {
-                    if satisfies(&statement.target, row) {
-                        judge.note_capacity_target(
-                            statement,
-                            row,
-                            &group,
-                            &mut totals,
-                            &mut violating,
-                            pending,
-                        )?;
-                    }
-                    Ok(true)
-                })? {
+                match self.visit_indexed_group(
+                    state,
+                    compiled,
+                    target_binding,
+                    det,
+                    |judge, row| {
+                        if satisfies(&statement.target, row) {
+                            judge.note_capacity_target(
+                                statement,
+                                row,
+                                &group,
+                                &mut totals,
+                                &mut violating,
+                                pending,
+                            )?;
+                        }
+                        Ok(true)
+                    },
+                )? {
                     Some(()) => {}
                     None => return Ok(false),
                 }
@@ -1875,7 +1913,6 @@ impl<E> Judge<'_, '_, E> {
     }
 
     fn compiled_indexes_live<S: DeltaFacts<Error = E>>(
-        &self,
         state: &S,
         theory: &CompiledTheory,
         source_binding: &ProjectionBinding,
@@ -1919,6 +1956,10 @@ impl<E> Judge<'_, '_, E> {
         Ok(found)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn offer_unindexed_unsatisfied<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1941,8 +1982,11 @@ impl<E> Judge<'_, '_, E> {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn mark_delta_groups<S: DeltaFacts<Error = E>>(
-        &mut self,
         state: &S,
         relation: RelationId,
         side: &Side,
@@ -1955,6 +1999,9 @@ impl<E> Judge<'_, '_, E> {
         let mut key = Vec::new();
         let mut walk_error = None;
         let mut mark = |row: &[Value]| -> Result<bool, S::Error> {
+            if walk_error.is_some() {
+                return Ok(false);
+            }
             if satisfies(side, row) {
                 let det = CompiledTheory::group_key(binding, row);
                 key.clear();
@@ -1974,19 +2021,13 @@ impl<E> Judge<'_, '_, E> {
             state
                 .visit_added_rows(relation, &mut mark)
                 .map_err(JudgeError::State)?;
-            if let Some(error) = walk_error.take() {
-                return Err(error);
-            }
         }
         if removes {
             state
                 .visit_removed_rows(relation, &mut mark)
                 .map_err(JudgeError::State)?;
-            if let Some(error) = walk_error.take() {
-                return Err(error);
-            }
         }
-        Ok(())
+        walk_error.map_or(Ok(()), Err)
     }
 
     fn finish(&mut self, pending: PendingViolation) {
@@ -2095,11 +2136,13 @@ fn run_covers<E>(
 ) -> Result<bool, JudgeError<E>> {
     let (span_start, span_end) =
         interval_order_words(span).expect("positional typing pairs interval positions");
-    Ok(runs.last_at_or_before(&run_key(token, span_start), found_key, found_value)?
-        && found_key.len() == 16
-        && found_key[..8] == token.to_be_bytes()
-        && found_value.len() == 8
-        && u64::from_be_bytes(found_value.as_slice().try_into().expect("checked")) >= span_end)
+    Ok(
+        runs.last_at_or_before(&run_key(token, span_start), found_key, found_value)?
+            && found_key.len() == 16
+            && found_key[..8] == token.to_be_bytes()
+            && found_value.len() == 8
+            && u64::from_be_bytes(found_value.as_slice().try_into().expect("checked")) >= span_end,
+    )
 }
 
 fn accumulate_capacity<E>(

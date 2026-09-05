@@ -1,11 +1,18 @@
-import { Effect, Option } from "effect"
 import type { Scope } from "effect"
+import { Effect, Option } from "effect"
+import type { ChangeSet } from "#changes.ts"
+import { internalChanges } from "#changes.ts"
 import { drainClose, releaseOwner } from "#close.ts"
 import type { CompiledSchema, SchemaId } from "#compile.ts"
 import { Schema as CoreSchema, schemaTables } from "#compile.ts"
-import type { ChangeSet } from "#changes.ts"
-import { internalChanges } from "#changes.ts"
-import type { ApplyOutcomeWire, DbInspectionWire, ExpectedWire, SessionHandle, SnapshotHandle, WitnessWire } from "#db-native.ts"
+import type {
+	ApplyOutcomeWire,
+	DbInspectionWire,
+	ExpectedWire,
+	SessionHandle,
+	SnapshotHandle,
+	WitnessWire
+} from "#db-native.ts"
 import { dbNative } from "#db-native.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle, Violation } from "#native.ts"
@@ -18,13 +25,12 @@ import type { CompleteResult } from "#result.ts"
 import { internalResult, makeCompleteResult } from "#result.ts"
 import type { CellValue } from "#rows.ts"
 import { factOfCells, keyCellsOf } from "#rows.ts"
+import type { ExecutionPolicy, NativeRuntime } from "#runtime.ts"
+import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
 import type { CloseReport } from "#runtime-errors.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { DirectoryHandle } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
-import type { NativeRuntime } from "#runtime.ts"
-import type { ExecutionPolicy } from "#runtime.ts"
-import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
 import type { AnySchema } from "#schema.ts"
 import type { Key, QueryTemplate, Rel } from "#shape.ts"
 
@@ -142,7 +148,11 @@ function preparedOf<S extends AnySchema>(
 	theory: S,
 	query: AnyQuery,
 	params: Readonly<Record<string, unknown>>
-): { readonly ir: ReturnType<typeof lowerQuery>; readonly wire: ReturnType<typeof wireParams>; readonly finds: AnyQuery["data"]["finds"] } {
+): {
+	readonly ir: ReturnType<typeof lowerQuery>
+	readonly wire: ReturnType<typeof wireParams>
+	readonly finds: AnyQuery["data"]["finds"]
+} {
 	if (query.schema !== theory) {
 		throw refusal("QueryReader.execute", "InvalidArgument")
 	}
@@ -368,9 +378,9 @@ function makeDb<S extends AnySchema>(theory: S, state: DbState): Db<S> {
 			// joins are idempotent natively.
 			return drainClose("Db.close", (callback) => runtimeNative.runtimeManagedDbClose(state.db, callback)).pipe(
 				Effect.flatMap((report) =>
-					drainClose("Db.directoryClose", (callback) => runtimeNative.runtimeDirectoryClose(state.directory, false, callback)).pipe(
-						Effect.map((directoryReport) => (report.kind === "closed" ? directoryReport : report))
-					)
+					drainClose("Db.directoryClose", (callback) =>
+						runtimeNative.runtimeDirectoryClose(state.directory, false, callback)
+					).pipe(Effect.map((directoryReport) => (report.kind === "closed" ? directoryReport : report)))
 				)
 			)
 		}
@@ -422,8 +432,7 @@ function openDatabase<S extends AnySchema>(
 			Effect.gen(function* () {
 				const outcome = yield* nativeOperationWith(
 					operation,
-					(callback) =>
-						runtimeNative.runtimeDirectoryDbOpen(directory, wire, CHILD, spec, create, callback),
+					(callback) => runtimeNative.runtimeDirectoryDbOpen(directory, wire, CHILD, spec, create, callback),
 					runtimeNative.runtimeDbTake,
 					(value) => value
 				).pipe(
@@ -511,8 +520,7 @@ function internalPublishedReader<S extends AnySchema>(
 			return Effect.acquireRelease(
 				nativeOperationWith(
 					"Snapshot.session",
-					(callback) =>
-						dbNative.runtimeSnapshotSession(state.handle, policyWire(work, "Snapshot.session"), callback),
+					(callback) => dbNative.runtimeSnapshotSession(state.handle, policyWire(work, "Snapshot.session"), callback),
 					dbNative.runtimeSessionTake,
 					(value) => makeSession(state, value)
 				),

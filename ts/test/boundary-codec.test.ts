@@ -2,7 +2,7 @@
  * The schema-tagged boundary VALUE codec (chapter 30's HTTP/export form;
  * API-02/API-09 pure half): every f64 — finite included — crosses as
  * `{"$f64":"<16 lowercase hex>"}` of canonical binary64 bits, integers as
- * canonical decimal strings, Id128 as 32 lowercase hex, bytes as one strict
+ * canonical decimal strings, Uuid as canonical UUID, bytes as one strict
  * lowercase-hex encoding, intervals as `{start,end}` in their element
  * encoding, closed references as handle names. Decoders reject malformed
  * widths, unknown tags, noncanonical representations and wrong-schema
@@ -12,19 +12,19 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Result } from "effect"
 import { decodeBoundaryRows, encodeBoundaryRows } from "#codec.ts"
-import { Id128 } from "#id128.ts"
 import { Attempt, Student } from "#test/fixtures/learning.ts"
+import { Uuid } from "#uuid.ts"
 
-function mustId(hex: string): Id128 {
-	const parsed = Id128.fromHex(hex)
+function mustId(hex: string): Uuid {
+	const parsed = Uuid.parse(hex)
 	if (!Result.isSuccess(parsed)) {
 		throw new Error("the fixture hex is canonical")
 	}
 	return parsed.success
 }
 
-const student = mustId("00112233445566778899aabbccddeeff")
-const attempt = mustId("ffeeddccbbaa99887766554433221100")
+const student = mustId("00112233-4455-6677-8899-aabbccddeeff")
+const attempt = mustId("ffeeddcc-bbaa-9988-7766-554433221100")
 
 test("finite, infinite, NaN and negative-zero floats all cross as canonical $f64 bit images", function floatImages() {
 	const rows = [
@@ -46,7 +46,7 @@ test("finite, infinite, NaN and negative-zero floats all cross as canonical $f64
 	])
 	// Integers are canonical decimal strings — never JSON numbers.
 	assert.equal(encoded.success[0]?.units, "1")
-	// Id128 is the canonical 32-lowercase-hex value.
+	// Uuid is the canonical hyphenated UUID value.
 	assert.equal(encoded.success[0]?.id, attempt)
 	// The whole encode/decode round-trip is exact (bit-for-bit after
 	// canonicalization; NaN equals NaN as a database value).
@@ -79,7 +79,7 @@ test("decoders reject malformed widths, noncanonical images, unknown tags and wr
 		["leading-zero decimal", { ...good, units: "01" }],
 		["negative u64", { ...good, units: "-1" }],
 		["u64 overflow", { ...good, units: (1n << 64n).toString() }],
-		["uppercase Id128", { ...good, id: attempt.toUpperCase() }],
+		["uppercase Uuid", { ...good, id: attempt.toUpperCase() }],
 		["empty interval", { ...good, active: { start: "60", end: "60" } }],
 		["inverted interval", { ...good, active: { start: "60", end: "0" } }],
 		["unknown extra field", { ...good, extra: 1 }],

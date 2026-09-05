@@ -14,13 +14,13 @@ use napi::bindgen_prelude::{Env, External, Function};
 use napi_derive::napi;
 
 use crate::runtime::registry::{NativeKind, RegistryAdmission};
-use crate::runtime::{Output, Runtime, RuntimeError};
+use crate::runtime::{Output, RuntimeError};
 use crate::runtime_wire::{
     CloseWire, OperationHandle, PolicyWire, RuntimeHandle, notification, operation_handle,
     owner as runtime_owner, reporter, take_output, thrown,
 };
 
-use super::{LogFail, MachineOutput};
+use super::MachineOutput;
 
 /// Opaque capability: L12 `NativeKind::RepositoryLock` + L11 kernel lock.
 pub struct RepositoryLockHandle {
@@ -31,7 +31,6 @@ pub struct RepositoryLockHandle {
 
 pub struct RepositoryLockOwned {
     pub(crate) lock: Option<RepositoryLock>,
-    pub(crate) directory: String,
 }
 
 impl Drop for RepositoryLockOwned {
@@ -75,21 +74,13 @@ pub fn log_repository_lock_acquire(
                     let held = match acquire_repository_lock(std::path::Path::new(&directory)) {
                         Ok(held) => held,
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(super::fail_output(LogFail::Core(
-                                RuntimeError::DirectoryBusy,
-                            )));
+                            return Err(RuntimeError::DirectoryBusy);
                         }
                         Err(error) => return Err(crate::runtime::owners::io_error(error)),
                     };
-                    if context.checkpoint().is_err() {
-                        drop(held);
-                        return Err(RuntimeError::ClosedHandle);
-                    }
+                    context.checkpoint()?;
                     Ok(Output::Machine(MachineOutput::RepositoryLock(
-                        RepositoryLockOwned {
-                            lock: Some(held),
-                            directory,
-                        },
+                        RepositoryLockOwned { lock: Some(held) },
                     )))
                 }))
             },
@@ -122,9 +113,6 @@ pub fn log_repository_lock_take(
                 admission,
                 released: AtomicBool::new(false),
             }))
-        }
-        Output::Machine(MachineOutput::Admin(super::AdminOwned::Failed { fail, .. })) => {
-            Err(super::throw_frame(env, &fail))
         }
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
@@ -161,7 +149,7 @@ pub fn log_repository_lock_release(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{CloseReport, Options};
+    use crate::runtime::{CloseReport, Options, Runtime};
     use std::time::Duration;
 
     fn options() -> Options {
@@ -236,7 +224,8 @@ mod tests {
             std::io::ErrorKind::WouldBlock
         );
         assert_eq!(
-            runtime.inspect().natives, baseline,
+            runtime.inspect().natives,
+            baseline,
             "a refused acquire must not mint NativeKind::RepositoryLock"
         );
         drop(held);

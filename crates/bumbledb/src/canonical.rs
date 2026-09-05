@@ -7,7 +7,7 @@
 //! history, not another log-owned value vocabulary.
 use crate::schema::{FieldDescriptor, ValueType, value_matches};
 use crate::work::{ByteKind, ByteReservation};
-use crate::{F64, Id128, Interval, Value, WorkContext, WorkError};
+use crate::{F64, Uuid, Value, WorkContext, WorkError};
 
 /// The canonical bounded named-scalar record — the core codec the log's
 /// declared `CommandResult` slot frames verbatim (C01; chapter 30).
@@ -75,7 +75,7 @@ impl CanonicalRow {
             let payload = match value {
                 Value::Bool(_) => 1,
                 Value::U64(_) | Value::I64(_) | Value::F64(_) => 8,
-                Value::Id128(_) => 16,
+                Value::Uuid(_) => 16,
                 Value::String(text) => text.len().checked_add(8).ok_or(RowError::LengthOverflow)?,
                 Value::FixedBytes(bytes) => {
                     bytes.len().checked_add(8).ok_or(RowError::LengthOverflow)?
@@ -150,7 +150,7 @@ impl CanonicalRow {
                     bytes.extend_from_slice(&v.start().to_be_bytes());
                     bytes.extend_from_slice(&v.end().to_be_bytes());
                 }
-                Value::Id128(v) => {
+                Value::Uuid(v) => {
                     bytes.push(8);
                     bytes.extend_from_slice(v.as_bytes());
                 }
@@ -209,6 +209,14 @@ impl AsRef<[u8]> for CanonicalRow {
     }
 }
 
+impl std::ops::Deref for CanonicalRow {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_bytes()
+    }
+}
+
 // Work polling granularity, not a database/row-size limit. At most this many
 // bytes are copied/UTF-8 checked without returning to the operation ledger.
 const COPY_QUANTUM: usize = 4096;
@@ -252,17 +260,47 @@ pub(crate) fn validate(
     walk(fields, bytes, work, None)
 }
 
-/// Bridge-facing decoded row. Not embedding API.
+/// An owned decoded row, including the capacity reservation for its values.
 ///
 /// The reservation covers the decoded values for as long as the owner
 /// lives. Borrow [`DecodedRow::values`]; transfer the whole owner with
 /// [`DecodedRow::into_owner`]. There is no owning `values` / `into_values`
 /// / `into_parts` escape that refunds while the payload remains live.
-#[doc(hidden)]
 #[derive(Debug)]
 pub struct DecodedRow {
     values: Vec<Value>,
     reservation: ByteReservation,
+}
+
+impl AsRef<[Value]> for DecodedRow {
+    fn as_ref(&self) -> &[Value] {
+        self.values()
+    }
+}
+
+impl std::ops::Deref for DecodedRow {
+    type Target = [Value];
+
+    fn deref(&self) -> &Self::Target {
+        self.values()
+    }
+}
+
+impl PartialEq for DecodedRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.values == other.values
+    }
+}
+
+impl Eq for DecodedRow {}
+
+impl<'a> IntoIterator for &'a DecodedRow {
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter()
+    }
 }
 
 impl DecodedRow {
@@ -304,6 +342,46 @@ pub fn decode(
         .try_reserve_exact(fields.len())
         .map_err(|_| RowError::Allocation)?;
     walk(fields, bytes, work, Some(&mut values))?;
+    Ok(DecodedRow {
+        values,
+        reservation,
+    })
+}
+
+/// The schema's fixed-width closed extension enters the same charged row
+/// representation as a stored canonical row. Only one row is decoded at a
+/// time; a closed source need not acquire a resident relation image.
+pub(crate) fn decode_sealed(
+    relation: &crate::schema::Relation,
+    bytes: &[u8],
+    work: &WorkContext,
+) -> crate::error::Result<DecodedRow> {
+    let size = relation
+        .fields()
+        .len()
+        .checked_mul(std::mem::size_of::<Value>())
+        .and_then(|size| size.checked_add(bytes.len()))
+        .ok_or_else(|| {
+            crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
+        })?;
+    let reservation = work
+        .reserve(ByteKind::Working, size as u64)
+        .map_err(crate::api::prepared::source::work_error)?;
+    work.step(relation.fields().len() as u64)
+        .map_err(crate::api::prepared::source::work_error)?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(relation.fields().len())
+        .map_err(|_| {
+            crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
+        })?;
+    crate::encoding::decode_values_keyed_into(
+        relation.layout().encoded(bytes),
+        &[],
+        &[],
+        |_| unreachable!("sealed closed extensions refuse text fields"),
+        &mut values,
+    )?;
     Ok(DecodedRow {
         values,
         reservation,
@@ -377,7 +455,7 @@ fn walk(
                 descriptor,
                 field,
             )?,
-            8 => Value::Id128(Id128::from_bytes(reader.word()?)),
+            8 => Value::Uuid(Uuid::from_bytes(reader.word()?)),
             9 => field::decode_interval_f64(
                 F64::from_canonical_be_bytes(reader.word()?)
                     .map_err(|_| RowError::NonCanonicalFloat { field })?,

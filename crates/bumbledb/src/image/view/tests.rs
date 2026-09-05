@@ -152,6 +152,25 @@ fn same_fact_field_equality_pairs_work() {
 }
 
 #[test]
+fn numeric_set_membership_does_not_interpret_high_bits_as_text_tokens() {
+    let schema = schema();
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(R);
+    let selected = [-20i64, 0, 5, 20];
+    let words = selected.map(|value| u64::from_be_bytes(encode_i64(value)));
+    let predicate = FilterPredicate::Compare {
+        field: FieldId(2).into(),
+        op: WordCmp::Eq,
+        value: Const::WordSet(words.to_vec()),
+    };
+    let view = view_apply(&image, &[predicate], &[], Vec::new());
+    assert_eq!(
+        survivor_ids(&view),
+        oracle(|_, _, a, _| selected.contains(&a))
+    );
+}
+
+#[test]
 fn unsatisfiable_filter_yields_an_empty_survivor_set() {
     let schema = schema();
     let source = populated(&schema);
@@ -283,7 +302,10 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         point: ViewWordSource::Word(w(9)),
         dense: false,
     }];
-    assert_eq!(sorted_ids(&view_apply(&image, &at_nine, &[], Vec::new())), [2]);
+    assert_eq!(
+        sorted_ids(&view_apply(&image, &at_nine, &[], Vec::new())),
+        [2]
+    );
 
     let at_two = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
@@ -301,7 +323,12 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         dense: false,
     }];
     assert_eq!(
-        sorted_ids(&view_apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
+        sorted_ids(&view_apply(
+            &image,
+            &via_param,
+            &[Const::Word(w(9))],
+            Vec::new()
+        )),
         [2]
     );
 }

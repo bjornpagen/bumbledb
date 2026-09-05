@@ -208,29 +208,31 @@ fn measure_world<S: bumbledb::Theory + Copy>(
     let fail = |stage: &str, detail: String| format!("{world}: {stage}: {detail}");
 
     let raw_dir = scale_dir.join(format!("{world}-raw"));
-    let db = Db::create(&raw_dir, spec.theory)
+    let db = Db::create(&raw_dir, spec.theory, crate::harness::bench_work())
         .map_err(|e| fail("create raw", format!("{e:?}")))?
         .expect("accepted");
     (spec.load_engine)(&db)?;
     let engine_raw_bytes = db
-        .disk_size()
+        .disk_size(crate::harness::bench_work())
         .map_err(|e| fail("raw disk_size", format!("{e:?}")))?;
 
     // ENGINE COMPACTED: compact into a sibling, drop raw, reopen.
     let compacted_dir = scale_dir.join(format!("{world}-compacted"));
-    db.compact(&compacted_dir)
+    db.compact(&compacted_dir, crate::harness::bench_work())
         .map_err(|e| fail("compact", format!("{e:?}")))?;
     drop(db);
-    let db = Db::open(&compacted_dir, spec.theory)
+    let db = Db::open(&compacted_dir, spec.theory, crate::harness::bench_work())
         .map_err(|e| fail("open compacted", format!("{e:?}")))?;
     let engine_compacted_bytes = db
-        .disk_size()
+        .disk_size(crate::harness::bench_work())
         .map_err(|e| fail("compacted disk_size", format!("{e:?}")))?;
     let mut engine_counts = Vec::with_capacity(spec.expected.len());
     for rel in 0..spec.expected.len() {
         let rel = RelationId(u32::try_from(rel).expect("relation ids fit u32"));
         let count = db
-            .read(|snap| Ok(snap.scan(rel)?.count()))
+            .read(crate::harness::bench_work(), |snap| {
+                Ok(snap.scan(rel)?.count())
+            })
             .map_err(|e| fail("engine scan count", format!("{e:?}")))?;
         engine_counts.push(count as u64);
     }
@@ -764,7 +766,7 @@ mod tests {
     fn disk_size_equals_the_stat_path() {
         let dir = scratch("storage-lane-disksize");
         let store = dir.join("db");
-        let db = Db::create(&store, crate::schema::Ledger)
+        let db = Db::create(&store, crate::schema::Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         crate::corpus::load_bumbledb(
@@ -776,7 +778,8 @@ mod tests {
         )
         .expect("load");
         assert_eq!(
-            db.disk_size().expect("disk_size"),
+            db.disk_size(crate::harness::bench_work())
+                .expect("disk_size"),
             file_bytes(&store.join("data.mdb")).expect("stat")
         );
         drop(db);
@@ -797,11 +800,16 @@ mod tests {
         };
 
         let load_dir = dir.join("db-load");
-        let db = Db::create(&load_dir, crate::schema::Ledger)
-            .expect("create")
-            .expect("accepted");
+        let db = Db::create(
+            &load_dir,
+            crate::schema::Ledger,
+            crate::harness::bench_work(),
+        )
+        .expect("create")
+        .expect("accepted");
         crate::corpus::load_bumbledb(&db, cfg).expect("load");
-        db.compact(&c0.join("db")).expect("compact");
+        db.compact(&c0.join("db"), crate::harness::bench_work())
+            .expect("compact");
         drop(db);
         let (conn, _) =
             crate::corpus::load_sqlite(&c0.join("oracle.sqlite"), cfg).expect("sqlite load");

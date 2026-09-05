@@ -119,7 +119,7 @@ pub fn relation_rows(mass: Mass, rel: RelationId) -> Box<dyn Iterator<Item = Vec
 /// # Errors
 pub fn load<S>(db: &Db<S>, mass: Mass) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(mass, rel))
                 .map(bumbledb::MutationReport::changed)
         })
@@ -150,7 +150,7 @@ pub fn commit_window_admission(
         let parent = world::WParentId(rng.range(PARENTS));
         let id = world::WChildId(*mint);
         *mint += 1;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert([&world::WChild {
                 id,
                 parent,
@@ -177,7 +177,7 @@ pub fn commit_window_baseline(
         let parent = baseline::WParentId(rng.range(PARENTS));
         let id = baseline::WChildId(*mint);
         *mint += 1;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert([&baseline::WChild {
                 id,
                 parent,
@@ -204,7 +204,7 @@ pub fn commit_window_exclusion(
         let parent = world::WParentId(unselected_parent(&mut rng));
         let id = world::WChildId(*mint);
         *mint += 1;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert([&world::WChild {
                 id,
                 parent,

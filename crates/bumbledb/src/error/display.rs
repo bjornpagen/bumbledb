@@ -1020,13 +1020,11 @@ impl fmt::Display for Error {
                  points are MIN..=MAX-1; MAX is the ray's \u{221e}",
                 param.0
             ),
-            Self::CapacityRayMeasure { statement, fact } => write!(
+            Self::CapacityRayMeasure { statement } => write!(
                 f,
                 "statement {}: capacity measure of a ray — a row's Duration weight or \
-                 bound is [s, ∞), which has no finite measure; the commit refuses whole \
-                 (offending row: {} bytes)",
-                statement.0,
-                fact.len()
+                 bound is [s, ∞), which has no finite measure; the commit refuses whole",
+                statement.0
             ),
             Self::DerivedBudgetExceeded { rounds, tuples } => write!(
                 f,

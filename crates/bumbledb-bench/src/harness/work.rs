@@ -21,12 +21,14 @@ pub fn bench_policy() -> ExecutionPolicy {
     }
 }
 
-/// # Errors
-/// Invalid timeout — the bench policy is representable on a 64-bit clock.
-pub fn bench_work() -> Result<WorkContext, String> {
+/// Start the harness's fixed, validated policy for one operation.
+/// # Panics
+/// If the fixed benchmark policy ceases to have a representable deadline.
+#[must_use]
+pub fn bench_work() -> WorkContext {
     bench_policy()
         .start()
-        .map_err(|error| format!("bench work: {error}"))
+        .expect("the fixed benchmark policy has a representable deadline")
 }
 
 /// Tight work-unit cap for D08-shaped semantic checks (no timing).

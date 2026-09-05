@@ -24,13 +24,14 @@
  * bridge for open/create; it is never respelled as text here. Both are
  * read-only: they never open, initialize, freeze or migrate a database.
  */
-import { internalMigrationRead, internalMigrationSchema } from "@bjornpagen/bumbledb/internal/log"
+
 import type { ExecutionPolicy, SchemaSpec } from "@bjornpagen/bumbledb"
+import { internalMigrationRead, internalMigrationSchema } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Schema } from "effect"
 import type { LogError } from "#errors.ts"
 import { logFailure } from "#errors.ts"
-import { compactJson } from "#migrations/canonical.ts"
 import type { JsonValue } from "#migrations/canonical.ts"
+import { compactJson } from "#migrations/canonical.ts"
 import type { ChainRequest, MigrationCodec, SchemaIdentity } from "#migrations/codec.ts"
 import { boundedDetail, repository } from "#migrations/fail.ts"
 
@@ -87,9 +88,9 @@ const decodeChainResponse = Schema.decodeUnknownOption(ChainResponse)
  * core `Internal` — never a fabricated success and never string matching.
  */
 export function nativeRefusal(operation: string, code: string, detail: string): LogError {
-	return logFailure(detail.length === 0 ? operation : `${operation}: ${boundedDetail(detail)}`, {
+	return logFailure(operation, {
 		source: "protocol",
-		reason: { _tag: code }
+		reason: { _tag: code, detail: boundedDetail(detail) }
 	})
 }
 
@@ -99,15 +100,6 @@ export function nativeRefusal(operation: string, code: string, detail: string): 
 
 function requestBytes(body: JsonValue): Uint8Array {
 	return encoder.encode(compactJson(body))
-}
-
-/** Native `compiledMappings` is a JSON array node, not a string wrapper. */
-function mappingsJson(text: string): JsonValue {
-	try {
-		return JSON.parse(text) as JsonValue
-	} catch {
-		return []
-	}
 }
 
 function decodeResponse(operation: string, bytes: Uint8Array): Effect.Effect<unknown, LogError> {
@@ -147,7 +139,6 @@ const verifyChain = Effect.fn("bumbledb-log.migrations.verifyChain")(function* (
 	work: ExecutionPolicy
 ) {
 	const operation = "migrations.verifyChain"
-	const mappings = mappingsJson(request.compiled.compiledMappings)
 	const raw = yield* internalMigrationRead(
 		requestBytes({
 			kind: "chain",
@@ -156,14 +147,7 @@ const verifyChain = Effect.fn("bumbledb-log.migrations.verifyChain")(function* (
 			snapshots: request.snapshots,
 			plans: request.plans,
 			append: request.append,
-			planSet: request.planSet === null ? null : { first: request.planSet.first, count: request.planSet.count },
-			compiledMappings: mappings,
-			compiled: {
-				baseSnapshot: request.compiled.baseSnapshot,
-				intermediateSnapshots: [...request.compiled.intermediateSnapshots],
-				orderedPlans: [...request.compiled.orderedPlans],
-				compiledMappings: request.compiled.compiledMappings
-			}
+			planSet: request.planSet === null ? null : { first: request.planSet.first, count: request.planSet.count }
 		}),
 		work
 	)

@@ -5,7 +5,7 @@ use super::FixedBytesValue;
 use super::{FactView, I64_SIGN_BIT, InternId, IntervalElement, ValueRef, ValueType};
 use crate::error::{CorruptionError, Error};
 use bumbledb_theory::schema::FixedIntervalElement;
-use bumbledb_theory::{F64, Id128, Interval};
+use bumbledb_theory::{F64, Interval, Uuid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldDecodeError {
@@ -285,21 +285,21 @@ pub fn decode_interval_f64(
     }
 }
 
-/// Typed `id128` field: the sixteen exact bytes. Total — every byte
+/// Typed `uuid` field: the sixteen exact bytes. Total — every byte
 /// pattern is a valid application-owned identity.
 /// # Panics
 /// Only on a programmer-invariant violation: the addressed field is not
-/// an `id128`.
+/// an `uuid`.
 #[must_use]
-pub fn decode_id128(fact: FactView<'_, '_>, field_idx: usize) -> Id128 {
+pub fn decode_uuid(fact: FactView<'_, '_>, field_idx: usize) -> Uuid {
     assert!(
-        matches!(fact.layout.field_type(field_idx), ValueType::Id128),
-        "id128 field: the layout derives the type"
+        matches!(fact.layout.field_type(field_idx), ValueType::Uuid),
+        "uuid field: the layout derives the type"
     );
     let bytes: [u8; 16] = field_bytes(fact, field_idx)
         .try_into()
-        .expect("id128 field: the layout derives the width");
-    Id128::from_bytes(bytes)
+        .expect("uuid field: the layout derives the width");
+    Uuid::from_bytes(bytes)
 }
 
 /// Typed `interval<i64>` field — general or fixed-width, as
@@ -359,7 +359,7 @@ pub fn decode_field(
                 .map_err(|_| FieldDecodeError::NonCanonicalF64(bytes))
         }
         ValueType::String => Ok(ValueRef::String(InternId::from_raw(decode_u64(word())))),
-        ValueType::Id128 => Ok(ValueRef::Id128(decode_id128(fact, field_idx))),
+        ValueType::Uuid => Ok(ValueRef::Uuid(decode_uuid(fact, field_idx))),
         ValueType::FixedBytes { .. } => decode_fixed_bytes(fact, field_idx).map(ValueRef::bytes),
         ValueType::Interval {
             element: IntervalElement::U64,
@@ -424,7 +424,7 @@ pub(crate) fn decode_values_keyed_into(
             ValueRef::U64(v) => Value::U64(v),
             ValueRef::I64(v) => Value::I64(v),
             ValueRef::F64(v) => Value::F64(v),
-            ValueRef::Id128(v) => Value::Id128(v),
+            ValueRef::Uuid(v) => Value::Uuid(v),
             ValueRef::String(id) => Value::String(resolve_str(id.raw())?),
             ValueRef::Bytes(_) => {
                 panic!("bytes<N> decodes through decode_fixed_bytes")

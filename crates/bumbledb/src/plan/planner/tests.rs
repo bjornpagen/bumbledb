@@ -26,7 +26,12 @@ fn schema(n: usize, arity: usize) -> Schema {
                     .collect(),
             })
             .collect(),
-        statements: vec![],
+        statements: (0..n)
+            .map(|r| StatementDescriptor::Functionality {
+                relation: RelationId(u32::try_from(r).expect("small fixture")),
+                projection: Box::from([FieldId(0)]),
+            })
+            .collect(),
     }
     .validate()
     .expect("valid fixture")
@@ -119,7 +124,7 @@ fn order_cost(
                 }
                 let projection = theory.projection(*id)?;
                 let mut set = 0u128;
-                for field in projection.projection.iter() {
+                for field in &projection.projection {
                     let (_, var) = occ(i).vars.iter().find(|(f, _)| f == field)?;
                     set |= 1 << var_index[var];
                 }
@@ -258,7 +263,7 @@ fn pointwise_prefix_join_takes_the_general_fanout() {
 }
 
 #[test]
-fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
+fn full_pointwise_projection_does_not_claim_scalar_uniqueness() {
     let schema = pointwise_schema();
     let query = normalized(vec![
         occurrence(0, 0, vec![(0, 0), (1, 1)]),
@@ -267,7 +272,7 @@ fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
     let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
     let (occs, _) = densify(&query, &positive, &schema, &pointwise_stats());
     let est = estimate(5, occs[0].vars, &occs, &[], 1);
-    assert_eq!(est, 5, "full key coverage: the reference-walk bound");
+    assert_eq!(est, 20, "pointwise keys retain general fanout");
 
     let no_key = OccInfo {
         key_var_sets: Vec::new(),

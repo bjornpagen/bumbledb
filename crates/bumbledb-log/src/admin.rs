@@ -19,8 +19,8 @@ use bumbledb::integration::{
 };
 use bumbledb::{Db, ExecutionPolicy, WorkContext, WorkError};
 
-use crate::checkpointer::read_live_head;
 use crate::certainty::AdminCertainty;
+use crate::checkpointer::read_live_head;
 use crate::history::authority::{
     ActivateOutcome, ActivationCause, AuthorityError, DeleteOutcome, DeletedReason, FreezeIntent,
     FreezeOutcome, HeadAuthority, decode_control, encode_control,
@@ -373,7 +373,9 @@ where
                     Ok(ConditionalOutcome::Published { .. }) => {
                         return AdminCertainty::Completed { value };
                     }
-                    Ok(ConditionalOutcome::PreconditionFailed | ConditionalOutcome::Indeterminate) => {
+                    Ok(
+                        ConditionalOutcome::PreconditionFailed | ConditionalOutcome::Indeterminate,
+                    ) => {
                         // Re-read; evidence recognition resolves a lost
                         // response, a competing writer forces a fresh step.
                     }

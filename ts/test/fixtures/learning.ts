@@ -9,16 +9,16 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { ref, weigh, within } from "#capacity.ts"
 import { on } from "#face.ts"
-import { f64, i64, id128, interval, str, u64 } from "#fields.ts"
+import { f64, i64, interval, str, u64, uuid } from "#fields.ts"
 import { relation } from "#relation.ts"
 import type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
 import { schema } from "#schema.ts"
 import { capacity, contained, key } from "#statements.ts"
 
-export const Student = relation("Student", { id: id128, name: str, budget: u64 })
+export const Student = relation("Student", { id: uuid, name: str, budget: u64 })
 export const Attempt = relation("Attempt", {
-	id: id128,
-	student: id128,
+	id: uuid,
+	student: uuid,
 	score: f64,
 	units: u64,
 	active: interval(i64)

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { Result } from "effect"
 
 import { closed } from "#closed.ts"
 import { bool, bytes, i64, interval, literalOf, span, str, u64 } from "#fields.ts"
@@ -175,19 +176,17 @@ describe("closed relations", function describeClosed() {
 
 describe("intervals", function describeIntervals() {
 	test("span constructs half-open nonempty intervals and rejects the rest", function probeSpan() {
-		const active = span(0n, 10n)
+		const active = Result.getOrThrow(span(0n, 10n))
 		assert.equal(active.start, 0n)
 		assert.equal(active.end, 10n)
-		assert.throws(function emptySpan() {
-			span(5n, 5n)
-		}, /start must be < end/)
-		assert.throws(function invertedSpan() {
-			span(6n, 5n)
-		}, /start must be < end/)
+		for (const refused of [span(5n, 5n), span(6n, 5n)]) {
+			assert.ok(Result.isFailure(refused))
+			assert.equal(refused.failure.code, "InvalidArgument")
+		}
 	})
 
 	test("the ray is representable", function probeRay() {
-		const ray = span(7n, 2n ** 64n)
+		const ray = Result.getOrThrow(span(7n, 2n ** 64n))
 		assert.equal(ray.end, 2n ** 64n)
 	})
 })

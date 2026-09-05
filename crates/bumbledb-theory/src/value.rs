@@ -1,10 +1,10 @@
 //! The one literal-value sum.
 //! Query literals (the engine IR's `Term::Literal`) and statement
 //! selection literals ([`crate::schema::Side::selection`]) are the same
-//! type — this module is the zero-dependency home both the IR and
+//! type — this module is the shared value home both the IR and
 //! `schema` import, so neither layer owes the other anything.
 //! denotation: interval variants carry the checked [`crate::Interval`] type,
-//! and [`Value::Id128`] carries the application-owned identity bytes —
+//! and [`Value::Uuid`] carries the application-owned identity bytes —
 //! ordinary canonical data, never database-issued authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
@@ -16,7 +16,7 @@ pub enum Value {
     /// An application-owned 128-bit identity value: sixteen exact bytes,
     /// chosen once before a command seals and reused unchanged across
     /// retries. No reserved patterns, no issuance, no history authority.
-    Id128(crate::Id128),
+    Uuid(crate::Uuid),
 
     String(Box<str>),
 
@@ -35,8 +35,8 @@ pub enum Value {
     IntervalF64(crate::Interval<crate::F64>),
 }
 
-impl From<crate::Id128> for Value {
-    fn from(id: crate::Id128) -> Self {
-        Self::Id128(id)
+impl From<crate::Uuid> for Value {
+    fn from(id: crate::Uuid) -> Self {
+        Self::Uuid(id)
     }
 }

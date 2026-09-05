@@ -37,10 +37,12 @@ fn idiom_schema() -> Schema {
         ],
         // A(id) -> A: the absence-half witness proof rides this declared
         // key (A's occurrence binds id only, not the whole row).
-        statements: vec![bumbledb_theory::schema::StatementDescriptor::Functionality {
-            relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
-        }],
+        statements: vec![
+            bumbledb_theory::schema::StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+        ],
     }
     .validate()
     .expect("valid fixture")

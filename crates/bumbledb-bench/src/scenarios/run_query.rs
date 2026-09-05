@@ -40,7 +40,9 @@ impl Engine {
                 let mut buffer = Answers::new();
                 stores
                     .db
-                    .read(|snap| snap.execute(prepared, &bind_values(params), &mut buffer))
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.execute(prepared, &bind_values(params), &mut buffer)
+                    })
                     .map_err(|e| format!("execute: {e:?}"))?;
                 Ok(compare::from_answers(&buffer, types))
             }
@@ -49,7 +51,9 @@ impl Engine {
                 statement,
             } => Ok(stores
                 .db
-                .read(|snap| snap.get_dyn(*relation, *statement, params))
+                .read(crate::harness::bench_work(), |snap| {
+                    snap.get_dyn(*relation, *statement, params)
+                })
                 .map_err(|e| format!("get_dyn: {e:?}"))?
                 .map(|fact| compare::from_fact(&fact))
                 .into_iter()
@@ -82,7 +86,7 @@ pub(super) fn gate(
             let query = query();
             let prepared = stores
                 .db
-                .prepare(&query)
+                .prepare(&query, crate::harness::bench_work())
                 .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
             let types: Vec<ValueType> = prepared
                 .signature()
@@ -210,8 +214,10 @@ pub(super) fn run_query(
             let mut buffer = Answers::new();
             harness::measure(proto, || {
                 let params = bind_values(rotation.next_set());
-                db.read(|snap| snap.execute(prepared, &params, &mut buffer))
-                    .map_err(|e| format!("execute: {e:?}"))?;
+                db.read(crate::harness::bench_work(), |snap| {
+                    snap.execute(prepared, &params, &mut buffer)
+                })
+                .map_err(|e| format!("execute: {e:?}"))?;
                 Ok(buffer.len() as u64)
             })?
         }
@@ -220,7 +226,9 @@ pub(super) fn run_query(
             statement,
         } => harness::measure(proto, || {
             let fact = db
-                .read(|snap| snap.get_dyn(*relation, *statement, rotation.next_set()))
+                .read(crate::harness::bench_work(), |snap| {
+                    snap.get_dyn(*relation, *statement, rotation.next_set())
+                })
                 .map_err(|e| format!("get_dyn: {e:?}"))?;
 
             Ok(std::hint::black_box(fact).map_or(0, |_| 1))
@@ -240,8 +248,10 @@ pub(super) fn run_query(
                 let mut buffer = Answers::new();
                 harness::measure_batched(proto, alloc_modes, 1, || {
                     let params = bind_values(rotation.next_set());
-                    db.read(|snap| snap.execute(prepared, &params, &mut buffer))
-                        .map_err(|e| format!("execute: {e:?}"))?;
+                    db.read(crate::harness::bench_work(), |snap| {
+                        snap.execute(prepared, &params, &mut buffer)
+                    })
+                    .map_err(|e| format!("execute: {e:?}"))?;
                     Ok(buffer.len() as u64)
                 })?
             }
@@ -250,7 +260,9 @@ pub(super) fn run_query(
                 statement,
             } => harness::measure_batched(proto, alloc_modes, 1, || {
                 let fact = db
-                    .read(|snap| snap.get_dyn(*relation, *statement, rotation.next_set()))
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.get_dyn(*relation, *statement, rotation.next_set())
+                    })
                     .map_err(|e| format!("get_dyn: {e:?}"))?;
                 Ok(std::hint::black_box(fact).map_or(0, |_| 1))
             })?,

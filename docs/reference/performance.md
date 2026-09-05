@@ -30,7 +30,7 @@ preimage.
 | Role | Width | Reason |
 | --- | ---: | --- |
 | Physical row ID | 8 bytes | Local row indirection, not a content hash or portable application identity |
-| Application Id128 | 16 bytes | Ordinary application data, chosen once before a command is sealed |
+| Application Uuid | 16 bytes | Ordinary application data, chosen once before a command is sealed |
 | Membership / wide determinant fingerprint | 16 bytes | Candidate routing; canonical bytes still decide equality |
 | Exact determinant | Checked encoded width | Avoid hashing small fixed domains; ordering is explicit |
 | Schema, command, decision, object and migration commitments | 32 bytes | Authoritative content bindings, with distinct domains |
@@ -38,7 +38,7 @@ preimage.
 
 Live raw key sizes from the current layout (L20 `appperf::constants`,
 rechecked 2026-09-05): row **13**, membership **29**, exact u64
-determinant **19**, Id128 determinant **27**. Determinant overhead is
+determinant **19**, Uuid determinant **27**. Determinant overhead is
 tag + `ProjectionId` + row (11), not a declaration-order statement
 number. Recalculate if
 `crates/bumbledb/src/storage/store/keys.rs` or

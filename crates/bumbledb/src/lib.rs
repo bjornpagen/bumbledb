@@ -8,12 +8,12 @@
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
-//!     relation Holder { id: id128 as HolderId }
-//!     relation Account { id: id128 as AccountId }
+//!     relation Holder { id: uuid as HolderId }
+//!     relation Account { id: uuid as AccountId }
 //!     Holder(id) -> Holder;
 //!     Account(id) -> Account;
 //! }
-//! let account = AccountId(bumbledb::Id128::from_bytes([1; 16]));
+//! let account = AccountId(bumbledb::Uuid::from_bytes([1; 16]));
 //! let _holder: HolderId = account; // mismatched types: rustc refuses
 //! ```
 //! The schema typestate closes the cross-schema hole the same way: an
@@ -21,12 +21,12 @@
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
-//!     relation Holder { id: id128 as HolderId }
+//!     relation Holder { id: uuid as HolderId }
 //!     Holder(id) -> Holder;
 //! }
 //! bumbledb::schema! {
 //!     pub Inventory;
-//!     relation Item { id: id128 as ItemId }
+//!     relation Item { id: uuid as ItemId }
 //!     Item(id) -> Item;
 //! }
 //! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
@@ -42,7 +42,7 @@
 //! # let _ = std::fs::remove_dir_all(&dir);
 //! let db = bumbledb::Db::create(&dir, Ledger, work).unwrap().unwrap();
 //! db.write(|tx| {
-//!     let id = ItemId(bumbledb::Id128::from_bytes([7; 16]));
+//!     let id = ItemId(bumbledb::Uuid::from_bytes([7; 16]));
 //!     tx.insert([&Item { id }]) // schema-B fact, schema-A database: rustc refuses
 //!         .map(|_| ())
 //! })
@@ -103,7 +103,7 @@ pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,
     PreparedQuery, ResultCursor, ResultIdentity, ResultPage,
 };
-pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Id128, Id128ParseError};
+pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
 pub use scalar::{NumericCast, ScalarError, ScalarEvaluator, ScalarExpr};
 /// Narrow native wrapper seam; not a public key/value database product.
@@ -135,11 +135,10 @@ pub use storage::GenerationId;
 pub use storage::store::CloseReport;
 pub use storage::store::format::LAYOUT as STORAGE_FORMAT_VERSION;
 pub use work::{
-    ExecutionPolicy, GenerationHandle, GenerationState, ResolverView, WeakGenerationHandle,
-    ScratchClaimKey,
-    ScratchAppend, ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe, ScratchRelation,
-    ScratchTextLookup, ScratchWriteBatch,
-    ScratchWordKey, WorkContext, WorkError,
+    ExecutionPolicy, GenerationHandle, GenerationState, ResolverView, ScratchAppend,
+    ScratchClaimKey, ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe, ScratchRelation,
+    ScratchTextLookup, ScratchWordKey, ScratchWriteBatch, WeakGenerationHandle, WorkContext,
+    WorkError,
 };
 
 /// Successor physical store (C04): LMDB owner, owned snapshots, private

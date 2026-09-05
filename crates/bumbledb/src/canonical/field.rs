@@ -94,8 +94,7 @@ pub(crate) const fn interval_tag_u64(descriptor: &FieldDescriptor) -> bool {
         descriptor.value_type,
         ValueType::Interval {
             element: bumbledb_theory::schema::IntervalElement::U64,
-        }
-        | ValueType::FixedInterval {
+        } | ValueType::FixedInterval {
             element: bumbledb_theory::schema::FixedIntervalElement::U64,
             ..
         }
@@ -108,8 +107,7 @@ pub(crate) const fn interval_tag_i64(descriptor: &FieldDescriptor) -> bool {
         descriptor.value_type,
         ValueType::Interval {
             element: bumbledb_theory::schema::IntervalElement::I64,
-        }
-        | ValueType::FixedInterval {
+        } | ValueType::FixedInterval {
             element: bumbledb_theory::schema::FixedIntervalElement::I64,
             ..
         }

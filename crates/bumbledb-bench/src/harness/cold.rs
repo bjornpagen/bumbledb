@@ -46,7 +46,7 @@ pub fn org_touch(
             id
         } else {
             let probed = db
-                .read(|snap| {
+                .read(crate::harness::bench_work(), |snap| {
                     let mut max: Option<u64> = None;
                     for fact in snap.scan(crate::schema::ids::ORG)? {
                         let row = fact?;
@@ -60,7 +60,7 @@ pub fn org_touch(
             next = Some(probed);
             probed
         };
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert([&crate::schema::Org {
                 id: crate::schema::OrgId(id),
                 name: &format!("__touch_{id}"),

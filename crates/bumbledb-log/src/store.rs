@@ -34,8 +34,8 @@ pub use fence::{
     acquire_repository_lock,
 };
 pub use receive::{
-    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
-    ReceivingStore, TransportContext, TransportObservation, RECEIVE_CHUNK_BYTES,
+    ObservedError, RECEIVE_CHUNK_BYTES, ReceiveAccumulator, ReceiveFault, ReceiveLimits,
+    ReceivedBody, ReceivedHead, ReceivingStore, TransportContext, TransportObservation,
 };
 
 use std::fmt;
@@ -242,6 +242,8 @@ pub fn decision_key(prefix: &str, epoch: u64, digest: &DecisionDigest) -> String
 /// protocol outcome; every other arm is a definite verified refusal.
 #[derive(Debug)]
 pub enum ObjectError {
+    /// The caller's bounded history walk ended before establishing evidence.
+    WalkBudgetExhausted,
     /// Transport/auth/IO with no definite observation.
     Backend(Box<dyn std::error::Error + Send + Sync>),
     /// A referenced object is definitely absent.
@@ -271,6 +273,7 @@ pub enum ObjectError {
 impl fmt::Display for ObjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::WalkBudgetExhausted => f.write_str("decision walk budget exhausted"),
             Self::Backend(error) => write!(f, "object backend: {error}"),
             Self::Missing { key } => write!(f, "object missing: {key}"),
             Self::WrongLength { key, expected, got } => {

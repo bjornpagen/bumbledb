@@ -11,7 +11,7 @@ use crate::schema::{
     StatementId, StatementKind, ValidateDescriptor as _, ValueType, Weight,
 };
 use crate::work::ExecutionPolicy;
-use crate::{F64, Id128, Interval, Value, WorkContext};
+use crate::{F64, Interval, Uuid, Value, WorkContext};
 use std::time::Duration;
 
 fn work() -> WorkContext {
@@ -43,14 +43,14 @@ fn dense(start: f64, end: f64) -> Interval<F64> {
     Interval::<F64>::new(F64::from(start), F64::from(end)).expect("checked fixture")
 }
 
-/// `User { id: id128, email: str }` with two keys: id and email.
+/// `User { id: uuid, email: str }` with two keys: id and email.
 fn user_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
             name: "User".into(),
             fields: vec![
-                field("id", ValueType::Id128),
+                field("id", ValueType::Uuid),
                 field("email", ValueType::String),
             ],
         }],
@@ -65,7 +65,7 @@ fn user_schema() -> Schema {
 
 fn user(id: u8, email: &str) -> Vec<Value> {
     vec![
-        Value::Id128(Id128::from_bytes([id; 16])),
+        Value::Uuid(Uuid::from_bytes([id; 16])),
         Value::String(email.into()),
     ]
 }
@@ -115,7 +115,7 @@ fn every_violated_statement_is_reported_in_canonical_order() {
     state.insert(
         RelationId(0),
         vec![
-            Value::Id128(Id128::from_bytes([1; 16])),
+            Value::Uuid(Uuid::from_bytes([1; 16])),
             Value::String("a@example".into()),
         ],
     );
@@ -129,7 +129,7 @@ fn every_violated_statement_is_reported_in_canonical_order() {
     state.insert(
         RelationId(0),
         vec![
-            Value::Id128(Id128::from_bytes([1; 16])),
+            Value::Uuid(Uuid::from_bytes([1; 16])),
             Value::String("a@example ".into()),
         ],
     );

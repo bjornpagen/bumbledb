@@ -41,6 +41,9 @@ bumbledb::schema! {
     Alpha(beta) <= Beta(id);
     Beta(alpha) <= Alpha(id);
     Node(parent) <= Node(id);
+    Alpha(id) -> Alpha;
+    Beta(id) -> Beta;
+    Node(id) -> Node;
 }
 
 #[test]
@@ -170,13 +173,17 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     .expect("write")
     .unwrap();
     let mut facts = db
-        .read(common::work(), |snap| snap.scan(RelationId(1))?.collect::<Result<Vec<_>, _>>())
+        .read(common::work(), |snap| {
+            snap.scan(RelationId(1))?.collect::<Result<Vec<_>, _>>()
+        })
         .expect("scan");
     facts.sort_by_key(|f| match f[0] {
         Value::U64(id) => id,
         _ => unreachable!("one reference column"),
     });
-    assert_eq!(facts, vec![vec![Value::U64(0)], vec![Value::U64(255)]]);
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].values(), &[Value::U64(0)]);
+    assert_eq!(facts[1].values(), &[Value::U64(255)]);
 
     let _ = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert_dyn(RelationId(1), [&[Value::U64(256)]])?;
@@ -307,10 +314,12 @@ fn zero_binding_gate_with_global_count() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, crate::common::work()).expect("prepare");
 
     let answers = db
-        .read(common::work(), |snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| {
+            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+        })
         .expect("execute");
     assert!(answers.is_empty(), "an empty gate empties the query");
 
@@ -318,7 +327,9 @@ fn zero_binding_gate_with_global_count() {
         .expect("open the gate")
         .unwrap();
     let answers = db
-        .read(common::work(), |snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| {
+            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+        })
         .expect("execute");
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), bumbledb::AnswerValue::U64(2));
@@ -379,7 +390,9 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
         .unwrap()
         .value;
 
-    let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
+    let mut prepared = db
+        .prepare(&mixed_params_query(), crate::common::work())
+        .expect("prepare");
     db.read(common::work(), |snap| {
         let args = [
             ParamArg::Scalar(BindValue::I64(5)),
@@ -462,7 +475,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
 
     let mut gapped = mixed_params_query();
     gapped.rules_mut()[0].atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
-    let Err(err) = db.prepare(&gapped).map(|_| ()) else {
+    let Err(err) = db.prepare(&gapped, crate::common::work()).map(|_| ()) else {
         panic!("a gapped param id space must fail to prepare");
     };
     assert!(

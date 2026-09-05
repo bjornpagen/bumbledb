@@ -51,7 +51,7 @@ pub struct ClosedSpec {
 
 /// One field: name, structural type, and host newtype name. [`ValueType`]
 /// is the one structural-type vocabulary — `bool`, `u64`, `i64`, `f64`,
-/// `id128`, `str` ([`ValueType::String`]), `bytes<N>`
+/// `uuid`, `str` ([`ValueType::String`]), `bytes<N>`
 /// ([`ValueType::FixedBytes`]), and the interval family
 /// ([`ValueType::Interval`] / [`ValueType::FixedInterval`]) — so the spec can
 /// state every type the grammar can. There is no `fresh` mark: the

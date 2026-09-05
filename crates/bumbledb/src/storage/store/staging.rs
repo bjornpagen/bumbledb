@@ -43,11 +43,11 @@ use super::judge_bridge::UnindexedRows;
 use super::map::MapPolicy;
 use super::snapshot::OwnedSnapshot;
 use super::store_env::{
-    Store, init_staging_directory, publish_staging, staging_path, PublishOutcome,
+    PublishOutcome, Store, init_staging_directory, publish_staging, staging_path,
 };
+use crate::ChangeSet;
 use crate::schema::Schema;
 use crate::work::{ByteKind, ByteReservation, WorkContext};
-use crate::ChangeSet;
 
 /// Exact staging identity owned for cleanup. Dropping an unpublished owner
 /// removes only this sibling, never an unrelated destination or a path
@@ -134,10 +134,7 @@ pub enum InstallOutcome {
     Installed(Store),
     /// This attempt's rename reached `dest`; a later sync/open step failed.
     /// Cleanup must not remove `dest`.
-    SettlementFailed {
-        dest: PathBuf,
-        detail: StoreError,
-    },
+    SettlementFailed { dest: PathBuf, detail: StoreError },
     /// Nothing was published. `cleanup` owns this attempt's unpublished sibling.
     NotInstalled {
         cleanup: StagingCleanup,
@@ -277,8 +274,9 @@ impl UnreadyStore {
             Judgment::Rejected(judged) => {
                 let statement = judged
                     .first()
-                    .map(|violation| violation.statement)
-                    .unwrap_or(bumbledb_theory::schema::StatementId(0));
+                    .map_or(bumbledb_theory::schema::StatementId(0), |violation| {
+                        violation.statement
+                    });
                 drop(judged);
                 return Err(StoreError::JudgeRefused {
                     statement,
@@ -346,7 +344,7 @@ impl StageWriter<'_> {
             after,
             work,
             byte_cap,
-            &mut |key, _value| {
+            &mut |key, _value| -> StoreResult<()> {
                 let charge = work.reserve(ByteKind::Working, key.len() as u64)?;
                 held.push((key.to_vec(), charge));
                 Ok(())

@@ -92,6 +92,7 @@ fn cell(
 /// Frozen compact matrix. Structure tests refuse missing families/gates
 /// and refuse a cartesian explosion (one cell per needed regime only).
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "One declarative benchmark roster")]
 pub fn scorecard() -> Vec<Cell> {
     vec![
         cell(
@@ -158,7 +159,11 @@ pub fn scorecard() -> Vec<Cell> {
             Regime::Selective,
             Gate::AppNumeric,
             "dense float-interval endpoint oracle + temporal Pack naive",
-            &["interval kernel path", "Pack logical merge", "length errors"],
+            &[
+                "interval kernel path",
+                "Pack logical merge",
+                "length errors",
+            ],
             "dense intervals and Pack agree with the endpoint/sweep oracle; \
              D11 order is logical, not insertion-token",
         ),

@@ -6,7 +6,7 @@
 bumbledb::schema! {
     pub Review;
 
-    relation Item { id: u64 as ItemId, fresh, lease: interval<u64, 7> as Lease }
+    relation Item { id: u64 as ItemId, lease: interval<u64, 7> as Lease }
 
     Item(id | lease == 1..3) <= Item(id);
 }

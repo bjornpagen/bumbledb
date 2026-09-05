@@ -9,7 +9,7 @@
  *
  * Verification: NotRun until packed-consumer qualification.
  */
-import { ChangeSet, type ChangeSet as ChangeSetType, Id128, type ExecutionPolicy, type QueryReader } from "@bjornpagen/bumbledb"
+import { ChangeSet, type ChangeSet as ChangeSetType, Uuid, type ExecutionPolicy, type QueryReader } from "@bjornpagen/bumbledb"
 import {
 	Command,
 	type GeneratedMigrations,
@@ -51,17 +51,17 @@ export { incrementUnits, incrementUnitsIntent, makeConsumerRuntime, resolveAfter
 export interface NativeCommand {
 	readonly receiptEpoch: ReceiptEpoch
 	readonly requestId: RequestId
-	readonly attempt: Id128
+	readonly attempt: Uuid
 }
 
-/** Observation key preserved from native-ledger — a string, not Id128. */
+/** Observation key preserved from native-ledger — a string, not Uuid. */
 export interface Observation {
 	readonly source: "published"
 	readonly reportToken: string
 }
 
-export const mintCommand = Effect.gen(function* (attempt: Id128) {
-	const requestSource = yield* Id128.random()
+export const mintCommand = Effect.gen(function* (attempt: Uuid) {
+	const requestSource = yield* Effect.sync(() => crypto.randomUUID())
 	const requestId = yield* Effect.fromResult(RequestId.from(requestSource))
 	const receiptEpoch = yield* Effect.fromResult(ReceiptEpoch.from(1n))
 	return { receiptEpoch, requestId, attempt } satisfies NativeCommand
@@ -110,7 +110,7 @@ export const submitTerminal = (
 export const retrySameCommand = (
 	binding: LocalBinding,
 	command: NativeCommand,
-	studentId: Id128,
+	studentId: Uuid,
 	state: OutboxState,
 	options: ExecutionPolicy
 ) =>
@@ -127,7 +127,7 @@ export const retrySameCommand = (
 
 export const witnessedPin = (
 	binding: LocalBinding,
-	attemptId: Id128,
+	attemptId: Uuid,
 	correction: NativeCommand,
 	state: OutboxState,
 	options: SubmitOptions
@@ -169,13 +169,13 @@ export const witnessedPin = (
 /** Same read helper on published snapshots — no adapter. */
 export const readPublishedAttempts = (
 	reader: QueryReader<typeof Learning>,
-	student: Id128,
+	student: Uuid,
 	delivery: ExecutionPolicy
 ) => readAttempts(reader, student, delivery)
 
 export const collectPublishedUnderTinyBudget = (
 	reader: QueryReader<typeof Learning>,
-	student: Id128
+	student: Uuid
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {

@@ -1,9 +1,7 @@
 use crate::error::{Error, FindIndex, OverflowKind, Result};
 use crate::exec::kernel::numeric::ExactF64Accumulator;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
-use crate::exec::sink::{
-    Acc, AggregateSink, GroupState, SinkSpec, encode_stage_row, i64_to_word,
-};
+use crate::exec::sink::{Acc, AggregateSink, GroupState, SinkSpec, encode_stage_row, i64_to_word};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::work::WorkContext;
 
@@ -98,6 +96,7 @@ impl AggregateSink {
     }
 
     /// Same stream as [`Self::stream_finalize`].
+    #[cfg(test)]
     pub(crate) fn stream_finalize_into_scratch(
         &mut self,
         dest: &mut ScratchRelation,

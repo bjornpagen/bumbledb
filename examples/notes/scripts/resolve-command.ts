@@ -7,7 +7,7 @@
  *
  * Verification: NotRun until F3.
  */
-import { Id128, NativeRuntime } from "@bjornpagen/bumbledb"
+import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
 import { parseCommandRef } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
@@ -23,9 +23,9 @@ if (tenantId === undefined || requestKeyHex === undefined) {
 	process.exit(2)
 }
 
-const requestKey = Id128.fromHex(requestKeyHex)
+const requestKey = Uuid.parse(requestKeyHex)
 if (Result.isFailure(requestKey)) {
-	console.error("request key must be 32 lowercase hex characters")
+	console.error("request key must be canonical UUID text")
 	process.exit(2)
 }
 

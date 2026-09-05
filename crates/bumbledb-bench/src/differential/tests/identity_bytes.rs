@@ -299,7 +299,7 @@ fn queries() -> Vec<Op> {
 fn identity_bytes_agree_with_the_naive_model() {
     let dir = TempDir::new("differential");
     let descriptor = schema();
-    let db = Db::create(dir.path(), descriptor)
+    let db = Db::create(dir.path(), descriptor, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     let mut naive = NaiveDb::new(&schema());

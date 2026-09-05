@@ -4,7 +4,6 @@
 //! resident `emit_pack_group`. Production `finalize_spilled` streams one
 //! group and fetches one header.
 
-use super::*;
 use crate::error::Error;
 use crate::exec::run::{Bindings, Sink as _};
 use crate::exec::sink::aggregate::spill::{PACK_WIDE_CLAIM_BYTES, pack_requires_wide};
@@ -45,10 +44,10 @@ fn independent_pack(claims: &[(Vec<u64>, u64, u64)]) -> Vec<Vec<u64>> {
     }
     impl Continuation<u64, ()> for Collect<'_> {
         type Error = ();
-        fn segment(&mut self, (): ()) -> Result<(), ()> {
+        fn segment(&mut self, (): ()) -> std::result::Result<(), ()> {
             Ok(())
         }
-        fn maximal(&mut self, start: u64, frontier: u64) -> Result<(), ()> {
+        fn maximal(&mut self, start: u64, frontier: u64) -> std::result::Result<(), ()> {
             let mut row = self.group.to_vec();
             row.push(start);
             row.push(frontier);
@@ -67,7 +66,10 @@ fn independent_pack(claims: &[(Vec<u64>, u64, u64)]) -> Vec<Vec<u64>> {
     let mut rows = Vec::new();
     for (group, mut segments) in by_group {
         segments.sort_unstable();
-        let items = segments.iter().copied().map(|(start, end)| Ok((start, end, ())));
+        let items = segments
+            .iter()
+            .copied()
+            .map(|(start, end)| Ok((start, end, ())));
         sweep(
             items,
             None,
@@ -126,10 +128,7 @@ fn d11_reverse_overlap_across_flushes_unions_to_one_segment() {
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
     ];
-    let claims = vec![
-        (vec![7], 10, 20),
-        (vec![7], 0, 15),
-    ];
+    let claims = vec![(vec![7], 10, 20), (vec![7], 0, 15)];
     let expected = independent_pack(&claims);
     assert_eq!(expected, vec![vec![7, 0, 20]]);
 
@@ -232,7 +231,7 @@ fn d11_leading_0xfe_narrow_group_is_not_token_mode() {
     assert_eq!(got, expected);
 }
 
-/// D11: group heads past MAX_INLINE_KEY use scratch token tables; forced
+/// D11: group heads past `MAX_INLINE_KEY` use scratch token tables; forced
 /// distinct keys that would share a hash bucket stay separate.
 #[test]
 fn d11_wide_groups_use_scratch_tokens_and_survive_collisions() {
@@ -293,15 +292,15 @@ fn d11_d19_float_endpoints_keep_canonical_order_across_spills() {
     let b = F64::from(0.0).to_order_key();
     let c = F64::NAN.to_order_key();
     let d = F64::INFINITY.to_order_key();
-    let claims = vec![
-        (vec![1], b, d),
-        (vec![1], a, c),
-        (vec![1], b, d),
-    ];
+    let claims = vec![(vec![1], b, d), (vec![1], a, c), (vec![1], b, d)];
     let expected = independent_pack(&claims);
     let got = spilled_pack(finds, 4, 0, &claims);
     assert_eq!(got, expected);
-    assert_eq!(got.len(), 1, "signed-zero through +inf is one run in F64 order");
+    assert_eq!(
+        got.len(),
+        1,
+        "signed-zero through +inf is one run in F64 order"
+    );
 }
 
 /// D19: exact sum/count is not rounded until emit; spilled bits match an
@@ -335,6 +334,7 @@ fn d19_exact_sum_count_not_rounded_before_emit() {
         oracle.push(value).expect("oracle cardinality");
     }
     let expected = vec![vec![
+        3,
         oracle.sum().expect("nonempty").to_order_key(),
         oracle.mean().expect("nonempty").to_order_key(),
         values.len() as u64,
@@ -400,10 +400,7 @@ fn d01_zero_capacity_refuses_before_sink_growth() {
     assert_eq!(emitted, 0, "Q-ATOMIC: no partial pack row");
     assert!(
         ledger.used(Resource::ScratchBytes) == baseline_scratch
-            || matches!(
-                refused,
-                Err(Error::Store(_))
-            ),
+            || matches!(refused, Err(Error::Store(_))),
         "failed reservation must not leave an uncharged scratch payload"
     );
     let _ = baseline_working;

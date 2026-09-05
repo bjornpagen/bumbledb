@@ -1,4 +1,4 @@
-//! The one ChangeSet row codec. No duplicate row encoder lives here.
+//! The one `ChangeSet` row codec. No duplicate row encoder lives here.
 //! Decode borrows `DecodedRow::values()` under the live owner, or
 //! transfers `into_owner()`. Grow/copy through `ChargedBytes` /
 //! `ChargedBuffer::admit_copy`. Bound cell/string/byte work before copy.
@@ -25,8 +25,12 @@ pub(crate) fn encode_rows_bytes(
     }
     let changes = builder.finish().map_err(|error| change_error(&error))?;
     let bytes = changes.as_bytes();
-    let charged = ChargedBytes::adopt(context, ByteKind::Working, bytes.to_vec().into_boxed_slice())
-        .map_err(RuntimeError::from)?;
+    let charged = ChargedBytes::adopt(
+        context,
+        ByteKind::Working,
+        bytes.to_vec().into_boxed_slice(),
+    )
+    .map_err(RuntimeError::from)?;
     Ok(charged.into_owner().as_bytes().to_vec())
 }
 

@@ -46,7 +46,11 @@ describe("the frozen expression roster round-trips exactly", function suite() {
 		assert.deepEqual([...outcome.fields].sort(), ["x", "y"])
 		ok({ kind: "isNaN", expr: { kind: "field", name: "f" } })
 		ok({ kind: "isFinite", expr: { kind: "field", name: "f" } })
-		ok({ kind: "divide", left: { kind: "field", name: "a" }, right: { kind: "literal", value: { $f64: "3ff0000000000000" } } })
+		ok({
+			kind: "divide",
+			left: { kind: "field", name: "a" },
+			right: { kind: "literal", value: { $f64: "3ff0000000000000" } }
+		})
 		for (const cast of ["toF64", "toF64Exact", "toI64Exact", "toU64Exact"]) {
 			ok({ kind: "cast", cast, expr: { kind: "field", name: "n" } })
 		}
@@ -73,9 +77,11 @@ describe("the frozen expression roster round-trips exactly", function suite() {
 	})
 
 	test("identity, bytes and interval literals require canonical spellings", function identities() {
-		assert.deepEqual(planValueOf({ id128: "0f".repeat(16) }), { id128: "0f".repeat(16) })
-		assert.equal(typeof planValueOf({ id128: "0F".repeat(16) }), "string")
-		assert.equal(typeof planValueOf({ id128: "0f".repeat(15) }), "string")
+		assert.deepEqual(planValueOf({ uuid: "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f" }), {
+			uuid: "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f"
+		})
+		assert.equal(typeof planValueOf({ uuid: "0F0F0F0F-0F0F-0F0F-0F0F-0F0F0F0F0F0F" }), "string")
+		assert.equal(typeof planValueOf({ uuid: "0f".repeat(15) }), "string")
 		assert.deepEqual(planValueOf({ fixedBytes: new Uint8Array([0, 255]) }), { fixedBytes: "00ff" })
 		assert.deepEqual(planValueOf({ intervalU64: ["1", "5"] }), { intervalU64: ["1", "5"] })
 		assert.deepEqual(planValueOf({ intervalI64: [-2n, 3n] }), { intervalI64: ["-2", "3"] })
@@ -87,7 +93,7 @@ describe("the frozen expression roster round-trips exactly", function suite() {
 		assert.equal(typeof planValueOf({ bool: true, u64: "1" }), "string")
 	})
 
-	test("anything outside the frozen grammar refuses — no callback or eval escape", function escape() {
+	test("anything outside the frozen grammar refuses — no callback or eval escape", function outsideGrammar() {
 		assert.ok(bad(() => false).includes("functions, promises and plain hosts are not plan data"))
 		assert.ok(bad({ kind: "jsEval", source: "process.exit(1)" }).includes("unsupported expression node"))
 		assert.ok(bad({ kind: "cast", cast: "toString", expr: { kind: "field", name: "x" } }).includes("unknown cast"))

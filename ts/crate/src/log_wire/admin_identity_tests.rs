@@ -26,11 +26,11 @@ use std::time::Duration;
 use bumbledb::Theory as _;
 use bumbledb::work::ExecutionPolicy;
 use bumbledb::{RelationId, Value};
+use bumbledb_log::certainty::SubmitCertainty;
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{
     CommandId, CommandResult, Condition, DatabaseId, IncarnationId, ReceiptEpoch, RequestId,
 };
-use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
 use bumbledb_log::writer::SubmitOptions;
 
 use super::*;
@@ -81,8 +81,8 @@ fn unique_dir(tag: &str) -> std::path::PathBuf {
 
 fn identity_of(descriptor: &bumbledb::SchemaDescriptor, seed: u8) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes([seed; 16])),
-        incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes([seed ^ 0xff; 16])),
+        database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes([seed; 16])),
+        incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes([seed ^ 0xff; 16])),
         schema_id: bumbledb_log::schema_file::schema_id(descriptor).expect("valid schema"),
     }
 }
@@ -99,7 +99,7 @@ fn open_spec(directory: &Path, create: bool, seed: u8) -> OpenSpec {
         discard_mismatched: false,
         creation: create.then(|| {
             (
-                OperationId::from_core(bumbledb::Id128::from_bytes([seed.wrapping_add(1); 16])),
+                OperationId::from_core(bumbledb::Uuid::from_bytes([seed.wrapping_add(1); 16])),
                 artifact,
             )
         }),
@@ -131,7 +131,7 @@ fn drain_resource(resource: &Arc<super::super::HistoryResource>) -> CloseReport 
 }
 
 fn op_id(byte: u8) -> OperationId {
-    OperationId::from_core(bumbledb::Id128::from_bytes([byte; 16]))
+    OperationId::from_core(bumbledb::Uuid::from_bytes([byte; 16]))
 }
 
 /// The requested binding for the local admin verbs under test.
@@ -167,7 +167,7 @@ fn submit_fact(opened: &HistoryOpened, request: u8, a: u64, work: &WorkContext) 
             identity: opened.resource.identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::new(1).expect("one"),
-                request_id: RequestId::from_core(bumbledb::Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(bumbledb::Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -192,7 +192,7 @@ fn snapshot_engine(db: &crate::Engine) -> LocalSnapshot {
     let mut records = Vec::new();
     let mut attachment = None;
     let mut facts = Vec::new();
-    db.read(|read| {
+    db.read(policy().start().unwrap(), |read| {
         read.integration_host_scan(b"", &mut |key: &[u8], value: &[u8]| {
             records.push((key.to_vec(), value.to_vec()));
             Ok(())
@@ -203,7 +203,7 @@ fn snapshot_engine(db: &crate::Engine) -> LocalSnapshot {
             .expect("attachment reads")
             .map(<[u8]>::to_vec);
         for row in read.scan(RelationId(0)).expect("facts scan") {
-            facts.push(row.expect("fact row"));
+            facts.push(row.expect("fact row").values().to_vec());
         }
         Ok(())
     })
@@ -215,7 +215,8 @@ fn snapshot_engine(db: &crate::Engine) -> LocalSnapshot {
 /// directly (nothing else may hold it).
 fn snapshot_dir(directory: &Path) -> LocalSnapshot {
     let ready = bumbledb_log::recovery::materialization_path(directory);
-    let db = crate::Engine::open(&ready, Mini.descriptor()).expect("snapshot open");
+    let db = crate::Engine::open(&ready, Mini.descriptor(), policy().start().unwrap())
+        .expect("snapshot open");
     snapshot_engine(&db)
 }
 
@@ -261,7 +262,7 @@ fn admin_identity_cold_erase_refuses_a_foreign_database_and_mutates_nothing() {
     // Same schema, valid-looking identity — but a DIFFERENT database. The
     // cold transient open must refuse before erase dispatches anything.
     let mut foreign = identity;
-    foreign.database_id = DatabaseId::from_core(bumbledb::Id128::from_bytes([0x99; 16]));
+    foreign.database_id = DatabaseId::from_core(bumbledb::Uuid::from_bytes([0x99; 16]));
     expect_refusal(
         run_admin(
             &runtime,
@@ -318,7 +319,7 @@ fn admin_identity_warm_reuse_refuses_a_stale_incarnation_before_retirement() {
     // The stale binding: the same database under its pre-restore/migration
     // incarnation. Receipt retirement must refuse before touching any row.
     let mut stale = identity;
-    stale.incarnation_id = IncarnationId::from_core(bumbledb::Id128::from_bytes([0x11; 16]));
+    stale.incarnation_id = IncarnationId::from_core(bumbledb::Uuid::from_bytes([0x11; 16]));
     expect_refusal(
         run_admin(
             &runtime,
@@ -401,7 +402,7 @@ fn admin_identity_valid_identity_at_another_tenants_directory_refuses_root_relea
         panic!("pin-root answers the pin verb");
     };
     let root =
-        OperationId::from_core(marshal::id128_in(&root_hex, "test root").expect("root id parses"));
+        OperationId::from_core(marshal::uuid_in(&root_hex, "test root").expect("root id parses"));
     let before = snapshot_dir(&dir_b);
 
     // Erase and root release aimed at B's directory under A's identity: both
@@ -465,8 +466,7 @@ fn admin_identity_stale_binding_after_reincarnation_refuses_epoch_rotation() {
     // The post-restore/post-migration state: database D reborn under a NEW
     // incarnation in this directory.
     let mut spec = open_spec(&dir, true, 9);
-    spec.identity.incarnation_id =
-        IncarnationId::from_core(bumbledb::Id128::from_bytes([0xdd; 16]));
+    spec.identity.incarnation_id = IncarnationId::from_core(bumbledb::Uuid::from_bytes([0xdd; 16]));
     let created = open_history(&runtime, &spec, &work).expect("creates");
     let new_identity = created.resource.identity;
     assert_eq!(drain_resource(&created.resource), CloseReport::Closed);
@@ -474,7 +474,7 @@ fn admin_identity_stale_binding_after_reincarnation_refuses_epoch_rotation() {
 
     // The stale binding names the OLD incarnation.
     let mut stale = new_identity;
-    stale.incarnation_id = IncarnationId::from_core(bumbledb::Id128::from_bytes([0x11; 16]));
+    stale.incarnation_id = IncarnationId::from_core(bumbledb::Uuid::from_bytes([0x11; 16]));
     expect_refusal(
         run_admin(
             &runtime,

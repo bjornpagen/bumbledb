@@ -6,12 +6,12 @@
 //! (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
 use std::sync::Arc;
 
+use super::derived::{ScratchStage, SealedStage};
 use super::run_join::run_join;
 use super::{
     Bindings, EitherSink, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery,
     PreparedRule, ProjectionSink, RecArm,
 };
-use super::derived::{ScratchStage, SealedStage};
 use crate::error::{Error, Result};
 use crate::exec::run::Counters;
 use crate::exec::scratch::ScratchRelation;
@@ -146,10 +146,13 @@ impl DerivedImages {
         Ok(count)
     }
 
-    /// One fallible finalize stream onto L06's admitted dest.
-    /// Tiny stages stay on dest's RAM tier (no `ScratchRelation::new(work, 0)`,
-    /// no scratch env). Larger stages continue on the same dest when its
-    /// RAM allowance is crossed — never a second relation, never force_spill.
+    /// Finalize small stages directly into columnar images, preserving
+    /// the Free Join path for their consumers. Larger/spilled stages
+    /// stream to one RAM-first scratch relation without reconstruction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn stash_aggregate(
         &mut self,
         id: usize,
@@ -157,6 +160,7 @@ impl DerivedImages {
         sink: &mut crate::exec::sink::AggregateSink,
         answer_scratch: &mut Vec<u64>,
         work: &crate::work::WorkContext,
+        generation: &crate::work::GenerationHandle,
         ram_bytes: usize,
     ) -> Result<u64> {
         debug_assert_eq!(
@@ -164,6 +168,31 @@ impl DerivedImages {
             id,
             "derived tables seal in declaration order"
         );
+        if let Some(bound) = sink.resident_row_bound()
+            && u32::try_from(bound).is_ok()
+        {
+            let bytes = crate::image::estimated_slab_bytes(field_types, bound)?;
+            let remaining = work
+                .limit(crate::work::Resource::WorkingBytes)
+                .saturating_sub(work.used(crate::work::Resource::WorkingBytes));
+            if bytes <= ram_bytes && bytes as u64 <= remaining {
+                let image = self.working[id].refill_bounded(
+                    work,
+                    field_types,
+                    bound,
+                    generation,
+                    |_, write| {
+                        sink.finalize_into(answer_scratch, |row| {
+                            write(row);
+                            Ok(())
+                        })
+                    },
+                )?;
+                let count = image.row_count() as u64;
+                self.published.push(SealedStage::Resident(image));
+                return Ok(count);
+            }
+        }
         let mut dest = crate::exec::sink::AggregateSink::admit_dest(work, ram_bytes);
         let count = sink.stream_finalize(&mut dest, answer_scratch)?;
         // dest.spilled() / dest.scratch_path() — never force_spill first.
@@ -182,12 +211,12 @@ fn seal_projection_scratch(
     let mut rows = ScratchRelation::new(work, 0);
     rows.force_spill()?;
     let count = sink.stream_into_scratch(&mut rows, 0, 0)?;
-    Ok(SealedStage::Scratch(ScratchStage {
+    Ok(SealedStage::Scratch(Box::new(ScratchStage {
         rows,
         field_types: field_types.to_vec(),
         row_words,
         count,
-    }))
+    })))
 }
 
 /// Feed a projection drain into an image-slab write. The write itself is
@@ -205,7 +234,7 @@ fn write_projection_rows(
 }
 
 /// One stage's row width in image words: the same slot arithmetic the
-/// binding layout uses (interval/Pack and Id128 columns are two words).
+/// binding layout uses (interval/Pack and Uuid columns are two words).
 fn stage_row_words(field_types: &[ValueType]) -> usize {
     field_types
         .iter()
@@ -218,6 +247,10 @@ fn stage_row_words(field_types: &[ValueType]) -> usize {
 /// cardinality / scalar errors surface now, before any consumer runs
 /// (the producer error boundary; a later filter cannot hide them).
 /// Returns the sealed row count for the derived-tuples budget.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+)]
 fn seal_interior(
     interior: &mut PreparedInterior,
     id: usize,
@@ -245,7 +278,15 @@ fn seal_interior(
     let field_types = &interior.field_types;
     let mut seal_aggregate = |sink: &mut crate::exec::sink::AggregateSink| -> Result<u64> {
         over(sink.group_count() as u64)?;
-        derived.stash_aggregate(id, field_types, sink, answer_scratch, work, ram_bytes)
+        derived.stash_aggregate(
+            id,
+            field_types,
+            sink,
+            answer_scratch,
+            work,
+            generation,
+            ram_bytes,
+        )
     };
     match &mut interior.sink {
         EitherSink::Projection(sink) => {
@@ -284,7 +325,7 @@ pub(super) struct RecPingPong {
     watermark: usize,
     /// Once a rec table leaves RAM, later rounds append only — never a
     /// whole-image resurrection.
-    acc_disk: Option<ScratchStage>,
+    acc_disk: Option<Box<ScratchStage>>,
 }
 
 impl RecPingPong {
@@ -326,27 +367,6 @@ struct RunCtx<'a> {
     nonresident: &'a mut Option<crate::image::NonresidentTextStore>,
 }
 
-pub(super) enum SealedStageRef<'a> {
-    Stage(&'a mut SealedStage),
-    Resident(&'a Arc<RelationImage>),
-}
-
-impl SealedStageRef<'_> {
-    fn is_resident(&self) -> bool {
-        match self {
-            Self::Stage(stage) => stage.is_resident(),
-            Self::Resident(_) => true,
-        }
-    }
-
-    fn resident(&self) -> Option<&Arc<RelationImage>> {
-        match self {
-            Self::Stage(stage) => stage.resident(),
-            Self::Resident(image) => Some(image),
-        }
-    }
-}
-
 pub(super) fn rule_uses_scratch_derived(
     plan: &crate::plan::fj::ValidatedPlan,
     published: &[SealedStage],
@@ -360,14 +380,20 @@ pub(super) fn rule_uses_scratch_derived_rec(
     rec_delta: Option<&SealedStage>,
     rec_acc: Option<&SealedStage>,
 ) -> bool {
-    plan.occurrences().iter().any(|occurrence| match occurrence.bind {
-        crate::plan::fj::OccBind::Finished(id) => published
-            .get(id.index())
-            .is_some_and(|stage| !stage.is_resident()),
-        crate::plan::fj::OccBind::RecDelta(_) => rec_delta.is_some_and(|stage| !stage.is_resident()),
-        crate::plan::fj::OccBind::RecAcc(_) => rec_acc.is_some_and(|stage| !stage.is_resident()),
-        crate::plan::fj::OccBind::Edb(_) => false,
-    })
+    plan.occurrences()
+        .iter()
+        .any(|occurrence| match occurrence.bind {
+            crate::plan::fj::OccBind::Finished(id) => published
+                .get(id.index())
+                .is_some_and(|stage| !stage.is_resident()),
+            crate::plan::fj::OccBind::RecDelta(_) => {
+                rec_delta.is_some_and(|stage| !stage.is_resident())
+            }
+            crate::plan::fj::OccBind::RecAcc(_) => {
+                rec_acc.is_some_and(|stage| !stage.is_resident())
+            }
+            crate::plan::fj::OccBind::Edb(_) => false,
+        })
 }
 
 impl<S> PreparedQuery<S> {
@@ -792,13 +818,8 @@ fn next_rec_tables(
         |from, write| write_projection_rows(sink, from, write),
     );
     match (delta, acc) {
-        (Ok(delta), Ok(acc)) => Ok((
-            SealedStage::Resident(delta),
-            SealedStage::Resident(acc),
-        )),
-        (Err(error), _) | (_, Err(error))
-            if super::source::is_working_exhaustion(&error) =>
-        {
+        (Ok(delta), Ok(acc)) => Ok((SealedStage::Resident(delta), SealedStage::Resident(acc))),
+        (Err(error), _) | (_, Err(error)) if super::source::is_working_exhaustion(&error) => {
             rec_tables_scratch(driver, work, since, len)
         }
         (Err(error), _) | (_, Err(error)) => Err(error),
@@ -852,12 +873,12 @@ fn seal_scratch_range(
     let mut rows = ScratchRelation::new(work, 0);
     rows.force_spill()?;
     let count = sink.stream_into_scratch(&mut rows, since, 0)?;
-    Ok(SealedStage::Scratch(ScratchStage {
+    Ok(SealedStage::Scratch(Box::new(ScratchStage {
         rows,
         field_types: field_types.to_vec(),
         row_words,
         count,
-    }))
+    })))
 }
 
 fn append_scratch_range(
@@ -943,17 +964,7 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
             Ok(true)
         }
         PreparedRule::FreeJoin(rule) => run_free_join_into_projection(
-            ctx,
-            None,
-            None,
-            rule,
-            units,
-            occ_images,
-            retired,
-            sink,
-            bindings,
-            latched,
-            counters,
+            ctx, None, None, rule, units, occ_images, retired, sink, bindings, latched, counters,
         ),
     }
 }
@@ -961,6 +972,10 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
 #[expect(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep the ordered execution and cleanup transitions together"
 )]
 fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
     ctx: &mut RunCtx<'_>,
@@ -1013,16 +1028,18 @@ fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
     let resolved = if ctx.fast_eligible && rule.resolution == super::ResolutionState::Complete {
         true
     } else {
-        let complete = super::bind::resolve_filters(
-            ctx.interner,
-            ctx.nonresident,
-            ctx.images.source().work(),
+        let complete = super::bind::LiteralResolution {
+            interner: ctx.interner,
+            store: ctx.nonresident,
+            work: ctx.images.source().work(),
+            params: ctx.resolved_params,
+            missed: ctx.missed_params,
+            latched,
+        }
+        .filters(
             &mut rule.plan,
-            ctx.resolved_params,
-            ctx.missed_params,
             &mut rule.resolved_filters,
             &mut rule.resolved_selections,
-            latched,
         )?;
         rule.resolution = if complete {
             super::ResolutionState::Complete

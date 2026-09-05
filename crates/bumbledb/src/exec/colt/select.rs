@@ -1,6 +1,6 @@
 use super::{
     CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, hash_words,
-    reserve_exact_for,
+    reserve_pool,
 };
 use crate::work::WorkError;
 
@@ -58,9 +58,16 @@ impl Colt {
         hits.clear();
         let needed_hits = words.len() / arity.max(1);
         let probed = (|| -> Result<Option<Cursor>, WorkError> {
-            self.admit_needed::<Cursor>(hits.capacity(), needed_hits)?;
-            reserve_exact_for(&mut hits, needed_hits);
-            for key in words.chunks_exact(arity) {
+            reserve_pool(
+                needed_hits,
+                &mut hits,
+                self.work.as_ref(),
+                &mut self.charges,
+            )?;
+            for (index, key) in words.chunks_exact(arity).enumerate() {
+                if index % super::force::FORCE_BATCH == 0 {
+                    self.poll_force_batch((needed_hits - index).min(super::force::FORCE_BATCH))?;
+                }
                 if let Some(child) = self.probe_child_at(cursor, level, key, hash_words(key))? {
                     hits.push(child);
                 }
@@ -76,14 +83,26 @@ impl Colt {
         positions.clear();
         let built = (|| -> Result<Option<Cursor>, WorkError> {
             let mut counted = 0usize;
-            for hit in hits {
-                self.union_positions(*hit, |_| counted += 1);
+            for batch in hits.chunks(super::force::FORCE_BATCH) {
+                self.poll_force_batch(batch.len())?;
+                for &hit in batch {
+                    // Selection children are unforced, so their estimate is
+                    // exactly their position count; no position walk is needed.
+                    counted += usize::try_from(self.key_count(hit).magnitude())
+                        .expect("selection counts index the resident position arena");
+                }
             }
-            self.admit_needed::<u32>(positions.capacity(), counted)?;
-            reserve_exact_for(&mut positions, counted);
+            reserve_pool(
+                counted,
+                &mut positions,
+                self.work.as_ref(),
+                &mut self.charges,
+            )?;
+            let mut pending_work = 0;
             for hit in hits {
-                self.union_positions(*hit, |position| positions.push(position));
+                self.union_positions(*hit, &mut positions, &mut pending_work)?;
             }
+            self.poll_force_batch(pending_work)?;
             match positions.as_slice() {
                 [] => Ok(None),
                 [only] => Ok(Some(Cursor::Row(*only))),
@@ -101,14 +120,31 @@ impl Colt {
                     );
                     let pos_needed = self.chunk_positions.len() + all.len();
                     let chunk_needed = self.chunks.len() + all.len().div_ceil(CHUNK_LEN);
-                    self.admit_needed::<u32>(self.chunk_positions.capacity(), pos_needed)?;
-                    self.admit_needed::<Chunk>(self.chunks.capacity(), chunk_needed)?;
-                    self.admit_needed::<NodeState>(self.nodes.capacity(), self.nodes.len() + 1)?;
-                    reserve_exact_for(&mut self.chunk_positions, pos_needed);
-                    reserve_exact_for(&mut self.chunks, chunk_needed);
-                    reserve_exact_for(&mut self.nodes, self.nodes.len() + 1);
+                    reserve_pool(
+                        pos_needed,
+                        &mut self.chunk_positions,
+                        self.work.as_ref(),
+                        &mut self.charges,
+                    )?;
+                    reserve_pool(
+                        chunk_needed,
+                        &mut self.chunks,
+                        self.work.as_ref(),
+                        &mut self.charges,
+                    )?;
+                    reserve_pool(
+                        self.nodes.len() + 1,
+                        &mut self.nodes,
+                        self.work.as_ref(),
+                        &mut self.charges,
+                    )?;
                     let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
                     for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
+                        if idx % (super::force::FORCE_BATCH / CHUNK_LEN) == 0 {
+                            self.poll_force_batch(
+                                (all.len() - idx * CHUNK_LEN).min(super::force::FORCE_BATCH),
+                            )?;
+                        }
                         let start = u32::try_from(self.chunk_positions.len())
                             .expect("position slab fits u32");
                         self.chunk_positions.extend_from_slice(segment);
@@ -141,18 +177,29 @@ impl Colt {
     }
 
     /// row or an unforced chunk list by the `select_union` invariant.
-    fn union_positions(&self, hit: Cursor, mut f: impl FnMut(u32)) {
+    fn union_positions(
+        &self,
+        hit: Cursor,
+        out: &mut Vec<u32>,
+        pending_work: &mut usize,
+    ) -> Result<(), WorkError> {
         match hit {
-            Cursor::Row(position) => f(position),
+            Cursor::Row(position) => {
+                out.push(position);
+                *pending_work += 1;
+            }
             Cursor::Node(node) => match self.nodes[node.0 as usize] {
                 NodeState::Unforced(Positions::Chunks { first, .. }) => {
                     let mut chunk = first;
                     while chunk != u32::MAX {
                         let c = &self.chunks[chunk as usize];
-                        for &position in
-                            &self.chunk_positions[c.start as usize..][..usize::from(c.len)]
-                        {
-                            f(position);
+                        out.extend_from_slice(
+                            &self.chunk_positions[c.start as usize..][..usize::from(c.len)],
+                        );
+                        *pending_work += usize::from(c.len);
+                        if *pending_work >= super::force::FORCE_BATCH {
+                            self.poll_force_batch(*pending_work)?;
+                            *pending_work = 0;
                         }
                         chunk = c.next;
                     }
@@ -162,6 +209,11 @@ impl Colt {
                 }
             },
         }
+        if *pending_work >= super::force::FORCE_BATCH {
+            self.poll_force_batch(*pending_work)?;
+            *pending_work = 0;
+        }
+        Ok(())
     }
 
     pub(super) fn pool_mark(&self) -> PoolMark {

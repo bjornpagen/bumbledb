@@ -56,7 +56,7 @@ fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
 fn the_window_verdicts_agree_with_the_naive_model() {
     let dir = scratch("naive");
     let mass = Mass::unit();
-    let db = Db::create(&dir, world::WindowedWorld)
+    let db = Db::create(&dir, world::WindowedWorld, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     let mut naive = NaiveDb::new(&world::WindowedWorld.descriptor());

@@ -4,7 +4,6 @@
 //! stops immediately. Tiny dests never open an environment; `ScratchBytes`
 //! and `WorkingBytes` are not that witness. No `type_name`/`size_of`.
 
-use super::*;
 use crate::error::Error;
 use crate::exec::run::{Bindings, Sink as _};
 use crate::exec::scratch::{DEFAULT_RAM_BYTES, ScratchRelation};
@@ -36,7 +35,7 @@ fn tight_work(scratch: u64, units: u64) -> crate::work::WorkContext {
 
 fn decode_stage_rows(dest: &mut ScratchRelation) -> Vec<Vec<u64>> {
     let mut rows = Vec::new();
-    dest.visit(&mut |_, value| {
+    dest.visit(&mut |_: &[u8], value: &[u8]| {
         let mut words = Vec::new();
         for chunk in value.as_chunks::<8>().0 {
             words.push(u64::from_be_bytes(*chunk));
@@ -52,10 +51,10 @@ fn decode_stage_rows(dest: &mut ScratchRelation) -> Vec<Vec<u64>> {
 /// D09: spilled projection streams into scratch one put at a time.
 #[test]
 fn d09_projection_stream_into_scratch_matches_resident() {
-    let finds = [FindSpec::Var { slot: 0, width: 1 }, FindSpec::Var {
-        slot: 1,
-        width: 1,
-    }];
+    let finds = [
+        FindSpec::Var { slot: 0, width: 1 },
+        FindSpec::Var { slot: 1, width: 1 },
+    ];
     let feed = |sink: &mut ProjectionSink| {
         let mut bindings = Bindings::new(2);
         for i in 0..32u64 {
@@ -187,7 +186,9 @@ fn d09_stream_put_refusal_does_not_buffer_the_rest() {
     let ledger = tight_work(64, 32);
     let baseline = ledger.used(Resource::ScratchBytes);
     let mut dest = ScratchRelation::new(&ledger, 0);
-    let refused = dest.force_spill().and_then(|()| sink.stream_into_scratch(&mut dest, 0, 0));
+    let refused = dest
+        .force_spill()
+        .and_then(|()| sink.stream_into_scratch(&mut dest, 0, 0));
     assert!(refused.is_err(), "tiny scratch must refuse a 16-row stream");
     assert!(
         dest.len() < 16,

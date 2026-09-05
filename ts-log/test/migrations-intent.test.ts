@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { AuthoringError, relation, Scalar, str, u64 } from "@bjornpagen/bumbledb"
+import { AuthoringError, i64, relation, Scalar, str, u64 } from "@bjornpagen/bumbledb"
 import {
 	backfill,
 	convert,
@@ -38,11 +38,11 @@ describe("intent constructors are inert typed metadata", function suite() {
 	})
 
 	test("the exact core ScalarExpr value passes through by reference, never copied or evaluated", function exprReuse() {
-		const expression = { kind: "literal", value: { bool: false } } as const
+		const expression = Scalar.bool(false)
 		const fill = backfill(Note1, "pinned", expression)
 		assert.ok(fill.kind === "backfill")
 		assert.equal(fill.expression, expression, "the core AST value is retained, not cloned")
-		const conv = convert(Note1, "body", { kind: "field", name: "body" })
+		const conv = convert(Note1, "body", Scalar.field("body"))
 		assert.ok(conv.kind === "convert")
 	})
 
@@ -66,6 +66,21 @@ describe("intent constructors are inert typed metadata", function suite() {
 		assert.ok(Object.isFrozen(intent.entries))
 		assert.equal(intent.schema, App1)
 	})
+
+	// Uncalled: native compile remains the runtime authority, including for
+	// untyped inputs. The public signature catches known mismatches earlier.
+	function targetKindWalls() {
+		const Counts = relation("Counts", { positive: u64, signed: i64 })
+		backfill(Counts, "positive", Scalar.u64(1n))
+		convert(Counts, "signed", Scalar.i64(-1n))
+		// @ts-expect-error — a signed literal cannot fill an unsigned field
+		backfill(Counts, "positive", Scalar.i64(1n))
+		// @ts-expect-error — a float cannot silently replace an integer
+		convert(Counts, "signed", Scalar.f64(1))
+		// @ts-expect-error — a known numeric expression is not a string
+		backfill(Tag, "name", Scalar.u64(1n))
+	}
+	void targetKindWalls
 
 	test("rename constructors bind the target through the typed relation value", function renames() {
 		const rel = renameRelation("Old", Tag)

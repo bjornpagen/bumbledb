@@ -1,5 +1,5 @@
 //! Allocation-refusal discriminators for fallible COLT force/growth.
-//! Verification: NotRun. Each gate consumes the production force, chunk,
+//! Verification: `NotRun`. Each gate consumes the production force, chunk,
 //! and resize boundaries — not a `type_name` / `size_of` / fn-ref claim.
 
 use super::*;
@@ -36,11 +36,18 @@ fn join_colt(view: &std::sync::Arc<crate::image::RelationImage>) -> Colt {
 fn iter_once(colt: &mut Colt, cursor: Cursor) -> Result<(usize, BatchToken), WorkError> {
     let mut keys = vec![0u64; 8];
     let mut children = vec![Cursor::Row(0); 8];
-    colt.iter_batch(cursor, 0, BatchToken::default(), &mut keys, &mut children, 8)
+    colt.iter_batch(
+        cursor,
+        0,
+        BatchToken::default(),
+        &mut keys,
+        &mut children,
+        8,
+    )
 }
 
 /// First map admission refuses before `maps[0]` can be indexed.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn first_map_refusal_is_typed_and_does_not_index() {
     let schema = schema();
@@ -50,7 +57,9 @@ fn first_map_refusal_is_typed_and_does_not_index() {
     let mut colt = join_colt(&view);
     colt.bind(Some(&work));
     let root = Colt::root();
-    let error = colt.force_root().expect_err("zero working bytes refuse the first map");
+    let error = colt
+        .force_root()
+        .expect_err("zero working bytes refuse the first map");
     assert!(
         is_working_exhaustion(&error),
         "typed WorkingBytes refusal licenses the bounded fallback, got {error:?}"
@@ -73,7 +82,7 @@ fn first_map_refusal_is_typed_and_does_not_index() {
 }
 
 /// First duplicate-key chunk refuses before `chunks[0]` can be indexed.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn first_duplicate_chunk_refusal_is_typed() {
     let schema = schema();
@@ -108,8 +117,8 @@ fn first_duplicate_chunk_refusal_is_typed() {
     );
 }
 
-/// A later grow_map resize refuses before ingest continues into a full table.
-/// Verification: NotRun.
+/// A later `grow_map` resize refuses before ingest continues into a full table.
+/// Verification: `NotRun`.
 #[test]
 fn later_resize_refusal_is_typed_and_does_not_hang() {
     let schema = schema();
@@ -145,7 +154,7 @@ fn later_resize_refusal_is_typed_and_does_not_hang() {
 }
 
 /// Same-shaped re-execution reuses retained capacity and does not re-charge.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn repeated_same_shape_executions_plateau_capacity_and_charges() {
     let schema = schema();
@@ -177,7 +186,7 @@ fn repeated_same_shape_executions_plateau_capacity_and_charges() {
 }
 
 /// Rebinding a fresh ledger clears a cancelled prior context.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn bind_resets_cancelled_work_without_poisoning_the_next_execution() {
     let schema = schema();
@@ -206,5 +215,43 @@ fn bind_resets_cancelled_work_without_poisoning_the_next_execution() {
         "the rebound execution forced a real map"
     );
     let drained = iter_once(&mut colt, Colt::root()).expect("rebound iteration");
-    assert!(drained.0 > 0, "rebound force produced keys, not empty output");
+    assert!(
+        drained.0 > 0,
+        "rebound force produced keys, not empty output"
+    );
+}
+
+#[test]
+fn pool_growth_is_geometric_and_failed_growth_has_no_phantom_charge() {
+    let work = working(u64::MAX);
+    let mut pool = Vec::<u32>::new();
+    let mut charges = Vec::new();
+    let mut allocations = 0;
+    for value in 0..4096 {
+        let capacity = pool.capacity();
+        super::super::reserve_pool(pool.len() + 1, &mut pool, Some(&work), &mut charges).unwrap();
+        allocations += usize::from(capacity != pool.capacity());
+        pool.push(value);
+    }
+    assert!(
+        allocations <= 10,
+        "one allocation per doubling, not per distinct key"
+    );
+    let retained = pool.capacity() * std::mem::size_of::<u32>()
+        + charges.capacity() * std::mem::size_of::<crate::work::ByteReservation>();
+    assert_eq!(work.used(Resource::WorkingBytes), retained as u64);
+
+    let tight = working(0);
+    let capacity = pool.capacity();
+    let count = charges.len();
+    assert!(
+        super::super::reserve_pool(capacity + 1, &mut pool, Some(&tight), &mut charges).is_err()
+    );
+    assert_eq!(pool.capacity(), capacity);
+    assert_eq!(charges.len(), count);
+    assert_eq!(tight.used(Resource::WorkingBytes), 0);
+    assert_eq!(pool, (0..4096).collect::<Vec<_>>());
+    drop(pool);
+    drop(charges);
+    assert_eq!(work.used(Resource::WorkingBytes), 0);
 }

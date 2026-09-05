@@ -1,16 +1,16 @@
 //! One immutable final-state apply and bounded inspection.
-//! Apply runs as a payload job over the sealed ChangeSet capability so the
+//! Apply runs as a payload job over the sealed `ChangeSet` capability so the
 //! JS thread never holds the change-set bytes as authority.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use bumbledb::work::WorkContext;
 use bumbledb::ChangeSet;
+use bumbledb::work::WorkContext;
 
 use crate::runtime::{Output, RuntimeError};
 
-use super::{engine_error, change_error, ApplyOutcomeOwned, DbInspectionOwned, ExpectedOwned};
+use super::{ApplyOutcomeOwned, DbInspectionOwned, ExpectedOwned, change_error, engine_error};
 
 struct ApplyWriterFlag(Arc<crate::DbInner>);
 
@@ -22,7 +22,7 @@ impl Drop for ApplyWriterFlag {
 
 /// Exclusive-writer admission by refusal (`WriterBusy`), witness comparison
 /// as a domain outcome (`moved`), complete final-state judgment, one
-/// durable commit. A foreign ChangeSet refuses typed.
+/// durable commit. A foreign `ChangeSet` refuses typed.
 pub(crate) fn apply_change_set(
     lease: &crate::runtime::owners::DbLease,
     changes: &ChangeSet,
@@ -112,7 +112,7 @@ pub(crate) fn inspect_db(
     context.checkpoint()?;
     let generation = lease
         .db()
-        .generation()
+        .generation(context.clone())
         .map_err(|error| engine_error(&error))?;
     let report = lease
         .db()

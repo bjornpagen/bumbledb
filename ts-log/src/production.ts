@@ -8,24 +8,17 @@
  * the already-acquired shared `NativeRuntime`. All four are core-owned
  * (P07/P06) and imported literally — the log mirrors none of them.
  */
-import {
-	internalChanges,
-	internalMigrationRead,
-	internalMigrationSchema,
-	internalPublishedReader,
-	lower,
-	runtimeHandle
-} from "@bjornpagen/bumbledb/internal/log"
-import type { Capability, ChangeSet, QueryReader } from "@bjornpagen/bumbledb/internal/log"
+
 import type { AnySchema } from "@bjornpagen/bumbledb"
+import type { Capability, ChangeSet, QueryReader, SnapshotHandle } from "@bjornpagen/bumbledb/internal/log"
+import { internalChanges, internalPublishedReader, lower, runtimeHandle } from "@bjornpagen/bumbledb/internal/log"
 import type { CoreIntegration, PublishedReadCapability } from "#machine.ts"
 import { makeLogMachine } from "#machine.ts"
-import type { CoreSnapshotHandle } from "#native.ts"
 import { logNative } from "#native.ts"
 
 const coreIntegration: CoreIntegration = {
 	reader<S extends AnySchema>(
-		core: CoreSnapshotHandle | Capability,
+		core: SnapshotHandle | Capability,
 		schema: S
 	): QueryReader<S> & PublishedReadCapability<S> {
 		return internalPublishedReader(core, schema)

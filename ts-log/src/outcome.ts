@@ -1,11 +1,11 @@
 /**
  * Publication certainty, receipts and admin outcomes as owned immutable
- * data. Every terminal arm is a durable decision in the log; errors ride
+ * data. Terminal receipts are durable decisions in the log; errors ride
  * inside the certainty unions (`not-submitted`/`outcome-unknown`) rather
- * than replacing them. `SubmitOutcome`'s E is `never` — interruption after
- * dispatch is `outcome-unknown` (or `decided` if the receipt already
- * decoded) under the original ref, never a new ID and never rewritten to
- * `not-submitted`. Admin operations use the same three-way certainty with
+ * than replacing them. `SubmitOutcome`'s E is `never`; fiber interruption
+ * remains in Cause and joins native cleanup. It proves nothing about
+ * publication: resolve the ref retained before dispatch. Admin operations
+ * use the same three-way certainty with
  * their existing protocol operation identities; there is no new journal.
  */
 import type { Violation } from "@bjornpagen/bumbledb"
@@ -50,11 +50,7 @@ export interface TerminalReceipt {
 }
 
 /** Where an authoritative operation is in its publication lifecycle. */
-export type PublicationPhase =
-	| "prepared"
-	| "dispatchedUnresolved"
-	| "confirmed"
-	| "provedNonpublication"
+export type PublicationPhase = "prepared" | "dispatchedUnresolved" | "confirmed" | "provedNonpublication"
 
 /**
  * This invocation's materialization, not durable receipt content. A
@@ -71,8 +67,18 @@ export type SubmitOutcome =
 			readonly localHealth: LocalMaterializationHealth
 			readonly phase: PublicationPhase
 	  }
-	| { readonly kind: "not-submitted"; readonly command: CommandRef; readonly error: LogError; readonly phase: PublicationPhase }
-	| { readonly kind: "outcome-unknown"; readonly command: CommandRef; readonly error: LogError; readonly phase: PublicationPhase }
+	| {
+			readonly kind: "not-submitted"
+			readonly command: CommandRef
+			readonly error: LogError
+			readonly phase: PublicationPhase
+	  }
+	| {
+			readonly kind: "outcome-unknown"
+			readonly command: CommandRef
+			readonly error: LogError
+			readonly phase: PublicationPhase
+	  }
 
 export type ResolveOutcome =
 	| { readonly kind: "found"; readonly receipt: TerminalReceipt }
@@ -132,8 +138,18 @@ export interface CacheInspection {
  */
 export type AdminOutcome<Value> =
 	| { readonly kind: "completed"; readonly ref: OperationRef; readonly value: Value; readonly phase: PublicationPhase }
-	| { readonly kind: "not-started"; readonly ref: OperationRef; readonly error: LogError; readonly phase: PublicationPhase }
-	| { readonly kind: "outcome-unknown"; readonly ref: OperationRef; readonly error: LogError; readonly phase: PublicationPhase }
+	| {
+			readonly kind: "not-started"
+			readonly ref: OperationRef
+			readonly error: LogError
+			readonly phase: PublicationPhase
+	  }
+	| {
+			readonly kind: "outcome-unknown"
+			readonly ref: OperationRef
+			readonly error: LogError
+			readonly phase: PublicationPhase
+	  }
 
 export interface CheckpointReport {
 	readonly at: DecisionStamp

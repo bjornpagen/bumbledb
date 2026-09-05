@@ -455,6 +455,10 @@ impl<'a, S> WriteTx<'a, S> {
     /// budget (native/E seam).
     /// # Errors
     /// Shape refusals or storage failure.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Database operations accept owned call-scoped work and key values consistently"
+    )]
     pub fn get_with_work<'tx, K: Key<'tx, Schema = S>>(
         &'tx self,
         key: K,
@@ -486,30 +490,17 @@ impl<'a, S> WriteTx<'a, S> {
 
     /// # Errors
     /// Shape refusals or storage failure.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Database operations accept owned call-scoped work and key values consistently"
+    )]
     pub fn get_dyn_with_work(
         &self,
         relation: RelationId,
         key: StatementId,
         key_values: &[Value],
         work: WorkContext,
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into_with_work(relation, key, key_values, &mut out, work)?
-            .then_some(out))
-    }
-
-    /// # Errors
-    /// Shape refusals or storage failure.
-    pub fn get_dyn_into_with_work(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-        work: WorkContext,
-    ) -> Result<bool> {
-        out.clear();
+    ) -> Result<Option<crate::canonical::DecodedRow>> {
         self.refuse_poisoned()?;
         let (_, statement) = get_path::key_statement_of(self.schema.as_ref(), relation, key)?;
         get_path::check_key_shape(
@@ -519,24 +510,25 @@ impl<'a, S> WriteTx<'a, S> {
             key_values,
         )?;
         if let Some(rows) = self.closed.get(relation) {
-            return Ok(
-                match get_path::closed_row_by_key(rows, statement, key_values) {
-                    Some(row) => {
-                        out.extend(row.values.iter().cloned());
-                        true
-                    }
-                    None => false,
-                },
-            );
+            return get_path::closed_row_by_key(rows, statement, key_values)
+                .map(|row| {
+                    crate::canonical::decode(
+                        self.schema.relation(relation).fields(),
+                        &row.canonical,
+                        &work,
+                    )
+                    .map_err(row_error)
+                })
+                .transpose();
         }
         match self.find_by_key(relation, &statement.projection, key_values, &work)? {
             Some(bytes) => {
                 let fields = self.schema.relation(relation).fields();
-                let decoded = crate::canonical::decode(fields, bytes, &work).map_err(row_error)?;
-                out.extend(decoded.values);
-                Ok(true)
+                crate::canonical::decode(fields, bytes, &work)
+                    .map(Some)
+                    .map_err(row_error)
             }
-            None => Ok(false),
+            None => Ok(None),
         }
     }
 
@@ -547,52 +539,8 @@ impl<'a, S> WriteTx<'a, S> {
         relation: RelationId,
         key: StatementId,
         key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into(relation, key, key_values, &mut out)?
-            .then_some(out))
-    }
-
-    /// # Errors
-    /// Shape refusals or storage failure.
-    pub fn get_dyn_into(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-    ) -> Result<bool> {
-        out.clear();
-        self.refuse_poisoned()?;
-        let (_, statement) = get_path::key_statement_of(self.schema.as_ref(), relation, key)?;
-        get_path::check_key_shape(
-            self.schema.as_ref(),
-            relation,
-            &statement.projection,
-            key_values,
-        )?;
-        if let Some(rows) = self.closed.get(relation) {
-            return Ok(
-                match get_path::closed_row_by_key(rows, statement, key_values) {
-                    Some(row) => {
-                        out.extend(row.values.iter().cloned());
-                        true
-                    }
-                    None => false,
-                },
-            );
-        }
-        match self.find_by_key(relation, &statement.projection, key_values, self.work)? {
-            Some(bytes) => {
-                let fields = self.schema.relation(relation).fields();
-                let decoded =
-                    crate::canonical::decode(fields, bytes, self.work).map_err(row_error)?;
-                out.extend(decoded.values);
-                Ok(true)
-            }
-            None => Ok(false),
-        }
+    ) -> Result<Option<crate::canonical::DecodedRow>> {
+        self.get_dyn_with_work(relation, key, key_values, self.work.clone())
     }
 
     /// Keyed lookup over the final-state view: pending adds first (they are
@@ -618,7 +566,7 @@ impl<'a, S> WriteTx<'a, S> {
                 continue;
             }
             work.step(1).map_err(store_work)?;
-            let decoded = crate::canonical::decode(fields, row, &work).map_err(row_error)?;
+            let decoded = crate::canonical::decode(fields, row, work).map_err(row_error)?;
             if get_path::projection_matches(decoded.values(), projection, key_values) {
                 return Ok(Some(row));
             }
@@ -634,7 +582,7 @@ impl<'a, S> WriteTx<'a, S> {
             relation,
             projection,
             key_values,
-            &work,
+            work,
         )?
         else {
             return Ok(None);

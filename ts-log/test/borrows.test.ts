@@ -266,7 +266,9 @@ describe("cache surface", function suite() {
 								budgetBytes: 1n << 30n,
 								maxOpen: 8,
 								evictions: 5n,
-								slots: [{ binding: "ab".repeat(16), state: "ready", borrows: 1, diskBytes: 4096n }]
+								slots: [
+									{ binding: "abababab-abab-abab-abab-abababababab", state: "ready", borrows: 1, diskBytes: 4096n }
+								]
 							}
 						})
 						return yield* cache.inspect(work)

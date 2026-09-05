@@ -45,11 +45,20 @@ impl ProbeOrder {
 }
 
 #[must_use]
-pub fn child_fact_bytes(id: u64, parent: u64, flag: u64) -> [u8; 24] {
-    let mut out = [0u8; 24];
-    out[..8].copy_from_slice(&id.to_be_bytes());
-    out[8..16].copy_from_slice(&parent.to_be_bytes());
-    out[16..].copy_from_slice(&flag.to_be_bytes());
+pub fn child_fact_bytes(id: u64, parent: u64, flag: u64) -> [u8; 29] {
+    // Independent model of canonical.rs: arity u16, then (U64 tag, BE64)
+    // per field. These are logical row bytes, not the packed index key.
+    let mut out = [0u8; 29];
+    out[..2].copy_from_slice(&3u16.to_be_bytes());
+    for (field, value) in out[2..]
+        .as_chunks_mut::<9>()
+        .0
+        .iter_mut()
+        .zip([id, parent, flag])
+    {
+        field[0] = 1;
+        field[1..].copy_from_slice(&value.to_be_bytes());
+    }
     out
 }
 
@@ -147,7 +156,7 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    let outcome = db.write(|tx| {
+    let outcome = db.write(crate::harness::bench_work(), |tx| {
         for &(id, parent) in &probe {
             tx.insert([&world::WChild {
                 id: world::WChildId(id),
@@ -229,7 +238,7 @@ fn run_cell(
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("sweep scratch: {e}"))?;
     }
-    let db = Db::create(dir, world::WindowedWorld)
+    let db = Db::create(dir, world::WindowedWorld, crate::harness::bench_work())
         .map_err(|e| format!("sweep create: {e:?}"))?
         .expect("accepted");
     load(&db, mass)?;
@@ -245,7 +254,7 @@ fn run_cell(
         };
         let children = grind_children(&parents, &ranks, &mut next_id);
         obs::start_capture();
-        let outcome = db.write(|tx| {
+        let outcome = db.write(crate::harness::bench_work(), |tx| {
             for &(id, parent) in &children {
                 tx.insert([&world::WChild {
                     id: world::WChildId(id),

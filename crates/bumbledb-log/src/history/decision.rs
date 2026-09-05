@@ -22,7 +22,7 @@ use super::frame::{
 use super::{
     CommandRef, DatabaseIdentity, DecisionDigest, DecisionStamp, IncarnationId, StateStamp,
 };
-use crate::store::{ObjectKind, ObjectRef};
+use crate::store::ObjectRef;
 
 pub const FAMILY: &[u8] = b"bumbledb.decision.v1\0";
 pub const LAYOUT: u16 = 2;
@@ -154,11 +154,12 @@ pub fn decode_decision(
     let nested = command::decode_command(canonical_command, limits)?;
     let command = nested.command_ref();
     if let Some(parent_ref) = parent_object {
-        crate::history::locator::validate_parent_locator(&parent_ref, &parent)
-            .map_err(|error| match error {
+        crate::history::locator::validate_parent_locator(&parent_ref, &parent).map_err(
+            |error| match error {
                 crate::store::ObjectError::Frame(frame) => frame,
                 _ => FrameError::InvalidTerminalStamp,
-            })?;
+            },
+        )?;
     }
     let envelope = UnverifiedDecisionEnvelope {
         identity,
@@ -352,10 +353,10 @@ pub fn decode_genesis(bytes: &[u8], cap: usize) -> Result<GenesisRecord, FrameEr
             source_evidence: input.array()?,
         },
         (_, 2) => GenesisProvenance::Migration {
-            source_database: super::DatabaseId::from_core(bumbledb::Id128::from_bytes(
+            source_database: super::DatabaseId::from_core(bumbledb::Uuid::from_bytes(
                 input.array()?,
             )),
-            source_incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(
+            source_incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(
                 input.array()?,
             )),
             plan_set_digest: input.array()?,
@@ -401,7 +402,7 @@ pub fn blank_initial_digests() -> ([u8; 32], [u8; 32]) {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use super::super::Condition;
     use super::super::{
@@ -419,8 +420,8 @@ mod tests {
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
@@ -438,7 +439,7 @@ mod tests {
                 identity: identity(),
                 id: CommandId {
                     receipt_epoch: ReceiptEpoch::INITIAL,
-                    request_id: RequestId::from_core(Id128::from_bytes([4; 16])),
+                    request_id: RequestId::from_core(Uuid::from_bytes([4; 16])),
                 },
                 condition: Condition::Unconditional,
             },
@@ -615,12 +616,12 @@ mod tests {
         let foreign_command = encode_command(
             CommandMetadata {
                 identity: DatabaseIdentity {
-                    database_id: DatabaseId::from_core(Id128::from_bytes([9; 16])),
+                    database_id: DatabaseId::from_core(Uuid::from_bytes([9; 16])),
                     ..identity()
                 },
                 id: CommandId {
                     receipt_epoch: ReceiptEpoch::INITIAL,
-                    request_id: RequestId::from_core(Id128::from_bytes([4; 16])),
+                    request_id: RequestId::from_core(Uuid::from_bytes([4; 16])),
                 },
                 condition: Condition::Unconditional,
             },
@@ -661,7 +662,7 @@ mod tests {
         );
         let other_identity = GenesisRecord {
             identity: DatabaseIdentity {
-                incarnation_id: IncarnationId::from_core(Id128::from_bytes([9; 16])),
+                incarnation_id: IncarnationId::from_core(Uuid::from_bytes([9; 16])),
                 ..identity()
             },
             ..record

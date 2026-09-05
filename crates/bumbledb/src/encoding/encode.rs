@@ -60,11 +60,11 @@ pub fn encode_interval_f64(interval: Interval<bumbledb_theory::F64>) -> [u8; 16]
     concat_halves(encode_f64(start), encode_f64(end))
 }
 
-/// Encodes an application-owned Id128 as its sixteen exact bytes: byte
+/// Encodes an application-owned Uuid as its sixteen exact bytes: byte
 /// order is its one total order, and no reinterpretation exists.
 #[must_use]
-pub const fn encode_id128(value: bumbledb_theory::Id128) -> [u8; 16] {
-    value.to_bytes()
+pub const fn encode_uuid(value: bumbledb_theory::Uuid) -> [u8; 16] {
+    value.into_bytes()
 }
 
 fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
@@ -87,7 +87,7 @@ pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
         Value::U64(v) => ValueRef::U64(*v),
         Value::I64(v) => ValueRef::I64(*v),
         Value::F64(v) => ValueRef::F64(*v),
-        Value::Id128(v) => ValueRef::Id128(*v),
+        Value::Uuid(v) => ValueRef::Uuid(*v),
         Value::FixedBytes(raw) => ValueRef::bytes(raw),
         Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
         Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
@@ -137,8 +137,8 @@ pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
         ValueRef::Bytes(_) => {
             panic!("bytes<N> field: append_field writes at the layout type")
         }
-        ValueRef::Id128(value) => {
-            out.extend_from_slice(&encode_id128(value));
+        ValueRef::Uuid(value) => {
+            out.extend_from_slice(&encode_uuid(value));
         }
         ValueRef::IntervalU64(interval) => {
             out.extend_from_slice(&encode_interval_u64(interval));

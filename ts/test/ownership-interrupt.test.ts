@@ -8,12 +8,11 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Effect, Exit, Fiber, ManagedRuntime } from "effect"
 import { ChangeSet } from "#changes.ts"
-import { dbNative } from "#db-native.ts"
 import { Db } from "#db.ts"
-import { Id128 } from "#id128.ts"
+import { dbNative } from "#db-native.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
-import { NativeRuntime, internalAcquireRepositoryLock } from "#runtime.ts"
+import { internalAcquireRepositoryLock, NativeRuntime } from "#runtime.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
 
 const allAttempts = query(Learning).rule((r) => {
@@ -25,27 +24,25 @@ function runtime() {
 	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
 }
 
-test("interrupt between directory acquire and db open drains the directory (D18)", async function directoryThenDb() {
+test("interrupt after directory acquire and before db output adoption drains both owners (D18)", async function directoryThenDb() {
 	const rt = runtime()
 	try {
 		const original = (await import("#runtime-native.ts")).runtimeNative
 		const open = original.runtimeDirectoryDbOpen
-		let opened = 0
-		original.runtimeDirectoryDbOpen = ((...args: Parameters<typeof open>) => {
-			opened += 1
-			return open.apply(original, args)
-		}) as typeof open
+		const completed = Promise.withResolvers<() => void>()
+		original.runtimeDirectoryDbOpen = ((directory, policy, child, spec, create, callback) =>
+			open.call(original, directory, policy, child, spec, create, () => completed.resolve(callback))) as typeof open
 		try {
-			const program = Effect.scoped(Db.create(storeDir("dir-then-db"), Learning, work))
-			const fiber = await rt.runPromise(Effect.fork(program))
-			await new Promise((resolve) => setTimeout(resolve, 15))
-			const exit = await rt.runPromise(Fiber.interrupt(fiber))
+			const path = storeDir("dir-then-db")
+			const fiber = rt.runFork(Effect.scoped(Db.create(path, Learning, work)))
+			const lateCallback = await completed.promise
+			await rt.runPromise(Fiber.interrupt(fiber))
+			const exit = await rt.runPromise(Fiber.await(fiber))
 			assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
-			const successor = await rt.runPromiseExit(
-				Effect.scoped(Db.create(storeDir("dir-then-db-2"), Learning, work).pipe(Effect.asVoid))
-			)
-			assert.ok(successor._tag === "Success" || successor._tag === "Failure")
-			void opened
+			lateCallback()
+			original.runtimeDirectoryDbOpen = open
+			const successor = await rt.runPromiseExit(Effect.scoped(Db.open(path, Learning, work).pipe(Effect.asVoid)))
+			assert.equal(successor._tag, "Success", "the same directory is unlocked and its created database can reopen")
 		} finally {
 			original.runtimeDirectoryDbOpen = open
 		}
@@ -62,8 +59,8 @@ test("retained JS tokens cannot prevent native drain; repeated close joins (D18)
 		kept.push(db)
 		const first = await rt.runPromise(db.close())
 		const second = await rt.runPromise(db.close())
-		assert.ok(first.kind === "closed" || first.kind === "failed")
-		assert.ok(second.kind === "closed" || second.kind === "failed")
+		assert.equal(first.kind, "closed")
+		assert.equal(second.kind, "closed")
 		assert.equal(kept.length, 1, "the wrapper stayed reachable through both closes")
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
@@ -76,31 +73,31 @@ test("interrupt during stamped lock acquire does not mint (D18)", async function
 		const native = (await import("#runtime-native.ts")).runtimeNative
 		const acquire = native.logRepositoryLockAcquire
 		const take = native.logRepositoryLockTake
+		const completed = Promise.withResolvers<() => void>()
 		let takes = 0
 		native.logRepositoryLockTake = ((...args: Parameters<typeof take>) => {
 			takes += 1
 			return take.apply(native, args)
 		}) as typeof take
-		native.logRepositoryLockAcquire = ((runtimeHandle, policy, directory, _callback) =>
-			acquire.call(native, runtimeHandle, policy, directory, () => {
-				// Stall completion so interruption wins the acquire gap.
-			})) as typeof acquire
+		native.logRepositoryLockAcquire = ((runtimeHandle, policy, directory, callback) =>
+			acquire.call(native, runtimeHandle, policy, directory, () => completed.resolve(callback))) as typeof acquire
 		try {
 			const inspect = Effect.gen(function* () {
 				return yield* (yield* NativeRuntime).inspect(work)
 			})
 			const baseline = await rt.runPromise(inspect)
-			const fiber = await rt.runPromise(
-				Effect.fork(
-					Effect.scoped(internalAcquireRepositoryLock("lock.interrupt", storeDir("lock-acq"), work))
-				)
-			)
-			await new Promise((resolve) => setTimeout(resolve, 15))
-			const exit = await rt.runPromise(Fiber.interrupt(fiber))
+			const path = storeDir("lock-acq")
+			const fiber = rt.runFork(Effect.scoped(internalAcquireRepositoryLock("lock.interrupt", path, work)))
+			const lateCallback = await completed.promise
+			await rt.runPromise(Fiber.interrupt(fiber))
+			const exit = await rt.runPromise(Fiber.await(fiber))
 			assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
+			lateCallback()
 			assert.equal(takes, 0, "interrupted acquire must not call take / mint_repository_lock")
 			const after = await rt.runPromise(inspect)
 			assert.equal(after.natives, baseline.natives, "no NativeKind::RepositoryLock row remains")
+			native.logRepositoryLockAcquire = acquire
+			await rt.runPromise(Effect.scoped(internalAcquireRepositoryLock("lock.reopen", path, work)))
 		} finally {
 			native.logRepositoryLockAcquire = acquire
 			native.logRepositoryLockTake = take
@@ -114,10 +111,10 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 	const rt = runtime()
 	const kept: object[] = []
 	const collect = dbNative.runtimeResultCollect
-	let published: (() => void) | undefined
+	const published = Promise.withResolvers<() => void>()
 	dbNative.runtimeResultCollect = ((handle, policy, callback) =>
 		collect.call(dbNative, handle, policy, () => {
-			published = callback
+			published.resolve(callback)
 		})) as typeof collect
 	try {
 		await rt.runPromise(
@@ -125,10 +122,10 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 				Effect.gen(function* () {
 					const db = yield* Db.create(storeDir("abort-after-pub"), Learning, work)
 					kept.push(db)
-					const studentId = yield* Id128.random()
+					const studentId = yield* Effect.sync(() => crypto.randomUUID())
 					const draft = yield* ChangeSet.builder(Learning, work)
 					yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 1000n }])
-					const attemptId = yield* Id128.random()
+					const attemptId = yield* Effect.sync(() => crypto.randomUUID())
 					yield* draft.insert(Attempt, [
 						{
 							id: attemptId,
@@ -144,22 +141,15 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 					kept.push(snapshot)
 					const result = yield* snapshot.execute(allAttempts, {}, work)
 					kept.push(result)
-					const fiber = yield* Effect.fork(result.collect({ maxBytes: work.resultBytes }, work))
-					yield* Effect.async<void>((resume) => {
-						const tick = () => {
-							if (published !== undefined) {
-								resume(Effect.void)
-								return
-							}
-							setImmediate(tick)
-						}
-						tick()
-					})
-					const exit = yield* Fiber.interrupt(fiber)
+					const before = yield* (yield* NativeRuntime).inspect(work)
+					const fiber = yield* Effect.forkChild(result.collect({ maxBytes: work.resultBytes }, work))
+					const lateCallback = yield* Effect.promise(() => published.promise)
+					yield* Fiber.interrupt(fiber)
+					const exit = yield* Fiber.await(fiber)
 					assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
-					published?.()
+					lateCallback()
 					const after = yield* (yield* NativeRuntime).inspect(work)
-					assert.equal(after.retained, 0n, "queued output reclaimed without JS take")
+					assert.equal(after.retained, before.retained, "queued output reclaimed without JS take")
 				})
 			)
 		)
@@ -172,27 +162,29 @@ test("abort after publication drains without take; retained wrappers cannot pin 
 
 test("draft interruption spends the draft and joins drain", async function interruptSpendsDraft() {
 	const rt = runtime()
+	const insert = dbNative.runtimeDraftInsert
+	const completed = Promise.withResolvers<() => void>()
+	dbNative.runtimeDraftInsert = ((handle, policy, relation, rows, cells, callback) =>
+		insert.call(dbNative, handle, policy, relation, rows, cells, () => completed.resolve(callback))) as typeof insert
 	try {
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
 					const draft = yield* ChangeSet.builder(Learning, work)
-					function* many() {
-						for (let index = 0; index < 10_000; index += 1) {
-							yield { id: `0000000000000000000000000000${index.toString(16).padStart(4, "0")}` as never, name: "n", budget: 1n }
-						}
-					}
-					const fiber = yield* Effect.fork(draft.insert(Student, many()))
-					yield* Effect.sleep("10 millis")
-					const interrupted = yield* Fiber.interrupt(fiber)
-					if (Exit.hasInterrupts(interrupted)) {
-						const late = yield* Effect.exit(draft.finish())
-						assert.equal(late._tag, "Failure", "interrupt spends the draft")
-					}
+					const id = yield* Effect.sync(() => crypto.randomUUID())
+					const fiber = yield* Effect.forkChild(draft.insert(Student, [{ id, name: "n", budget: 1n }]))
+					const lateCallback = yield* Effect.promise(() => completed.promise)
+					yield* Fiber.interrupt(fiber)
+					const interrupted = yield* Fiber.await(fiber)
+					assert.ok(Exit.hasInterrupts(interrupted), "the insert was interrupted after native completion")
+					lateCallback()
+					const late = yield* Effect.exit(draft.finish())
+					assert.equal(late._tag, "Failure", "interrupt spends the draft")
 				})
 			)
 		)
 	} finally {
+		dbNative.runtimeDraftInsert = insert
 		await Effect.runPromise(rt.disposeEffect)
 	}
 })

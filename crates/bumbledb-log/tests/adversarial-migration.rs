@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{CommandId, CommandResult, Condition, ReceiptEpoch, RequestId};
@@ -147,7 +147,7 @@ fn build_source(dir: &Path) -> (Arc<Db<SchemaDescriptor>>, LocalHistory<SchemaDe
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([0x01; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([0x01; 16])),
             },
             condition: Condition::Unconditional,
         },

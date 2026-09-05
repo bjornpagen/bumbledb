@@ -17,7 +17,6 @@
 use bumbledb::work::WorkContext;
 use bumbledb::{Query, RelationId, StatementId, Value};
 
-use crate::marshal::ValueOut;
 use crate::runtime::session::{SnapshotAccess, SnapshotWork};
 use crate::runtime::{Output, RuntimeError};
 
@@ -38,10 +37,11 @@ pub(crate) fn snapshot_get_work(
         let hit = access
             .owned
             .get_dyn(relation, key, &row, context)
-            .map_err(engine_error)?;
-        Ok(Output::Row(hit.map(|values| {
-            values.into_iter().map(ValueOut::from_value).collect()
-        })))
+            .map_err(|error| engine_error(&error))?;
+        Ok(Output::Row(
+            hit.map(|row| crate::marshal::row_out_charged(context, &row))
+                .transpose()?,
+        ))
     })
 }
 
@@ -55,7 +55,7 @@ pub(crate) fn execute_complete_work(
     Box::new(move |context, access| {
         context.checkpoint()?;
         let _generation = access.owned.generation();
-        let result = owned_execute_complete(access, context, query, &params)?;
+        let result = owned_execute_complete(access, context, &query, &params)?;
         Ok(Output::CompleteResult(result))
     })
 }
@@ -63,16 +63,15 @@ pub(crate) fn execute_complete_work(
 fn owned_execute_complete(
     access: &mut SnapshotAccess<'_>,
     context: &WorkContext,
-    query: Query,
+    query: &Query,
     params: &[crate::marshal::OwnedParam],
 ) -> Result<bumbledb::CompleteResult, RuntimeError> {
     let frame = access.frame(context);
-    let mut prepared = frame.prepare(&query).map_err(engine_error)?;
+    let mut prepared = frame.prepare(query).map_err(|error| engine_error(&error))?;
     let args = crate::param_args(params);
     let result = prepared
         .execute_complete_with_work(&frame, context, args.as_slice())
-        .map_err(engine_error)?;
+        .map_err(|error| engine_error(&error))?;
     access.install(prepared);
     Ok(result)
 }
-

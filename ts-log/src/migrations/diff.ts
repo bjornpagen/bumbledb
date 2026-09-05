@@ -16,8 +16,9 @@
  * sealed schema axioms — unnameable by data operations and exempt from
  * coverage; their evolution is the schema change itself.
  */
-import type { IntentRequirement } from "#migrations/fail.ts"
+
 import { fieldExpression, planExpressionOf } from "#migrations/expr.ts"
+import type { IntentRequirement } from "#migrations/fail.ts"
 import type { MigrationIntentEntry } from "#migrations/intent.ts"
 import type { PlanFieldMap, PlanLoss, PlanOperation, TheoryRelation, TheorySnapshot } from "#migrations/types.ts"
 
@@ -229,12 +230,22 @@ export function diffSchemas(
 			}
 			if (targetFields.has(from)) {
 				requirements.push(
-					requirement("conflicting-intent", target.name, from, `renameField: ${from} still exists in the current schema`)
+					requirement(
+						"conflicting-intent",
+						target.name,
+						from,
+						`renameField: ${from} still exists in the current schema`
+					)
 				)
 			}
 			if (sourceFields.has(to)) {
 				requirements.push(
-					requirement("conflicting-intent", target.name, to, `renameField: ${to} already existed in the previous schema`)
+					requirement(
+						"conflicting-intent",
+						target.name,
+						to,
+						`renameField: ${to} already existed in the previous schema`
+					)
 				)
 			}
 		}
@@ -260,7 +271,9 @@ export function diffSchemas(
 				acknowledged.add(field.name)
 				continue
 			}
-			const added = target.fields.filter((candidate) => !sourceFields.has(candidate.name)).map((candidate) => candidate.name)
+			const added = target.fields
+				.filter((candidate) => !sourceFields.has(candidate.name))
+				.map((candidate) => candidate.name)
 			const hint =
 				added.length > 0
 					? ` If this is a rename, declare renameField(${target.name}, "${field.name}", "${added.join('" | "')}").`
@@ -306,8 +319,7 @@ export function diffSchemas(
 				// play) matches no change — the signature of an intent already
 				// consumed by a recorded migration. `conflicting-intent` is reserved
 				// for intents contradicting a live change on the field.
-				const fieldUnchanged =
-					sourceName === field.name && sourceField !== undefined && sourceField.type === field.type
+				const fieldUnchanged = sourceName === field.name && sourceField !== undefined && sourceField.type === field.type
 				// Backfill is only for new fields. On an unchanged existing field it
 				// is stale (already recorded, or the wrong constructor). Convert on
 				// the same field is an explicit meaning change — record it even when
@@ -484,7 +496,12 @@ export function diffSchemas(
 		const target = nextByName.get(intent.entry.relation)
 		if (target === undefined) {
 			requirements.push(
-				requirement("stale-intent", intent.entry.relation, null, `seed: no current relation named ${intent.entry.relation}`)
+				requirement(
+					"stale-intent",
+					intent.entry.relation,
+					null,
+					`seed: no current relation named ${intent.entry.relation}`
+				)
 			)
 			continue
 		}
@@ -554,8 +571,6 @@ export function diffSchemas(
 		labelTokens,
 		requirements,
 		identity:
-			mapOperations.every((entry) => entry.identity) &&
-			emptyOperations.length === 0 &&
-			dropOperations.length === 0
+			mapOperations.every((entry) => entry.identity) && emptyOperations.length === 0 && dropOperations.length === 0
 	}
 }

@@ -52,7 +52,7 @@ function isAnswerRow<Row>(
  * The one answer-row decoder: owned positional cells into a plain frozen
  * record keyed by the find columns — the SAME fields and shapes across
  * every row and page (stable row shape). A column carrying its mint slot
- * decodes through the full value roster (id128 bytes lift to canonical
+ * decodes through the full value roster (uuid bytes lift to canonical
  * hex, closed ids lift to handle names, float intervals stay owned plain
  * objects); an aggregate column without a slot passes the engine's owned
  * scalar through, with the closed lift when the column is closed-typed.

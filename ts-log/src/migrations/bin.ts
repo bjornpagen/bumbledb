@@ -1,7 +1,7 @@
 #!/usr/bin/env node
+import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 /** The `bumbledb-log` executable: the one process boundary over the Effect CLI. */
 import { NativeRuntime } from "@bjornpagen/bumbledb"
-import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
 import { cliProgram, loadAuthoring, parseCliArguments } from "#migrations/cli.ts"
 

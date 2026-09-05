@@ -10,18 +10,19 @@
  */
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { once } from "node:events"
 import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
 import type { ExecutionPolicy, NativeRuntime, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
-import { NativeRuntime as NativeRuntimeService } from "@bjornpagen/bumbledb"
+import { DbError, NativeRuntime as NativeRuntimeService } from "@bjornpagen/bumbledb"
 import { Effect, Exit, Fiber } from "effect"
 import { ProtocolError } from "#errors.ts"
 import { joinPendingIo, readBounded } from "#migrations/fsops.ts"
+import { makeGenerator } from "#migrations/generate.ts"
 import { productionExclusion } from "#migrations/lock.ts"
 import { productionCodec } from "#migrations/native.ts"
-import { makeGenerator } from "#migrations/generate.ts"
 import { App0, App1, evolution1 } from "#test/migrations-example.ts"
 
 const runtimeOptions: NativeRuntimeOptions = {
@@ -64,9 +65,7 @@ describe("D21/D28 kernel lock and generated history", function suite() {
 		const program = Effect.scoped(
 			Effect.gen(function* () {
 				yield* productionExclusion.acquire("gate.lock", directory, work)
-				const busy = yield* Effect.result(
-					gen.generateMigrations({ schema: App0, repository: { directory }, work })
-				)
+				const busy = yield* Effect.result(gen.generateMigrations({ schema: App0, repository: { directory }, work }))
 				return busy
 			}).pipe(Effect.ensuring(joinPendingIo))
 		)
@@ -85,6 +84,9 @@ describe("D21/D28 kernel lock and generated history", function suite() {
 				import { NativeRuntime } from "@bjornpagen/bumbledb"
 				import { Effect } from "effect"
 				import { productionExclusion } from ${JSON.stringify(new URL("../src/migrations/lock.ts", import.meta.url).href)}
+				// Keep the IPC channel referenced while the lock scope is suspended.
+				// A pending Promise/Effect alone does not keep Node alive.
+				process.on("message", () => {})
 				const work = ${JSON.stringify({
 					inputBytes: "4000000",
 					workingBytes: "16000000",
@@ -105,7 +107,8 @@ describe("D21/D28 kernel lock and generated history", function suite() {
 				}
 				const program = Effect.scoped(Effect.gen(function* () {
 					yield* productionExclusion.acquire("child.lock", ${JSON.stringify(directory)}, policy)
-					yield* Effect.sleep("30 seconds")
+					process.send("locked")
+					yield* Effect.never
 				}))
 				await Effect.runPromise(program.pipe(Effect.provide(NativeRuntime.layer({
 					workers: 1, queueCapacity: 8, cleanupCapacity: 8, ownerCapacity: 8,
@@ -115,19 +118,30 @@ describe("D21/D28 kernel lock and generated history", function suite() {
 				}))))
 				`
 			],
-			{ stdio: ["ignore", "inherit", "inherit"] }
+			{ stdio: ["ignore", "inherit", "inherit", "ipc"] }
 		)
-		await Effect.runPromise(Effect.sleep("500 millis"))
-		const exit = await Effect.runPromiseExit(
+		const exited = once(child, "exit")
+		try {
+			await Promise.race([
+				once(child, "message").then(([message]) => assert.equal(message, "locked")),
+				exited.then(() => assert.fail("lock owner exited before reporting acquisition"))
+			])
+			const exit = await Effect.runPromiseExit(
+				provide(gen.generateMigrations({ schema: App0, repository: { directory }, work }))
+			)
+			assert.ok(Exit.isFailure(exit))
+			const failure = Exit.findErrorOption(exit)
+			assert.ok(failure._tag === "Some")
+			assert.ok(failure.value instanceof DbError)
+			assert.equal(failure.value.reason._tag, "DirectoryBusy")
+		} finally {
+			child.kill("SIGKILL")
+			await exited
+		}
+		const successor = await Effect.runPromise(
 			provide(gen.generateMigrations({ schema: App0, repository: { directory }, work }))
 		)
-		child.kill("SIGKILL")
-		await child.exited
-		assert.ok(Exit.isFailure(exit))
-		const failure = Exit.findErrorOption(exit)
-		assert.ok(failure._tag === "Some")
-		assert.ok(failure.value instanceof ProtocolError)
-		assert.equal(failure.value.reason._tag, "MigrationRepository")
+		assert.equal(successor.status, "generated", "process death releases the same repository's kernel lock")
 	})
 
 	test("kill after each durable step: retry recovers previous or committed chain", async function crashSteps() {
@@ -179,9 +193,7 @@ describe("D21/D28 kernel lock and generated history", function suite() {
 
 	test("generate cancel joins pending I/O before L16 lock.release", async function generateJoinBeforeRelease() {
 		const directory = await repoDir()
-		const fiber = Effect.runFork(
-			provide(gen.generateMigrations({ schema: App0, repository: { directory }, work }))
-		)
+		const fiber = Effect.runFork(provide(gen.generateMigrations({ schema: App0, repository: { directory }, work })))
 		await Effect.runPromise(Effect.sleep("10 millis"))
 		await Effect.runPromise(Fiber.interrupt(fiber))
 		await Effect.runPromise(Fiber.await(fiber))
@@ -196,17 +208,13 @@ describe("D21/D28 kernel lock and generated history", function suite() {
 		const directory = await repoDir()
 		const fiber = Effect.runFork(
 			provide(
-				Effect.scoped(
-					productionExclusion.acquire("gate.acq", directory, work).pipe(Effect.andThen(Effect.never))
-				)
+				Effect.scoped(productionExclusion.acquire("gate.acq", directory, work).pipe(Effect.andThen(Effect.never)))
 			)
 		)
 		await Effect.runPromise(Fiber.interrupt(fiber))
 		const exit = await Effect.runPromise(Fiber.await(fiber))
 		assert.ok(Exit.isFailure(exit) && Exit.hasInterrupts(exit))
-		await Effect.runPromise(
-			provide(Effect.scoped(productionExclusion.acquire("gate.acq.successor", directory, work)))
-		)
+		await Effect.runPromise(provide(Effect.scoped(productionExclusion.acquire("gate.acq.successor", directory, work))))
 		await rm(directory, { recursive: true, force: true }).catch(() => undefined)
 	})
 })

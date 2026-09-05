@@ -119,8 +119,9 @@ fn key_probe_candidate(
                     });
                 }
             }
-            Some(DistinctnessWitness::FullRowEquality)
-            | Some(DistinctnessWitness::ExistenceOnly { .. })
+            Some(
+                DistinctnessWitness::FullRowEquality | DistinctnessWitness::ExistenceOnly { .. },
+            )
             | None => {}
         }
     }
@@ -135,12 +136,6 @@ fn key_probe_candidate(
                 .iter()
                 .map(|f| (*f, value_of(*f).expect("checked above")))
                 .collect(),
-        })
-        .filter(|_| {
-            matches!(
-                theory.full_row_witness(),
-                DistinctnessWitness::FullRowEquality
-            )
         })
 }
 

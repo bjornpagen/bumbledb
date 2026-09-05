@@ -84,11 +84,15 @@ describe("the three class laws", function laws() {
 		const Booking = relation("Booking", { id: u64, room: u64 })
 		const CalendarEntry = relation("CalendarEntry", { booking: u64, label: str })
 		const Calendar = schema("Calendar", { Booking, CalendarEntry }, [
+			key(Booking, ["id"]),
 			key(CalendarEntry, ["booking"]),
 			mirrors(on(CalendarEntry.where({ label: "hold" }), "booking"), on(Booking, "id"))
 		])
 
-		const probeSource: Equal<(typeof Calendar)["classes"]["CalendarEntry"]["booking"], "Booking.id"> = true
+		const probeSource: Equal<
+			(typeof Calendar)["classes"]["CalendarEntry"]["booking"],
+			"Booking.id" | "CalendarEntry.booking"
+		> = true
 		assert.ok(probeSource)
 		assert.deepStrictEqual(Calendar.classes, {
 			Booking: { id: "Booking.id", room: undefined },
@@ -114,10 +118,7 @@ describe("the generator authority after the fresh deletion — closed ids are th
 		const probeNoWall: Equal<NoWall, false> = true
 		assert.ok(probeNoWall)
 
-		const Unified = schema("Unified", { Left, Right }, [
-			key(Right, ["id"]),
-			contained(on(Left, "id"), on(Right, "id"))
-		])
+		const Unified = schema("Unified", { Left, Right }, [key(Right, ["id"]), contained(on(Left, "id"), on(Right, "id"))])
 		assert.equal(Unified.classes.Left?.id, "Left.id", "least member in declaration order names the class")
 		assert.equal(Unified.classes.Right?.id, "Left.id")
 	})
@@ -182,7 +183,23 @@ describe("the runtime/type agreement and the wire", function agreement() {
 
 	test("the runtime class map and the type-level class map are the same map", function diff() {
 		const fixture = buildFixture()
-		const probe: Equal<(typeof fixture)["classes"], typeof GOLDEN> = true
+		// At the type tier, generator-less classes are exact member sets;
+		// only the runtime tier chooses a declaration-order representative.
+		type Classes = (typeof fixture)["classes"]
+		const probe: Equal<
+			Classes,
+			{
+				readonly Vocab: { readonly id: "Vocab.id" }
+				readonly Holder: { readonly id: "Holder.id" | "Account.holder"; readonly name: undefined }
+				readonly Account: {
+					readonly id: "Account.id" | "Terms.account"
+					readonly holder: "Holder.id" | "Account.holder"
+					readonly kind: "Vocab.id"
+					readonly note: undefined
+				}
+				readonly Terms: { readonly account: "Account.id" | "Terms.account" }
+			}
+		> = true
 		assert.ok(probe)
 		assert.deepStrictEqual(fixture.classes, GOLDEN)
 	})

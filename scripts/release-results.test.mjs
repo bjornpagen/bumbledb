@@ -165,6 +165,10 @@ test('a skipped case without a recorded reason is unexplained, with one it is no
 test('required qualification cells must be present and passed with substantive evidence',()=>{
   const full=inventory()
   const m=manifest()
+  m.audits=full.audit.map(passed)
+  m.gates=full.gates.map(passed)
+  m.priorReviews=full.priorReview.map(passed)
+  m.discriminators=full.discriminators.map(passed)
   m.qualification=full.qualificationCells.map(cell=>({id:cell.id,outcome:'Passed',evidence:[evidence()]}))
   assert.deepEqual(validateResults(m,full,'pre-promotion',()=>true,{candidateSourceDigest:candidateDigest}),[])
   m.qualification[0].outcome='NotRun'

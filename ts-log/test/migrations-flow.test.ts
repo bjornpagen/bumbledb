@@ -19,10 +19,10 @@ import { Effect, Exit } from "effect"
 import { ProtocolError } from "#errors.ts"
 import { decodeGeneratedMigrations } from "#migrations/decode.ts"
 import { makeGenerator } from "#migrations/generate.ts"
-import type { GeneratedMigrations, MigrationPlan } from "#migrations/types.ts"
-import { scriptedCodec, scriptedExclusion, withStubRuntime, WORK } from "#test/migrations-double.ts"
-import { App0, App1, App2, App3, evolution1, evolution2, evolution3 } from "#test/migrations-example.ts"
 import { migrationIntent, seed } from "#migrations/intent.ts"
+import type { GeneratedMigrations, MigrationPlan } from "#migrations/types.ts"
+import { scriptedCodec, scriptedExclusion, WORK, withStubRuntime } from "#test/migrations-double.ts"
+import { App0, App1, App2, App3, evolution1, evolution2, evolution3 } from "#test/migrations-example.ts"
 
 const gen = makeGenerator(scriptedCodec(), scriptedExclusion())
 
@@ -59,7 +59,9 @@ async function repoFiles(directory: string): Promise<Map<string, string>> {
 
 /** Build the exact value the generated static index would export. */
 async function loadGenerated(directory: string): Promise<GeneratedMigrations> {
-	const manifest = JSON.parse(await readFile(path.join(directory, "manifest.json"), "utf8")) as GeneratedMigrations["manifest"]
+	const manifest = JSON.parse(
+		await readFile(path.join(directory, "manifest.json"), "utf8")
+	) as GeneratedMigrations["manifest"]
 	const plans: MigrationPlan[] = []
 	for (const entry of manifest.entries) {
 		plans.push(JSON.parse(await readFile(path.join(directory, `${entry.id}.plan.json`), "utf8")) as MigrationPlan)
@@ -68,13 +70,18 @@ async function loadGenerated(directory: string): Promise<GeneratedMigrations> {
 	return { manifest, plans, snapshots }
 }
 
-function expectIntentRequired(exit: Exit.Exit<unknown, unknown>): readonly { code: string; relation: string; field: string | null }[] {
+function expectIntentRequired(
+	exit: Exit.Exit<unknown, unknown>
+): readonly { code: string; relation: string; field: string | null }[] {
 	assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit), "expected a typed refusal")
 	const failure = Exit.findErrorOption(exit)
 	assert.ok(failure._tag === "Some")
 	const error = failure.value
 	assert.ok(error instanceof ProtocolError, "expected ProtocolError")
-	const reason = error.reason as { _tag: string; requirements?: readonly { code: string; relation: string; field: string | null }[] }
+	const reason = error.reason as {
+		_tag: string
+		requirements?: readonly { code: string; relation: string; field: string | null }[]
+	}
 	assert.equal(reason._tag, "MigrationIntentRequired")
 	assert.ok(Array.isArray(reason.requirements))
 	return reason.requirements ?? []
@@ -117,7 +124,7 @@ describe("generate / check flow", function suite() {
 		assert.equal(report.contract.schemaId, plan.toSchemaId)
 		assert.equal(report.contract.steps, "1")
 		const contractText = files.get("runtime-contract.json")
-		assert.ok(contractText !== undefined && contractText.includes(plan.toSchemaId))
+		assert.ok(contractText?.includes(plan.toSchemaId))
 	})
 
 	test("rerun is unchanged and writes nothing; check is clean and writes nothing", async function rerun() {
@@ -165,11 +172,17 @@ describe("generate / check flow", function suite() {
 	test("the complete staged example history generates end to end (P13 handoff)", async function example() {
 		const directory = await repoDir()
 		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
-		const one = await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK }))
+		const one = await run(
+			gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK })
+		)
 		assert.equal(one.planId, "0001-note")
-		const two = await run(gen.generateMigrations({ schema: App2, intent: evolution2, repository: { directory }, work: WORK }))
+		const two = await run(
+			gen.generateMigrations({ schema: App2, intent: evolution2, repository: { directory }, work: WORK })
+		)
 		assert.equal(two.planId, "0002-create-tag-seed-tag")
-		const three = await run(gen.generateMigrations({ schema: App3, intent: evolution3, repository: { directory }, work: WORK }))
+		const three = await run(
+			gen.generateMigrations({ schema: App3, intent: evolution3, repository: { directory }, work: WORK })
+		)
 		assert.equal(three.planId, "0003-note")
 		const generated = await loadGenerated(directory)
 		const decoded = decodeGeneratedMigrations(generated)
@@ -300,9 +313,14 @@ describe("generate / check flow", function suite() {
 		const directory = await repoDir()
 		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
 		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK }))
-		const exit = await runExit(gen.checkMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK }))
+		const exit = await runExit(
+			gen.checkMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK })
+		)
 		const requirements = expectIntentRequired(exit)
-		assert.deepEqual(requirements.map((entry) => entry.code), ["stale-intent"])
+		assert.deepEqual(
+			requirements.map((entry) => entry.code),
+			["stale-intent"]
+		)
 	})
 
 	test("intent declared for a different schema value refuses before any work", async function foreignIntent() {

@@ -41,10 +41,12 @@ pub(super) fn capture_query(
             let mut prepared = None;
             let (_, cold) = crate::harness::traced_sample(&mut || {
                 let mut p = db
-                    .prepare(&q)
+                    .prepare(&q, crate::harness::bench_work())
                     .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
-                db.read(|snap| snap.execute(&mut p, &bind_values(&sets[0]), &mut buffer))
-                    .map_err(|e| format!("{}/{}: cold execute: {e:?}", scenario.name, sq.name))?;
+                db.read(crate::harness::bench_work(), |snap| {
+                    snap.execute(&mut p, &bind_values(&sets[0]), &mut buffer)
+                })
+                .map_err(|e| format!("{}/{}: cold execute: {e:?}", scenario.name, sq.name))?;
                 prepared = Some(p);
                 Ok(buffer.len() as u64)
             })?;
@@ -53,8 +55,10 @@ pub(super) fn capture_query(
 
             let mut run = |index: usize| {
                 let params = bind_values(&sets[index]);
-                db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
-                    .map_err(|e| format!("{}/{}: execute: {e:?}", scenario.name, sq.name))?;
+                db.read(crate::harness::bench_work(), |snap| {
+                    snap.execute(&mut prepared, &params, &mut buffer)
+                })
+                .map_err(|e| format!("{}/{}: execute: {e:?}", scenario.name, sq.name))?;
                 Ok(buffer.len() as u64)
             };
             for round in 0..WARM_ROUNDS {
@@ -69,7 +73,9 @@ pub(super) fn capture_query(
 
             let (_, cold) = crate::harness::traced_sample(&mut || {
                 let fact = db
-                    .read(|snap| snap.get_dyn(*relation, statement, &sets[0]))
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.get_dyn(*relation, statement, &sets[0])
+                    })
                     .map_err(|e| format!("{}/{}: cold get_dyn: {e:?}", scenario.name, sq.name))?;
                 Ok(std::hint::black_box(fact).map_or(0, |_| 1))
             })?;
@@ -77,7 +83,9 @@ pub(super) fn capture_query(
 
             let run = |index: usize| {
                 let fact = db
-                    .read(|snap| snap.get_dyn(*relation, statement, &sets[index]))
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.get_dyn(*relation, statement, &sets[index])
+                    })
                     .map_err(|e| format!("{}/{}: get_dyn: {e:?}", scenario.name, sq.name))?;
                 Ok(std::hint::black_box(fact).map_or(0, |_| 1))
             };

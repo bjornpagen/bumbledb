@@ -32,9 +32,8 @@ fn u64_key_uses_exact_bounded_routing_bytes() {
     )
     .expect("create")
     .0;
-    let proj = store
-        .snapshot(&work())
-        .expect("snap")
+    let snapshot = store.snapshot(&work()).expect("snap");
+    let proj = snapshot
         .compiled()
         .projection(crate::schema::ProjectionId(0))
         .expect("proj");
@@ -73,17 +72,19 @@ fn text_key_uses_fingerprint_routing() {
     )
     .expect("create")
     .0;
-    let proj = store
-        .snapshot(&work())
-        .expect("snap")
+    let snapshot = store.snapshot(&work()).expect("snap");
+    let proj = snapshot
         .compiled()
         .projection(crate::schema::ProjectionId(0))
         .expect("proj");
     assert_eq!(proj.encoding, KeyEncoding::FingerprintBucket);
     let projected =
         determinant_bytes(proj, &[Value::String("hello".into())], &work()).expect("project");
-    assert!(projected.len() > 16, "canonical row encoding for hash input");
-    let routing = super::rows::routing_for_projected(
+    assert_eq!(
+        projected.as_slice(),
+        &[&[0, 1, 4][..], &5u64.to_be_bytes(), b"hello"].concat()
+    );
+    let routing = crate::storage::store::rows::routing_for_projected(
         store.snapshot(&work()).expect("snap").store_inner(),
         proj.id,
         &projected,
@@ -92,32 +93,36 @@ fn text_key_uses_fingerprint_routing() {
     assert_eq!(routing.len(), 16, "16-byte fingerprint routing");
     assert_eq!(
         1 + 2 + routing.len() + 8,
-        DETERMINANT_KEY_MIN_LEN,
-        "fingerprint determinant key width"
+        DETERMINANT_KEY_MIN_LEN + 16,
+        "minimum key framing plus fingerprint routing"
     );
     assert_eq!(TAG_DETERMINANT, 0x03);
 }
 
 #[test]
 fn compiled_theory_table_matches_chapter_40() {
-    let theory = CompiledTheory::compile(&SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            name: "T".into(),
-            fields: vec![FieldDescriptor {
-                name: "id".into(),
-                value_type: ValueType::U64,
+    let theory = CompiledTheory::compile(
+        &SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "T".into(),
+                fields: vec![FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                }],
+                extension: None,
             }],
-            extension: None,
-        }],
-        statements: vec![StatementDescriptor::Functionality {
-            relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
-        }],
-    }
-    .validate()
-    .expect("valid"))
+            statements: vec![StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::from([FieldId(0)]),
+            }],
+        }
+        .validate()
+        .expect("valid"),
+    )
     .expect("compile");
-    let proj = theory.projection(crate::schema::ProjectionId(0)).expect("one");
+    let proj = theory
+        .projection(crate::schema::ProjectionId(0))
+        .expect("one");
     // Row 13 + membership 29 + determinant exact u64 19 = 61 raw key bytes
     // (one fact, one key) per chapter 40 worked example structure.
     let det_key = 1 + 2 + proj.encoding.routing_width() + 8;
@@ -135,16 +140,10 @@ fn store_shares_schema_compiled_theory() {
             }],
             extension: None,
         }],
-        statements: vec![
-            StatementDescriptor::Functionality {
-                relation: RelationId(0),
-                projection: Box::from([FieldId(0)]),
-            },
-            StatementDescriptor::Functionality {
-                relation: RelationId(0),
-                projection: Box::from([FieldId(0)]),
-            },
-        ],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::from([FieldId(0)]),
+        }],
     }
     .validate()
     .expect("valid");
@@ -156,9 +155,14 @@ fn store_shares_schema_compiled_theory() {
     .expect("create")
     .0;
     assert_eq!(
-        store.snapshot(&work()).expect("snap").compiled().projections().len(),
+        store
+            .snapshot(&work())
+            .expect("snap")
+            .compiled()
+            .projections()
+            .len(),
         1,
-        "one interned projection shared across statements"
+        "one declared key, one interned projection"
     );
     let id0 = store
         .snapshot(&work())
@@ -167,12 +171,11 @@ fn store_shares_schema_compiled_theory() {
         .projection_of_statement(StatementId(0))
         .expect("stmt 0")
         .id;
-    let id1 = store
-        .snapshot(&work())
-        .expect("snap")
-        .compiled()
-        .projection_of_statement(StatementId(1))
-        .expect("stmt 1")
-        .id;
-    assert_eq!(id0, id1);
+    let theory = schema.shared_compiled_theory().expect("compiled schema");
+    let snapshot = store.snapshot(&work()).expect("snap");
+    assert!(std::ptr::eq(theory.as_ref(), snapshot.compiled()));
+    assert_eq!(
+        theory.projection_of_statement(StatementId(0)).unwrap().id,
+        id0
+    );
 }

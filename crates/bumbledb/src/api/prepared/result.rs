@@ -194,20 +194,23 @@ impl CompleteResult {
             return Err(Error::ResultBytesOverflow);
         }
         work.step(1).map_err(super::source::work_error)?;
-        let estimated = if self.len() > 0 {
+        self.rebind_work(work);
+        let estimated = if self.is_empty() {
+            0
+        } else {
             self.byte_len()
                 .saturating_mul(limit.min(self.len()))
                 .div_ceil(self.len())
-        } else {
-            0
         };
         if estimated > byte_allowance {
-            return Err(super::source::work_error(crate::work::WorkError::Exhausted {
-                resource: crate::work::Resource::ResultBytes,
-                used: work.used(crate::work::Resource::ResultBytes),
-                requested: estimated,
-                limit: byte_allowance,
-            }));
+            return Err(super::source::work_error(
+                crate::work::WorkError::Exhausted {
+                    resource: crate::work::Resource::ResultBytes,
+                    used: work.used(crate::work::Resource::ResultBytes),
+                    requested: estimated,
+                    limit: byte_allowance,
+                },
+            ));
         }
         let mut out = Answers::new();
         out.begin(self.arity());
@@ -218,12 +221,14 @@ impl CompleteResult {
             self.encode_row(index, &mut encoded)?;
             let row_bytes = encoded.len() as u64;
             if used.saturating_add(row_bytes) > byte_allowance {
-                return Err(super::source::work_error(crate::work::WorkError::Exhausted {
-                    resource: crate::work::Resource::ResultBytes,
-                    used: work.used(crate::work::Resource::ResultBytes),
-                    requested: used.saturating_add(row_bytes),
-                    limit: byte_allowance,
-                }));
+                return Err(super::source::work_error(
+                    crate::work::WorkError::Exhausted {
+                        resource: crate::work::Resource::ResultBytes,
+                        used: work.used(crate::work::Resource::ResultBytes),
+                        requested: used.saturating_add(row_bytes),
+                        limit: byte_allowance,
+                    },
+                ));
             }
             self.push_row(index, &mut out)?;
             used = used.saturating_add(row_bytes);
@@ -231,23 +236,6 @@ impl CompleteResult {
         let _delivery = work
             .reserve(ByteKind::Result, used)
             .map_err(super::source::work_error)?;
-        Ok(out)
-    }
-
-    /// Convert into one fully owned collection, or fail — a cap refusal
-    /// leaves this sealed backing untouched and available.
-    /// # Errors
-    /// `ResultBytesOverflow` when the row count exceeds `limit`; scratch
-    /// read failure.
-    pub(crate) fn collect(&mut self, limit: u64) -> Result<Answers> {
-        if self.len() > limit {
-            return Err(Error::ResultBytesOverflow);
-        }
-        let mut out = Answers::new();
-        out.begin(self.arity());
-        for index in 0..self.len() {
-            self.push_row(index, &mut out)?;
-        }
         Ok(out)
     }
 
@@ -423,10 +411,22 @@ impl<'w> ResultCharge<'w> {
         Ok(())
     }
 
+    /// True up a resident collection before transferring the caller-owned
+    /// answer buffer. Like collected copies from a `CompleteResult`, that
+    /// buffer's lifetime is controlled by the Rust caller, not a result lease.
+    pub(super) fn finish_resident(mut self, answers: &Answers) -> Result<()> {
+        debug_assert!(self.spill.is_none(), "resident collection never spills");
+        self.charge_to(self.total_bytes(answers))
+    }
+
     /// Seal the constructed set: the final true-up charge plus the backing
     /// the construction already chose. `answers` holds the complete RAM
     /// set when nothing spilled, and is empty otherwise.
-    pub(super) fn seal(mut self, answers: Answers, identity: ResultIdentity) -> Result<CompleteResult> {
+    pub(super) fn seal(
+        mut self,
+        answers: Answers,
+        identity: ResultIdentity,
+    ) -> Result<CompleteResult> {
         self.charge_to(self.total_bytes(&answers))?;
         let Self {
             reservations,
@@ -559,7 +559,26 @@ impl<'cursor> DeliveryTicket<'cursor> {
     /// hardcoded 1.
     /// # Errors
     /// Delivery byte/work refusal or terminal backing failure.
-    pub fn preview_page(&mut self, work: &WorkContext, byte_allowance: u64) -> Result<Option<&Answers>> {
+    pub fn preview_page(
+        &mut self,
+        work: &WorkContext,
+        byte_allowance: u64,
+    ) -> Result<Option<&Answers>> {
+        self.preview_page_with_cost(work, byte_allowance, |bytes| bytes)
+    }
+
+    /// Preview with a caller-supplied bound on total delivery bytes per row.
+    /// The input is the encoded row length; adapters include their conversion
+    /// and overlap costs here, before copying any row. The engine retains no
+    /// knowledge of the host's object layout. Cost must be at least the input.
+    /// # Errors
+    /// As [`Self::preview_page`], or an invalid (underestimating) cost function.
+    pub fn preview_page_with_cost(
+        &mut self,
+        work: &WorkContext,
+        byte_allowance: u64,
+        mut delivery_cost: impl FnMut(u64) -> u64,
+    ) -> Result<Option<&Answers>> {
         if let Some(error) = &self.cursor.failed {
             return Err(error.clone());
         }
@@ -568,6 +587,7 @@ impl<'cursor> DeliveryTicket<'cursor> {
         }
         work.step(1).map_err(super::source::work_error)?;
         work.checkpoint().map_err(super::source::work_error)?;
+        self.cursor.rebind_work(work);
         self.preview = None;
         self.preview_charge = None;
         self.pending = None;
@@ -584,13 +604,17 @@ impl<'cursor> DeliveryTicket<'cursor> {
                 Ok(bytes) => bytes,
                 Err(error) => return Err(self.surface_preview_error(error)),
             };
-            if used.saturating_add(row_bytes) > byte_allowance {
+            let delivery_bytes = delivery_cost(row_bytes);
+            if delivery_bytes < row_bytes {
+                return Err(self.abort_pull(Error::ResultBytesOverflow));
+            }
+            if used.saturating_add(delivery_bytes) > byte_allowance {
                 if rows.is_empty() {
                     return Err(self.abort_pull(super::source::work_error(
                         crate::work::WorkError::Exhausted {
                             resource: crate::work::Resource::ResultBytes,
                             used: work.used(crate::work::Resource::ResultBytes),
-                            requested: row_bytes,
+                            requested: delivery_bytes,
                             limit: byte_allowance,
                         },
                     )));
@@ -612,7 +636,7 @@ impl<'cursor> DeliveryTicket<'cursor> {
             if let Err(error) = self.cursor.copy_fit_row(index, &self.scratch, &mut rows) {
                 return Err(self.surface_preview_error(error));
             }
-            used = used.saturating_add(row_bytes);
+            used = used.saturating_add(delivery_bytes);
             index += 1;
         }
         self.pending = Some(PendingAdvance {
@@ -691,12 +715,14 @@ impl<'cursor> DeliveryTicket<'cursor> {
         let additional = need.saturating_sub(self.scratch.len());
         if additional > 0 && self.scratch.try_reserve(additional).is_err() {
             drop(reservation);
-            return Err(super::source::work_error(crate::work::WorkError::Exhausted {
-                resource: crate::work::Resource::ResultBytes,
-                used: work.used(crate::work::Resource::ResultBytes),
-                requested: extra,
-                limit: work.limit(crate::work::Resource::ResultBytes),
-            }));
+            return Err(super::source::work_error(
+                crate::work::WorkError::Exhausted {
+                    resource: crate::work::Resource::ResultBytes,
+                    used: work.used(crate::work::Resource::ResultBytes),
+                    requested: extra,
+                    limit: work.limit(crate::work::Resource::ResultBytes),
+                },
+            ));
         }
         match &mut self.scratch_charge {
             Some(owned) => owned.join(reservation),
@@ -811,6 +837,11 @@ impl ResultCursor {
         self.next_row
     }
 
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn backing_is_scratch(&self) -> bool {
         matches!(self.backing, Backing::Scratch { .. })
     }
@@ -887,7 +918,7 @@ impl ResultCursor {
             ticket.commit();
             return Ok(None);
         };
-        let rows = ticket.adopt().expect("previewed page");
+        let rows = ticket.adopt().ok_or_else(missing_row)?;
         let charge = ticket.take_preview_charge();
         let terminal = ticket.will_be_terminal();
         ticket.commit();
@@ -898,89 +929,9 @@ impl ResultCursor {
         }))
     }
 
-    /// The next chunk. `Ok(None)` after the terminal page was delivered.
-    /// # Panics
-    /// Only on programmer-invariant violations (a corrupt in-memory page
-    /// shape); never on caller input.
-    /// # Errors
-    /// Scratch read failure — delivery stops without a terminal frame; the
-    /// already-delivered prefix must not be mistaken for the complete set.
-    pub(crate) fn next_page(&mut self) -> Result<Option<ResultPage>> {
-        if let Some(error) = &self.failed {
-            return Err(error.clone());
-        }
-        if self.done {
-            return Ok(None);
-        }
-        match self.build_page(self.next_row) {
-            Ok((page, next_row, done)) => {
-                self.next_row = next_row;
-                self.done = done;
-                Ok(page)
-            }
-            Err(error) => {
-                self.failed = Some(error.clone());
-                Err(error)
-            }
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn inject_backing_failure(&mut self, error: Error) {
         self.failed = Some(error);
-    }
-
-    fn build_page(&mut self, start: u64) -> Result<(Option<ResultPage>, u64, bool)> {
-        let take = self.page_rows as u64;
-        let mut rows = Answers::new();
-        rows.begin(match &self.backing {
-            Backing::Ram(answers) => answers.arity(),
-            Backing::Scratch { arity, .. } => *arity,
-        });
-        let total = match &mut self.backing {
-            Backing::Ram(answers) => {
-                let arity = answers.arity();
-                let end = (start + take).min(answers.len() as u64);
-                let skip = usize::try_from(start).expect("64-bit usize");
-                let take_rows = usize::try_from(end - start).expect("64-bit usize");
-                for answer in answers.answers().skip(skip).take(take_rows) {
-                    for column in 0..arity {
-                        rows.push_value(&answer.get(column));
-                    }
-                }
-                answers.len() as u64
-            }
-            Backing::Scratch {
-                rows: stored,
-                arity,
-                count,
-                ..
-            } => {
-                let arity = *arity;
-                let end = (start + take).min(*count);
-                let mut value = Vec::new();
-                for row in start..end {
-                    if !stored.get(&row.to_be_bytes(), &mut value)? {
-                        return Err(Error::Corruption(
-                            crate::error::CorruptionError::MalformedValue("result row sequence"),
-                        ));
-                    }
-                    decode_row(&value, arity, &mut rows)?;
-                }
-                *count
-            }
-        };
-        let next_row = (start + take).min(total);
-        let terminal = next_row >= total;
-        Ok((
-            Some(ResultPage {
-                rows,
-                terminal,
-                charge: None,
-            }),
-            next_row,
-            terminal,
-        ))
     }
 }
 
@@ -1014,7 +965,7 @@ fn is_resource_refusal(error: &Error) -> bool {
 fn scratch_row_encoded_len(rows: &mut ScratchRelation, index: u64) -> Result<u64> {
     let key = index.to_be_bytes();
     let mut found = None;
-    rows.visit_from(&key, &mut |k, value| {
+    rows.visit_from(&key, &mut |k: &[u8], value: &[u8]| {
         if k == key.as_slice() {
             found = Some(value.len() as u64);
         }
@@ -1034,7 +985,7 @@ fn encoded_value_len(value: &AnswerValue<'_>) -> u64 {
         AnswerValue::IntervalU64(_)
         | AnswerValue::IntervalI64(_)
         | AnswerValue::IntervalF64(_)
-        | AnswerValue::Id128(_) => 17,
+        | AnswerValue::Uuid(_) => 17,
     }
 }
 
@@ -1099,7 +1050,7 @@ fn encode_value(value: &AnswerValue<'_>, out: &mut Vec<u8>) {
             out.extend_from_slice(&interval.start().to_be_bytes());
             out.extend_from_slice(&interval.end().to_be_bytes());
         }
-        AnswerValue::Id128(id) => {
+        AnswerValue::Uuid(id) => {
             out.push(8);
             out.extend_from_slice(id.as_bytes());
         }
@@ -1169,7 +1120,7 @@ fn decode_row(mut bytes: &[u8], arity: usize, out: &mut Answers) -> Result<()> {
             }
             8 => {
                 let raw: [u8; 16] = take(16)?.try_into().expect("sixteen");
-                out.push_value(&AnswerValue::Id128(bumbledb_theory::Id128::from_bytes(raw)));
+                out.push_value(&AnswerValue::Uuid(bumbledb_theory::Uuid::from_bytes(raw)));
             }
             9 => {
                 let start: [u8; 8] = take(8)?.try_into().expect("eight");
@@ -1240,20 +1191,6 @@ impl<S> super::PreparedQuery<S> {
             generation: Some(instance.snapshot().generation()),
         };
         charge.seal(answers, identity)
-    }
-}
-
-impl<S> crate::api::db::ReadFrame<'_, S> {
-    /// Seal a complete result on this frame's fresh work (C4/C8).
-    /// # Errors
-    /// As [`super::PreparedQuery::execute_complete_with_work`].
-    #[doc(hidden)]
-    pub fn execute_complete<'p, P: super::BindArgs<'p>>(
-        &self,
-        prepared: &mut super::PreparedQuery<S>,
-        params: P,
-    ) -> Result<CompleteResult> {
-        prepared.execute_complete_with_work(self, self.work(), params)
     }
 }
 

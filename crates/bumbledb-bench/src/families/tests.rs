@@ -27,12 +27,12 @@ fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
 fn all_sixteen_validate_and_prepare() {
     let dir = std::env::temp_dir().join("bumbledb-bench-families");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     assert_eq!(all().len(), 16);
     for family in all() {
-        db.prepare(&(family.query)())
+        db.prepare(&(family.query)(), crate::harness::bench_work())
             .unwrap_or_else(|e| panic!("{} fails validation: {e:?}", family.name));
     }
     drop(db);
@@ -236,10 +236,10 @@ fn balance_counts_equal_amounts_separately() {
 
     let dir = std::env::temp_dir().join("bumbledb-bench-true-balance");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for (rel, values) in &rows {
             tx.insert_dyn(*rel, [values])?;
         }
@@ -247,9 +247,13 @@ fn balance_counts_equal_amounts_separately() {
     })
     .expect("seed")
     .unwrap();
-    let mut prepared = db.prepare(&balance_query()).expect("prepare");
+    let mut prepared = db
+        .prepare(&balance_query(), crate::harness::bench_work())
+        .expect("prepare");
     let out = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[bumbledb::BindValue::U64(0)]))
+        .read(crate::harness::bench_work(), |snap| {
+            snap.execute_collect(&mut prepared, &[bumbledb::BindValue::U64(0)])
+        })
         .expect("execute");
     assert_eq!(out.len(), 1);
     assert_eq!(
@@ -322,22 +326,30 @@ fn deep_chain_reaches_node_three_at_runtime() {
         seed: 1,
         scale: Scale::S,
     };
-    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger)
-        .expect("create")
-        .expect("accepted");
+    let db = bumbledb::Db::create(
+        &dir.join("db"),
+        crate::schema::Ledger,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
 
     let family = all()
         .iter()
         .find(|f| f.name == "deep_chain")
         .expect("registered");
-    let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+    let mut prepared = db
+        .prepare(&(family.query)(), crate::harness::bench_work())
+        .expect("prepare");
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = bumbledb::Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("{e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("{e:?}"))?;
         Ok(buffer.len() as u64)
     };
     for _ in 0..4 {

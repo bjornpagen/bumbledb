@@ -107,7 +107,9 @@ fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
     .expect("identity rewrite commits")
     .unwrap();
     let renamed = db
-        .write(common::work(), |tx| tx.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])]))
+        .write(common::work(), |tx| {
+            tx.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])])
+        })
         .expect("point read")
         .unwrap()
         .value
@@ -248,7 +250,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
         let kind = snap
             .get_dyn(Graph::KIND, KIND_KEY, &[Value::U64(1)])?
             .expect("Assessment is row 1");
-        assert_eq!(kind, vec![Value::U64(1)]);
+        assert_eq!(kind.values(), &[Value::U64(1)]);
         assert_eq!(snap.get_dyn(Graph::KIND, KIND_KEY, &[Value::U64(9)])?, None);
         for statement in [StatementId(40), EDGE_DST_CONTAINMENT] {
             let err = snap
@@ -352,7 +354,11 @@ fn an_fd_rejection_renders_the_key_form() {
     let fact = &violations.cited_facts(0)[0];
     assert_eq!(fact.relation(), Graph::NODE);
     assert_eq!(fact.values()[0], Value::U64(ids[0]));
-    assert_eq!(fact.values()[1], Value::String(Box::from("usurper")));
+    assert_eq!(fact.values()[1], Value::String(Box::from("node-0")));
+    assert_eq!(
+        violations.cited_facts(0)[1].values()[1],
+        Value::String(Box::from("usurper"))
+    );
 
     let rendered = render_rejection(&Graph.descriptor(), &violations);
     assert_eq!(rendered[0].kind(), StatementKind::Functionality);
@@ -370,12 +376,12 @@ fn the_manifest_names_every_statement_in_canonical_spelling() {
     let statements = &manifest.statements;
     assert_eq!(statements.len(), 6);
     let expect: [(StatementKind, &str); 6] = [
-        (StatementKind::Functionality, "Node(id) -> Node"),
         (StatementKind::Functionality, "Kind(id) -> Kind"),
         (StatementKind::Containment, "Edge(src) <= Node(id)"),
         (StatementKind::Containment, "Edge(dst) <= Node(id)"),
         (StatementKind::Containment, "Node(kind) <= Kind(id)"),
         (StatementKind::Capacity, "Node(id) <={0..2} Edge(src)"),
+        (StatementKind::Functionality, "Node(id) -> Node"),
     ];
     for (idx, (kind, spelling)) in expect.into_iter().enumerate() {
         assert_eq!(

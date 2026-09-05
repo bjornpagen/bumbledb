@@ -459,7 +459,7 @@ fn wide_scalar_keys_compile_to_fingerprint_routing() {
     let mut decl = one_relation(fields);
     decl.statements.push(fd(RelationId(0), &projection));
     let schema = decl.validate().expect("wide key uses fingerprint bucket");
-    let theory = crate::schema::CompiledTheory::compile(&schema);
+    let theory = crate::schema::CompiledTheory::compile(&schema).expect("compiled schema");
     assert!(
         theory.max_determinant_key_width <= crate::schema::LMDB_KEY_LIMIT,
         "physical determinant keys must fit LMDB"

@@ -7,19 +7,18 @@
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Effect, Stream } from "effect"
+import { Effect, type Stream } from "effect"
 import { ChangeSet } from "#changes.ts"
 import { Schema as BumbleSchema } from "#compile.ts"
 import { Db } from "#db.ts"
-import { f64, id128, str, u64 } from "#fields.ts"
-import { Id128 } from "#id128.ts"
+import { f64, str, u64, uuid } from "#fields.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { schema } from "#schema.ts"
 import { key } from "#statements.ts"
-import { Attempt, Learning, Student, work } from "#test/fixtures/learning.ts"
+import { type Attempt, Learning, type Student, work } from "#test/fixtures/learning.ts"
 
 function assertNoTwin(name: string, value: object): void {
 	assert.equal("then" in value, false, `${name} is not thenable`)
@@ -34,13 +33,11 @@ test("every core entry point constructs a lazy Effect (or Stream) — nothing ru
 	const open = Db.open("/tmp/never-used", Learning, work)
 	const compile = BumbleSchema.compile(Learning, work)
 	const builder = ChangeSet.builder(Learning, work)
-	const random = Id128.random()
 	for (const [name, value] of [
 		["Db.create", create],
 		["Db.open", open],
 		["Schema.compile", compile],
-		["ChangeSet.builder", builder],
-		["Id128.random", random]
+		["ChangeSet.builder", builder]
 	] as const) {
 		assert.ok(Effect.isEffect(value), `${name} constructs an Effect`)
 		assertNoTwin(name, value)
@@ -71,7 +68,7 @@ test("pure schema/query metadata construction touches no native work and no I/O"
 	// These constructions run against ORDINARY data only. A native
 	// dispatch here would be an import-time/authoring-time side effect —
 	// the exact thing chapter 35's pure-descriptions table forbids.
-	const Widget = relation("Widget", { id: id128, name: str, score: f64, count: u64 })
+	const Widget = relation("Widget", { id: uuid, name: str, score: f64, count: u64 })
 	const Gadgets = schema("Gadgets", { Widget }, [key(Widget, ["id"])])
 	const template = query(Gadgets).rule((r) => {
 		const { id, name, score } = v(Widget)

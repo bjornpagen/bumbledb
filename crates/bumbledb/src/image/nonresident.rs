@@ -1,6 +1,6 @@
 //! Exact scratch-backed text resolution for nonresident execution.
 //!
-//! Forward/reverse maps are L03 charged [`ScratchRelation`]s. A small
+//! Forward/reverse maps share one charged [`ScratchTextLookup`]. A small
 //! working-charged warm alias cache sits in front of them so [`TextEq`]
 //! does not lock the intern or walk bytes on a warm join. The cache is
 //! bounded; eviction never drops the exact scratch entries.
@@ -10,19 +10,17 @@
 //! Scratch tokens are [`SCRATCH_TOKEN_TAG`] `| dense`; `u64::MAX` is
 //! never minted.
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{CorruptionError, Error, Result};
-use crate::exec::scratch::{ScratchCapability, ScratchRelation};
+use crate::exec::scratch::{ScratchCapability, ScratchProbe, ScratchTextLookup};
 use crate::image::epoch::TextGeneration;
 use crate::image::intern::{SCRATCH_TOKEN_TAG, SENTINEL_WORD, is_resident_token, is_scratch_token};
 use crate::work::{ByteKind, ByteReservation, GenerationHandle, WorkContext, WorkError};
 
 static NEXT_STORE_EPOCH: AtomicU64 = AtomicU64::new(1);
 
-const WARM_ENTRY_BYTES: u64 = 32;
 const WARM_CACHE_LIMIT: u64 = 64 * 1024;
 
 /// Owner identity of one [`NonresidentTextStore`]. Not packed into tokens.
@@ -46,18 +44,11 @@ impl TextStoreEpoch {
     }
 }
 
-/// Tokens no longer pack an epoch. Stamp [`NonresidentTextStore::epoch`]
-/// on memos instead of recovering identity from a word.
-#[must_use]
-pub const fn scratch_token_epoch(_token: u64) -> Option<TextStoreEpoch> {
-    None
-}
-
 fn dense_of(token: u64) -> Option<u64> {
     is_scratch_token(token).then_some(token & !SCRATCH_TOKEN_TAG)
 }
 
-fn mint_token(dense: u64) -> Result<u64, WorkError> {
+fn mint_token(dense: u64) -> std::result::Result<u64, WorkError> {
     if dense >= SCRATCH_TOKEN_TAG {
         return Err(WorkError::Exhausted {
             resource: crate::work::Resource::Rows,
@@ -81,58 +72,63 @@ fn mint_token(dense: u64) -> Result<u64, WorkError> {
 /// Bounded, working-charged alias cache. Exact text stays in scratch.
 #[derive(Debug)]
 struct WarmAliases {
-    to_canonical: HashMap<u64, u64>,
-    charges: HashMap<u64, ByteReservation>,
-    bytes: u64,
+    table: Option<AliasTable>,
     limit: u64,
     work: WorkContext,
+}
+
+#[derive(Debug)]
+struct AliasTable {
+    entries: Box<[(u64, u64)]>,
+    charge: ByteReservation,
 }
 
 impl WarmAliases {
     fn new(work: WorkContext, limit: u64) -> Self {
         Self {
-            to_canonical: HashMap::new(),
-            charges: HashMap::new(),
-            bytes: 0,
+            table: None,
             limit,
             work,
         }
     }
 
     fn get(&self, token: u64) -> Option<u64> {
-        self.to_canonical.get(&token).copied()
+        let table = self.table.as_ref()?;
+        let index = usize::try_from(token & (table.entries.len() - 1) as u64)
+            .expect("masked index fits the allocated table");
+        let (stored, canonical) = table.entries[index];
+        (stored == token).then_some(canonical)
     }
 
     fn insert(&mut self, token: u64, canonical: u64) {
-        if WARM_ENTRY_BYTES > self.limit {
-            return;
+        if self.table.is_none() {
+            let available = self.limit / std::mem::size_of::<(u64, u64)>() as u64;
+            if available == 0 {
+                return;
+            }
+            let slots = 1usize << available.ilog2();
+            let bytes = slots * std::mem::size_of::<(u64, u64)>();
+            let Ok(charge) = self.work.reserve(ByteKind::Working, bytes as u64) else {
+                return;
+            };
+            let mut entries = Vec::new();
+            if entries.try_reserve_exact(slots).is_err() {
+                return;
+            }
+            entries.resize(slots, (SENTINEL_WORD, SENTINEL_WORD));
+            self.table = Some(AliasTable {
+                entries: entries.into_boxed_slice(),
+                charge,
+            });
         }
-        if self.to_canonical.contains_key(&token) {
-            self.to_canonical.insert(token, canonical);
-            return;
-        }
-        while self.bytes + WARM_ENTRY_BYTES > self.limit && !self.to_canonical.is_empty() {
-            self.evict_one();
-        }
-        let Ok(charge) = self.work.reserve(ByteKind::Working, WARM_ENTRY_BYTES) else {
-            return;
-        };
-        self.bytes += WARM_ENTRY_BYTES;
-        self.charges.insert(token, charge);
-        self.to_canonical.insert(token, canonical);
-    }
-
-    fn evict_one(&mut self) {
-        let Some((&token, _)) = self.to_canonical.iter().next() else {
-            return;
-        };
-        self.to_canonical.remove(&token);
-        self.charges.remove(&token);
-        self.bytes = self.bytes.saturating_sub(WARM_ENTRY_BYTES);
+        let table = self.table.as_mut().expect("cache just admitted");
+        let index = usize::try_from(token & (table.entries.len() - 1) as u64)
+            .expect("masked index fits the allocated table");
+        table.entries[index] = (token, canonical);
     }
 
     fn bytes(&self) -> u64 {
-        self.bytes
+        self.table.as_ref().map_or(0, |table| table.charge.bytes())
     }
 
     fn limit(&self) -> u64 {
@@ -209,14 +205,12 @@ impl<'a> TextEq<'a> {
         if !store.live(token) {
             return Ok(None);
         }
-        if let Some(canonical) = store.warm.get(token) {
-            if store.handle.ptr_eq(self.generation) {
-                return Ok(Some(canonical));
-            }
+        if let Some(canonical) = store.warm.get(token)
+            && store.handle.ptr_eq(self.generation)
+        {
+            return Ok(Some(canonical));
         }
-        store
-            .alias_from_scratch(token, self.generation)
-            .map(Some)
+        store.alias_from_scratch(token, self.generation).map(Some)
     }
 
     /// Same function as [`Self::canonical`]: grouping/hash/dedup keys.
@@ -228,9 +222,9 @@ impl<'a> TextEq<'a> {
     /// `Err` fails execution; it is not inequality.
     pub fn tokens_equal(self, left: u64, right: u64) -> Result<bool> {
         match (self.canonical(left)?, self.canonical(right)?) {
-            (Some(left), Some(right)) => Ok(
-                left == right || self.generation.tokens_equal(left, self.generation, right),
-            ),
+            (Some(left), Some(right)) => {
+                Ok(left == right || self.generation.tokens_equal(left, self.generation, right))
+            }
             _ => Ok(false),
         }
     }
@@ -241,8 +235,7 @@ pub struct NonresidentTextStore {
     handle: GenerationHandle,
     generation: TextGeneration,
     epoch: TextStoreEpoch,
-    forward: ScratchRelation,
-    reverse: Mutex<ScratchRelation>,
+    lookup: Mutex<ScratchTextLookup>,
     next_dense: u64,
     warm: WarmAliases,
     #[cfg(test)]
@@ -270,8 +263,7 @@ impl NonresidentTextStore {
             handle: generation.clone(),
             generation: TextGeneration::of(generation.identity()),
             epoch: TextStoreEpoch::next(),
-            forward: capability.relation(),
-            reverse: Mutex::new(capability.relation_with_ram(0)),
+            lookup: Mutex::new(ScratchTextLookup::new(capability)),
             next_dense: 0,
             warm: WarmAliases::new(work, WARM_CACHE_LIMIT),
             #[cfg(test)]
@@ -284,11 +276,6 @@ impl NonresidentTextStore {
     #[must_use]
     pub const fn owns_token(token: u64) -> bool {
         is_scratch_token(token)
-    }
-
-    #[must_use]
-    pub(super) fn bind(capability: &ScratchCapability, generation: &GenerationHandle) -> Self {
-        Self::new(capability, generation)
     }
 
     #[must_use]
@@ -331,17 +318,20 @@ impl NonresidentTextStore {
         if let Some(fault) = self.alias_fault.take() {
             return Err(fault.into_error());
         }
-        let mut out = Vec::new();
-        let mut reverse = self.reverse.lock().expect("scratch reverse");
-        let hit = reverse.get(&encode_token(token), &mut out)?;
-        drop(reverse);
-        if !hit {
-            return Ok(token);
-        }
-        let text = std::str::from_utf8(&out).map_err(|_| {
-            Error::Corruption(CorruptionError::MalformedValue("nonresident text"))
-        })?;
-        Ok(generation.resolver().lookup(text).unwrap_or(token))
+        self.lookup
+            .lock()
+            .expect("scratch text lookup")
+            .lookup_reverse(&encode_token(token), |probe| {
+                let ScratchProbe::Hit(bytes) = probe else {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "missing nonresident text",
+                    )));
+                };
+                let text = std::str::from_utf8(bytes).map_err(|_| {
+                    Error::Corruption(CorruptionError::MalformedValue("nonresident text"))
+                })?;
+                Ok(generation.resolver().lookup(text).unwrap_or(token))
+            })
     }
 
     fn remember(&mut self, token: u64, text: &str) {
@@ -357,27 +347,30 @@ impl NonresidentTextStore {
     pub fn intern(&mut self, text: &str, work: &WorkContext) -> Result<u64> {
         work.step(1 + text.len() as u64)
             .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
-        let mut found = Vec::new();
-        if self.forward.get(text.as_bytes(), &mut found)? {
-            let token = decode_token(&found)?;
-            if self.live(token) {
-                self.remember(token, text);
-                return Ok(token);
-            }
-        }
-        let token = mint_token(self.next_dense).map_err(|error| {
-            Error::from_store(crate::storage::store::StoreError::Work(error))
-        })?;
-        let encoded = encode_token(token);
-        // Reverse first: a failed forward put must not leave a get-hit
-        // that publishes a token whose reverse/next_dense are unset.
-        self.reverse
+        let found = self
+            .lookup
             .lock()
-            .expect("scratch reverse")
-            .put(&encoded, text.as_bytes())?;
-        if let Err(error) = self.forward.put(text.as_bytes(), &encoded) {
-            return Err(error);
+            .expect("scratch text lookup")
+            .lookup_forward(text.as_bytes(), |probe| match probe {
+                ScratchProbe::Hit(bytes) => decode_token(bytes).map(Some),
+                ScratchProbe::Miss => Ok(None),
+            })?;
+        if let Some(token) = found {
+            if !self.live(token) {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "nonresident token",
+                )));
+            }
+            self.remember(token, text);
+            return Ok(token);
         }
+        let token = mint_token(self.next_dense)
+            .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
+        let encoded = encode_token(token);
+        self.lookup
+            .lock()
+            .expect("scratch text lookup")
+            .put(text.as_bytes(), &encoded)?;
         self.next_dense += 1;
         self.remember(token, text);
         Ok(token)
@@ -390,21 +383,23 @@ impl NonresidentTextStore {
         if !is_scratch_token(token) {
             return Ok(false);
         }
-        self.reverse
+        self.lookup
             .lock()
-            .expect("scratch reverse")
-            .get(&encode_token(token), out)
+            .expect("scratch text lookup")
+            .get_reverse(&encode_token(token), out)
+            .map(|probe| probe.is_hit())
     }
 
     /// Exact token↔canonical text compare.
     /// # Errors
     /// As [`Self::resolve`].
     pub fn token_eq_text(&mut self, token: u64, text: &str) -> Result<bool> {
-        let mut out = Vec::new();
-        if !self.resolve(token, &mut out)? {
-            return Ok(false);
-        }
-        Ok(out == text.as_bytes())
+        self.lookup
+            .lock()
+            .expect("scratch text lookup")
+            .lookup_reverse(&encode_token(token), |probe| {
+                Ok(matches!(probe, ScratchProbe::Hit(bytes) if bytes == text.as_bytes()))
+            })
     }
 
     /// Mixed compare via [`TextEq`].
@@ -439,9 +434,7 @@ pub(crate) enum TextAliasFault {
 impl TextAliasFault {
     fn into_error(self) -> Error {
         match self {
-            Self::ReverseGet => {
-                Error::from_store(crate::storage::store::StoreError::Allocation)
-            }
+            Self::ReverseGet => Error::from_store(crate::storage::store::StoreError::Allocation),
             Self::Utf8 => Error::Corruption(CorruptionError::MalformedValue("nonresident text")),
             Self::Work => Error::from_store(crate::storage::store::StoreError::Work(
                 WorkError::Cancelled,
@@ -493,7 +486,7 @@ mod tests {
         assert_ne!(alpha, 0, "scratch ids never reuse intern space");
         assert_ne!(alpha, SENTINEL_WORD);
         assert!(store.live(alpha));
-        assert_eq!(scratch_token_epoch(alpha), None);
+
         assert_eq!(store.intern("alpha", &work).expect("re-intern"), alpha);
         let mut out = Vec::new();
         assert!(store.resolve(alpha, &mut out).expect("resolve"));
@@ -510,7 +503,14 @@ mod tests {
             scratch_bytes: 1 << 20,
             ..UNBOUNDED_POLICY
         };
-        let cap = ScratchCapability::start(policy, ScratchPolicy::unbounded()).expect("start");
+        let cap = ScratchCapability::start(
+            policy,
+            ScratchPolicy {
+                ram_bytes_per_relation: 0,
+                ..ScratchPolicy::from_execution(policy)
+            },
+        )
+        .expect("start");
         let generation = generation();
         let mut store = NonresidentTextStore::new(&cap, &generation);
         let work = cap.work().clone();
@@ -536,7 +536,7 @@ mod tests {
             .lock_resolver()
             .intern("shared", &work, resident.ledger())
             .expect("resident intern");
-        let mut store = NonresidentTextStore::bind(&cap, &resident);
+        let mut store = NonresidentTextStore::new(&cap, &resident);
         let scratch = store.intern("shared", &work).expect("scratch intern");
         assert_ne!(scratch, token, "scratch and intern ids are disjoint");
         assert!(is_scratch_token(scratch) && is_resident_token(token));
@@ -545,9 +545,11 @@ mod tests {
                 .tokens_equal_resident(scratch, &resident, token)
                 .expect("compare")
         );
-        assert!(TextEq::bind(&resident, Some(&store))
-            .tokens_equal(scratch, token)
-            .expect("equal"));
+        assert!(
+            TextEq::bind(&resident, Some(&store))
+                .tokens_equal(scratch, token)
+                .expect("equal")
+        );
         assert_eq!(
             TextEq::bind(&resident, Some(&store))
                 .canonical(scratch)
@@ -557,9 +559,11 @@ mod tests {
                 .expect("identity")
         );
         let other = store.intern("other", &work).expect("other");
-        assert!(!store
-            .tokens_equal_resident(other, &resident, token)
-            .expect("unequal"));
+        assert!(
+            !store
+                .tokens_equal_resident(other, &resident, token)
+                .expect("unequal")
+        );
     }
 
     #[test]
@@ -577,10 +581,8 @@ mod tests {
             panic!("tiny cache must spill");
         };
         let mut store = exhausted.open_nonresident(&cap);
-        let scratch = store
-            .intern("shared-meaning", cap.work())
-            .expect("scratch");
-        let fat = generation();
+        let scratch = store.intern("shared-meaning", cap.work()).expect("scratch");
+        let fat = self::generation();
         let intern = fat
             .lock_resolver()
             .intern("shared-meaning", &work, fat.ledger())
@@ -593,9 +595,10 @@ mod tests {
             eq.identity(scratch).expect("identity"),
             eq.canonical(scratch).expect("canonical")
         );
-        assert!(!eq
-            .tokens_equal(scratch, intern.wrapping_add(1))
-            .expect("unequal"));
+        assert!(
+            !eq.tokens_equal(scratch, intern.wrapping_add(1))
+                .expect("unequal")
+        );
     }
 
     #[test]
@@ -612,6 +615,7 @@ mod tests {
         let mut second = exhausted.open_nonresident(&cap);
         assert_ne!(second.epoch(), old_epoch);
         let fresh = second.intern("beta", cap.work()).expect("new text");
+        let remint = second.intern("alpha", cap.work()).expect("remint alpha");
         let eq = TextEq::bind(&generation, Some(&second)).with_memo_stamp(old_epoch);
         assert!(
             !eq.accepts_stamp(old_epoch),
@@ -623,7 +627,6 @@ mod tests {
         );
         assert!(!eq.tokens_equal(old, fresh).expect("stale unequal"));
         let live = TextEq::bind(&generation, Some(&second));
-        let remint = second.intern("alpha", cap.work()).expect("remint alpha");
         assert!(live.accepts_stamp(second.epoch()));
         assert!(!eq.tokens_equal(old, remint).expect("stale remint"));
         assert!(live.tokens_equal(remint, remint).expect("live identity"));
@@ -676,9 +679,16 @@ mod tests {
         let huge = "x".repeat(256);
         let first = store.intern(&huge, cap.work());
         assert!(first.is_err(), "tiny scratch refuses a huge insert");
-        assert_eq!(store.resident_cache_bytes(), 0, "failed insert is not cached");
+        assert_eq!(
+            store.resident_cache_bytes(),
+            0,
+            "failed insert is not cached"
+        );
         let retry = store.intern(&huge, cap.work());
-        assert!(retry.is_err(), "retry sees the same refusal, not a ghost hit");
+        assert!(
+            retry.is_err(),
+            "retry sees the same refusal, not a ghost hit"
+        );
         let cap = capability();
         let mut roomy = NonresidentTextStore::new(&cap, &generation);
         let ok = roomy.intern("ok", cap.work()).expect("roomy intern");
@@ -730,7 +740,8 @@ mod tests {
         assert_ne!(scratch, intern, "raw words stay disjoint");
         let eq = TextEq::bind(&fat, Some(&store));
         assert!(
-            eq.tokens_equal(scratch, intern).expect("warm-or-cold equal"),
+            eq.tokens_equal(scratch, intern)
+                .expect("warm-or-cold equal"),
             "control: same text is equal before a fault"
         );
         for fault in [

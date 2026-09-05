@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::error::{Error, Result};
 use crate::exec::scratch::ScratchRelation;
 use crate::image::RelationImage;
+#[cfg(test)]
 use crate::work::WorkContext;
 use bumbledb_theory::schema::ValueType;
 
@@ -15,7 +16,7 @@ use bumbledb_theory::schema::ValueType;
 /// image or an exact scratch row map keyed by insertion ordinal.
 pub(crate) enum SealedStage {
     Resident(Arc<RelationImage>),
-    Scratch(ScratchStage),
+    Scratch(Box<ScratchStage>),
 }
 
 /// A derived set that exceeded resident eligibility or was sealed from a
@@ -41,12 +42,12 @@ impl SealedStage {
             .iter()
             .map(|ty| crate::ir::normalize::SlotWidth::of(ty).slots())
             .sum();
-        Self::Scratch(ScratchStage {
+        Self::Scratch(Box::new(ScratchStage {
             rows: dest,
             field_types: field_types.to_vec(),
             row_words,
             count,
-        })
+        }))
     }
 
     #[must_use]
@@ -93,6 +94,7 @@ impl SealedStage {
     /// the live ledger — do not step a second time per row.
     /// # Errors
     /// Storage/work failure, corruption, or visitor refusal.
+    #[cfg(test)]
     pub(crate) fn for_each_scratch_row(
         stage: &mut ScratchStage,
         work: &WorkContext,
@@ -101,7 +103,7 @@ impl SealedStage {
         work.checkpoint().map_err(super::source::work_error)?;
         let mut words = Vec::new();
         let row_words = stage.row_words;
-        stage.rows.visit(&mut |_, value| {
+        stage.rows.visit(&mut |_: &[u8], value: &[u8]| {
             decode_scratch_words(row_words, value, &mut words)?;
             visit(&words)
         })

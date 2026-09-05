@@ -11,14 +11,16 @@
 import { AuthoringError } from "#errors.ts"
 import type { AnyField } from "#fields.ts"
 import { bool as boolField, f64 as f64Field, i64 as i64Field, rosterOf, u64 as u64Field } from "#fields.ts"
+import type { AnyVar } from "#query/scope.ts"
+import { isTerm, term } from "#query/scope.ts"
 import type { ScalarKind, ScalarLiteral, ScalarNode } from "#scalar.ts"
 import {
-	MAX_SCALAR_DEPTH,
 	checkBool,
 	checkF64,
 	checkI64,
 	checkU64,
 	isScalarNode,
+	MAX_SCALAR_DEPTH,
 	queryVarLeaf,
 	queryVarsOf,
 	scalarBinary,
@@ -27,8 +29,6 @@ import {
 	scalarLiteral,
 	scalarNegate
 } from "#scalar.ts"
-import type { AnyVar } from "#query/scope.ts"
-import { isTerm, term } from "#query/scope.ts"
 
 /** Query-var tree: the shared AST restricted to this leaf scope. */
 type QueryNode = ScalarNode<"query-var">
@@ -45,15 +45,20 @@ type Operand = AnyVar | AnyComputeExpr
 
 type NumericVarOperand = AnyVar & { readonly field: { readonly kind: "u64" | "i64" | "f64" } }
 type ArithmeticOperand = ComputeExpr<"u64"> | ComputeExpr<"i64"> | ComputeExpr<"f64"> | NumericVarOperand
+type SignedOperand =
+	| ComputeExpr<"i64">
+	| ComputeExpr<"f64">
+	| (AnyVar & { readonly field: { readonly kind: "i64" | "f64" } })
 type FloatOperand = ComputeExpr<"f64"> | (AnyVar & { readonly field: { readonly kind: "f64" } })
 
-type OperandKind<O> = O extends ComputeExpr<infer K extends ScalarKind>
-	? K
-	: O extends AnyVar
-		? O["field"]["kind"] extends "u64" | "i64" | "f64" | "bool"
-			? O["field"]["kind"]
+type OperandKind<O> =
+	O extends ComputeExpr<infer K extends ScalarKind>
+		? K
+		: O extends AnyVar
+			? O["field"]["kind"] extends "u64" | "i64" | "f64" | "bool"
+				? O["field"]["kind"]
+				: never
 			: never
-		: never
 
 function isComputeExpr(value: unknown): value is AnyComputeExpr {
 	return isScalarNode(value) && value.scope === "query-var" && value.result !== "unresolved"
@@ -113,6 +118,13 @@ function bool(value: boolean): ComputeExpr<"bool"> {
 
 type BinaryKind = "add" | "subtract" | "multiply" | "divide"
 
+/** The right operand must have the left operand's kind, never an inferred union. */
+type SameKind<L, R> = [OperandKind<R>] extends [OperandKind<L>]
+	? [OperandKind<L>] extends [OperandKind<R>]
+		? R
+		: never
+	: never
+
 function binary<K extends "u64" | "i64" | "f64">(
 	op: BinaryKind,
 	left: ArithmeticOperand,
@@ -124,33 +136,33 @@ function binary<K extends "u64" | "i64" | "f64">(
 
 function add<L extends ArithmeticOperand, R extends ArithmeticOperand>(
 	left: L,
-	right: R
+	right: R & SameKind<NoInfer<L>, R>
 ): ComputeExpr<OperandKind<L> & OperandKind<R> & ("u64" | "i64" | "f64")> {
 	return binary("add", left, right)
 }
 
 function subtract<L extends ArithmeticOperand, R extends ArithmeticOperand>(
 	left: L,
-	right: R
+	right: R & SameKind<NoInfer<L>, R>
 ): ComputeExpr<OperandKind<L> & OperandKind<R> & ("u64" | "i64" | "f64")> {
 	return binary("subtract", left, right)
 }
 
 function multiply<L extends ArithmeticOperand, R extends ArithmeticOperand>(
 	left: L,
-	right: R
+	right: R & SameKind<NoInfer<L>, R>
 ): ComputeExpr<OperandKind<L> & OperandKind<R> & ("u64" | "i64" | "f64")> {
 	return binary("multiply", left, right)
 }
 
 function divide<L extends ArithmeticOperand, R extends ArithmeticOperand>(
 	left: L,
-	right: R
+	right: R & SameKind<NoInfer<L>, R>
 ): ComputeExpr<OperandKind<L> & OperandKind<R> & ("u64" | "i64" | "f64")> {
 	return binary("divide", left, right)
 }
 
-function negate<O extends ArithmeticOperand>(operand: O): ComputeExpr<OperandKind<O> & ("i64" | "f64")> {
+function negate<O extends SignedOperand>(operand: O): ComputeExpr<OperandKind<O> & ("i64" | "f64")> {
 	const where = "Compute.negate"
 	return scalarNegate(where, asQueryNode(where, operand)) as ComputeExpr<OperandKind<O> & ("i64" | "f64")>
 }
@@ -175,12 +187,12 @@ function toU64Exact(operand: ArithmeticOperand): ComputeExpr<"u64"> {
 	return scalarCast(where, "toU64Exact", "u64", asQueryNode(where, operand)) as ComputeExpr<"u64">
 }
 
-function isNaN(operand: FloatOperand): ComputeExpr<"bool"> {
+function isNaNExpr(operand: FloatOperand): ComputeExpr<"bool"> {
 	const where = "Compute.isNaN"
 	return scalarFloatPredicate(where, "isNaN", asQueryNode(where, operand))
 }
 
-function isFinite(operand: FloatOperand): ComputeExpr<"bool"> {
+function isFiniteExpr(operand: FloatOperand): ComputeExpr<"bool"> {
 	const where = "Compute.isFinite"
 	return scalarFloatPredicate(where, "isFinite", asQueryNode(where, operand))
 }
@@ -217,8 +229,8 @@ const Compute = Object.freeze({
 	toF64Exact,
 	toI64Exact,
 	toU64Exact,
-	isNaN,
-	isFinite
+	isNaN: isNaNExpr,
+	isFinite: isFiniteExpr
 })
 
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode }

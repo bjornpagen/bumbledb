@@ -311,10 +311,7 @@ fn resident_images_charge_the_shared_cache_ledger() {
 fn d01_zero_cache_refuses_before_image_allocate() {
     use crate::work::CachePolicy;
     let fixture = fixture();
-    let cache = ImageCache::with_policy(
-        fixture.schema(),
-        CachePolicy { cache_bytes: 0 },
-    );
+    let cache = ImageCache::with_policy(fixture.schema(), CachePolicy { cache_bytes: 0 });
     let source = fixture.source();
     let crate::image::ResidentAdmit::BeyondMemory(exhausted) = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
@@ -414,12 +411,8 @@ fn d02_concurrent_trim_and_admit_keep_pinned_meanings() {
         scope.spawn(move || {
             let source = fixture.source();
             for version in 2..6u64 {
-                let _ = cache_build.get_or_build_at(
-                    &source,
-                    fixture.schema(),
-                    R,
-                    generation(version),
-                );
+                let _ =
+                    cache_build.get_or_build_at(&source, fixture.schema(), R, generation(version));
             }
         });
     });
@@ -483,10 +476,7 @@ fn d29_retained_owner_keeps_charge_and_old_text() {
 fn d29_pinned_old_generation_can_refuse_new_resident_admission() {
     use crate::work::CachePolicy;
     let fixture = fixture();
-    let cache = ImageCache::with_policy(
-        fixture.schema(),
-        CachePolicy { cache_bytes: 8 },
-    );
+    let cache = ImageCache::with_policy(fixture.schema(), CachePolicy { cache_bytes: 8 });
     let source = fixture.source();
     let crate::image::ResidentAdmit::BeyondMemory(exhausted) = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
@@ -509,22 +499,17 @@ fn d02_nonresident_resolution_is_the_real_fallback() {
     use crate::image::{ResidentAdmit, SourceImages};
     use crate::work::CachePolicy;
     let fixture = fixture();
-    let tiny = ImageCache::with_policy(
-        fixture.schema(),
-        CachePolicy { cache_bytes: 8 },
-    );
+    let tiny = ImageCache::with_policy(fixture.schema(), CachePolicy { cache_bytes: 8 });
     let source = fixture.source();
     let images = SourceImages::bind(&source, &tiny);
     let ResidentAdmit::BeyondMemory(exhausted) = images
+        .interner()
         .intern_or_spill("row-0")
         .expect("unbounded work")
     else {
         panic!("tiny cache intern_or_spill must spill");
     };
-    match images
-        .image(fixture.schema(), R)
-        .expect("image seam")
-    {
+    match crate::image::bind::ImageBind::image(&images, fixture.schema(), R).expect("image seam") {
         ResidentAdmit::BeyondMemory(_) => {}
         ResidentAdmit::Ready(_) => panic!("tiny cache image() must spill"),
     }
@@ -542,6 +527,7 @@ fn d02_nonresident_resolution_is_the_real_fallback() {
     let fat_source = fixture.source();
     let fat_images = SourceImages::bind(&fat_source, &fat);
     let resident_tok = fat_images
+        .interner()
         .intern_or_spill("row-0")
         .expect("fat intern")
         .expect_ready("unbounded cache intern");
@@ -549,8 +535,7 @@ fn d02_nonresident_resolution_is_the_real_fallback() {
     assert!(crate::image::is_resident_token(resident_tok));
     assert_ne!(token, resident_tok, "intern and scratch ids cannot alias");
     assert!(
-        fat_images
-            .text_eq(Some(&store))
+        crate::image::TextEq::bind(fat_images.generation(), Some(&store))
             .tokens_equal(token, resident_tok)
             .expect("equal"),
         "TextEq unifies intern and scratch without raw word =="

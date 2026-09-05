@@ -125,7 +125,7 @@ pub fn insert_bumbledb(
     cursor: &mut MintCursor,
 ) -> Result<Measurement, String> {
     harness::measure(proto, || {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             for _ in 0..per_commit {
                 mint_doc(tx, seed, cursor)?;
             }
@@ -182,7 +182,7 @@ pub fn update_bumbledb(
         let op = iter
             .next()
             .ok_or("the stream ended before the protocol did")?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             if tx
                 .delete([&Counter {
                     key: op.key,
@@ -264,7 +264,7 @@ pub fn upsert_bumbledb(
         let op = iter
             .next()
             .ok_or("the stream ended before the protocol did")?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             let old = tx.get(CounterByKey { key: op.key })?;
             if old.as_ref().map(|o| o.val) != op.prev {
                 return Err(refuse(
@@ -334,7 +334,7 @@ pub fn rmw_bumbledb(
         let key = *iter
             .next()
             .ok_or("the stream ended before the protocol did")?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             let Some(old) = tx.get(CounterByKey { key })? else {
                 return Err(refuse("the rmw round trip needs an existing counter row"));
             };
@@ -409,7 +409,7 @@ pub fn delete_bumbledb(
         let row = iter
             .next()
             .ok_or("the stream ended before the protocol did")?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             if tx.delete_dyn(ids::DOC, [row])?.changed() == 0 {
                 return Err(refuse(
                     "the delete must be delete-bearing: the pool row was absent",
@@ -478,20 +478,26 @@ pub fn mixed_bumbledb(
     cursor: &mut MintCursor,
 ) -> Result<Measurement, String> {
     let query = read_query();
-    let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new(ops::read_keys(seed, sizes));
     let mut buffer = Answers::new();
     harness::measure(proto, || {
         let mut drained = 0u64;
         for _ in 0..MIXED_READS {
             let binds = families::bind_values(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &binds, &mut buffer))
-                .map_err(|e| format!("crud_mixed_90_10 read: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &binds, &mut buffer)
+            })
+            .map_err(|e| format!("crud_mixed_90_10 read: {e:?}"))?;
             drained += buffer.len() as u64;
         }
-        db.write(|tx| mint_doc(tx, seed, cursor))
-            .map_err(|e| format!("crud_mixed_90_10 insert: {e:?}"))?
-            .unwrap();
+        db.write(crate::harness::bench_work(), |tx| {
+            mint_doc(tx, seed, cursor)
+        })
+        .map_err(|e| format!("crud_mixed_90_10 insert: {e:?}"))?
+        .unwrap();
         Ok(drained + 1)
     })
 }

@@ -13,6 +13,8 @@
 //! explicit script entries / phase hooks); real S3 is the P05/P12 F3 lane.
 //! Maps to MIG-01/02/03/05/08/09/10/11/12/14 hosted halves and OPS-001.
 
+use bumbledb_log::store::receive::{ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext};
+
 #[path = "migration_support/mod.rs"]
 mod support;
 
@@ -21,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::checkpointer::CheckpointPolicy;
 use bumbledb_log::codec::StreamLimits;
@@ -45,7 +47,7 @@ use bumbledb_log::migration::manifest::{Manifest, append_entry, plan_set_digest}
 use bumbledb_log::recovery;
 use bumbledb_log::schema_file::schema_id;
 use bumbledb_log::store::mem::{Behavior, Gate, MemStore, Op};
-use bumbledb_log::writer::verbs::{ConditionalStore as _, HeadRead};
+
 use bumbledb_log::writer::{HostedHistory, LogError, SubmitOutcome};
 
 use support::{
@@ -155,7 +157,7 @@ fn insert_notes(
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request_byte; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request_byte; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -189,9 +191,15 @@ fn driver<'a>(
 }
 
 fn head_record(store: &MemStore, key: &str) -> HeadRecord {
-    match store.read_head(key).unwrap() {
-        HeadRead::Present { body, .. } => decode_head(&body, CAP).unwrap(),
-        HeadRead::Absent => panic!("head must exist: {key}"),
+    match store
+        .receive_head(
+            key,
+            TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64)),
+        )
+        .unwrap()
+    {
+        ReceivedHead::Present { body, .. } => decode_head(body.as_bytes(), CAP).unwrap(),
+        ReceivedHead::Absent => panic!("head must exist: {key}"),
     }
 }
 
@@ -217,7 +225,7 @@ fn scan_all(db: &Db<SchemaDescriptor>, relation: RelationId) -> Vec<Vec<Value>> 
     let mut rows = Vec::new();
     db.read(work(), |read| {
         for row in read.scan(relation)? {
-            rows.push(row?);
+            rows.push(row?.to_vec());
         }
         Ok(())
     })
@@ -255,6 +263,10 @@ fn target_object_keys(store: &MemStore, kind: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn hosted_initialization_publishes_a_hydratable_genesis_rooted_target() {
     let root = temp_dir("host-init");
     let store = MemStore::new();
@@ -290,7 +302,10 @@ fn hosted_initialization_publishes_a_hydratable_genesis_rooted_target() {
     assert_eq!(record.object_epoch, TARGET_EPOCH);
     let recovery_root = record.recovery.expect("live head names its recovery");
     let checkpoint = recovery_root.checkpoint.expect("checkpoint recovery root");
-    assert_eq!(checkpoint.epoch, TARGET_EPOCH, "staged under the open epoch");
+    assert_eq!(
+        checkpoint.epoch, TARGET_EPOCH,
+        "staged under the open epoch"
+    );
     assert_eq!(recovery_root.base, recovery_root.tip, "genesis base");
     assert!(
         !target_object_keys(&store, "/ckpt/").is_empty(),
@@ -355,7 +370,10 @@ fn hosted_initialization_publishes_a_hydratable_genesis_rooted_target() {
         &work(),
     )
     .unwrap();
-    assert_eq!(scan_all(&recovered.db, RelationId(0)), Vec::<Vec<Value>>::new());
+    assert_eq!(
+        scan_all(&recovered.db, RelationId(0)),
+        Vec::<Vec<Value>>::new()
+    );
     assert_eq!(
         scan_all(&recovered.db, RelationId(1)),
         vec![vec![Value::String("seeded".into())]],
@@ -426,18 +444,30 @@ fn full_hosted_migration_reaches_ready_to_switch_and_activates_explicitly() {
 
     // A matching migrate retry is verified reuse: identical reference,
     // identical Applied, no second lineage, no head revision spent.
-    let version_before = match store.read_head(&target_head_key()).unwrap() {
-        HeadRead::Present { version, .. } => version,
-        HeadRead::Absent => panic!("target head exists"),
+    let version_before = match store
+        .receive_head(
+            &target_head_key(),
+            TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64)),
+        )
+        .unwrap()
+    {
+        ReceivedHead::Present { version, .. } => version,
+        ReceivedHead::Absent => panic!("target head exists"),
     };
     let again = runner
         .migrate(&request(&plans, &steps, MIGRATE_OP, 0xb2), &work())
         .unwrap();
     let (reference_again, _) = ready(again);
     assert_eq!(reference, reference_again);
-    match store.read_head(&target_head_key()).unwrap() {
-        HeadRead::Present { version, .. } => assert_eq!(version, version_before),
-        HeadRead::Absent => panic!("target head exists"),
+    match store
+        .receive_head(
+            &target_head_key(),
+            TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64)),
+        )
+        .unwrap()
+    {
+        ReceivedHead::Present { version, .. } => assert_eq!(version, version_before),
+        ReceivedHead::Absent => panic!("target head exists"),
     }
 
     // Explicit activation; the source STAYS frozen (thaw is a separate
@@ -572,7 +602,15 @@ fn lost_responses_resolve_from_durable_evidence_and_unknown_never_thaws() {
         "Unknown never thaws"
     );
     assert!(
-        matches!(store3.read_head(&target_head_key()).unwrap(), HeadRead::Absent),
+        matches!(
+            store3
+                .receive_head(
+                    &target_head_key(),
+                    TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64))
+                )
+                .unwrap(),
+            ReceivedHead::Absent
+        ),
         "the dropped create landed nothing"
     );
     match runner3.status(&plans, &work()).unwrap() {
@@ -761,7 +799,7 @@ fn a_concurrent_old_writer_is_refused_after_the_source_freeze() {
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([0x77; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([0x77; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -1026,9 +1064,15 @@ mod process_loss {
     }
 
     fn fs_head_record(store: &FsStore, key: &str) -> Option<HeadRecord> {
-        match store.read_head(key).unwrap() {
-            HeadRead::Present { body, .. } => Some(decode_head(&body, CAP).unwrap()),
-            HeadRead::Absent => None,
+        match store
+            .receive_head(
+                key,
+                TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64)),
+            )
+            .unwrap()
+        {
+            ReceivedHead::Present { body, .. } => Some(decode_head(body.as_bytes(), CAP).unwrap()),
+            ReceivedHead::Absent => None,
         }
     }
 
@@ -1066,7 +1110,7 @@ mod process_loss {
                 identity: history.identity(),
                 id: CommandId {
                     receipt_epoch: ReceiptEpoch::INITIAL,
-                    request_id: RequestId::from_core(Id128::from_bytes([1; 16])),
+                    request_id: RequestId::from_core(Uuid::from_bytes([1; 16])),
                 },
                 condition: Condition::Unconditional,
             },
@@ -1102,7 +1146,8 @@ mod process_loss {
             }
             Inject::Continue
         });
-        let db = Arc::new(Db::open(&source_db_dir(root), base_schema(), work()).expect("open source"));
+        let db =
+            Arc::new(Db::open(&source_db_dir(root), base_schema(), work()).expect("open source"));
         let runner = HostedMigration::new(
             &db,
             &store,
@@ -1161,7 +1206,8 @@ mod process_loss {
         // A NEW process resumes the SAME operation from the store alone:
         // reuse of the published verified target, or a clean re-execution
         // from the fixed frozen source — never two lineages.
-        let db = Arc::new(Db::open(&source_db_dir(&root), base_schema(), work()).expect("open source"));
+        let db =
+            Arc::new(Db::open(&source_db_dir(&root), base_schema(), work()).expect("open source"));
         let runner = HostedMigration::new(
             &db,
             &store,

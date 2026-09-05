@@ -15,7 +15,7 @@ use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
     ValueType,
 };
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, FieldId, Id128, Value};
+use bumbledb::{ChangeSet, Db, ExecutionPolicy, FieldId, Uuid, Value};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{
@@ -61,15 +61,15 @@ fn two_relation_schema() -> SchemaDescriptor {
     }
 }
 
-/// `Note(owner: id128, body: string)` for the entity-identity port.
-fn id128_schema() -> SchemaDescriptor {
+/// `Note(owner: uuid, body: string)` for the entity-identity port.
+fn uuid_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "Note".into(),
             fields: vec![
                 FieldDescriptor {
                     name: "owner".into(),
-                    value_type: ValueType::Id128,
+                    value_type: ValueType::Uuid,
                 },
                 FieldDescriptor {
                     name: "body".into(),
@@ -94,8 +94,8 @@ fn create_history(
     );
     let history = LocalHistory::create(
         Arc::clone(&db),
-        bumbledb_log::history::DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        bumbledb_log::history::IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        bumbledb_log::history::DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        bumbledb_log::history::IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         op(0xc3),
         LIMITS,
         &work(),
@@ -118,7 +118,7 @@ fn seal_with(
             identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -130,7 +130,10 @@ fn seal_with(
     .expect("command seals")
 }
 
-fn rows_in(db: &Db<SchemaDescriptor>, relation: RelationId) -> Vec<Vec<Value>> {
+fn rows_in(
+    db: &Db<SchemaDescriptor>,
+    relation: RelationId,
+) -> Vec<bumbledb::canonical::DecodedRow> {
     let mut rows = Vec::new();
     db.read(work(), |read| {
         for row in read.scan(relation)? {
@@ -209,8 +212,8 @@ fn sdk001_a_later_command_preserves_the_earlier_attempts_resolution() {
         store,
         "t".to_string(),
         0,
-        bumbledb_log::history::DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        bumbledb_log::history::IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        bumbledb_log::history::DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        bumbledb_log::history::IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         op(0xc3),
         LIMITS,
         &work(),
@@ -268,14 +271,14 @@ fn sdk001_a_later_command_preserves_the_earlier_attempts_resolution() {
 /// REP-004/ENG-004 baseline (audit/10 and audit/20: the database entity
 /// allocator granted equal counter ranges / reissued escaped IDs): the
 /// allocator and every `FreshRef` surface are DELETED. Successor property:
-/// entity identity is application-owned Id128 bytes sealed INSIDE the
+/// entity identity is application-owned Uuid bytes sealed INSIDE the
 /// command; retries return the retained receipt and the persisted bytes are
 /// exactly the application's, with no issuance authority anywhere
 /// (PROTO-11, E-NO-RESERVE, G09).
 #[test]
 fn rep004_entity_bytes_are_application_owned_and_retry_stable() {
-    let (db, history) = create_history("rep004", id128_schema());
-    let owner = Id128::from_bytes([
+    let (db, history) = create_history("rep004", uuid_schema());
+    let owner = Uuid::from_bytes([
         0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69, 0x78, 0x87, 0x96, 0xa5, 0xb4, 0xc3, 0xd2, 0xe1,
         0xf0,
     ]);
@@ -283,7 +286,7 @@ fn rep004_entity_bytes_are_application_owned_and_retry_stable() {
         draft
             .insert(
                 RelationId(0),
-                &[Value::Id128(owner), Value::String("mine".into())],
+                &[Value::Uuid(owner), Value::String("mine".into())],
             )
             .expect("insert");
     });
@@ -303,16 +306,16 @@ fn rep004_entity_bytes_are_application_owned_and_retry_stable() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].first(),
-        Some(&Value::Id128(owner)),
+        Some(&Value::Uuid(owner)),
         "the persisted identity is byte-for-byte the application's"
     );
     // Duplicate identity is ordinary schema law, not an issuance conflict: a
-    // second command reusing the same Id128 in a keyless relation admits.
+    // second command reusing the same Uuid in a keyless relation admits.
     let duplicate = seal_with(&db, history.identity(), 0x22, |draft| {
         draft
             .insert(
                 RelationId(0),
-                &[Value::Id128(owner), Value::String("again".into())],
+                &[Value::Uuid(owner), Value::String("again".into())],
             )
             .expect("insert");
     });
@@ -426,7 +429,8 @@ fn rep001_a_stale_writers_staging_is_an_orphan_never_history() {
         "the stale writer's staging is collected, never adopted"
     );
     // Every protected decision the recovery root names is still verifiable.
-    let (head, _) = read_live_head(&store, "t", lane_support::HEAD_CAP).expect("head reads");
+    let (head, _) =
+        read_live_head(&store, "t", lane_support::HEAD_CAP, &work()).expect("head reads");
     let recovery = head.recovery.expect("recovery root");
     assert_eq!(recovery.tip.seq, 2, "the retained history is intact");
 }

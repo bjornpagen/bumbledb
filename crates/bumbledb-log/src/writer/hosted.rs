@@ -39,10 +39,10 @@ use bumbledb::integration::{AttachmentChange, HostChanges};
 use bumbledb::{ChangeSet, Db, WorkContext};
 
 use crate::apply::{self, ApplyError};
-use crate::certainty::{CoveredNegativeProof, LocalParent, SubmitCertainty};
-use crate::history::admission::{Resolution, Refusal};
+use crate::certainty::{CoveredNegativeProof, SubmitCertainty};
 use crate::checkpointer::{Headroom, admission_headroom};
 use crate::history::admission::Submission;
+use crate::history::admission::{Refusal, Resolution};
 use crate::history::authority::{
     Activation, ActivationCause, HeadAuthority, decode_control, encode_control,
 };
@@ -51,8 +51,8 @@ use crate::history::decision::{self, GenesisProvenance, GenesisRecord};
 use crate::history::locator::{ChainVisitor, walk_decision_chain};
 use crate::history::receipt::{decode_receipt_row, receipt_key};
 use crate::history::{
-    CommandRef, DatabaseId, DatabaseIdentity, DecisionStamp, IncarnationId, OperationId,
-    SchemaId, TerminalReceipt,
+    CommandRef, DatabaseId, DatabaseIdentity, DecisionStamp, IncarnationId, OperationId, SchemaId,
+    TerminalReceipt,
 };
 use crate::manifest::{self, HeadRecord, TailPolicy};
 use crate::replica::WitnessCheck;
@@ -349,10 +349,9 @@ where
                 receipt,
                 local_health,
             },
-            Ok(SubmitOutcome::NotSubmitted { command, error }) => SubmitCertainty::NotSubmitted {
-                command,
-                error,
-            },
+            Ok(SubmitOutcome::NotSubmitted { command, error }) => {
+                SubmitCertainty::NotSubmitted { command, error }
+            }
             Ok(SubmitOutcome::OutcomeUnknown { command, error }) => {
                 SubmitCertainty::OutcomeUnknown { command, error }
             }
@@ -399,6 +398,10 @@ where
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep the ordered execution and cleanup transitions together"
+    )]
     fn try_submit(
         &self,
         command: &Command,
@@ -419,22 +422,22 @@ where
                     SubmitFailure::NotSubmitted(error)
                 }
             };
-            work.checkpoint()
-                .map_err(|e| predispatch(e.into()))?;
+            work.checkpoint().map_err(|e| predispatch(e.into()))?;
             let head_key = store::head_key(&self.prefix);
-            let (record, version, body) = read_captured_head(
-                &self.backend,
-                &head_key,
-                self.limits,
-                work,
-            )
-            .map_err(predispatch)?;
+            let (record, version, body) =
+                read_captured_head(&self.backend, &head_key, self.limits, work)
+                    .map_err(predispatch)?;
             // Bring the local materialization to this captured tip before
             // preparing a candidate against it.
-            self.catch_up_to(&record, work)
-                .map_err(predispatch)?;
+            self.catch_up_to(&record, work).map_err(predispatch)?;
 
             let frontier = self.local_frontier(reference, work).map_err(predispatch)?;
+            // Another submitter sharing this cache may have committed after
+            // our HEAD read. Never combine its receipt frontier with an older
+            // admission view; capture the authority again within this budget.
+            if frontier.control != record.control {
+                continue;
+            }
             if frontier.row_present && frontier.receipt.is_none() {
                 return Err(predispatch(LogError::IncompleteRejectionEvidence));
             }
@@ -446,8 +449,7 @@ where
                 reference,
                 command.metadata().condition,
                 frontier.receipt.as_ref(),
-            )
-            {
+            ) {
                 Ok(Submission::AlreadyDecided(receipt)) => {
                     return Ok(SubmitOutcome::Decided {
                         receipt: receipt.clone(),
@@ -549,6 +551,11 @@ where
         Err(SubmitFailure::Unknown(LogError::Backend))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
+    )]
     fn attempt_publish(
         &self,
         command: &Command,
@@ -574,6 +581,12 @@ where
             .db
             .integration_writer(work)
             .map_err(|e| fail(e.into()))?;
+        // The capture/catch-up/read sequence does not own the LMDB writer.
+        // Revalidate after acquiring it, before judging facts or dispatching
+        // anything. This also covers distinct history handles on one Db.
+        if self.local_authority(work).map_err(fail)? != parent.control {
+            return Ok(AttemptResult::Lost);
+        }
         let schema = self.db.schema();
         let authority = &parent.control;
         let parent_object = parent.recovery.and_then(|recovery| recovery.tip_object);
@@ -594,17 +607,15 @@ where
                 match decide::prepare_real(&mut session, schema, command, self.limits, work)
                     .map_err(fail)?
                 {
-                    RealPrepared::Admitted { prepared, judged } => {
-                        decide::seal_candidate(
-                            prepared,
-                            authority,
-                            command,
-                            judged,
-                            parent_object,
-                            self.limits,
-                        )
-                        .map_err(fail)?
-                    }
+                    RealPrepared::Admitted { prepared, judged } => decide::seal_candidate(
+                        prepared,
+                        authority,
+                        command,
+                        judged,
+                        parent_object,
+                        self.limits,
+                    )
+                    .map_err(fail)?,
                     RealPrepared::Rejected { evidence } => {
                         let prepared =
                             decide::prepare_empty(&mut session, schema, work).map_err(fail)?;
@@ -714,13 +725,9 @@ where
         work: &WorkContext,
     ) -> Result<UnknownResolution, SubmitFailure> {
         let head_key = store::head_key(&self.prefix);
-        let (record, current, charged) = read_captured_head(
-            &self.backend,
-            &head_key,
-            self.limits,
-            work,
-        )
-        .map_err(SubmitFailure::Unknown)?;
+        let (record, current, charged) =
+            read_captured_head(&self.backend, &head_key, self.limits, work)
+                .map_err(SubmitFailure::Unknown)?;
         drop(charged);
         self.catch_up_to(&record, work)
             .map_err(SubmitFailure::Unknown)?;
@@ -920,12 +927,12 @@ where
             return Ok(WitnessCheck::Unavailable);
         }
         let tip_object = recovery.tip_object.ok_or(LogError::Corruption)?;
-        let mut budget = self.catch_up_bound as u64;
+        let mut budget = u64::from(self.catch_up_bound);
         let mut visitor = AncestryVisitor {
             requested,
             found: None,
         };
-        walk_decision_chain(
+        let walked = walk_decision_chain(
             &self.backend,
             &self.prefix,
             recovery.tip,
@@ -935,8 +942,12 @@ where
             &mut budget,
             work,
             &mut visitor,
-        )
-        .map_err(map_object_error)?;
+        );
+        match walked {
+            Err(ObjectError::WalkBudgetExhausted) => return Ok(WitnessCheck::Unavailable),
+            Err(error) => return Err(map_object_error(&error)),
+            Ok(()) => {}
+        }
         Ok(match visitor.found {
             Some(hash) if hash == requested.hash => WitnessCheck::Ancestor,
             Some(_) => WitnessCheck::NotAncestor,
@@ -950,11 +961,41 @@ where
     /// walk a suffix. A local cache older than the checkpoint base is
     /// `MaterializationStale` — never an empty fallback or epoch probe.
     fn catch_up_to(&self, record: &HeadRecord, work: &WorkContext) -> Result<(), LogError> {
+        let mut budget = u64::from(self.catch_up_bound);
+        for _ in 0..self.catch_up_bound.max(1) {
+            work.checkpoint()?;
+            if self.try_catch_up_to(record, &mut budget, work)? {
+                return Ok(());
+            }
+        }
+        Err(LogError::Backend)
+    }
+
+    /// False means a concurrent local materializer advanced during replay.
+    /// Restart from its committed frontier, never reinterpret bad bytes as a
+    /// successful replay or install captured control over newer local facts.
+    fn try_catch_up_to(
+        &self,
+        record: &HeadRecord,
+        budget: &mut u64,
+        work: &WorkContext,
+    ) -> Result<bool, LogError> {
+        if record.control.identity != self.identity {
+            return Err(LogError::Identity);
+        }
         let target_stamp = match record.control.position() {
             Some(position) => position.decision,
-            None => return Ok(()), // A tombstone has no tip to materialize.
+            None => return Ok(true), // A tombstone has no tip to materialize.
         };
         let mut local = self.local_authority(work)?;
+        if local.identity != self.identity {
+            return Err(LogError::Identity);
+        }
+        // A capture is a lower bound, not permission to rewind a shared
+        // cache. Every installed local revision was already published.
+        if local.revision.0 > record.control.revision.0 {
+            return Ok(true);
+        }
         let local_stamp = local
             .position()
             .map(|position| position.decision)
@@ -962,7 +1003,7 @@ where
         let target_revision = record.control.revision;
         let local_revision = local.revision;
         if local_stamp == target_stamp && local_revision == target_revision {
-            return Ok(());
+            return Ok(true);
         }
         let recovery = record.recovery.ok_or(LogError::Corruption)?;
         if local_stamp != target_stamp {
@@ -979,7 +1020,6 @@ where
                 return Err(LogError::Corruption);
             }
             let tip_object = recovery.tip_object.ok_or(LogError::Corruption)?;
-            let mut budget = self.catch_up_bound as u64;
             let mut visitor = CatchUpBuffer {
                 pending: Vec::new(),
                 cap: self.catch_up_bound,
@@ -991,22 +1031,33 @@ where
                 local_stamp,
                 Some(tip_object),
                 self.limits,
-                &mut budget,
+                budget,
                 work,
                 &mut visitor,
             )
-            .map_err(map_object_error)?;
+            .map_err(|error| map_object_error(&error))?;
             // Stream is newest-first; apply the bounded suffix oldest-first.
             for bytes in visitor.pending.into_iter().rev() {
-                local = apply::materialize(&self.db, &local, &bytes, self.limits, work)
-                    .map_err(map_apply_error)?;
+                match apply::materialize(&self.db, &local, &bytes, self.limits, work) {
+                    Ok(applied) => local = applied,
+                    Err(ApplyError::Chain(error)) => {
+                        let current = self.local_authority(work)?;
+                        if current.identity == local.identity
+                            && current.revision.0 > local.revision.0
+                        {
+                            return Ok(false);
+                        }
+                        return Err(map_apply_error(ApplyError::Chain(error)));
+                    }
+                    Err(error) => return Err(map_apply_error(error)),
+                }
             }
         }
         // Control-only HEAD changes still need installation (LOG-004).
         if local.revision != target_revision || local != record.control {
             self.install_captured_control(&record.control, work)?;
         }
-        Ok(())
+        Ok(true)
     }
 
     fn install_captured_control(
@@ -1017,10 +1068,7 @@ where
         let control_bytes =
             crate::history::authority::encode_control(control, self.limits.envelope_bytes)
                 .map_err(|_| LogError::Corruption)?;
-        let mut session = self
-            .db
-            .integration_writer(work)
-            .map_err(|e| LogError::from(e))?;
+        let mut session = self.db.integration_writer(work).map_err(LogError::from)?;
         // Revalidate identity + decision + control under this writer (C5).
         // Same-tip maintenance is legal; a newer local revision must not regress.
         let local = read_attachment(&self.db, work)?
@@ -1031,11 +1079,11 @@ where
         if local.identity != control.identity {
             return Err(LogError::Identity);
         }
+        if local.revision.0 > control.revision.0 {
+            return Ok(());
+        }
         match (local.position(), control.position()) {
             (Some(here), Some(incoming)) if here.decision != incoming.decision => {
-                return Err(LogError::Corruption);
-            }
-            (Some(_), Some(_)) if local.revision.0 > control.revision.0 => {
                 return Err(LogError::Corruption);
             }
             _ => {}
@@ -1043,14 +1091,6 @@ where
         if local == *control {
             return Ok(());
         }
-        let _captured = LocalParent {
-            identity: local.identity,
-            decision: local
-                .position()
-                .map(|position| position.decision)
-                .ok_or(LogError::DatabaseDeleted)?,
-            revision: local.revision,
-        };
         let empty = bumbledb::ChangeSet::builder(self.db.schema(), work.clone())
             .finish()
             .map_err(|e| LogError::Core(e.into()))?;
@@ -1063,9 +1103,9 @@ where
                 records: &[],
                 attachment: bumbledb::integration::AttachmentChange::Put(&control_bytes),
             })
-            .map_err(|e| LogError::from(e))?
+            .map_err(LogError::from)?
             .commit()
-            .map_err(|e| LogError::from(e))?;
+            .map_err(LogError::from)?;
         Ok(())
     }
 
@@ -1132,7 +1172,6 @@ where
             Err(error) => LocalHealth::Unavailable { error },
         }
     }
-
 }
 
 /// Decode a composed head body to its record. Malformed composed frames are
@@ -1157,7 +1196,7 @@ where
         head_key,
         TransportContext::new(work, ReceiveLimits::capped(limits.envelope_bytes as u64)),
     )
-    .map_err(map_object_error)?
+    .map_err(|error| map_object_error(&error))?
     {
         ReceivedHead::Present { version, body } => {
             let charged = body.into_charged().ok_or(LogError::Backend)?;
@@ -1197,6 +1236,10 @@ where
 /// - A malformed body is corruption-class evidence; an unreadable or absent
 ///   head stays unknown-typed (`Backend`) — the create may still land, and
 ///   uncertainty is never rewritten into a refusal.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
+)]
 fn resolve_create_evidence<B>(
     backend: &B,
     head_key: &str,
@@ -1216,7 +1259,7 @@ where
         head_key,
         TransportContext::new(work, ReceiveLimits::capped(limits.envelope_bytes as u64)),
     )
-    .map_err(map_object_error)?
+    .map_err(|error| map_object_error(&error))?
     {
         ReceivedHead::Present { body, .. } => body,
         ReceivedHead::Absent => return Err(LogError::Backend),
@@ -1248,7 +1291,9 @@ where
 /// name holding foreign bytes) is corruption-class evidence.
 fn map_object_error(error: &ObjectError) -> LogError {
     match error {
-        ObjectError::Backend(_) | ObjectError::Unverified { .. } => LogError::Backend,
+        ObjectError::Backend(_)
+        | ObjectError::Unverified { .. }
+        | ObjectError::WalkBudgetExhausted => LogError::Backend,
         // Denied/bucket/region are transport observations, not publication
         // and not a covered loss.
         ObjectError::Denied { .. } | ObjectError::Bucket { .. } | ObjectError::Region { .. } => {
@@ -1391,11 +1436,8 @@ impl ChainVisitor for CatchUpBuffer {
         bytes: &[u8],
         _reference: crate::store::ObjectRef,
     ) -> Result<bool, Self::Error> {
-        if self.pending.len() as u32 >= self.cap {
-            return Err(crate::store::ObjectError::Backend(Box::new(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "decision walk budget exhausted",
-            ))));
+        if self.pending.len() as u64 >= u64::from(self.cap) {
+            return Err(crate::store::ObjectError::WalkBudgetExhausted);
         }
         self.pending.push(bytes.to_vec());
         Ok(true)
@@ -1426,10 +1468,115 @@ impl ChainVisitor for AncestryVisitor {
 
 #[cfg(test)]
 mod tests {
-    //! The per-call bound arithmetic (P04R concern 5). Machine-level submit
-    //! coverage lives in `tests/writer_hosted.rs`. Verification: `NotRun`.
+    //! Bound arithmetic and deterministic shared-cache interleavings.
 
     use super::*;
+
+    #[test]
+    fn stale_captures_never_rewind_or_judge_a_newer_local_parent() {
+        use bumbledb::schema::SchemaDescriptor;
+        use bumbledb::{ExecutionPolicy, Uuid};
+
+        use crate::history::command::CommandMetadata;
+        use crate::history::{CommandId, CommandResult, Condition, ReceiptEpoch, RequestId};
+        use crate::store::mem::MemStore;
+
+        let work = ExecutionPolicy {
+            input_bytes: 1_000_000,
+            working_bytes: 1_000_000,
+            scratch_bytes: 1_000_000,
+            result_bytes: 1_000_000,
+            rows: 100_000,
+            work_units: 10_000_000,
+            timeout: Duration::from_secs(30),
+        }
+        .start()
+        .unwrap();
+        let limits = Limits {
+            envelope_bytes: 100_000,
+            change_bytes: 90_000,
+            evidence_bytes: 1_000,
+            result_bytes: 1_000,
+        };
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "bumbledb-hosted-stale-{}-{nonce}",
+            std::process::id()
+        ));
+        let db = Arc::new(
+            Db::create(
+                &path,
+                SchemaDescriptor {
+                    relations: vec![],
+                    statements: vec![],
+                },
+                work.clone(),
+            )
+            .unwrap()
+            .unwrap(),
+        );
+        let history = HostedHistory::create(
+            Arc::clone(&db),
+            MemStore::new(),
+            "stale".into(),
+            0,
+            DatabaseId::from_core(Uuid::from_u128(1)),
+            IncarnationId::from_core(Uuid::from_u128(2)),
+            OperationId::from_core(Uuid::from_u128(3)),
+            limits,
+            &work,
+        )
+        .unwrap();
+        let (captured, version, body) =
+            read_captured_head(&history.backend, &store::head_key("stale"), limits, &work).unwrap();
+        let command = Command::seal(
+            CommandMetadata {
+                identity: history.identity,
+                id: CommandId {
+                    receipt_epoch: ReceiptEpoch::INITIAL,
+                    request_id: RequestId::from_core(Uuid::from_u128(4)),
+                },
+                condition: Condition::Unconditional,
+            },
+            ChangeSet::builder(db.schema(), work.clone())
+                .finish()
+                .unwrap(),
+            CommandResult::empty(),
+            limits,
+            &work,
+        )
+        .unwrap();
+        assert!(matches!(
+            history.submit(&command, &work),
+            SubmitOutcome::Decided { .. }
+        ));
+        let advanced = history.local_authority(&work).unwrap();
+        assert!(advanced.revision.0 > captured.control.revision.0);
+        history.catch_up_to(&captured, &work).unwrap();
+        history
+            .install_captured_control(&captured.control, &work)
+            .unwrap();
+        assert_eq!(history.local_authority(&work).unwrap(), advanced);
+        assert!(matches!(
+            history.attempt_publish(
+                &command,
+                &captured,
+                body.as_bytes(),
+                &version,
+                Plan::Evaluate,
+                false,
+                &work,
+            ),
+            Ok(AttemptResult::Lost)
+        ));
+        assert_eq!(history.local_authority(&work).unwrap(), advanced);
+        drop(history);
+        drop(db);
+        std::fs::remove_dir_all(path).unwrap();
+    }
 
     #[test]
     fn per_call_attempts_can_only_narrow_the_machine_budget() {

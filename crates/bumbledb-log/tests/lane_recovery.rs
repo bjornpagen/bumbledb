@@ -9,11 +9,11 @@ mod lane_support;
 
 use std::sync::Arc;
 
+use bumbledb::Uuid;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
     StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
-use bumbledb::{Id128, Value};
 use bumbledb_log::admin;
 use bumbledb_log::checkpointer::{CheckpointKind, CheckpointPolicy, publish_checkpoint};
 use bumbledb_log::history::authority::DeletedReason;
@@ -92,8 +92,8 @@ fn nonempty_binding() -> OriginBinding {
         origin: "local".into(),
         prefix: "t".into(),
         identity: DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
             schema_id: bumbledb::schema::fingerprint::fingerprint(&schema),
         },
     }
@@ -244,15 +244,14 @@ fn missing_head_is_database_missing_and_open_never_initializes() {
 fn deleted_authority_refuses_ordinary_open_before_hydration() {
     let store = MemStore::new();
     let mirror = hosted_fixture("rec-deleted", &store);
-    admin::tombstone_hosted(
+    lane_support::completed(admin::tombstone_hosted(
         &store,
         "t",
         op(0xd1),
         DeletedReason::Erasure,
         HEAD_CAP,
         &work(),
-    )
-    .expect("tombstone");
+    ));
     let dir = temp_dir("rec-deleted-target");
     let refused = open_hosted(
         &dir,
@@ -346,8 +345,9 @@ fn corrupt_authoritative_chunk_stops_hydration_with_evidence_never_empty() {
         .checkpoint
         .expect("checkpoint");
     let manifest_bytes = fetch_verified(&store, "t", &reference);
-    let manifest = bumbledb_log::codec::decode_manifest(manifest_bytes.as_bytes(), ckpt_policy().stream)
-        .expect("decodes");
+    let manifest =
+        bumbledb_log::codec::decode_manifest(manifest_bytes.as_bytes(), ckpt_policy().stream)
+            .expect("decodes");
     let chunk_key = manifest.chunks[0].key("t");
     assert!(store.corrupt_object(&chunk_key, |bytes| bytes[10] ^= 0xff));
     let dir = temp_dir("rec-corrupt-target");
@@ -432,11 +432,11 @@ fn local_create_is_explicit_and_local_open_needs_no_remote_machinery() {
         origin: "local".into(),
         prefix: "t".into(),
         identity: bumbledb_log::history::DatabaseIdentity {
-            database_id: bumbledb_log::history::DatabaseId::from_core(bumbledb::Id128::from_bytes(
+            database_id: bumbledb_log::history::DatabaseId::from_core(bumbledb::Uuid::from_bytes(
                 [0xa1; 16],
             )),
             incarnation_id: bumbledb_log::history::IncarnationId::from_core(
-                bumbledb::Id128::from_bytes([0xb2; 16]),
+                bumbledb::Uuid::from_bytes([0xb2; 16]),
             ),
             schema_id: bumbledb::schema::fingerprint::fingerprint(
                 bumbledb::Db::create(&temp_dir("rec-local-fp").join("db"), theory(), work())
@@ -487,7 +487,7 @@ fn local_create_is_explicit_and_local_open_needs_no_remote_machinery() {
 
 /// D06/D26: a legal schema whose empty state violates a law never becomes
 /// Ready. Create, empty genesis restore, and a missing-HEAD hydrate leave
-/// the destination absent — not a ready partial Db. Verification: NotRun.
+/// the destination absent — not a ready partial Db. Verification: `NotRun`.
 #[test]
 fn d06_failed_hydrate_leaves_destination_absent() {
     let store = MemStore::new();
@@ -521,7 +521,8 @@ fn d06_failed_hydrate_leaves_destination_absent() {
     let created = create_local(&empty_create, nonempty_required(), &binding, &work());
     assert!(
         matches!(created, Err(RecoveryError::InvariantViolation)),
-        "D26: empty nonempty-required create refuses, got {created:?}"
+        "D26: empty nonempty-required create refuses, got {}",
+        format_args!("{:?}", created.as_ref().err())
     );
     assert!(
         !materialization_path(&empty_create).exists(),
@@ -540,7 +541,7 @@ fn d06_failed_hydrate_leaves_destination_absent() {
         genesis,
         std::iter::empty::<Result<bumbledb::work::ChargedBytes, RecoveryError>>(),
         genesis,
-        IncarnationId::from_core(Id128::from_bytes([0xc3; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xc3; 16])),
         op(0x26),
         [0x26; 32],
         "local",
@@ -552,13 +553,13 @@ fn d06_failed_hydrate_leaves_destination_absent() {
     );
     assert!(
         empty_restore.is_err(),
-        "D26: empty genesis restore of nonempty-required refuses, got {empty_restore:?}"
+        "D26: empty genesis restore of nonempty-required refuses, got {}",
+        format_args!("{:?}", empty_restore.as_ref().err())
     );
     assert!(
         !genesis_dir.exists()
             || std::fs::read_dir(&genesis_dir)
-                .map(|listing| listing.filter_map(Result::ok).count())
-                .unwrap_or(0)
+                .map_or(0, |listing| listing.filter_map(Result::ok).count())
                 == 0,
         "D06: refused empty genesis restore leaves dest absent-or-empty"
     );
@@ -567,18 +568,17 @@ fn d06_failed_hydrate_leaves_destination_absent() {
 fn dest_unpublished(path: &std::path::Path) {
     assert!(
         !path.exists()
-            || std::fs::read_dir(path)
-                .map(|listing| listing.filter_map(Result::ok).count())
-                .unwrap_or(0)
+            || std::fs::read_dir(path).map_or(0, |listing| listing.filter_map(Result::ok).count())
                 == 0,
-        "unpublished restore left a destination at {path:?}"
+        "unpublished restore left a destination at {}",
+        path.display()
     );
 }
 
 /// D17: tip disagreement and a refuse during final metadata construction
 /// never publish. `theory()` admits empty, so a premature `complete_install`
 /// would leave a destination — dest-absent is the discriminator.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn d17_incomplete_genesis_restore_leaves_destination_absent() {
     let genesis = DecisionStamp {
@@ -586,8 +586,8 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
         hash: DecisionDigest::from_bytes([0x11; 32]),
     };
     let source = DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(
             &theory().validate().expect("theory validates"),
         ),
@@ -610,7 +610,7 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
         genesis,
         empty(),
         later,
-        IncarnationId::from_core(Id128::from_bytes([0xc7; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xc7; 16])),
         op(0x17),
         [0x17; 32],
         "local",
@@ -622,7 +622,8 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
     );
     assert!(
         truncated_err.is_err(),
-        "truncated tail (empty vs tip 7) refuses, got {truncated_err:?}"
+        "truncated tail (empty vs tip 7) refuses, got {}",
+        format_args!("{:?}", truncated_err.as_ref().err())
     );
     dest_unpublished(&truncated);
 
@@ -634,7 +635,7 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
         genesis,
         empty(),
         wrong_genesis,
-        IncarnationId::from_core(Id128::from_bytes([0xc8; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xc8; 16])),
         op(0x18),
         [0x18; 32],
         "local",
@@ -646,7 +647,8 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
     );
     assert!(
         wrong_err.is_err(),
-        "wrong genesis tip refuses, got {wrong_err:?}"
+        "wrong genesis tip refuses, got {}",
+        format_args!("{:?}", wrong_err.as_ref().err())
     );
     dest_unpublished(&wrong);
 
@@ -658,7 +660,7 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
         genesis,
         empty(),
         genesis,
-        IncarnationId::from_core(Id128::from_bytes([0xc9; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xc9; 16])),
         op(0x19),
         [0x19; 32],
         "local",
@@ -670,7 +672,8 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
     );
     assert!(
         metadata_err.is_err(),
-        "head_cap=1 refuses genesis/control construction, got {metadata_err:?}"
+        "head_cap=1 refuses genesis/control construction, got {}",
+        format_args!("{:?}", metadata_err.as_ref().err())
     );
     dest_unpublished(&metadata);
 }
@@ -678,7 +681,7 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
 /// D18: receipt cleanup is L07 `delete_host_batch` / `HostResume` windows
 /// (`RECEIPT_CLEANUP_BATCH_BYTES`); peak working storage does not grow with
 /// receipt count. Wrong tip still refuses before that cleanup and leaves
-/// dest unpublished. Verification: NotRun.
+/// dest unpublished. Verification: `NotRun`.
 #[test]
 fn d18_receipt_cleanup_stays_bounded_wrong_tip_absent() {
     let genesis = DecisionStamp {
@@ -686,8 +689,8 @@ fn d18_receipt_cleanup_stays_bounded_wrong_tip_absent() {
         hash: DecisionDigest::from_bytes([0x11; 32]),
     };
     let source = DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(
             &theory().validate().expect("theory validates"),
         ),
@@ -703,7 +706,7 @@ fn d18_receipt_cleanup_stays_bounded_wrong_tip_absent() {
             seq: 7,
             hash: DecisionDigest::from_bytes([0x77; 32]),
         },
-        IncarnationId::from_core(Id128::from_bytes([0xca; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xca; 16])),
         op(0x1a),
         [0x1a; 32],
         "local",
@@ -715,7 +718,8 @@ fn d18_receipt_cleanup_stays_bounded_wrong_tip_absent() {
     );
     assert!(
         refused.is_err(),
-        "wrong tip refuses before receipt cleanup / publish, got {refused:?}"
+        "wrong tip refuses before receipt cleanup / publish, got {}",
+        format_args!("{:?}", refused.as_ref().err())
     );
     dest_unpublished(&dest);
 }

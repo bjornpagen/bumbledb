@@ -317,7 +317,7 @@ fn compile_fail_fixtures() {
     // an unbound head variable, a
     // negative `u64`, a foreign integer suffix, a binding's `in` without
     // its ?param, a numeric label on a relation atom, a third Arg
-    // position after the key, a malformed id128 literal, an inverted dense
+    // position after the key, a malformed uuid literal, an inverted dense
     // float interval, a `use` import after a rule — plus the typed-template
     // walls (chapter 34): an unknown `params!` name, a missing param
     // (typestate), a doubled `params!` name, a scalar-and-set mixed param,

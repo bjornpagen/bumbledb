@@ -183,7 +183,7 @@ fn the_closed_write_classes_agree_with_the_engine() {
         naive.apply(&strand),
         Err(vec![Violation::Containment {
             statement: target::CURRENCY_BACKED,
-            direction: Direction::TargetRequired,
+            direction: Direction::SourceUnsatisfied,
         }]),
         "the domain quantification judges the stranded axiom target-side"
     );

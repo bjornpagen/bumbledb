@@ -14,7 +14,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { Id128, NativeRuntime } from "@bjornpagen/bumbledb"
+import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
 import { backup, OperationId, restore, verifyBackup } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
@@ -30,9 +30,9 @@ function saveOutcome(name: string, body: unknown): void {
 }
 
 function operationIdOf(hex: string): OperationId {
-	const id = Id128.fromHex(hex)
+	const id = Uuid.parse(hex)
 	if (Result.isFailure(id)) {
-		throw new Error(`operation id must be 32 lowercase hex characters, got ${hex}`)
+		throw new Error(`operation id must be canonical UUID text, got ${hex}`)
 	}
 	const operation = OperationId.from(id.success)
 	if (Result.isFailure(operation)) {

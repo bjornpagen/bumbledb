@@ -6,8 +6,8 @@ bumbledb::schema! {
     pub Grades;
 
     relation Attempt {
-        id: id128 as AttemptId,
-        student: id128 as StudentId,
+        id: uuid as AttemptId,
+        student: uuid as StudentId,
         score: f64,
     }
 
@@ -19,6 +19,6 @@ pub fn bound() -> Vec<bumbledb::ParamArg<'static>> {
         (score) | Attempt(id, student == ?student, score);
     });
     attempts_for.bind(bumbledb_query::params! {
-        student_typo: bumbledb::Id128::from_bytes([1; 16])
+        student_typo: bumbledb::Uuid::from_bytes([1; 16])
     })
 }

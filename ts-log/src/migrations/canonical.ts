@@ -15,7 +15,14 @@
  * (`7ff8000000000000`), canonical +0 — exactly the core F64 quotient; the
  * native codec re-judges every value.
  */
-import type { ManifestEntry, MigrationPlan, PlanExpression, PlanOperation, PlanValue, RuntimeContract } from "#migrations/types.ts"
+import type {
+	ManifestEntry,
+	MigrationPlan,
+	PlanExpression,
+	PlanOperation,
+	PlanValue,
+	RuntimeContract
+} from "#migrations/types.ts"
 
 // ---------------------------------------------------------------------------
 // Canonical scalar spellings.
@@ -80,8 +87,8 @@ export function valueJson(value: PlanValue): JsonValue {
 	if ("$f64" in value) {
 		return { $f64: value.$f64 }
 	}
-	if ("id128" in value) {
-		return { id128: value.id128 }
+	if ("uuid" in value) {
+		return { uuid: value.uuid }
 	}
 	if ("string" in value) {
 		return { string: value.string }
@@ -196,24 +203,4 @@ export function renderIndex(entries: readonly ManifestEntry[]): string {
 /** Derived sidecar: exact snapshot texts, empty-base first. */
 export function renderSnapshots(texts: readonly string[]): string {
 	return renderJson(texts)
-}
-
-/** Symbolic source-field AST for native compile — never evaluated here. */
-export function compiledMappingsJson(plans: readonly MigrationPlan[]): string {
-	const mappings: JsonValue[] = []
-	for (const plan of plans) {
-		for (const operation of plan.operations) {
-			if (operation.kind === "map-relation") {
-				mappings.push({
-					source: operation.source,
-					target: operation.target,
-					fields: operation.fields.map((field) => ({
-						target: field.target,
-						expression: expressionJson(field.expression)
-					}))
-				})
-			}
-		}
-	}
-	return compactJson(mappings)
 }

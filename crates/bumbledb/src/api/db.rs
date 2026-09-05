@@ -124,11 +124,6 @@ impl<S> Db<S> {
         &self.schema
     }
 
-    /// The shared relation-image cache (C05/B seam: one owner per database).
-    pub(crate) fn cache(&self) -> &Arc<ImageCache> {
-        &self.cache
-    }
-
     /// The successor store owner (C04). Native/log integration and the
     /// offline sweeper read through this; it is not embedding API.
     #[doc(hidden)]

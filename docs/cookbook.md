@@ -31,14 +31,11 @@ One fact per outage window; the pointwise key is the whole temporal design.
 bumbledb::schema! {
     pub Uptime;
 
-    relation Service { id: u64 as ServiceId, fresh, name: str }
-    // The window is one value, not a (start, end) column pair: the denotation
-    // (a set of points, half-open) is what the judgments below read through.
+    relation Service { id: u64 as ServiceId, name: str }
     relation Outage  { service: u64 as ServiceId, window: interval<i64> }
 
+    Service(id) -> Service;
     Outage(service) <= Service(id);
-    // The pointwise key: per service, no two outages share a point — every
-    // pair satisfies DISJOINT. SQL:2011's WITHOUT OVERLAPS, as a theorem.
     Outage(service, window) -> Outage;
 }
 ```
@@ -77,26 +74,18 @@ relations, glued by bidirectional conditional containments
 bumbledb::schema! {
     pub Grading;
 
-    // The discriminator vocabulary is a closed relation: its ground axioms are
-    // axioms, and the host enum `Kind` is emitted for rustc's matching.
     closed relation Kind as KindId = { Deterministic, CustomOperator };
 
-    relation Task { id: u64 as TaskId, fresh, kind: u64 as KindId }
+    relation Task { id: u64 as TaskId, kind: u64 as KindId }
     relation DeterministicGrading  { task: u64 as TaskId, tolerance: i64 }
     relation CustomOperatorGrading { task: u64 as TaskId, operator: str }
 
-    Task(kind) <= Kind(id);                                // the discriminator resolves
-    DeterministicGrading(task)  -> DeterministicGrading;   // one arm fact per parent
+    Task(id) -> Task;
+    Task(kind) <= Kind(id);
+    DeterministicGrading(task)  -> DeterministicGrading;
     CustomOperatorGrading(task) -> CustomOperatorGrading;
-    // Totality (==, left to right): a Deterministic task HAS its arm fact —
-    // same commit, always. Arm validity (right to left): an arm fact's parent
-    // exists WITH that kind — composite-FK-plus-CHECK, one statement.
     Task(id | kind == Deterministic)  == DeterministicGrading(task);
     Task(id | kind == CustomOperator) == CustomOperatorGrading(task);
-    // Exclusivity is a theorem, not a statement: one id in two arms would
-    // force `kind` to equal two handles against the fresh key on id.
-    // The executor spends the same theorem again as a diagnostic witness
-    // (recipe 22); multi-rule execution still keeps a spanning seen-set.
 }
 ```
 
@@ -114,14 +103,12 @@ child's key plus a one-way containment *is* "nullable column", done honestly.
 bumbledb::schema! {
     pub Optionality;
 
-    relation Business { id: u64 as BusinessId, fresh, name: str }
+    relation Business { id: u64 as BusinessId, name: str }
     relation MailingAddress { business: u64 as BusinessId, line: str, city: str }
 
-    MailingAddress(business) -> MailingAddress;   // at most one address...
-    MailingAddress(business) <= Business(id);     // ...and only for a real business
-    // One-way <= on purpose: absence is the fact that isn't. The all-or-nothing
-    // column group (line+city together or neither) is unstatable TO VIOLATE —
-    // the fact carries both fields or does not exist.
+    Business(id) -> Business;
+    MailingAddress(business) -> MailingAddress;
+    MailingAddress(business) <= Business(id);
 }
 ```
 
@@ -147,17 +134,15 @@ bumbledb::schema! {
 
     closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
 
-    relation Account { id: u64 as AccountId, fresh, name: str }
-    // Minor units in i64 (±92 quadrillion cents); `as Minor` is the host
-    // newtype — rustc polices cross-domain confusion, not the engine
-    // (hard structural typing, 10-data-model.md).
+    relation Account { id: u64 as AccountId, name: str }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         account: u64 as AccountId,
         currency: u64 as CurrencyId,
         minor: i64 as Minor,
     }
 
+    Account(id) -> Account;
     Posting(account)  <= Account(id);
     Posting(currency) <= Currency(id);
 }
@@ -189,19 +174,16 @@ bumbledb::schema! {
     closed relation Region as RegionId = { Us, Eu };
 
     relation Document {
-        id: u64 as DocumentId, fresh,
-        name: str,                          // repeats: interned, id-equality
-        payload: bytes<32> as PayloadHash,  // identifies: the blake3 of the
-    }                                       // external blob — inline, never interned
+        id: u64 as DocumentId,
+        name: str,
+        payload: bytes<32> as PayloadHash,
+    }
     relation Replica { payload: bytes<32> as PayloadHash, region: u64 as RegionId }
 
-    Document(payload) -> Document;          // content-addressed: one doc per digest
+    Document(id) -> Document;
+    Document(payload) -> Document;
     Replica(payload) <= Document(payload);
     Replica(region)  <= Region(id);
-    // bytes<N> is identity-only (Eq/Ne, membership): a digest's lexicographic
-    // order is an encoding artifact, refused as semantics (10-data-model.md).
-    // Large objects: facts stay fixed-width; the payload lives in external
-    // storage, referenced by identity (the large-object refusal).
 }
 ```
 
@@ -233,26 +215,16 @@ Plan introspection, errors.
 bumbledb::schema! {
     pub Tickets;
 
-    // Tier 1: handles only. The macro emits the host enum `Priority`,
-    // welded to declaration-order ids — an emission, not a type:
-    // the engine's vocabulary stays relational; rustc's pattern matching
-    // keeps working on the projection.
     closed relation Priority as PriorityId = { Low, Normal, Urgent };
 
     relation Ticket {
-        id: u64 as TicketId, fresh,
+        id: u64 as TicketId,
         priority: u64 as PriorityId,
         opened_at: i64,
     }
 
-    // A closed reference is an ordinary u64 under the handle newtype plus
-    // one containment; the judgment compiles at validate to a member-set
-    // test — one AND, one bit test, no probe (30-dependencies.md).
+    Ticket(id) -> Ticket;
     Ticket(priority) <= Priority(id);
-
-    // The boundary law: intrinsic meaning goes here (changing it is a new
-    // theory); policy that drifts without a rebuild is an ordinary
-    // relation — a vocabulary is never written, only declared.
 }
 ```
 
@@ -282,8 +254,6 @@ declared, never written.
 bumbledb::schema! {
     pub Review;
 
-    // Tier 2: payload columns state what each word MEANS, next to the
-    // word. A rubric change is a new theory — exactly right for meaning.
     closed relation Kind as KindId {
         mastered: bool,
         rank: u64,
@@ -293,15 +263,13 @@ bumbledb::schema! {
         Failed     { mastered: false, rank: 10 },
     };
 
-    relation Attempt { id: u64 as AttemptId, fresh, kind: u64 as KindId }
+    relation Attempt { id: u64 as AttemptId, kind: u64 as KindId }
     relation Certificate { attempt: u64 as AttemptId, kind: u64 as KindId }
 
+    Attempt(id) -> Attempt;
     Attempt(kind) <= Kind(id);
     Certificate(attempt) -> Certificate;
     Certificate(attempt) <= Attempt(id);
-    // ψ reads the payload: certificates carry mastered kinds only — the
-    // member set {DirectPass, JudgedPass} compiles at validate and the
-    // judgment is O(1) at commit (recipe 8 is this statement's own recipe).
     Certificate(kind) <= Kind(id | mastered == true);
 }
 ```
@@ -344,7 +312,7 @@ bumbledb::schema! {
     };
 
     relation Incident {
-        id: u64 as IncidentId, fresh,
+        id: u64 as IncidentId,
         severity: u64 as SeverityId,
     }
     relation Escalation {
@@ -353,12 +321,9 @@ bumbledb::schema! {
         at: i64,
     }
 
+    Incident(id) -> Incident;
     Incident(severity) <= Severity(id);
     Escalation(incident) <= Incident(id);
-    // The sub-vocabulary: an escalation carries a PAGING severity, by
-    // statement. ψ over the sealed extension compiles to the member set
-    // {Critical, Fatal}; the judgment is one bit test per touched fact,
-    // and an escalation at severity == Info aborts the commit.
     Escalation(severity) <= Severity(id | pages == true);
 }
 ```
@@ -403,19 +368,17 @@ The idiomatic ordered collection is an interval partition, spelled as a
 bumbledb::schema! {
     pub Playlists;
 
-    relation Playlist { id: u64 as PlaylistId, fresh, name: str }
-    // The extent: a 0..1 child, because empty playlists exist and empty
-    // intervals do not — presence of the child IS nonemptiness.
+    relation Playlist { id: u64 as PlaylistId, name: str }
     relation Extent { playlist: u64 as PlaylistId, span: interval<u64> }
-    // The unit slot: position p occupies [p, p+1) — the width is the type.
     relation Slot { playlist: u64 as PlaylistId, slot: interval<u64, 1>, track: str }
 
+    Playlist(id) -> Playlist;
     Extent(playlist) <= Playlist(id);
     Slot(playlist)   <= Playlist(id);
-    Extent(playlist) -> Extent;             // 0..1 extent per playlist
-    Extent(playlist, span) -> Extent;       // exact target key (recipe 26's note)
-    Slot(playlist, slot) -> Slot;           // one occupant per position
-    Extent(playlist, span) == Slot(playlist, slot);  // slots tile the span exactly
+    Extent(playlist) -> Extent;
+    Extent(playlist, span) -> Extent;
+    Slot(playlist, slot) -> Slot;
+    Extent(playlist, span) == Slot(playlist, slot);
 }
 ```
 
@@ -455,25 +418,19 @@ bumbledb::schema! {
 
     closed relation Kind as KindId = { Lit, Add };
 
-    relation Node { id: u64 as NodeId, fresh, kind: u64 as KindId }
+    relation Node { id: u64 as NodeId, kind: u64 as KindId }
     relation Lit  { node: u64 as NodeId, value: i64 }
     relation Add  { node: u64 as NodeId, lhs: u64 as NodeId, rhs: u64 as NodeId }
     relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
 
+    Node(id) -> Node;
     Node(kind) <= Kind(id);
     Lit(node) -> Lit;
     Add(node) -> Add;
-    // Every node's arm is total, valid, and exclusive (recipe 2's theorems):
     Node(id | kind == Lit) == Lit(node);
     Node(id | kind == Add) == Add(node);
-    // Every child edge resolves — no dangling subtrees, judged at commit:
     Add(lhs) <= Node(id);
     Add(rhs) <= Node(id);
-    // Functional parent (one parent per child) ⇒ the reachable shape is
-    // paths-or-cycles; acyclicity itself is outside the ∀∃ vocabulary —
-    // host discipline, recorded (statements never reference predicates,
-    // 30-dependencies.md). Transitive reach is recipe 24's closure, in
-    // either dialect, or a precomputed relation the host maintains.
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
@@ -500,14 +457,16 @@ endpoint containments pin which node kinds each edge may touch.
 bumbledb::schema! {
     pub Graph;
 
-    relation Person { id: u64 as PersonId, fresh, name: str }
-    relation Repo   { id: u64 as RepoId, fresh, name: str }
+    relation Person { id: u64 as PersonId, name: str }
+    relation Repo   { id: u64 as RepoId, name: str }
     relation Follows   { follower: u64 as PersonId, followee: u64 as PersonId }
     relation Maintains { person: u64 as PersonId, repo: u64 as RepoId }
 
-    Follows(follower) <= Person(id);        // a Person→Person edge, by statement —
-    Follows(followee) <= Person(id);        // a Follows fact cannot touch a Repo
-    Follows(follower, followee) -> Follows; // at most one edge per pair
+    Person(id) -> Person;
+    Repo(id) -> Repo;
+    Follows(follower) <= Person(id);
+    Follows(followee) <= Person(id);
+    Follows(follower, followee) -> Follows;
     Maintains(person) <= Person(id);
     Maintains(repo)   <= Repo(id);
     Maintains(person, repo) -> Maintains;
@@ -537,18 +496,17 @@ relation, not a wider fact.
 bumbledb::schema! {
     pub Ecs;
 
-    relation Entity { id: u64 as EntityId, fresh, name: str }
+    relation Entity { id: u64 as EntityId, name: str }
     relation Transform  { entity: u64 as EntityId, x: i64, y: i64 }
     relation Velocity   { entity: u64 as EntityId, dx: i64, dy: i64 }
     relation Renderable { entity: u64 as EntityId, mesh: str }
 
-    Transform(entity)  -> Transform;        // each component 0..1 per entity
+    Entity(id) -> Entity;
+    Transform(entity)  -> Transform;
     Transform(entity)  <= Entity(id);
     Velocity(entity)   -> Velocity;
     Velocity(entity)   <= Entity(id);
     Renderable(entity) -> Renderable;
-    // An archetype rule is one containment: every Renderable has a Transform
-    // (and, through it, an Entity — containment composes).
     Renderable(entity) <= Transform(entity);
 }
 ```
@@ -577,22 +535,16 @@ bumbledb::schema! {
 
     closed relation State as StateId = { Cart, Placed, Shipped };
 
-    relation Order { id: u64 as OrderId, fresh, state: u64 as StateId }
+    relation Order { id: u64 as OrderId, state: u64 as StateId }
     relation Placement { order: u64 as OrderId, at: i64 }
     relation Shipment  { order: u64 as OrderId, carrier: str, at: i64 }
 
+    Order(id) -> Order;
     Order(state) <= State(id);
     Placement(order) -> Placement;
     Shipment(order)  -> Shipment;
-    // History accretes: a Shipped order keeps its Placement — one-way <=
-    // admits arms from earlier states surviving the transition.
     Placement(order) <= Order(id);
-    // The conditional target, both ways: every Shipment references an order
-    // THAT IS Shipped (validity), and every Shipped order has its Shipment
-    // (totality) — the transition and its evidence commit together.
     Shipment(order) == Order(id | state == Shipped);
-    // Transition predicates ("only Placed may ship") are host code under the
-    // generation witness — recipe 20; the schema pins the states, not the paths.
 }
 ```
 
@@ -623,11 +575,11 @@ bumbledb::schema! {
     closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
     closed relation Arm as ArmId = { Busy, Ooo };
 
-    relation Person { id: u64 as PersonId, fresh, name: str }
-    relation Room   { id: u64 as RoomId, fresh, name: str }
-    relation Event  { id: u64 as EventId, fresh, span: interval<i64> }
+    relation Person { id: u64 as PersonId, name: str }
+    relation Room   { id: u64 as RoomId, name: str }
+    relation Event  { id: u64 as EventId, span: interval<i64> }
     relation Attendance {
-        id: u64 as AttendanceId, fresh,
+        id: u64 as AttendanceId,
         event: u64 as EventId,
         person: u64 as PersonId,
         rsvp: u64 as RsvpId,
@@ -641,21 +593,19 @@ bumbledb::schema! {
     relation Booking   { room: u64 as RoomId, event: u64 as EventId, span: interval<i64> }
     relation WorkHours { person: u64 as PersonId, hours: interval<i64> }
 
+    Person(id) -> Person;
+    Room(id) -> Room;
+    Event(id) -> Event;
+    Attendance(id) -> Attendance;
     Attendance(event)  <= Event(id);
     Attendance(person) <= Person(id);
     Attendance(rsvp)   <= Rsvp(id);
-    Attendance(event, person) -> Attendance;    // one RSVP per (event, person)
+    Attendance(event, person) -> Attendance;
     Claim(source) -> Claim;
     Claim(person) <= Person(id);
     Claim(arm)    <= Arm(id);
-    // HARD: rooms cannot double-book — the pointwise key (recipe 1's theorem).
     Booking(room, span) -> Booking;
-    // SOFT: people CAN double-book — `Claim(person, span) -> Claim` is simply
-    // not declared. Policy is the presence or absence of one statement.
-    // Accepting an invitation IS claiming the time (totality + validity):
     Attendance(id | rsvp == Accepted) == Claim(source | arm == Busy);
-    // Busy time lies inside working hours, pointwise — coverage rides the
-    // target's own key (disjoint + ordered is a theorem, not a request):
     WorkHours(person, hours) -> WorkHours;
     Claim(person, span | arm == Busy) <= WorkHours(person, hours);
     Booking(room)  <= Room(id);
@@ -693,15 +643,12 @@ date t" is one membership probe.
 bumbledb::schema! {
     pub Pricing;
 
-    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Policy  { id: u64 as PolicyId, live: interval<i64> }
     relation Version { policy: u64 as PolicyId, rate_bps: i64, valid: interval<i64> }
 
+    Policy(id) -> Policy;
     Version(policy) <= Policy(id);
-    // No overlapping versions: at any instant, at most one rate is the law.
     Version(policy, valid) -> Version;
-    // No gaps in the policy lifetime: every source point is covered by versions.
-    // Together with the key above this is a disjoint cover, not an exact
-    // partition: Version intervals may overhang the Policy lifetime (recipe 16).
     Policy(id, live) <= Version(policy, valid);
 }
 ```
@@ -740,13 +687,13 @@ called a tiling here; that was stronger than the judgment actually proved.
 bumbledb::schema! {
     pub Payroll;
 
-    relation FiscalYear { id: u64 as FiscalYearId, fresh, span: interval<i64> }
+    relation FiscalYear { id: u64 as FiscalYearId, span: interval<i64> }
     relation PayPeriod  { year: u64 as FiscalYearId, seq: u64, span: interval<i64> }
 
+    FiscalYear(id) -> FiscalYear;
     PayPeriod(year) <= FiscalYear(id);
-    PayPeriod(year, seq)  -> PayPeriod;     // sequence numbers stay unique
-    PayPeriod(year, span) -> PayPeriod;     // disjoint: no shared instant
-    // Covering: no holes in the fiscal year's span; pay-period overhang is legal.
+    PayPeriod(year, seq)  -> PayPeriod;
+    PayPeriod(year, span) -> PayPeriod;
     FiscalYear(id, span) <= PayPeriod(year, span);
 }
 ```
@@ -774,29 +721,21 @@ bumbledb::schema! {
     closed relation Status as StatusId = { Single, MarriedJoint, HeadOfHousehold };
 
     relation Regime {
-        id: u64 as RegimeId, fresh,
+        id: u64 as RegimeId,
         year: i64,
         status: u64 as StatusId,
     }
     relation Bracket { regime: u64 as RegimeId, income: interval<i64>, rate_bps: i64 }
     relation Residency { person: u64, span: interval<i64> }
-    // Split at write: an Earned fact never spans a year boundary — writers
-    // split (prorate) at the boundary, so no reader ever clips. The
-    // representation move that deletes clip-at-query (gravestone, recipe 23).
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
 
+    Regime(id) -> Regime;
     Regime(status) <= Status(id);
-    Regime(year, status) -> Regime;         // one regime per (year, filing status)
+    Regime(year, status) -> Regime;
     Bracket(regime) <= Regime(id);
-    // Brackets are disjoint per regime. Seed data conventionally covers [0, ∞)
-    // and the top bracket is a ray, but this key proves disjointness only — it
-    // does not prove coverage. end == MAX denotes [s, ∞), an honest value of
-    // the representation, not a sentinel (the point-domain law, 10-data-model.md).
     Bracket(regime, income) -> Bracket;
     Earned(regime) <= Regime(id);
     Residency(person, span) -> Residency;
-    // Residency exclusion: income counts only where earned inside a residency
-    // period — pointwise coverage, the same judgment as recipe 15's.
     Earned(person, span) <= Residency(person, span);
 }
 ```
@@ -828,12 +767,11 @@ engine stores the claims it was given.
 bumbledb::schema! {
     pub FreeTime;
 
-    relation Person { id: u64 as PersonId, fresh, name: str }
+    relation Person { id: u64 as PersonId, name: str }
     relation Claim  { person: u64 as PersonId, span: interval<i64> }
 
+    Person(id) -> Person;
     Claim(person) <= Person(id);
-    // No pointwise key, on purpose: claims overlap freely and Pack coalesces
-    // at read time. Wanting them stored-disjoint is recipe 1's key instead.
 }
 ```
 
@@ -868,21 +806,20 @@ The census workload. Balance is a query, never a column.
 bumbledb::schema! {
     pub Ledger;
 
-    relation Account      { id: u64 as AccountId, fresh, name: str }
-    relation JournalEntry { id: u64 as JournalEntryId, fresh, at: i64, memo: str }
+    relation Account      { id: u64 as AccountId, name: str }
+    relation JournalEntry { id: u64 as JournalEntryId, at: i64, memo: str }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         entry: u64 as JournalEntryId,
         account: u64 as AccountId,
         minor: i64,
     }
 
+    Account(id) -> Account;
+    JournalEntry(id) -> JournalEntry;
+    Posting(id) -> Posting;
     Posting(entry)   <= JournalEntry(id);
     Posting(account) <= Account(id);
-    // A stored balance column equaling Sum(postings) is the arithmetic-
-    // agreement statement — refused (the ledger): statements prove presence
-    // and topology, never that a value equals a computation. Balance is host
-    // arithmetic over Sum; a materialized rollup is recipe 21's shape.
 }
 ```
 
@@ -920,16 +857,15 @@ bumbledb::schema! {
     closed relation State as StateId = { Queued, Running, Done };
 
     relation Job {
-        id: u64 as JobId, fresh,
+        id: u64 as JobId,
         state: u64 as StateId,
         payload: str,
     }
     relation Lease { job: u64 as JobId, worker: u64, until: i64 }
 
+    Job(id) -> Job;
     Job(state) <= State(id);
     Lease(job) -> Lease;
-    // A lease exists iff its job is Running (recipe 13's conditional target):
-    // claiming a job and leasing it commit together or not at all.
     Lease(job) == Job(id | state == Running);
 }
 ```
@@ -979,10 +915,7 @@ bumbledb::schema! {
     Claim(arm) <= Arm(id);
     Claim(source) -> Claim;
     Claim(person, span) -> Claim;
-    BusySpan(person, span) -> BusySpan;     // packed ⇒ disjoint: statable
-    // Soundness, pointwise: every stored rollup point is covered by busy
-    // claims — an UNSOUND rollup (claiming busy time that isn't, or surviving
-    // its sources' deletion) cannot commit, judged on every touching commit.
+    BusySpan(person, span) -> BusySpan;
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
 }
 ```
@@ -1015,10 +948,11 @@ bumbledb::schema! {
 
     closed relation Kind as KindId = { Card, Ach };
 
-    relation Payment { id: u64 as PaymentId, fresh, kind: u64 as KindId }
+    relation Payment { id: u64 as PaymentId, kind: u64 as KindId }
     relation Card { payment: u64 as PaymentId, last4: u64 }
     relation Ach  { payment: u64 as PaymentId, routing: u64 }
 
+    Payment(id) -> Payment;
     Payment(kind) <= Kind(id);
     Card(payment) -> Card;
     Ach(payment)  -> Ach;
@@ -1052,26 +986,13 @@ relations are the replacements, compiled.
 bumbledb::schema! {
     pub Gravestones;
 
-    // GRAVESTONE: successor pointers (a `next` column). A linked list inside
-    // a relation is control flow smuggled into data; every reorder is a
-    // dependent chain of writes. REPLACEMENT: the ordering triple (recipe 9).
     relation Step { flow: u64, pos: u64, action: str }
-    // GRAVESTONE: floats for scores, rates, money. Permanently refused (the
-    // ledger). REPLACEMENT: fixed-point i64 — basis points (recipe 4).
     relation Score { subject: u64, bps: i64 }
-    // GRAVESTONE: conditional keys ("at most one active run per student") —
-    // rejected as FDs. REPLACEMENT: the relation split, whose ordinary key IS
-    // the invariant (30-dependencies.md; recipe 13's arm shape).
     relation ActiveRun { student: u64, run: u64 }
-    // GRAVESTONE: clip-at-query intervals (facts spanning period boundaries,
-    // every reader clipping). REPLACEMENT: split at write (recipe 17) — split
-    // the fact at the boundary; readers stop clipping because nothing spans.
     relation Usage { meter: u64, period: u64, used: interval<i64> }
-    // GRAVESTONE: uuid keys. uuidv7 is identity + clash-avoidance + clock in
-    // one lie. REPLACEMENT: fresh (minted identity) + an explicit i64 time
-    // column (10-data-model.md).
-    relation Event { id: u64 as GravestoneEventId, fresh, at: i64 }
+    relation Event { id: u64 as GravestoneEventId, at: i64 }
 
+    Event(id) -> Event;
     Step(flow, pos)    -> Step;
     Score(subject)     -> Score;
     ActiveRun(student) -> ActiveRun;
@@ -1105,11 +1026,10 @@ finished table, not a second rec.
 bumbledb::schema! {
     pub Closure;
 
-    relation Node   { id: u64 as NodeId, fresh, name: str }
-    // One parent per child — a forest (recipe 10's edge shape); a root
-    // is a node whose Parent fact is absent (recipe 3's honest 0..1).
+    relation Node   { id: u64 as NodeId, name: str }
     relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
 
+    Node(id) -> Node;
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
@@ -1193,15 +1113,16 @@ dialects against the hand-computed sums).
 bumbledb::schema! {
     pub Accounts;
 
-    relation Account { id: u64 as AccountId, fresh, name: str }
+    relation Account { id: u64 as AccountId, name: str }
     relation AccountParent { child: u64 as AccountId, parent: u64 as AccountId }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         account: u64 as AccountId,
         minor: i64,
     }
 
-    AccountParent(child) -> AccountParent;   // one parent per account
+    Account(id) -> Account;
+    AccountParent(child) -> AccountParent;
     AccountParent(child)  <= Account(id);
     AccountParent(parent) <= Account(id);
     Posting(account) <= Account(id);
@@ -1252,14 +1173,15 @@ the `{id, live}` target and the engine infers no key closure.
 bumbledb::schema! {
     pub ExactPartition;
 
-    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Policy  { id: u64 as PolicyId, live: interval<i64> }
     relation Version { policy: u64 as PolicyId, valid: interval<i64> }
 
-    Version(policy) <= Policy(id);             // reference intent
-    Version(policy, valid) -> Version;          // disjoint versions
-    Policy(id, live) -> Policy;                 // exact target key, not implied by {id}
-    Policy(id, live) <= Version(policy, valid); // no gaps in the policy source span
-    Version(policy, valid) <= Policy(id, live); // no version overhang
+    Policy(id) -> Policy;
+    Version(policy) <= Policy(id);
+    Version(policy, valid) -> Version;
+    Policy(id, live) -> Policy;
+    Policy(id, live) <= Version(policy, valid);
+    Version(policy, valid) <= Policy(id, live);
 }
 ```
 
@@ -1378,15 +1300,16 @@ Salary(employee) <= Employee(id);
 bumbledb::schema! {
     pub Payroll;
 
-    relation Employee { id: u64 as EmployeeId, fresh, name: str }
+    relation Employee { id: u64 as EmployeeId, name: str }
     relation Salary {
         employee: u64 as EmployeeId,
         amount: i64,
         applies: interval<i64>,
     }
 
+    Employee(id) -> Employee;
     Salary(employee) <= Employee(id);
-    Salary(employee, applies) -> Salary;   // one salary per instant
+    Salary(employee, applies) -> Salary;
 }
 ```
 
@@ -1438,20 +1361,17 @@ bumbledb::schema! {
 
     closed relation Kind as KindId = { Unit, Pair };
 
-    relation Ledger   { id: u64 as LedgerId, fresh, name: str }
-    // The witness: every zone of the ledger, kind-discriminated; its one
-    // pointwise key is the cross-sidecar disjointness proof.
+    relation Ledger   { id: u64 as LedgerId, name: str }
     relation Zone     { ledger: u64 as LedgerId, kind: u64 as KindId, at: interval<u64> }
     relation UnitSlot { ledger: u64 as LedgerId, at: interval<u64, 1>, entry: u64 }
     relation PairSlot { ledger: u64 as LedgerId, at: interval<u64, 2>, entry: u64 }
 
+    Ledger(id) -> Ledger;
     Zone(ledger) <= Ledger(id);
     Zone(kind)   <= Kind(id);
-    Zone(ledger, at) -> Zone;               // all zones disjoint, whatever the kind
+    Zone(ledger, at) -> Zone;
     UnitSlot(ledger, at) -> UnitSlot;
     PairSlot(ledger, at) -> PairSlot;
-    // Each kind's zones carry exactly its sidecar's points — mixed widths,
-    // one element domain (30-dependencies.md § Q1):
     Zone(ledger, at | kind == Unit) == UnitSlot(ledger, at);
     Zone(ledger, at | kind == Pair) == PairSlot(ledger, at);
 }
@@ -1482,15 +1402,16 @@ the store already enforces that on every commit:
 bumbledb::schema! {
     pub KeyedRead;
 
-    relation Grp     { id: u64 as GrpId, fresh, label: str }
+    relation Grp     { id: u64 as GrpId, label: str }
     relation Course {
-        id: u64 as CourseId, fresh,
+        id: u64 as CourseId,
         grp: u64 as GrpId,
         title: str,
     }
 
+    Grp(id) -> Grp;
     Course(grp) <= Grp(id);
-    Course(grp) -> Course;    // one course per group — the callable law
+    Course(grp) -> Course;
 }
 ```
 
@@ -1533,23 +1454,19 @@ by name against the target's full roster, ruled 2026-07-24, C1).
 bumbledb::schema! {
     pub Racks;
 
-    relation Pool  { id: u64 as PoolId, fresh, supply: u64 }
-    relation Model { id: u64 as ModelId, fresh, watts: u64 }
+    relation Pool  { id: u64 as PoolId, supply: u64 }
+    relation Model { id: u64 as ModelId, watts: u64 }
     relation Device {
-        id: u64 as DeviceId, fresh,
+        id: u64 as DeviceId,
         pool: u64 as PoolId,
         model: u64 as ModelId,
         watts: u64,
     }
 
+    Pool(id) -> Pool;
     Device(pool) <= Pool(id);
-    // The pinned column: a device's watts provably equals its model's — the
-    // two-column containment IS the join, stated as a law. The superkey it
-    // targets is deliberate write-amplification rent (RedundantSuperkey is
-    // the recorded diagnostic, never an error).
     Model(id, watts) -> Model;
     Device(model, watts) <= Model(id, watts);
-    // Σ watts over a pool's devices stays within the pool's own supply.
     Pool(id) <=[watts]{0..supply} Device(pool);
 }
 ```
@@ -1586,16 +1503,15 @@ v0 projection refusal survives narrowed).
 bumbledb::schema! {
     pub Rooms;
 
-    relation Room { id: u64 as RoomId, fresh, span: interval<i64> }
+    relation Room { id: u64 as RoomId, span: interval<i64> }
     relation Booking {
-        id: u64 as BookingId, fresh,
+        id: u64 as BookingId,
         room: u64 as RoomId,
         booked: interval<i64>,
     }
 
+    Room(id) -> Room;
     Booking(room) <= Room(id);
-    // The pointwise key forbids double-booking (recipe 1); the capacity law
-    // bounds the TOTAL. Different laws — a schema usually wants both.
     Booking(room, booked) -> Booking;
     Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room);
 }

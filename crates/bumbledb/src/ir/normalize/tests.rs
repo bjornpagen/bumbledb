@@ -138,7 +138,14 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
         .collect();
     let source = crate::image::testsupport::TestSource::new(&schema, &[(R, facts)]);
     let (_cache, image) = source.image_with_cache(R);
-    let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
+    let filtered = crate::image::view::apply(
+        &image,
+        &norm.occurrences[0].filters,
+        &[],
+        Vec::new(),
+        image.generation().text_eq(None),
+    )
+    .expect("view");
 
     let ids: Vec<u64> = filtered
         .positions()

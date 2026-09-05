@@ -159,12 +159,7 @@ describe("a strict downstream consumer", function suite() {
 
 function consumerProgram(): string {
 	return `import type {
-	CapacityViolation,
-	ContainmentViolation,
-	DeclaredKeyViolation,
 	Fact,
-	ImpliedKeyViolation,
-	MirrorViolation,
 	Violation
 } from "@bjornpagen/bumbledb"
 import { contained, key, on, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
@@ -176,59 +171,40 @@ const holderKey = key(Holder, ["id"])
 const termsKey = key(Terms, ["account"])
 const holderOf = contained(on(Account, "holder"), on(Holder, "id"))
 const Theory = schema("T", { Holder, Account, Terms }, [holderKey, termsKey, holderOf])
-type Rels = (typeof Theory)["relations"]
-
-const implied: ImpliedKeyViolation<Rels> = {
+const declared: Violation = {
 	kind: "functionality",
-	statement: undefined,
-	canonical: "Holder(id) -> Holder",
-	facts: []
-}
-const declared: DeclaredKeyViolation<Rels> = {
-	kind: "functionality",
-	statement: termsKey,
+	statementId: 1,
 	canonical: "Terms(account) -> Terms",
 	facts: []
 }
-const containment: ContainmentViolation<Rels> = {
+const containment: Violation = {
 	kind: "containment",
-	statement: holderOf,
+	statementId: 2,
 	canonical: "Account(holder) <= Holder(id)",
 	direction: "sourceUnsatisfied",
 	facts: []
 }
-const mirrored: MirrorViolation<Rels> = {
+const mirrored: Violation = {
 	kind: "containment",
-	statement: holderOf,
+	statementId: 2,
 	canonical: "Account(holder) == Holder(id)",
 	direction: "targetRequired",
-	orientation: "written",
 	facts: []
 }
 
-const violations: readonly Violation<Rels>[] = [implied, declared, containment, mirrored]
-export const statements = violations.map(function statementOf(violation: Violation<Rels>) {
-	return violation.statement
+const violations: readonly Violation[] = [declared, containment, mirrored]
+export const statements = violations.map(function statementOf(violation: Violation) {
+	return Theory.statements[violation.statementId]
 })
-
-function impliedStatement(violation: ImpliedKeyViolation<Rels>): undefined {
-	return violation.statement
-}
-function declaredStatement(violation: DeclaredKeyViolation<Rels> | ContainmentViolation<Rels> | CapacityViolation<Rels>) {
-	return violation.statement
-}
-impliedStatement(implied)
-declaredStatement(declared)
-declaredStatement(containment)
 
 const insert: Fact<typeof Holder> = { name: "Ada", id: 1n }
 export const inserted = insert
 
-function containmentRejectsUndefined(): Violation<Rels> {
-	// @ts-expect-error — declared containments always carry the SDK statement
+function containmentRejectsUndefined(): Violation {
 	return {
 		kind: "containment",
-		statement: undefined,
+		// @ts-expect-error — every violation identifies a declared statement
+		statementId: undefined,
 		canonical: "",
 		direction: "sourceUnsatisfied",
 		facts: []

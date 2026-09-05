@@ -84,16 +84,16 @@ pub use staging::{
     AdmittedStore, InstallOutcome, StageReader, StageWriter, StagingCleanup, UnreadyStore,
 };
 
-pub use candidate::{
-    AppliedChanges, CandidateJudge, CandidateState, Judgment, Prepared, PreparedWrite, RowIndexer,
-    SealedWrite, StoreCommit, WriteOwner,
-};
-pub use error::{HostKeyFault, StoreError, StoreResult};
-pub use fingerprint::{FP_LEN, Fingerprinter};
 pub use crate::schema::{
     CompiledProjection, CompiledTheory, KeyEncoding, LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES,
     ProjectionId, encode_scalar_group,
 };
+pub use candidate::{
+    AppliedChanges, CandidateJudge, CandidateState, Judgment, Prepared, PreparedWrite,
+    ProjectionEmitter, RowIndexer, SealedWrite, StoreCommit, WriteOwner,
+};
+pub use error::{HostKeyFault, StoreError, StoreResult};
+pub use fingerprint::{FP_LEN, Fingerprinter};
 pub use format::{CoreStoreId, EnvironmentId, RelationVersion, RowId, StoreIdentity};
 pub use host::{
     AttachmentChange, HostChanges, HostRecordChange, HostResume, HostSealError, HostWindow,

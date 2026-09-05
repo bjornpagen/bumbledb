@@ -24,16 +24,16 @@ use std::sync::Arc;
 use object_store::aws::{AmazonS3, AmazonS3Builder, AwsCredential};
 use object_store::path::Path;
 use object_store::{
-    CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, PutMode, PutOptions,
-    RetryConfig, UpdateVersion,
+    CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, ObjectStoreExt as _,
+    PutMode, PutOptions, RetryConfig, UpdateVersion,
 };
-use tokio::runtime::{Builder, Handle, Runtime};
 use std::sync::OnceLock;
+use tokio::runtime::{Builder, Handle, Runtime};
 
 use super::key_ok;
 use super::receive::{
-    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
-    ReceivingStore, TransportContext, TransportObservation,
+    ObservedError, ReceiveAccumulator, ReceiveFault, ReceivedBody, ReceivedHead, ReceivingStore,
+    TransportContext, TransportObservation,
 };
 use crate::writer::verbs::{
     ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, PutOutcome,
@@ -436,14 +436,13 @@ impl ReceivingStore for S3Store {
     ) -> Result<ReceivedBody, S3Error> {
         let path = Self::path_of("receive_object", key)?;
         self.block("receive_object", key, async {
-            ctx.checkpoint()
-                .map_err(|source| {
-                    S3Error::new(
-                        "receive_object",
-                        key,
-                        io::Error::new(io::ErrorKind::TimedOut, format!("{source:?}")),
-                    )
-                })?;
+            ctx.checkpoint().map_err(|source| {
+                S3Error::new(
+                    "receive_object",
+                    key,
+                    io::Error::new(io::ErrorKind::TimedOut, format!("{source:?}")),
+                )
+            })?;
             match self.inner.get_opts(&path, GetOptions::new()).await {
                 Ok(result) => stream_get_capped("receive_object", key, ctx, result).await,
                 Err(ObjError::NotFound { .. }) => Err(S3Error::observed(
@@ -464,14 +463,13 @@ impl ReceivingStore for S3Store {
     ) -> Result<ReceivedHead, S3Error> {
         let path = Self::path_of("receive_head", head_key)?;
         self.block("receive_head", head_key, async {
-            ctx.checkpoint()
-                .map_err(|source| {
-                    S3Error::new(
-                        "receive_head",
-                        head_key,
-                        io::Error::new(io::ErrorKind::TimedOut, format!("{source:?}")),
-                    )
-                })?;
+            ctx.checkpoint().map_err(|source| {
+                S3Error::new(
+                    "receive_head",
+                    head_key,
+                    io::Error::new(io::ErrorKind::TimedOut, format!("{source:?}")),
+                )
+            })?;
             match self.inner.get_opts(&path, GetOptions::new()).await {
                 Ok(result) => {
                     let etag = result.meta.e_tag.clone();
@@ -638,12 +636,16 @@ mod tests {
         let runtime = Builder::new_current_thread().build().unwrap();
         runtime.block_on(async {
             assert!(S3Store::new(&config()).is_err());
-            assert!(store
-                .receive_head("t/HEAD", TransportContext::limited(64))
-                .is_err());
-            assert!(store
-                .receive_object("t/objects/1/chunk/aa", TransportContext::limited(64))
-                .is_err());
+            assert!(
+                store
+                    .receive_head("t/HEAD", TransportContext::limited(64))
+                    .is_err()
+            );
+            assert!(
+                store
+                    .receive_object("t/objects/1/chunk/aa", TransportContext::limited(64))
+                    .is_err()
+            );
         });
     }
 
@@ -717,7 +719,10 @@ mod tests {
             path: "p".into(),
             source: Box::new(io::Error::other("Client error with status 409 Conflict")),
         };
-        assert_eq!(replace_verdict(&conflict), ConditionalOutcome::Indeterminate);
+        assert_eq!(
+            replace_verdict(&conflict),
+            ConditionalOutcome::Indeterminate
+        );
     }
 
     #[test]
@@ -800,7 +805,7 @@ mod tests {
             "t/objects/1/chunk/aa",
             TransportContext {
                 work: None,
-                receive: ReceiveLimits::capped(16),
+                receive: super::super::receive::ReceiveLimits::capped(16),
             },
         );
         assert!(

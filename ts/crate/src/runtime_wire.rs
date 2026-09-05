@@ -14,8 +14,7 @@ use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 
 use crate::runtime::{
-    CloseReport, Inspection, Operation, Options, Output, Phase, QueuedOutput, Runtime,
-    RuntimeError,
+    CloseReport, Inspection, Operation, Options, Output, Phase, Runtime, RuntimeError,
 };
 
 static LIVE: Mutex<Option<Arc<Runtime>>> = Mutex::new(None);
@@ -765,7 +764,7 @@ pub fn runtime_directory_db_open(
                 let path = reference.child_path(&child_name)?;
                 context.checkpoint()?;
                 let opened = if create {
-                    match crate::Engine::create(&path, descriptor.clone()) {
+                    match crate::Engine::create(&path, descriptor.clone(), context.clone()) {
                         Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
                         Ok(bumbledb::Admission::Rejected(violations)) => {
                             return Ok(Output::Db(ManagedDbOutcome::Rejected(
@@ -775,7 +774,7 @@ pub fn runtime_directory_db_open(
                         Err(error) => Err(error),
                     }
                 } else {
-                    crate::Engine::open(&path, descriptor.clone())
+                    crate::Engine::open(&path, descriptor.clone(), context.clone())
                 };
                 match opened {
                     Ok(db) => {
@@ -865,7 +864,6 @@ pub fn runtime_managed_db_close(
 pub struct SessionHandle {
     identity: usize,
     session: Arc<crate::runtime::session::SnapshotSession>,
-    sealed: Arc<crate::Sealed>,
     /// `None`: the owning worker-session capability — close drains the
     /// pinned thread. `Some(closed)`: a snapshot-bound EXECUTION session
     /// sharing the snapshot's pinned session (chapter 35 `Snapshot.session`)
@@ -874,14 +872,10 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    pub(crate) fn exec_over(
-        session: Arc<crate::runtime::session::SnapshotSession>,
-        sealed: Arc<crate::Sealed>,
-    ) -> Self {
+    pub(crate) fn exec_over(session: Arc<crate::runtime::session::SnapshotSession>) -> Self {
         Self {
             identity: identity(),
             session,
-            sealed,
             exec: Some(Arc::new(std::sync::atomic::AtomicBool::new(false))),
         }
     }
@@ -901,58 +895,15 @@ pub(crate) fn session(
     Ok(&handle.session)
 }
 
-#[napi]
-pub fn runtime_db_session(
-    env: Env,
-    db: &External<crate::DbHandle>,
-    policy: PolicyWire,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let owner = db.owner();
-    let runtime = Arc::clone(owner.runtime());
-    let operation = runtime
-        .open_session(
-            owner,
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-/// One take for BOTH session-shaped outputs: the worker-affine open
-/// (`Output::Session` → `{ session, witness, generation }`) and the
-/// snapshot-bound execution session (`Output::ExecSession` → the bare
-/// session capability, chapter 35 `Snapshot.session`).
+/// Adopt one snapshot-bound execution session. Snapshot adoption has its
+/// own typed output; no caller must inspect a union of unrelated handles.
 #[napi]
 pub fn runtime_session_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<napi::bindgen_prelude::Either<Object<'_>, External<SessionHandle>>> {
-    use napi::bindgen_prelude::Either;
+) -> napi::Result<External<SessionHandle>> {
     match take_output(env, handle)? {
-        Output::Session(opened) => {
-            let mut object = Object::new(&env)?;
-            object.set(
-                "session",
-                External::new(SessionHandle {
-                    identity: identity(),
-                    session: Arc::new(opened.session),
-                    sealed: opened.sealed,
-                    exec: None,
-                }),
-            )?;
-            object.set(
-                "witness",
-                External::new(crate::WitnessHandle::mint(opened.witness)),
-            )?;
-            object.set("generation", BigInt::from(opened.generation))?;
-            Ok(Either::A(object))
-        }
-        Output::ExecSession(opened) => Ok(Either::B(External::new(SessionHandle::exec_over(
-            opened.session,
-            opened.sealed,
-        )))),
+        Output::ExecSession(opened) => Ok(External::new(SessionHandle::exec_over(opened.session))),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
@@ -983,257 +934,12 @@ pub fn runtime_session_close(
 }
 
 #[napi]
-pub fn runtime_session_scan(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    relation: u32,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    let frame = access.frame(context);
-                    let rows = crate::scan_rows(
-                        frame
-                            .scan(bumbledb::RelationId(relation))
-                            .map_err(|error| crate::runtime::session::engine_error(&error))?,
-                    )
-                    .map_err(|error| crate::runtime::session::engine_error(&error))?;
-                    Ok(Output::Rows(QueuedOutput::admit(
-                        context,
-                        crate::marshal::rows_out(rows),
-                        0,
-                    )?))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-#[napi]
-pub fn runtime_session_count(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    relation: u32,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    access
-                        .frame(context)
-                        .count(bumbledb::RelationId(relation))
-                        .map(Output::Count)
-                        .map_err(|error| crate::runtime::session::engine_error(&error))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn runtime_session_contains(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    relation: u32,
-    values: napi::bindgen_prelude::Array,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let sealed = Arc::clone(&handle.sealed);
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                let row = crate::marshal::fact_row(&sealed.rosters, relation, &values)
-                    .map_err(|_| RuntimeError::InvalidArgument)?;
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    access
-                        .frame(context)
-                        .contains_dyn(row.0, &row.1)
-                        .map(Output::Contains)
-                        .map_err(|error| crate::runtime::session::engine_error(&error))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn runtime_session_get(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    relation: u32,
-    key_statement: u32,
-    key_values: napi::bindgen_prelude::Array,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let sealed = Arc::clone(&handle.sealed);
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                let (rel, key, row) = crate::marshal::key_row(
-                    &sealed.rosters,
-                    &sealed.statements,
-                    relation,
-                    key_statement,
-                    &key_values,
-                )
-                .map_err(|_| RuntimeError::InvalidArgument)?;
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    let mut out = Vec::new();
-                    let hit = access
-                        .frame(context)
-                        .get_dyn_into(rel, key, &row, &mut out)
-                        .map_err(|error| crate::runtime::session::engine_error(&error))?;
-                    Ok(Output::Row(hit.then(|| {
-                        out
-                            .into_iter()
-                            .map(crate::marshal::ValueOut::from_value)
-                            .collect()
-                    })))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn runtime_session_prepare(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    query: Object,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                let query =
-                    crate::marshal::query_in(&query).map_err(|_| RuntimeError::InvalidArgument)?;
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    match access.frame(context).prepare(&query) {
-                        Ok(prepared) => Ok(Output::Prepared(
-                            crate::runtime::session::PrepareReply::Ok(access.install(prepared)),
-                        )),
-                        Err(bumbledb::Error::Validation(error)) => Ok(Output::Prepared(
-                            crate::runtime::session::PrepareReply::IrError(error.to_string()),
-                        )),
-                        Err(error) => Err(crate::runtime::session::engine_error(&error)),
-                    }
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-/// Prepared-id execution on a retained worker-session prepared query. The
-/// db-bridge's `runtime_session_execute` (`db_wire.rs`) is the `ParsedQuery`
-/// form; this one executes an installed prepared id.
-#[napi]
-#[allow(clippy::needless_pass_by_value)]
-pub fn runtime_session_execute_prepared(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    prepared: BigInt,
-    params: napi::bindgen_prelude::Array,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let prepared = integer(&prepared).map_err(|error| thrown(env, error))?;
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                let params = crate::marshal::params_in(&params)
-                    .map_err(|_| RuntimeError::InvalidArgument)?;
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    let args = crate::param_args(&params);
-                    let answers = access.execute(prepared, context, args.as_slice())?;
-                    let (rows, charge) = crate::marshal::answers_out_charged(context, &answers)?;
-                    Ok(Output::Rows(QueuedOutput { rows, charge }))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-#[napi]
-pub fn runtime_session_prepared_close(
-    env: Env,
-    handle: &External<SessionHandle>,
-    policy: PolicyWire,
-    prepared: BigInt,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let session = session(handle).map_err(|error| thrown(env, error))?;
-    let runtime = Arc::clone(session.runtime());
-    let prepared = integer(&prepared).map_err(|error| thrown(env, error))?;
-    let operation = session
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context, access| {
-                    context.checkpoint()?;
-                    access.remove_prepared(prepared)?;
-                    Ok(Output::Ready)
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(&runtime, operation))
-}
-
-#[napi]
 pub fn runtime_rows_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Vec<Vec<crate::marshal::ValueOut>>> {
+) -> napi::Result<crate::runtime::QueuedOutput> {
     match take_output(env, handle)? {
-        Output::Rows(queued) => Ok(queued.rows),
+        Output::Rows(queued) => Ok(queued),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
@@ -1242,229 +948,9 @@ pub fn runtime_rows_take(
 pub fn runtime_row_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Option<Vec<crate::marshal::ValueOut>>> {
+) -> napi::Result<Option<crate::runtime::QueuedRow>> {
     match take_output(env, handle)? {
         Output::Row(row) => Ok(row),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
-}
-
-#[napi]
-pub fn runtime_bool_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<bool> {
-    match take_output(env, handle)? {
-        Output::Contains(value) => Ok(value),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-}
-
-#[napi]
-pub fn runtime_count_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<BigInt> {
-    match take_output(env, handle)? {
-        Output::Count(value) | Output::Generation(value) => Ok(BigInt::from(value)),
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-}
-
-#[napi]
-pub fn runtime_prepared_take(
-    env: Env,
-    handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
-    let mut object = Object::new(&env)?;
-    match take_output(env, handle)? {
-        Output::Prepared(crate::runtime::session::PrepareReply::Ok(id)) => {
-            object.set("ok", true)?;
-            object.set("prepared", BigInt::from(id))?;
-        }
-        Output::Prepared(crate::runtime::session::PrepareReply::IrError(message)) => {
-            object.set("ok", false)?;
-            object.set("kind", crate::tags::prepare_kind::IR_ERROR)?;
-            object.set("message", message)?;
-        }
-        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-    Ok(object)
-}
-
-#[napi]
-pub fn runtime_mutation_take(
-    env: Env,
-    handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
-    match take_output(env, handle)? {
-        Output::Mutation { submitted, changed } => {
-            let mut object = Object::new(&env)?;
-            object.set("submitted", BigInt::from(submitted))?;
-            object.set("changed", BigInt::from(changed))?;
-            Ok(object)
-        }
-        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Builder admission, owned-instance work and managed publish on the one
-// executor. The libuv AsyncTask admission path is deleted.
-// ---------------------------------------------------------------------------
-
-#[napi]
-pub fn runtime_builder_admit(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    builder: &External<crate::BuilderHandle>,
-    policy: PolicyWire,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let policy = policy.parse().map_err(|error| thrown(env, error))?;
-    let notify = notification(callback)?;
-    let (taken, sealed) = crate::builder_take(builder)?;
-    let mut draft = Some(taken);
-    let submitted = runtime.submit(policy, notify, |_| {
-        let builder = draft.take().ok_or(RuntimeError::Internal)?;
-        let sealed = Arc::clone(&sealed);
-        Ok(Box::new(move |context| {
-            context.checkpoint()?;
-            match builder.admit() {
-                Ok(bumbledb::Admission::Accepted(instance)) => {
-                    Ok(Output::Admitted(crate::AdmitOwned::Accepted {
-                        instance,
-                        sealed,
-                    }))
-                }
-                Ok(bumbledb::Admission::Rejected(violations)) => {
-                    Ok(Output::Admitted(crate::AdmitOwned::Rejected(
-                        crate::violations_wire(&sealed.descriptor, &violations),
-                    )))
-                }
-                Err(error) => Err(crate::runtime::session::engine_error(&error)),
-            }
-        }))
-    });
-    match submitted {
-        Ok(operation) => Ok(operation_handle(runtime, operation)),
-        Err(error) => {
-            // A refused submission must not spend the draft: put the
-            // untouched builder back into its handle.
-            if let Some(untouched) = draft {
-                crate::builder_restore(builder, untouched);
-            }
-            Err(thrown(env, error))
-        }
-    }
-}
-
-#[napi]
-pub fn runtime_admit_take(
-    env: Env,
-    handle: &External<OperationHandle>,
-) -> napi::Result<Object<'_>> {
-    let mut object = Object::new(&env)?;
-    match take_output(env, handle)? {
-        Output::Admitted(crate::AdmitOwned::Accepted { instance, sealed }) => {
-            object.set("tag", crate::tags::admission_tag::ACCEPTED)?;
-            object.set("value", crate::owned_wrap(env, instance, sealed)?)?;
-        }
-        Output::Admitted(crate::AdmitOwned::Rejected(violations)) => {
-            object.set("tag", crate::tags::admission_tag::REJECTED)?;
-            object.set("violations", violations)?;
-        }
-        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
-    }
-    Ok(object)
-}
-
-#[napi]
-pub fn runtime_owned_scan(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    instance: &External<crate::OwnedHandle>,
-    policy: PolicyWire,
-    relation: u32,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let (owned, _sealed, flag) = crate::owned_lease(instance)?;
-    let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context| {
-                    let _flag = flag;
-                    context.checkpoint()?;
-                    let rows = crate::scan_rows(
-                        owned
-                            .scan(bumbledb::RelationId(relation))
-                            .map_err(|error| crate::runtime::session::engine_error(&error))?,
-                    )
-                    .map_err(|error| crate::runtime::session::engine_error(&error))?;
-                    Ok(Output::Rows(QueuedOutput::admit(
-                        context,
-                        crate::marshal::rows_out(rows),
-                        0,
-                    )?))
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
-}
-
-/// Managed publish/materialization (C04/C08): writes an admitted
-/// `OwnedInstance` into a new store under the directory owner's fenced
-/// namespace and attaches the resulting engine to that owner in the one
-/// registry — never a JS-owned engine off a libuv task. The outcome is
-/// taken with `runtime_db_take`.
-#[napi]
-pub fn runtime_directory_publish(
-    env: Env,
-    handle: &External<DirectoryHandle>,
-    policy: PolicyWire,
-    child_name: String,
-    instance: &External<crate::OwnedHandle>,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    use crate::runtime::owners::ManagedDbOutcome;
-    let owner = directory(handle).map_err(|error| thrown(env, error))?;
-    if child_name.len() as u64 > owner.runtime().options.chunk_bytes {
-        return Err(thrown(env, RuntimeError::InvalidPath));
-    }
-    let (instance_rows, sealed, flag) = crate::owned_lease(instance)?;
-    let reference = owner.reference();
-    let operation = owner
-        .runtime()
-        .submit_owned(
-            owner,
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |context| {
-                context.input(child_name.len() as u64)?;
-                Ok(Box::new(move |context| {
-                    let _flag = flag;
-                    let path = reference.child_path(&child_name)?;
-                    context.checkpoint()?;
-                    match crate::Engine::from_instance(&path, &instance_rows) {
-                        Ok(db) => {
-                            let inner = crate::DbInner {
-                                db: std::sync::Arc::new(db),
-                                sealed: std::sync::Arc::clone(&sealed),
-                                writing: std::sync::atomic::AtomicBool::new(false),
-                            };
-                            let managed = reference.attach_db(inner)?;
-                            Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
-                        }
-                        Err(error @ bumbledb::Error::DestinationExists { .. }) => {
-                            Ok(Output::Db(ManagedDbOutcome::Refused {
-                                kind: crate::tags::open_kind::DESTINATION_EXISTS,
-                                message: crate::marshal::engine_message(&error),
-                            }))
-                        }
-                        Err(error) => Err(crate::runtime::session::engine_error(&error)),
-                    }
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(owner.runtime(), operation))
 }

@@ -20,18 +20,24 @@
  * schema lowering and the core row-cell codec are imported literally.
  */
 import * as path from "node:path"
-import { cellBytes, cellOf, lower } from "@bjornpagen/bumbledb"
-import type { AnyRelation, ExecutionPolicy, NativeRuntime, RelationData, SchemaSpec } from "@bjornpagen/bumbledb"
-import type { LogError } from "#errors.ts"
-import { Effect } from "effect"
+import type {
+	AnyRelation,
+	ExecutionPolicy,
+	NativeRuntime,
+	RelationData,
+	SchemaRelations,
+	SchemaSpec
+} from "@bjornpagen/bumbledb"
+import { cellBytes, cellOf, Uuid } from "@bjornpagen/bumbledb"
+import { lower } from "@bjornpagen/bumbledb/internal/log"
 import type { Scope } from "effect"
-import { compiledMappingsJson, planJson, renderContract, renderIndex, renderSnapshots } from "#migrations/canonical.ts"
-import { bytesHex, f64Bits } from "#migrations/canonical.ts"
+import { Effect } from "effect"
+import type { LogError } from "#errors.ts"
 import type { JsonValue } from "#migrations/canonical.ts"
-import type { ChainPayload, CompiledChainInput, MigrationCodec } from "#migrations/codec.ts"
-import { decodePlanData } from "#migrations/decode.ts"
-import { diffSchemas } from "#migrations/diff.ts"
+import { bytesHex, f64Bits, planJson, renderContract, renderIndex, renderSnapshots } from "#migrations/canonical.ts"
+import type { ChainPayload, MigrationCodec } from "#migrations/codec.ts"
 import type { DiffResult } from "#migrations/diff.ts"
+import { diffSchemas } from "#migrations/diff.ts"
 import { budget, drift, intentRequired, unsupported } from "#migrations/fail.ts"
 import {
 	ensureDirectory,
@@ -66,10 +72,8 @@ import type {
 	MigrationPlan,
 	PlanOperation,
 	PlanValue,
-	RuntimeContract,
-	TheorySnapshot
+	RuntimeContract
 } from "#migrations/types.ts"
-import type { SchemaRelations } from "@bjornpagen/bumbledb"
 
 const EMPTY_SPEC: SchemaSpec = { relations: [], statements: [] }
 const MAX_SEQUENCE = 9999
@@ -131,14 +135,14 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 			return { i64: String(cell) }
 		case "f64":
 			return { $f64: f64Bits(typeof cell === "number" ? cell : Number.NaN) }
-		case "id128": {
-			// The core row-cell codec lowers id128 to its canonical
-			// 32-lowercase-hex string (chapter 35) — already the plan wire
+		case "uuid": {
+			// The core row-cell codec lowers uuid to its canonical
+			// canonical hyphenated UUID string (chapter 35) — already the plan wire
 			// spelling.
-			if (typeof cell !== "string" || cell.length !== 32) {
-				throw new Error(`relation ${relation.name}.${declared.name}: id128 cell did not lower to canonical hex`)
+			if (!Uuid.isUuid(cell)) {
+				throw new Error(`relation ${relation.name}.${declared.name}: uuid cell did not lower to canonical hex`)
 			}
-			return { id128: cell }
+			return { uuid: cell }
 		}
 		case "str":
 			return { string: String(cell) }
@@ -271,153 +275,113 @@ function parseTree(operation: string, label: string, text: string): Effect.Effec
 	})
 }
 
-function mappingsFromTrees(trees: readonly JsonValue[]): string {
-	const plans: MigrationPlan[] = []
-	for (const tree of trees) {
-		const decoded = decodePlanData(tree)
-		if (decoded.ok) {
-			plans.push(decoded.value)
-		}
-	}
-	return compiledMappingsJson(plans)
-}
-
-function compiledChain(
-	emptySnapshot: string,
-	snapshotTexts: readonly string[],
-	planTexts: readonly string[],
-	append: { readonly snapshot: string; readonly plan: MigrationPlan } | null
-): CompiledChainInput {
-	const baseSnapshot = snapshotTexts[0] ?? emptySnapshot
-	const recordedTargets = snapshotTexts.length > 0 ? snapshotTexts.slice(1) : []
-	const intermediateSnapshots =
-		append === null ? recordedTargets : [...recordedTargets, append.snapshot]
-	const appendTree = append === null ? null : planJson(append.plan)
-	const mappingTrees: JsonValue[] = []
-	for (const text of planTexts) {
-		try {
-			mappingTrees.push(JSON.parse(text) as JsonValue)
-		} catch {
-			// decodePlanData skips malformed trees; native still sees orderedPlans.
-		}
-	}
-	if (appendTree !== null) {
-		mappingTrees.push(appendTree)
-	}
-	const orderedPlans =
-		appendTree === null ? [...planTexts] : [...planTexts, JSON.stringify(appendTree)]
-	return {
-		baseSnapshot,
-		intermediateSnapshots,
-		orderedPlans,
-		compiledMappings: mappingsFromTrees(mappingTrees)
-	}
-}
-
 export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclusion) {
 	const analyze = Effect.fn("bumbledb-log.migrations.analyze")(function* <Rels extends SchemaRelations>(
 		options: CheckOptions<Rels>
 	) {
-	const operation = "migrations.analyze"
-	if (options.intent !== undefined && options.intent.schema !== options.schema) {
-		return yield* Effect.fail(
-			unsupported(operation, "the migration intent was declared for a different schema value than the one being generated")
-		)
-	}
-	const repoState = yield* readRepository(options.repository)
-	// Recorded texts become parsed trees for the bridge; identity is judged
-	// from canonical frames natively, never from this formatting.
-	const manifestTree =
-		repoState.manifestText === null ? null : yield* parseTree(operation, "manifest.json", repoState.manifestText)
-	const snapshotTrees: JsonValue[] = []
-	for (const [index, text] of repoState.snapshotTexts.entries()) {
-		snapshotTrees.push(yield* parseTree(operation, `snapshot ${index}`, text))
-	}
-	const planTrees: JsonValue[] = []
-	for (const [index, text] of repoState.planTexts.entries()) {
-		planTrees.push(yield* parseTree(operation, `plan ${index}`, text))
-	}
-	const currentSpec = lower(options.schema)
-	const identity = yield* codec.schemaIdentity(currentSpec, options.work)
-	// Empty-base snapshot is always compiled — empty source is not a shortcut.
-	const emptyIdentity = yield* codec.schemaIdentity(EMPTY_SPEC, options.work)
-	const baseSchemaId = repoState.manifest === null ? emptyIdentity.schemaId : repoState.manifest.baseSchemaId
-	const emptySnapshotTree = yield* parseTree(operation, "empty-base snapshot", emptyIdentity.snapshot)
-	const snapshotChain = snapshotTrees.length > 0 ? snapshotTrees : [emptySnapshotTree]
-	const compiled = compiledChain(emptyIdentity.snapshot, repoState.snapshotTexts, repoState.planTexts, null)
-	const chain = yield* codec.verifyChain(
-		{
-			manifest: manifestTree,
-			baseSchemaId: manifestTree === null ? baseSchemaId : null,
-			snapshots: snapshotChain,
-			plans: planTrees,
-			append: null,
-			planSet: null,
-			compiled
-		},
-		options.work
-	)
-	const previousText = latestSnapshot(repoState)
-	const prevSource = previousText === null ? emptyIdentity.snapshot : previousText
-	const parsedPrev = parseTheory(prevSource)
-	if (!parsedPrev.ok) {
-		return yield* Effect.fail(
-			drift(
-				operation,
-				previousText === null
-					? `empty-base snapshot is not the canonical theory grammar: ${parsedPrev.detail}`
-					: `recorded snapshot is not the canonical theory grammar: ${parsedPrev.detail}`
+		const operation = "migrations.analyze"
+		if (options.intent !== undefined && options.intent.schema !== options.schema) {
+			return yield* Effect.fail(
+				unsupported(
+					operation,
+					"the migration intent was declared for a different schema value than the one being generated"
+				)
 			)
+		}
+		const repoState = yield* readRepository(options.repository)
+		// Recorded texts become parsed trees for the bridge; identity is judged
+		// from canonical frames natively, never from this formatting.
+		const manifestTree =
+			repoState.manifestText === null ? null : yield* parseTree(operation, "manifest.json", repoState.manifestText)
+		const snapshotTrees: JsonValue[] = []
+		for (const [index, text] of repoState.snapshotTexts.entries()) {
+			snapshotTrees.push(yield* parseTree(operation, `snapshot ${index}`, text))
+		}
+		const planTrees: JsonValue[] = []
+		for (const [index, text] of repoState.planTexts.entries()) {
+			planTrees.push(yield* parseTree(operation, `plan ${index}`, text))
+		}
+		const currentSpec = lower(options.schema)
+		const identity = yield* codec.schemaIdentity(currentSpec, options.work)
+		// Empty-base snapshot is always compiled — empty source is not a shortcut.
+		const emptyIdentity = yield* codec.schemaIdentity(EMPTY_SPEC, options.work)
+		const baseSchemaId = repoState.manifest === null ? emptyIdentity.schemaId : repoState.manifest.baseSchemaId
+		const emptySnapshotTree = yield* parseTree(operation, "empty-base snapshot", emptyIdentity.snapshot)
+		const snapshotChain = snapshotTrees.length > 0 ? snapshotTrees : [emptySnapshotTree]
+		const chain = yield* codec.verifyChain(
+			{
+				manifest: manifestTree,
+				baseSchemaId: manifestTree === null ? baseSchemaId : null,
+				snapshots: snapshotChain,
+				plans: planTrees,
+				append: null,
+				planSet: null
+			},
+			options.work
 		)
-	}
-	const prevTheory = parsedPrev.snapshot
-	const currentParsed = parseTheory(identity.snapshot)
-	if (!currentParsed.ok) {
-		return yield* Effect.fail(drift(operation, `native snapshot is not the canonical theory grammar: ${currentParsed.detail}`))
-	}
-	const intents = options.intent === undefined ? [] : options.intent.entries
-	const diff = diffSchemas(prevTheory, currentParsed.snapshot, intents)
-	const entries = repoState.manifest === null ? [] : repoState.manifest.entries
-	const prevSchemaId = entries.length === 0 ? baseSchemaId : (entries[entries.length - 1]?.toSchemaId ?? baseSchemaId)
-	const analysis: Analysis = {
-		manifestTree,
-		entries,
-		planTrees,
-		snapshotTrees,
-		planTexts: repoState.planTexts,
-		snapshotTexts: repoState.snapshotTexts,
-		emptySnapshot: emptyIdentity.snapshot,
-		baseSchemaId,
-		headPrefixDigest: chain.headPrefixDigest,
-		currentSchemaId: identity.schemaId,
-		currentSnapshot: identity.snapshot,
-		prevSchemaId,
-		diff,
-		changed: prevSchemaId !== identity.schemaId || !diff.identity,
-		hasSeeds: diff.seedRelations.length > 0,
-		seedIntents: intents,
-		staleDrafts: repoState.staleDrafts,
-		snapshotChain
-	}
-	return analysis
-})
+		const previousText = latestSnapshot(repoState)
+		const prevSource = previousText === null ? emptyIdentity.snapshot : previousText
+		const parsedPrev = parseTheory(prevSource)
+		if (!parsedPrev.ok) {
+			return yield* Effect.fail(
+				drift(
+					operation,
+					previousText === null
+						? `empty-base snapshot is not the canonical theory grammar: ${parsedPrev.detail}`
+						: `recorded snapshot is not the canonical theory grammar: ${parsedPrev.detail}`
+				)
+			)
+		}
+		const prevTheory = parsedPrev.snapshot
+		const currentParsed = parseTheory(identity.snapshot)
+		if (!currentParsed.ok) {
+			return yield* Effect.fail(
+				drift(operation, `native snapshot is not the canonical theory grammar: ${currentParsed.detail}`)
+			)
+		}
+		const intents = options.intent === undefined ? [] : options.intent.entries
+		const diff = diffSchemas(prevTheory, currentParsed.snapshot, intents)
+		const entries = repoState.manifest === null ? [] : repoState.manifest.entries
+		const prevSchemaId = entries.length === 0 ? baseSchemaId : (entries[entries.length - 1]?.toSchemaId ?? baseSchemaId)
+		const analysis: Analysis = {
+			manifestTree,
+			entries,
+			planTrees,
+			snapshotTrees,
+			planTexts: repoState.planTexts,
+			snapshotTexts: repoState.snapshotTexts,
+			emptySnapshot: emptyIdentity.snapshot,
+			baseSchemaId,
+			headPrefixDigest: chain.headPrefixDigest,
+			currentSchemaId: identity.schemaId,
+			currentSnapshot: identity.snapshot,
+			prevSchemaId,
+			diff,
+			changed: prevSchemaId !== identity.schemaId || !diff.identity,
+			hasSeeds: diff.seedRelations.length > 0,
+			seedIntents: intents,
+			staleDrafts: repoState.staleDrafts,
+			snapshotChain
+		}
+		return analysis
+	})
 
-function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): RuntimeContract {
-	if (appended !== null) {
+	function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): RuntimeContract {
+		if (appended !== null) {
+			return {
+				contractVersion: 1,
+				schemaId: appended.entry.toSchemaId,
+				appliedPrefixDigest: appended.entry.prefixDigest,
+				steps: (analysis.entries.length + 1).toString(10)
+			}
+		}
 		return {
 			contractVersion: 1,
-			schemaId: appended.entry.toSchemaId,
-			appliedPrefixDigest: appended.entry.prefixDigest,
-			steps: (analysis.entries.length + 1).toString(10)
+			schemaId: analysis.prevSchemaId,
+			appliedPrefixDigest: analysis.headPrefixDigest,
+			steps: analysis.entries.length.toString(10)
 		}
 	}
-	return {
-		contractVersion: 1,
-		schemaId: analysis.prevSchemaId,
-		appliedPrefixDigest: analysis.headPrefixDigest,
-		steps: analysis.entries.length.toString(10)
-	}
-}
 
 	// -------------------------------------------------------------------------
 	// generateMigrations
@@ -448,158 +412,151 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 		)
 	}
 
-	const generateMigrations = Effect.fn("bumbledb-log.generateMigrations")(function* <
-		Rels extends SchemaRelations
-	>(options: GenerateOptions<Rels>) {
-	const operation = "migrations.generate"
-	const directory = options.repository.directory
-	return yield* exclusive(
-		operation,
-		directory,
-		options.work,
-		Effect.gen(function* () {
-	yield* ensureDirectory(operation, directory)
-	if (options.label !== undefined && !validLabel(options.label)) {
-		return yield* Effect.fail(
-			unsupported(operation, `label must be 1..${MAX_LABEL} characters of [a-z0-9-]`)
+	const generateMigrations = Effect.fn("bumbledb-log.generateMigrations")(function* <Rels extends SchemaRelations>(
+		options: GenerateOptions<Rels>
+	) {
+		const operation = "migrations.generate"
+		const directory = options.repository.directory
+		return yield* exclusive(
+			operation,
+			directory,
+			options.work,
+			Effect.gen(function* () {
+				yield* ensureDirectory(operation, directory)
+				if (options.label !== undefined && !validLabel(options.label)) {
+					return yield* Effect.fail(unsupported(operation, `label must be 1..${MAX_LABEL} characters of [a-z0-9-]`))
+				}
+				const analysis = yield* analyze(options)
+				if (analysis.diff.requirements.length > 0) {
+					return yield* Effect.fail(intentRequired(operation, analysis.diff.requirements))
+				}
+				if (!analysis.changed && !analysis.hasSeeds) {
+					// Nothing to record. Remove interrupted-generation leftovers and repair
+					// derived files only when they drifted from the recorded chain (never
+					// touch recorded history).
+					const removed: string[] = []
+					for (const draft of analysis.staleDrafts) {
+						yield* removeFile(operation, path.join(directory, draft))
+						removed.push(draft)
+					}
+					const contract = contractOf(analysis, null)
+					const files: string[] = []
+					if (analysis.entries.length > 0) {
+						const wantIndex = renderIndex(analysis.entries)
+						const haveIndex = yield* readBounded(operation, indexPath(directory), MAX_DERIVED_BYTES)
+						if (haveIndex !== wantIndex) {
+							yield* writeDerived(operation, indexPath(directory), wantIndex)
+							files.push("index.ts")
+						}
+						const wantSnapshots = renderSnapshots(analysis.snapshotTexts)
+						const haveSnapshots = yield* readBounded(operation, snapshotsSidecarPath(directory), MAX_DERIVED_BYTES)
+						if (haveSnapshots !== wantSnapshots) {
+							yield* writeDerived(operation, snapshotsSidecarPath(directory), wantSnapshots)
+							files.push("snapshots.json")
+						}
+						const wantContract = renderContract(contract)
+						const haveContract = yield* readBounded(operation, contractPath(options.repository), MAX_DERIVED_BYTES)
+						if (haveContract !== wantContract) {
+							yield* writeDerived(operation, contractPath(options.repository), wantContract)
+							files.push(path.basename(contractPath(options.repository)))
+						}
+					}
+					const report: GenerationReport = { status: "unchanged", planId: null, contract, files, removed }
+					return report
+				}
+				const sequence = analysis.entries.length
+				if (sequence > MAX_SEQUENCE) {
+					return yield* Effect.fail(unsupported(operation, `the manifest already records ${MAX_SEQUENCE + 1} plans`))
+				}
+				const label = options.label ?? deriveLabel(analysis.diff.labelTokens)
+				const id = planId(sequence, label)
+				// Seeds are ingested exactly once, bounded, at generation time.
+				const seedOps = yield* lowerSeeds(
+					options.schema.relations,
+					analysis.seedIntents,
+					analysis.diff.seedRelations,
+					options.work
+				)
+				const operations: PlanOperation[] = [
+					...analysis.diff.operations,
+					...seedOps,
+					{ kind: "validate-schema", schemaId: analysis.currentSchemaId }
+				]
+				const plan: MigrationPlan = {
+					planVersion: 1,
+					sequence: sequence.toString(10),
+					id,
+					fromSchemaId: analysis.prevSchemaId,
+					toSchemaId: analysis.currentSchemaId,
+					operations,
+					destructive: analysis.diff.destructive
+				}
+				// Native validation + canonical rendering + digest + manifest append.
+				const currentTree = yield* parseTree(operation, "current snapshot", analysis.currentSnapshot)
+				const chain = yield* codec.verifyChain(
+					{
+						manifest: analysis.manifestTree,
+						baseSchemaId: analysis.manifestTree === null ? analysis.baseSchemaId : null,
+						snapshots: [...analysis.snapshotChain, currentTree],
+						plans: analysis.planTrees,
+						append: planJson(plan),
+						planSet: null
+					},
+					options.work
+				)
+				if (chain.appended === null) {
+					return yield* Effect.fail(drift(operation, "the native chain pass did not append the validated plan"))
+				}
+				const contract = contractOf(analysis, chain.appended)
+				// Write order is the interruption-safety contract: snapshot and plan are
+				// inert until the manifest (the commit point) records them; index and
+				// contract are derived and rewritten deterministically. Leftovers of a
+				// previously interrupted generation under a different derived label are
+				// removed first — they were never recorded, and leaving them would read
+				// as drift once the manifest advances past their sequence.
+				yield* ensureDirectory(operation, path.join(directory, "meta"))
+				const written = new Set([
+					`${id}.plan.json`,
+					`meta/${sequence.toString(10).padStart(4, "0")}.schema.json`,
+					"meta/base.schema.json"
+				])
+				const removed: string[] = []
+				for (const draft of analysis.staleDrafts) {
+					if (written.has(draft)) {
+						continue
+					}
+					yield* removeFile(operation, path.join(directory, draft))
+					removed.push(draft)
+				}
+				const uniqueSnapshots =
+					analysis.snapshotTexts.length > 0
+						? [...analysis.snapshotTexts, analysis.currentSnapshot]
+						: [analysis.emptySnapshot, analysis.currentSnapshot]
+				yield* writeImmutable(operation, baseSnapshotPath(directory), analysis.emptySnapshot)
+				yield* writeImmutable(operation, snapshotPath(directory, sequence), analysis.currentSnapshot)
+				yield* writeImmutable(operation, planPath(directory, id), chain.appended.planText)
+				yield* writeManifest(operation, manifestPath(directory), chain.appended.manifestText)
+				yield* writeDerived(operation, indexPath(directory), renderIndex([...analysis.entries, chain.appended.entry]))
+				yield* writeDerived(operation, snapshotsSidecarPath(directory), renderSnapshots(uniqueSnapshots))
+				yield* writeDerived(operation, contractPath(options.repository), renderContract(contract))
+				const report: GenerationReport = {
+					status: "generated",
+					planId: id,
+					contract,
+					files: [
+						"meta/base.schema.json",
+						`meta/${sequence.toString(10).padStart(4, "0")}.schema.json`,
+						`${id}.plan.json`,
+						"manifest.json",
+						"index.ts",
+						"snapshots.json",
+						path.basename(contractPath(options.repository))
+					],
+					removed
+				}
+				return report
+			})
 		)
-	}
-	const analysis = yield* analyze(options)
-	if (analysis.diff.requirements.length > 0) {
-		return yield* Effect.fail(intentRequired(operation, analysis.diff.requirements))
-	}
-	if (!analysis.changed && !analysis.hasSeeds) {
-		// Nothing to record. Remove interrupted-generation leftovers and repair
-		// derived files only when they drifted from the recorded chain (never
-		// touch recorded history).
-		const removed: string[] = []
-		for (const draft of analysis.staleDrafts) {
-			yield* removeFile(operation, path.join(directory, draft))
-			removed.push(draft)
-		}
-		const contract = contractOf(analysis, null)
-		const files: string[] = []
-		if (analysis.entries.length > 0) {
-			const wantIndex = renderIndex(analysis.entries)
-			const haveIndex = yield* readBounded(operation, indexPath(directory), MAX_DERIVED_BYTES)
-			if (haveIndex !== wantIndex) {
-				yield* writeDerived(operation, indexPath(directory), wantIndex)
-				files.push("index.ts")
-			}
-			const wantSnapshots = renderSnapshots(analysis.snapshotTexts)
-			const haveSnapshots = yield* readBounded(operation, snapshotsSidecarPath(directory), MAX_DERIVED_BYTES)
-			if (haveSnapshots !== wantSnapshots) {
-				yield* writeDerived(operation, snapshotsSidecarPath(directory), wantSnapshots)
-				files.push("snapshots.json")
-			}
-			const wantContract = renderContract(contract)
-			const haveContract = yield* readBounded(operation, contractPath(options.repository), MAX_DERIVED_BYTES)
-			if (haveContract !== wantContract) {
-				yield* writeDerived(operation, contractPath(options.repository), wantContract)
-				files.push(path.basename(contractPath(options.repository)))
-			}
-		}
-		const report: GenerationReport = { status: "unchanged", planId: null, contract, files, removed }
-		return report
-	}
-	const sequence = analysis.entries.length
-	if (sequence > MAX_SEQUENCE) {
-		return yield* Effect.fail(unsupported(operation, `the manifest already records ${MAX_SEQUENCE + 1} plans`))
-	}
-	const label = options.label ?? deriveLabel(analysis.diff.labelTokens)
-	const id = planId(sequence, label)
-	// Seeds are ingested exactly once, bounded, at generation time.
-	const seedOps = yield* lowerSeeds(
-		options.schema.relations,
-		analysis.seedIntents,
-		analysis.diff.seedRelations,
-		options.work
-	)
-	const operations: PlanOperation[] = [
-		...analysis.diff.operations,
-		...seedOps,
-		{ kind: "validate-schema", schemaId: analysis.currentSchemaId }
-	]
-	const plan: MigrationPlan = {
-		planVersion: 1,
-		sequence: sequence.toString(10),
-		id,
-		fromSchemaId: analysis.prevSchemaId,
-		toSchemaId: analysis.currentSchemaId,
-		operations,
-		destructive: analysis.diff.destructive
-	}
-	// Native validation + canonical rendering + digest + manifest append.
-	const compiled = compiledChain(analysis.emptySnapshot, analysis.snapshotTexts, analysis.planTexts, {
-		snapshot: analysis.currentSnapshot,
-		plan
-	})
-	const currentTree = yield* parseTree(operation, "current snapshot", analysis.currentSnapshot)
-	const chain = yield* codec.verifyChain(
-		{
-			manifest: analysis.manifestTree,
-			baseSchemaId: analysis.manifestTree === null ? analysis.baseSchemaId : null,
-			snapshots: [...analysis.snapshotChain, currentTree],
-			plans: analysis.planTrees,
-			append: planJson(plan),
-			planSet: null,
-			compiled
-		},
-		options.work
-	)
-	if (chain.appended === null) {
-		return yield* Effect.fail(drift(operation, "the native chain pass did not append the validated plan"))
-	}
-	const contract = contractOf(analysis, chain.appended)
-	// Write order is the interruption-safety contract: snapshot and plan are
-	// inert until the manifest (the commit point) records them; index and
-	// contract are derived and rewritten deterministically. Leftovers of a
-	// previously interrupted generation under a different derived label are
-	// removed first — they were never recorded, and leaving them would read
-	// as drift once the manifest advances past their sequence.
-	yield* ensureDirectory(operation, path.join(directory, "meta"))
-	const written = new Set([
-		`${id}.plan.json`,
-		`meta/${sequence.toString(10).padStart(4, "0")}.schema.json`,
-		"meta/base.schema.json"
-	])
-	const removed: string[] = []
-	for (const draft of analysis.staleDrafts) {
-		if (written.has(draft)) {
-			continue
-		}
-		yield* removeFile(operation, path.join(directory, draft))
-		removed.push(draft)
-	}
-	const uniqueSnapshots =
-		analysis.snapshotTexts.length > 0
-			? [...analysis.snapshotTexts, analysis.currentSnapshot]
-			: [analysis.emptySnapshot, analysis.currentSnapshot]
-	yield* writeImmutable(operation, baseSnapshotPath(directory), analysis.emptySnapshot)
-	yield* writeImmutable(operation, snapshotPath(directory, sequence), analysis.currentSnapshot)
-	yield* writeImmutable(operation, planPath(directory, id), chain.appended.planText)
-	yield* writeManifest(operation, manifestPath(directory), chain.appended.manifestText)
-	yield* writeDerived(operation, indexPath(directory), renderIndex([...analysis.entries, chain.appended.entry]))
-	yield* writeDerived(operation, snapshotsSidecarPath(directory), renderSnapshots(uniqueSnapshots))
-	yield* writeDerived(operation, contractPath(options.repository), renderContract(contract))
-	const report: GenerationReport = {
-		status: "generated",
-		planId: id,
-		contract,
-		files: [
-			"meta/base.schema.json",
-			`meta/${sequence.toString(10).padStart(4, "0")}.schema.json`,
-			`${id}.plan.json`,
-			"manifest.json",
-			"index.ts",
-			"snapshots.json",
-			path.basename(contractPath(options.repository))
-		],
-		removed
-	}
-	return report
-		})
-	)
 	})
 
 	// -------------------------------------------------------------------------
@@ -609,64 +566,65 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 	const checkMigrations = Effect.fn("bumbledb-log.checkMigrations")(function* <Rels extends SchemaRelations>(
 		options: CheckOptions<Rels>
 	) {
-	const operation = "migrations.check"
-	const directory = options.repository.directory
-	return yield* exclusive(
-		operation,
-		directory,
-		options.work,
-		Effect.gen(function* () {
-	const analysis = yield* analyze(options)
-	if (analysis.diff.requirements.length > 0) {
-		return yield* Effect.fail(intentRequired(operation, analysis.diff.requirements))
-	}
-	const contract = contractOf(analysis, null)
-	if (analysis.changed || analysis.hasSeeds) {
-		const report: CheckReport = {
-			status: "generation-required",
-			detail:
-				analysis.changed && analysis.hasSeeds
-					? "the schema and declared seed data have changes with no recorded plan"
-					: analysis.prevSchemaId !== analysis.currentSchemaId
-						? "the schema differs from the latest recorded snapshot"
-						: analysis.changed
-							? "declared field conversions have no recorded plan"
-							: "declared seed data has no recorded plan",
-			contract
-		}
-		return report
-	}
-	if (analysis.staleDrafts.length > 0) {
-		const report: CheckReport = {
-			status: "generation-required",
-			detail: `interrupted generation leftovers exist (${analysis.staleDrafts.join(", ")}); rerun generate`,
-			contract
-		}
-		return report
-	}
-	// Recorded chain verified natively in analyze; now hold the derived files
-	// and the latest snapshot to their recorded meaning, byte for byte.
-	if (analysis.entries.length > 0) {
-		const wantIndex = renderIndex(analysis.entries)
-		const haveIndex = yield* readBounded(operation, indexPath(directory), MAX_DERIVED_BYTES)
-		if (haveIndex !== wantIndex) {
-			return yield* Effect.fail(drift(operation, "index.ts does not match the recorded manifest"))
-		}
-		const wantSnapshots = renderSnapshots(analysis.snapshotTexts)
-		const haveSnapshots = yield* readBounded(operation, snapshotsSidecarPath(directory), MAX_DERIVED_BYTES)
-		if (haveSnapshots !== wantSnapshots) {
-			return yield* Effect.fail(drift(operation, "snapshots.json does not match the recorded snapshot chain"))
-		}
-		const wantContract = renderContract(contract)
-		const haveContract = yield* readBounded(operation, contractPath(options.repository), MAX_DERIVED_BYTES)
-		if (haveContract !== wantContract) {
-			return yield* Effect.fail(drift(operation, "runtime-contract.json does not match the recorded chain head"))
-		}
-	}
-	const report: CheckReport = { status: "clean", detail: "recorded chain verified; schema unchanged", contract }
-	return report
-		})
-	)
+		const operation = "migrations.check"
+		const directory = options.repository.directory
+		return yield* exclusive(
+			operation,
+			directory,
+			options.work,
+			Effect.gen(function* () {
+				const analysis = yield* analyze(options)
+				if (analysis.diff.requirements.length > 0) {
+					return yield* Effect.fail(intentRequired(operation, analysis.diff.requirements))
+				}
+				const contract = contractOf(analysis, null)
+				if (analysis.changed || analysis.hasSeeds) {
+					let detail = "declared seed data has no recorded plan"
+					if (analysis.changed && analysis.hasSeeds) {
+						detail = "the schema and declared seed data have changes with no recorded plan"
+					} else if (analysis.prevSchemaId !== analysis.currentSchemaId) {
+						detail = "the schema differs from the latest recorded snapshot"
+					} else if (analysis.changed) {
+						detail = "declared field conversions have no recorded plan"
+					}
+					const report: CheckReport = {
+						status: "generation-required",
+						detail,
+						contract
+					}
+					return report
+				}
+				if (analysis.staleDrafts.length > 0) {
+					const report: CheckReport = {
+						status: "generation-required",
+						detail: `interrupted generation leftovers exist (${analysis.staleDrafts.join(", ")}); rerun generate`,
+						contract
+					}
+					return report
+				}
+				// Recorded chain verified natively in analyze; now hold the derived files
+				// and the latest snapshot to their recorded meaning, byte for byte.
+				if (analysis.entries.length > 0) {
+					const wantIndex = renderIndex(analysis.entries)
+					const haveIndex = yield* readBounded(operation, indexPath(directory), MAX_DERIVED_BYTES)
+					if (haveIndex !== wantIndex) {
+						return yield* Effect.fail(drift(operation, "index.ts does not match the recorded manifest"))
+					}
+					const wantSnapshots = renderSnapshots(analysis.snapshotTexts)
+					const haveSnapshots = yield* readBounded(operation, snapshotsSidecarPath(directory), MAX_DERIVED_BYTES)
+					if (haveSnapshots !== wantSnapshots) {
+						return yield* Effect.fail(drift(operation, "snapshots.json does not match the recorded snapshot chain"))
+					}
+					const wantContract = renderContract(contract)
+					const haveContract = yield* readBounded(operation, contractPath(options.repository), MAX_DERIVED_BYTES)
+					if (haveContract !== wantContract) {
+						return yield* Effect.fail(drift(operation, "runtime-contract.json does not match the recorded chain head"))
+					}
+				}
+				const report: CheckReport = { status: "clean", detail: "recorded chain verified; schema unchanged", contract }
+				return report
+			})
+		)
 	})
 
 	return { generateMigrations, checkMigrations }

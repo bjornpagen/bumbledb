@@ -13,13 +13,13 @@
  * declarations, run `bumbledb-log generate`, review the emitted plan, and
  * delete the intent.
  */
-import { bool, contained, id128, key, on, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { bool, contained, uuid, key, on, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 
 /** A user's note. `text` was renamed from `body` in plan 0003. */
-export const Note = relation("Note", { id: id128, text: str, pinned: bool })
+export const Note = relation("Note", { id: uuid, text: str, pinned: bool })
 
 /** Fixed labels, seeded declaratively in plan 0002. */
-export const Tag = relation("Tag", { id: id128, name: str })
+export const Tag = relation("Tag", { id: uuid, name: str })
 
 /**
  * The application outbox (OPS-003): a pending external effect recorded
@@ -28,7 +28,7 @@ export const Tag = relation("Tag", { id: id128, name: str })
  * in a separate idempotent command. Deliberately NOT contained in Note:
  * a pending dispatch may outlive its note.
  */
-export const Outbox = relation("Outbox", { id: id128, note: id128, kind: str })
+export const Outbox = relation("Outbox", { id: uuid, note: uuid, kind: str })
 
 /**
  * A blob reference. The immutable blob is uploaded FIRST (content-addressed
@@ -37,8 +37,8 @@ export const Outbox = relation("Outbox", { id: id128, note: id128, kind: str })
  * reference (OPS-003 "immutable blob first, reference commit second").
  */
 export const Attachment = relation("Attachment", {
-	id: id128,
-	note: id128,
+	id: uuid,
+	note: uuid,
 	key: str,
 	bytes: u64
 })

@@ -13,7 +13,7 @@ use crate::image::SourceImages;
 use crate::image::canon::RowWords;
 use crate::obs;
 
-use super::bind::resolve_filters;
+use super::bind::LiteralResolution;
 
 impl<S> PreparedQuery<S> {
     /// Execute against one committed snapshot lease.
@@ -39,9 +39,7 @@ impl<S> PreparedQuery<S> {
         instance: &ReadInstance<'_, S>,
         params: P,
     ) -> Result<Answers> {
-        let mut out = Answers::new();
-        self.execute(instance, params, &mut out)?;
-        Ok(out)
+        self.execute_collect_with_work(instance, instance.work(), params)
     }
 
     /// Execute against one admitted heap instance. Heap instances carry no
@@ -56,7 +54,8 @@ impl<S> PreparedQuery<S> {
         out: &mut Answers,
     ) -> Result<()> {
         self.heap_tick += 1;
-        let source = QuerySource::heap(instance, self.heap_tick, super::source::heap_default_work());
+        let source =
+            QuerySource::heap(instance, self.heap_tick, super::source::heap_default_work());
         self.execute_source(&source, params, out)
     }
 
@@ -80,7 +79,12 @@ impl<S> PreparedQuery<S> {
     ) -> Result<Answers> {
         let source = QuerySource::store(instance.snapshot(), work);
         let mut out = Answers::new();
-        self.execute_source(&source, params, &mut out)?;
+        // Collect promises a resident answer set. Reuse streamed result
+        // accounting without a scratch tier; a byte refusal drops the
+        // private carrier instead of publishing a partial collection.
+        let mut charge = super::result::ResultCharge::new(work, usize::MAX);
+        self.execute_source_charged(&source, params, &mut out, Some(&mut charge))?;
+        charge.finish_resident(&out)?;
         Ok(out)
     }
 
@@ -297,10 +301,7 @@ impl<S> PreparedQuery<S> {
         let fallback = match &self.pipeline.main_rules()[rule_idx] {
             PreparedRule::FreeJoin(rule) => {
                 self.forced_fallback
-                    || super::reach::rule_uses_scratch_derived(
-                        &rule.plan,
-                        &self.derived.published,
-                    )
+                    || super::reach::rule_uses_scratch_derived(&rule.plan, &self.derived.published)
                     || resident_positions_overflow(images.source(), &rule.plan)?
             }
             PreparedRule::KeyProbe(_) => false,
@@ -332,30 +333,31 @@ impl<S> PreparedQuery<S> {
                 let mut ran_resident = true;
                 if !use_fallback {
                     let plan = &mut rule.plan;
-                    let resolved = if fast_eligible
-                        && rule.resolution == super::ResolutionState::Complete
-                    {
-                        true
-                    } else {
-                        let _s = obs::span(obs::names::RESOLVE_FILTERS);
-                        let complete = resolve_filters(
-                            &interner,
-                            &mut self.nonresident,
-                            images.source().work(),
-                            plan,
-                            &self.resolved_params,
-                            &self.missed_params,
-                            &mut rule.resolved_filters,
-                            &mut rule.resolved_selections,
-                            &mut latched,
-                        )?;
-                        rule.resolution = if complete {
-                            super::ResolutionState::Complete
+                    let resolved =
+                        if fast_eligible && rule.resolution == super::ResolutionState::Complete {
+                            true
                         } else {
-                            super::ResolutionState::Pending
+                            let _s = obs::span(obs::names::RESOLVE_FILTERS);
+                            let complete = LiteralResolution {
+                                interner: &interner,
+                                store: &mut self.nonresident,
+                                work: images.source().work(),
+                                params: &self.resolved_params,
+                                missed: &self.missed_params,
+                                latched: &mut latched,
+                            }
+                            .filters(
+                                plan,
+                                &mut rule.resolved_filters,
+                                &mut rule.resolved_selections,
+                            )?;
+                            rule.resolution = if complete {
+                                super::ResolutionState::Complete
+                            } else {
+                                super::ResolutionState::Pending
+                            };
+                            complete
                         };
-                        complete
-                    };
                     ran_resident = resolved;
                     if self.nonresident.is_some() {
                         use_fallback = true;
@@ -521,8 +523,8 @@ impl<S> PreparedQuery<S> {
                     .push(Answers::interval_cell(element, words[0], words[1]));
                 continue;
             }
-            if matches!(ty, ValueType::Id128) {
-                out.cells.push(Answers::id128_cell(words[0], words[1]));
+            if matches!(ty, ValueType::Uuid) {
+                out.cells.push(Answers::uuid_cell(words[0], words[1]));
                 continue;
             }
             if let ValueType::FixedBytes { len } = ty {

@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    charge, entry_retained, work_error, ScratchAppend, ScratchCapability, ScratchMapId,
-    ScratchProbe, ScratchRelation, ScratchVisitor,
+    ScratchAppend, ScratchCapability, ScratchMapId, ScratchProbe, ScratchRelation, ScratchVisitor,
+    charge, entry_retained, work_error,
 };
 use crate::error::Result;
 use crate::work::{ByteReservation, WorkContext};
@@ -17,7 +17,7 @@ const TEXT_CACHE_BYTES: usize = 64 << 10;
 /// bounded resident cache. Writes go through [`ScratchAppend`]; the cache
 /// admits only after that visitor finishes. A failed append leaves no hit.
 ///
-/// This is not TextEq: warm join equality stays on L04.
+/// This is not `TextEq`: warm join equality stays on L04.
 pub struct ScratchTextLookup {
     relation: ScratchRelation,
     cache: ChargedTextCache,
@@ -72,24 +72,21 @@ impl ChargedTextCache {
 }
 
 impl ScratchTextLookup {
-    /// Open forward/reverse on one relation under a live capability.
+    /// Construct forward/reverse on one lazily opened relation.
     /// Construct the capability with [`ScratchCapability::on_work`], not
     /// [`ScratchCapability::start`] on an already-running execute ledger.
     ///
-    /// # Errors
-    /// Named-map open failure.
-    pub fn open(capability: &ScratchCapability) -> Result<Self> {
-        let mut relation = capability.relation();
-        relation.open_map(ScratchMapId::TextForward)?;
-        relation.open_map(ScratchMapId::TextReverse)?;
+    #[must_use]
+    pub fn new(capability: &ScratchCapability) -> Self {
+        let relation = capability.relation();
         let limit = capability
             .policy()
             .ram_bytes_per_relation
             .min(TEXT_CACHE_BYTES);
-        Ok(Self {
+        Self {
             relation,
             cache: ChargedTextCache::new(limit),
-        })
+        }
     }
 
     /// Scoped forward borrow. Work, admission, and I/O are `Err`; miss is
@@ -106,8 +103,7 @@ impl ScratchTextLookup {
             self.relation.work.step(1).map_err(work_error)?;
             return visit(ScratchProbe::Hit(token.as_ref()));
         }
-        self.relation
-            .lookup(ScratchMapId::TextForward, text, visit)
+        self.relation.lookup(ScratchMapId::TextForward, text, visit)
     }
 
     /// Scoped reverse borrow. Same error contract as [`Self::lookup_forward`].
@@ -151,9 +147,7 @@ impl ScratchTextLookup {
     /// # Errors
     /// As [`ScratchAppend::append`] / [`ScratchAppend::finish`].
     pub fn put(&mut self, text: &[u8], token: &[u8]) -> Result<()> {
-        if self
-            .lookup_forward(text, |probe| Ok(probe.is_hit()))?
-        {
+        if self.lookup_forward(text, |probe| Ok(probe.is_hit()))? {
             return Ok(());
         }
         {
@@ -162,8 +156,7 @@ impl ScratchTextLookup {
             append.append(ScratchMapId::TextReverse, token, text)?;
             append.finish()?;
         }
-        self.cache
-            .admit(&self.relation.work, text, token);
+        self.cache.admit(&self.relation.work, text, token);
         Ok(())
     }
 
@@ -172,8 +165,7 @@ impl ScratchTextLookup {
     /// # Errors
     /// As [`ScratchRelation::visit_map`].
     pub fn visit_forward(&mut self, visitor: &mut impl ScratchVisitor) -> Result<()> {
-        self.relation
-            .visit_map(ScratchMapId::TextForward, visitor)
+        self.relation.visit_map(ScratchMapId::TextForward, visitor)
     }
 
     /// Visit committed reverse entries (authoritative map, not cache-only).
@@ -181,8 +173,7 @@ impl ScratchTextLookup {
     /// # Errors
     /// As [`ScratchRelation::visit_map`].
     pub fn visit_reverse(&mut self, visitor: &mut impl ScratchVisitor) -> Result<()> {
-        self.relation
-            .visit_map(ScratchMapId::TextReverse, visitor)
+        self.relation.visit_map(ScratchMapId::TextReverse, visitor)
     }
 }
 

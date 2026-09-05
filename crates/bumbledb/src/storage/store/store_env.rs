@@ -25,13 +25,13 @@ use super::candidate::{CandidateState, Judgment};
 use super::copy::FreshDestination;
 use super::det_index::DeterminantTable;
 use super::error::{StoreError, StoreResult};
-use super::judge_bridge::SchemaJudge;
 use super::fingerprint::Fingerprinter;
 use super::format::{
     self, CoreStoreId, DATA_DB, EnvironmentId, FAMILY, K_FAMILY, K_GENERATION, K_LAYOUT,
     K_NEXT_ROW_ID, K_SCHEMA, K_STORE_ID, LAYOUT, META_DB, StoreIdentity,
 };
 use super::gate::{GatePass, TransactionGate};
+use super::judge_bridge::SchemaJudge;
 use super::map::{MapPolicy, MapReport};
 use super::snapshot::OwnedSnapshot;
 use crate::schema::Schema;
@@ -190,7 +190,11 @@ impl Store {
     /// Returns the minted [`FreshDestination`] capability for snapshot adoption.
     /// # Errors
     /// `DestinationExists`, lock/I/O/LMDB failures.
-    pub fn create(path: &Path, schema: &Schema, policy: MapPolicy) -> StoreResult<(Self, FreshDestination)> {
+    pub fn create(
+        path: &Path,
+        schema: &Schema,
+        policy: MapPolicy,
+    ) -> StoreResult<(Self, FreshDestination)> {
         if path.exists() {
             return Err(StoreError::DestinationExists {
                 path: path.to_path_buf(),
@@ -667,7 +671,7 @@ pub(crate) fn publish_staging(
     }
     match std::fs::rename(staging, dest) {
         Ok(()) => {}
-        Err(error) if dest.exists() => {
+        Err(_error) if dest.exists() => {
             return PublishOutcome::DestinationOccupied {
                 path: dest.to_path_buf(),
             };

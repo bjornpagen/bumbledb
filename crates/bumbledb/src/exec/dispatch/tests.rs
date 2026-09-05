@@ -307,7 +307,7 @@ fn extra_filters_survive_as_remaining() {
 }
 
 #[test]
-fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
+fn a_pointwise_key_does_not_license_a_unique_row_probe() {
     let schema = booking_schema();
 
     let normalized = single(occurrence(
@@ -317,23 +317,7 @@ fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
             eq_filter(1, Const::Interval { start: 5, end: 10 }),
         ],
     ));
-    let plan = classify(&normalized, &schema).expect("key probe");
-    assert!(matches!(
-        &plan.kind,
-        KeyProbeKind::Uniqueness {
-            statement: StatementId(0),
-            ..
-        }
-    ));
-
-    assert_eq!(
-        plan.kind.key(),
-        &[
-            (FieldId(0), Const::Word(1)),
-            (FieldId(1), Const::Interval { start: 5, end: 10 }),
-        ]
-    );
-    assert!(plan.remaining_filters.is_empty());
+    assert!(classify(&normalized, &schema).is_none());
 }
 
 #[test]
@@ -413,11 +397,8 @@ fn run_key_probe(
 ) -> Vec<Vec<u64>> {
     let cache = crate::image::cache::ImageCache::new(schema);
     let source = fixture.source();
-    let interner = InternerHandle::new(
-        cache.interner(),
-        source.work(),
-        cache.cache_ledger(),
-    );
+    let generation = cache.acquire();
+    let interner = InternerHandle::new(&generation, source.work());
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new((0..plan.slot_count()).collect());
     let mut key = Vec::new();
@@ -498,61 +479,6 @@ fn an_unstored_pending_literal_is_empty_not_an_error() {
 }
 
 #[test]
-fn pointwise_key_probe_hit_is_byte_exact() {
-    let schema = booking_schema();
-    let fixture = value_source(
-        &schema,
-        &[
-            vec![
-                Value::U64(1),
-                Value::IntervalU64(
-                    bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
-                ),
-                Value::U64(100),
-            ],
-            vec![
-                Value::U64(1),
-                Value::IntervalU64(
-                    bumbledb_theory::Interval::<u64>::new(20, 30).expect("nonempty interval"),
-                ),
-                Value::U64(200),
-            ],
-        ],
-    );
-    let normalized = single(occurrence(
-        &[(2, 0)],
-        vec![
-            eq_filter(0, Const::Word(1)),
-            eq_filter(1, Const::Interval { start: 5, end: 10 }),
-        ],
-    ));
-    let plan = classify(&normalized, &schema).expect("key probe");
-    assert!(matches!(
-        &plan.kind,
-        KeyProbeKind::Uniqueness {
-            statement: StatementId(0),
-            ..
-        }
-    ));
-    assert_eq!(
-        run_key_probe(&plan, &fixture, &schema, &[]),
-        vec![vec![100]]
-    );
-
-    // The exact-bound twin one past the end misses: interval keys compare
-    // by both endpoint words, never a prefix.
-    let near = single(occurrence(
-        &[(2, 0)],
-        vec![
-            eq_filter(0, Const::Word(1)),
-            eq_filter(1, Const::Interval { start: 5, end: 11 }),
-        ],
-    ));
-    let plan = classify(&near, &schema).expect("key probe");
-    assert!(run_key_probe(&plan, &fixture, &schema, &[]).is_empty());
-}
-
-#[test]
 fn full_fact_membership_lookup_with_an_interval_field() {
     let schema = stay_schema();
     let fixture = value_source(
@@ -585,11 +511,8 @@ fn full_fact_membership_lookup_with_an_interval_field() {
         );
         let cache = crate::image::cache::ImageCache::new(&schema);
         let source = fixture.source();
-        let interner = InternerHandle::new(
-            cache.interner(),
-            source.work(),
-            cache.cache_ledger(),
-        );
+        let generation = cache.acquire();
+        let interner = InternerHandle::new(&generation, source.work());
         let field_types: Vec<ValueType> = schema
             .relation(REL)
             .fields()
@@ -649,11 +572,8 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let plan = classify(&normalized, &schema).expect("key probe");
     let cache = crate::image::cache::ImageCache::new(&schema);
     let source = fixture.source();
-    let interner = InternerHandle::new(
-        cache.interner(),
-        source.work(),
-        cache.cache_ledger(),
-    );
+    let generation = cache.acquire();
+    let interner = InternerHandle::new(&generation, source.work());
     let mut bindings = Bindings::new(1);
     let mut sink = AggregateSink::new(vec![FindSpec::Agg(AggSpec::Count)], 1);
     let mut key = Vec::new();

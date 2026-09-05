@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, Id128, RelationId, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
 use bumbledb_log::history::{
@@ -33,8 +33,7 @@ use bumbledb_log::manifest::{self, TailPolicy};
 use bumbledb_log::store::mem::{Behavior, Gate, MemFault, MemStore, Op};
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, PutOutcome, ReceiveLimits,
-    ReceivedBody, ReceivedHead,
-    ReceivingStore, TransportContext, TransportObservation,
+    ReceivedBody, ReceivedHead, ReceivingStore, TransportContext, TransportObservation,
 };
 use bumbledb_log::writer::hosted::DEFAULT_TAIL_POLICY;
 use bumbledb_log::writer::{HostedHistory, LogError, ResolveOutcome, SubmitOutcome};
@@ -107,8 +106,8 @@ fn work() -> WorkContext {
 
 fn identity(db: &Db<SchemaDescriptor>) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(db.schema()),
     }
 }
@@ -127,7 +126,7 @@ fn command(
             identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -158,7 +157,7 @@ fn create<'a>(
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -217,7 +216,7 @@ fn a_proven_cas_loss_re_attempts_and_decides_within_bounds() {
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -309,7 +308,7 @@ fn an_uncertain_create_resolves_to_created_by_us_evidence() {
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -324,7 +323,7 @@ fn an_uncertain_create_resolves_to_created_by_us_evidence() {
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -351,7 +350,7 @@ fn an_uncertain_create_resolves_to_created_by_us_evidence() {
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -377,9 +376,9 @@ fn create_over_a_foreign_authority_refuses_with_evidence() {
         &store,
         "tenants/foreign".to_string(),
         EPOCH,
-        DatabaseId::from_core(Id128::from_bytes([0x55; 16])),
-        IncarnationId::from_core(Id128::from_bytes([0x56; 16])),
-        OperationId::from_core(Id128::from_bytes([0x66; 16])),
+        DatabaseId::from_core(Uuid::from_bytes([0x55; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0x56; 16])),
+        OperationId::from_core(Uuid::from_bytes([0x66; 16])),
         LIMITS,
         &work(),
     )
@@ -396,9 +395,9 @@ fn create_over_a_foreign_authority_refuses_with_evidence() {
         &store,
         "tenants/foreign".to_string(),
         EPOCH,
-        DatabaseId::from_core(Id128::from_bytes([0x57; 16])),
-        IncarnationId::from_core(Id128::from_bytes([0x58; 16])),
-        OperationId::from_core(Id128::from_bytes([0x67; 16])),
+        DatabaseId::from_core(Uuid::from_bytes([0x57; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0x58; 16])),
+        OperationId::from_core(Uuid::from_bytes([0x67; 16])),
         LIMITS,
         &work(),
     )
@@ -422,9 +421,9 @@ fn an_unresolvable_create_outcome_stays_unknown_typed() {
         &store,
         "tenants/unknowncreate".to_string(),
         EPOCH,
-        DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -443,9 +442,9 @@ fn an_unresolvable_create_outcome_stays_unknown_typed() {
         &store2,
         "tenants/unknowncreate2".to_string(),
         EPOCH,
-        DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )
@@ -471,15 +470,13 @@ fn the_default_tail_envelope_is_finite_and_unbounded_is_explicit_only() {
     // Inflate the durable tail accounting to the default byte bound: no
     // with_tail_policy call anywhere, so any refusal proves the DEFAULT is
     // finite and active.
-    assert!(
-        store.corrupt_head("tenants/envelope-default/HEAD", |body| {
-            let mut record = manifest::decode_head(body, LIMITS.envelope_bytes).unwrap();
-            let mut recovery = record.recovery.expect("live head names its recovery root");
-            recovery.tail_bytes = DEFAULT_TAIL_POLICY.max_bytes;
-            record.recovery = Some(recovery);
-            *body = manifest::encode_head(&record, LIMITS.envelope_bytes).unwrap();
-        })
-    );
+    assert!(store.corrupt_head("tenants/envelope-default/HEAD", |body| {
+        let mut record = manifest::decode_head(body, LIMITS.envelope_bytes).unwrap();
+        let mut recovery = record.recovery.expect("live head names its recovery root");
+        recovery.tail_bytes = DEFAULT_TAIL_POLICY.max_bytes;
+        record.recovery = Some(recovery);
+        *body = manifest::encode_head(&record, LIMITS.envelope_bytes).unwrap();
+    }));
     let insert = command(history.db(), identity, 1, 7);
     match history.submit(&insert, &work()) {
         SubmitOutcome::NotSubmitted {
@@ -527,6 +524,19 @@ fn the_default_tail_envelope_is_finite_and_unbounded_is_explicit_only() {
 
 #[test]
 fn authenticated_parent_locators_fetch_in_one_get() {
+    struct Count(usize);
+    impl ChainVisitor for Count {
+        type Error = ObjectError;
+        fn visit(
+            &mut self,
+            _stamp: bumbledb_log::history::DecisionStamp,
+            _bytes: &[u8],
+            _reference: bumbledb_log::store::ObjectRef,
+        ) -> Result<bool, ObjectError> {
+            self.0 += 1;
+            Ok(true)
+        }
+    }
     use bumbledb_log::certainty::PublicationPhase;
     use bumbledb_log::history::locator::{ChainVisitor, walk_decision_chain};
     use bumbledb_log::store::ObjectError;
@@ -564,27 +574,14 @@ fn authenticated_parent_locators_fetch_in_one_get() {
         ),
     )
     .expect("direct fetch");
-    let envelope =
-        bumbledb_log::history::decision::decode_decision(bytes.as_bytes(), LIMITS).expect("decodes");
-    drop(bytes);
+    let envelope = bumbledb_log::history::decision::decode_decision(bytes.as_bytes(), LIMITS)
+        .expect("decodes");
     assert_eq!(envelope.stamp(), recovery.tip);
+    drop(bytes);
     // Phase is derived from certainty arms, not stored independently.
     assert_eq!(certainty.publication_phase(), PublicationPhase::Confirmed);
     let genesis = recovery.base;
     let mut budget = 64;
-    struct Count(usize);
-    impl ChainVisitor for Count {
-        type Error = ObjectError;
-        fn visit(
-            &mut self,
-            _stamp: bumbledb_log::history::DecisionStamp,
-            _bytes: &[u8],
-            _reference: bumbledb_log::store::ObjectRef,
-        ) -> Result<bool, ObjectError> {
-            self.0 += 1;
-            Ok(true)
-        }
-    }
     let ctx = work();
     let mut count = Count(0);
     walk_decision_chain(
@@ -674,6 +671,8 @@ fn retired_receipt_after_lost_ack_is_expired_unprovable_not_loss() {
         let mut record = manifest::decode_head(body, LIMITS.envelope_bytes).unwrap();
         record.control = record
             .control
+            .rotate_receipts(bumbledb_log::history::ReceiptEpoch::new(2).unwrap())
+            .expect("rotate epoch")
             .retire_receipts(1)
             .expect("same-tip retirement");
         *body = manifest::encode_head(&record, LIMITS.envelope_bytes).unwrap();
@@ -691,14 +690,22 @@ fn retired_receipt_after_lost_ack_is_expired_unprovable_not_loss() {
             assert!(
                 matches!(
                     error,
-                    LogError::ReceiptExpiredUnknown | LogError::Backend | LogError::CommandEpochClosed
+                    LogError::ReceiptExpiredUnknown
+                        | LogError::Backend
+                        | LogError::CommandEpochClosed
                 ),
                 "original identity stays unknown/expired, got {error:?}"
             );
         }
-        SubmitOutcome::NotSubmitted { .. } => {
-            panic!("retirement after a dispatched attempt is not NotSubmitted")
+        SubmitOutcome::NotSubmitted {
+            command,
+            error: LogError::ReceiptExpiredUnknown | LogError::CommandEpochClosed,
+        } => {
+            // This is a NEW attempt after retirement: it is not dispatched.
+            // It says nothing about whether the earlier lost-ack attempt committed.
+            assert_eq!(command, insert.command_ref());
         }
+        SubmitOutcome::NotSubmitted { error, .. } => panic!("unexpected retry refusal: {error:?}"),
         SubmitOutcome::Decided { .. } => {
             panic!("retired absence must not mint a new decided receipt")
         }
@@ -892,10 +899,7 @@ fn denied_capped_and_generic_indeterminate_err_are_not_publication() {
     for (tag, observation) in [
         ("denied-not-pub", TransportObservation::Denied),
         ("capped-not-pub", TransportObservation::Capped),
-        (
-            "indet-err-not-pub",
-            TransportObservation::Indeterminate,
-        ),
+        ("indet-err-not-pub", TransportObservation::Indeterminate),
     ] {
         let store = ObservedReplace::new();
         let db = fresh_db(tag);
@@ -907,7 +911,7 @@ fn denied_capped_and_generic_indeterminate_err_are_not_publication() {
             EPOCH,
             identity.database_id,
             identity.incarnation_id,
-            OperationId::from_core(Id128::from_bytes(OPERATION)),
+            OperationId::from_core(Uuid::from_bytes(OPERATION)),
             LIMITS,
             &work(),
         )
@@ -933,7 +937,7 @@ fn admin_denied_replace_is_unknown_not_completed() {
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes(OPERATION)),
+        OperationId::from_core(Uuid::from_bytes(OPERATION)),
         LIMITS,
         &work(),
     )

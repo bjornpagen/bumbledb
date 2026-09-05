@@ -15,9 +15,10 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
-use bumbledb::{ExecutionPolicy, Id128, WorkContext};
+use bumbledb::{ExecutionPolicy, Uuid, WorkContext};
 
 use bumbledb_log::backup::{backup_root, read_backup_manifest, verify_backup};
+use bumbledb_log::certainty::AdminCertainty;
 use bumbledb_log::checkpointer::read_live_head;
 use bumbledb_log::erase::{erase_hosted, residual_report};
 use bumbledb_log::gc::{GcPolicy, run_collection};
@@ -31,7 +32,6 @@ use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, ObservedError, PutOutcome,
     ReceivedBody, ReceivedHead, ReceivingStore, TransportContext, TransportObservation,
 };
-use bumbledb_log::certainty::AdminCertainty;
 use bumbledb_log::{admin, codec};
 
 const HEAD_CAP: usize = 1024 * 1024;
@@ -258,27 +258,23 @@ fn usage() -> String {
     "usage: duty <status|gc|fence|rotate-receipts|root-add|root-release|backup|verify-backup|erase|residual>\n\
      backend: --fs-root PATH | --s3-bucket B --s3-region R [--s3-endpoint URL] (credentials from AWS_* env)\n\
      common: --prefix P\n\
-     gc/erase/backup: --op HEX32; rotate-receipts: --epoch N\n\
-     root-add: --root-id HEX32 --label TEXT [--hold] --op HEX32; root-release: --root-id HEX32\n\
+     gc/erase/backup: --op UUID; rotate-receipts: --epoch N\n\
+     root-add: --root-id UUID --label TEXT [--hold] --op UUID; root-release: --root-id UUID\n\
      backup/verify-backup: --dest-fs-root PATH --dest-prefix P\n\
-     erase: repeatable --release-root HEX32"
+     erase: repeatable --release-root UUID"
         .to_string()
 }
 
-fn parse_id128(hex: &str) -> Result<Id128, String> {
-    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(format!("`{hex}` is not 32 hex characters"));
+fn parse_uuid(text: &str) -> Result<Uuid, String> {
+    let id = Uuid::parse_str(text).map_err(|error| format!("invalid UUID: {error}"))?;
+    if id.hyphenated().encode_lower(&mut Uuid::encode_buffer()) != text {
+        return Err("expected a canonical lowercase hyphenated UUID".into());
     }
-    let mut bytes = [0u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        let text = std::str::from_utf8(chunk).expect("hex chunk");
-        bytes[index] = u8::from_str_radix(text, 16).map_err(|error| error.to_string())?;
-    }
-    Ok(Id128::from_bytes(bytes))
+    Ok(id)
 }
 
 fn operation(args: &Args, name: &str) -> Result<OperationId, String> {
-    Ok(OperationId::from_core(parse_id128(args.require(name)?)?))
+    Ok(OperationId::from_core(parse_uuid(args.require(name)?)?))
 }
 
 fn backend_of(args: &Args, root_name: &str, standard: bool) -> Result<AnyStore, String> {
@@ -434,7 +430,6 @@ fn run() -> Result<(), String> {
                 head.control.identity,
                 live.state,
                 &recovery,
-                head.object_epoch,
                 op,
                 LIMITS,
                 codec::StreamLimits::DEFAULT,
@@ -482,7 +477,7 @@ fn run() -> Result<(), String> {
             let op = operation(&args, "--op")?;
             let mut release = Vec::new();
             for hex in args.all("--release-root") {
-                release.push(OperationId::from_core(parse_id128(hex)?));
+                release.push(OperationId::from_core(parse_uuid(hex)?));
             }
             let report = erase_hosted(&backend, &prefix, op, &release, LIMITS, &gc_policy, &work)
                 .map_err(|error| format!("erase: {error:?}"))?;

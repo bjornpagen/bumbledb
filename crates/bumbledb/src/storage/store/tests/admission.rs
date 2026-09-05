@@ -4,7 +4,7 @@ use super::*;
 use crate::schema::tests::{closed, containment, fd, field, row, side};
 use crate::schema::{
     ContainmentId, FieldDescriptor, RelationDescriptor, Schema, SchemaDescriptor,
-    StatementDescriptor, ValidateDescriptor as _,
+    StatementDescriptor,
 };
 use crate::storage::store::staging::{InstallOutcome, UnreadyStore};
 use crate::storage::store::{
@@ -54,7 +54,7 @@ fn nonempty_required() -> Schema {
         statements: vec![
             fd(RelationId(1), &[FieldId(0)]),
             containment(
-                side(RelationId(0), &[FieldId(0)]),
+                side(RelationId(0), &[FieldId(1)]),
                 side(RelationId(1), &[FieldId(0)]),
             ),
         ],
@@ -85,9 +85,13 @@ fn d26_conflicting_populated_stage_rejects_with_empty_delta() {
         .expect("populate");
     match unready.admit(&schema, &work) {
         Err(StoreError::JudgeRefused { .. }) => {}
-        other => panic!("invalid populated stage must reject complete admit, got {other:?}"),
+        Err(error) => panic!("invalid populated stage must reject complete admit, got {error:?}"),
+        Ok(_) => panic!("invalid populated stage admitted"),
     }
-    assert!(!path.exists(), "destination stays absent after abandoned admit");
+    assert!(
+        !path.exists(),
+        "destination stays absent after abandoned admit"
+    );
 }
 
 /// D26 positive dual: empty nonempty-required staging rejects; valid rows admit.
@@ -99,7 +103,8 @@ fn d26_nonempty_required_survives_populate_admit_install_reopen() {
     let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
     unready
         .admit(&schema, &work)
-        .expect_err("empty nonempty-required staging rejects");
+        .err()
+        .expect("empty nonempty-required staging rejects");
     assert!(!path.exists());
 
     let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
@@ -153,16 +158,19 @@ fn d06_second_installer_cannot_clobber_and_cleanup_spares_winner() {
         InstallOutcome::Installed(_) => {}
         other => panic!("first installer publishes, got {other:?}"),
     }
-    match second.admit(&schema, &work).expect("second still unready").install(
-        &schema,
-        MapPolicy::default(),
-        &work,
-    ) {
+    match second
+        .admit(&schema, &work)
+        .expect("second still unready")
+        .install(&schema, MapPolicy::default(), &work)
+    {
         InstallOutcome::NotInstalled { cleanup, detail } => {
             assert!(matches!(detail, StoreError::DestinationExists { .. }));
             assert!(path.exists(), "winner remains");
             cleanup.abandon();
-            assert!(path.exists(), "cleanup must not delete the winning successor");
+            assert!(
+                path.exists(),
+                "cleanup must not delete the winning successor"
+            );
         }
         other => panic!("second installer must not overwrite, got {other:?}"),
     }
@@ -174,10 +182,15 @@ fn d06_ready_destination_population_is_refused() {
     let (_dir, path) = store_dir("d06-ready-dest");
     let schema = schema();
     let work = work();
-    drop(Store::create(&path, &schema, MapPolicy::default()).expect("create").0);
+    drop(
+        Store::create(&path, &schema, MapPolicy::default())
+            .expect("create")
+            .0,
+    );
     match UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work) {
         Err(StoreError::DestinationExists { .. }) => {}
-        other => panic!("ready dest must refuse begin, got {other:?}"),
+        Err(error) => panic!("ready dest must refuse begin, got {error:?}"),
+        Ok(_) => panic!("ready dest was accepted by begin"),
     }
 }
 
@@ -188,8 +201,7 @@ fn d06_zero_row_host_metadata_is_not_fresh() {
     let (_dir2, src_path) = store_dir("d06-meta-src");
     let schema = keyed_users();
     let work = work();
-    let (dest, _fresh) =
-        Store::create(&dest_path, &schema, MapPolicy::default()).expect("dest");
+    let (dest, _fresh) = Store::create(&dest_path, &schema, MapPolicy::default()).expect("dest");
     {
         let mut owner = dest.writer(&work).expect("writer");
         let empty = ChangeSet::builder(&schema, work.clone())
@@ -228,7 +240,7 @@ fn d06_zero_row_host_metadata_is_not_fresh() {
 
 /// Ordinary admitted writes call `prepare_incremental` with a real
 /// `LawfulParent`. A row commits; an empty follow-up is a no-op under
-/// that parent, not complete admit. Verification NotRun.
+/// that parent, not complete admit. Verification `NotRun`.
 #[test]
 fn ordinary_admitted_write_uses_prepare_incremental_under_lawful_parent() {
     let parent = crate::schema::judge::LawfulParent::established();
@@ -287,14 +299,17 @@ fn ordinary_admitted_write_uses_prepare_incremental_under_lawful_parent() {
                 .expect("seal")
                 .commit()
                 .expect("commit");
-            assert!(!commit.changed, "empty delta under a lawful parent is a no-op");
+            assert!(
+                !commit.changed,
+                "empty delta under a lawful parent is a no-op"
+            );
         }
         Prepared::Rejected(violations) => panic!("{violations:?}"),
     }
 }
 
 /// Projection-id exhaustion is `StoreError::Compile`, never corruption.
-/// Verification NotRun.
+/// Verification `NotRun`.
 #[test]
 fn compile_exhaustion_is_store_error_compile_not_corruption() {
     let err = StoreError::from(crate::schema::CompileError::ProjectionIdExhausted);
@@ -307,7 +322,7 @@ fn compile_exhaustion_is_store_error_compile_not_corruption() {
 
 /// Host metadata written on unready is visible only through inspect, not
 /// at dest. Complete-admit failure leaves dest unpublished. Verification
-/// NotRun.
+/// `NotRun`.
 #[test]
 fn unready_host_metadata_is_invisible_until_admit() {
     let (_dir, path) = store_dir("unready-host-invisible");
@@ -320,14 +335,13 @@ fn unready_host_metadata_is_invisible_until_admit() {
         .populate(&work, |stage, work| {
             stage.apply(&first, work)?;
             stage.apply(&second, work)?;
-            stage
-                .put_host(
-                    HostChanges {
-                        records: &host_put(b"binding", b"genesis"),
-                        attachment: AttachmentChange::Put(b"control"),
-                    },
-                    work,
-                )?;
+            stage.put_host(
+                HostChanges {
+                    records: &host_put(b"binding", b"genesis"),
+                    attachment: AttachmentChange::Put(b"control"),
+                },
+                work,
+            )?;
             Ok(())
         })
         .expect("populate");
@@ -339,7 +353,7 @@ fn unready_host_metadata_is_invisible_until_admit() {
             );
             assert_eq!(reader.attachment().expect("ctl"), Some(&b"control"[..]));
             let mut saw = false;
-            reader.host_scan(b"bind", work, &mut |key, value| {
+            reader.host_scan(b"bind", work, &mut |key, value| -> StoreResult<()> {
                 saw = key == b"binding" && value == b"genesis";
                 Ok(())
             })?;
@@ -353,7 +367,8 @@ fn unready_host_metadata_is_invisible_until_admit() {
     );
     match unready.admit(&schema, &work) {
         Err(StoreError::JudgeRefused { .. }) => {}
-        other => panic!("conflict must refuse complete admit, got {other:?}"),
+        Err(error) => panic!("conflict must refuse complete admit, got {error:?}"),
+        Ok(_) => panic!("conflicting stage admitted"),
     }
     assert!(
         !path.exists(),
@@ -363,7 +378,7 @@ fn unready_host_metadata_is_invisible_until_admit() {
 
 /// Batched host deletes on unready are not installed; admit failure never
 /// yields admitted ownership and dest stays unpublished. Verification
-/// NotRun.
+/// `NotRun`.
 #[test]
 fn unready_batched_host_deletes_stay_invisible_until_admit() {
     let (_dir, path) = store_dir("unready-host-batch-invisible");
@@ -430,7 +445,7 @@ fn unready_batched_host_deletes_stay_invisible_until_admit() {
     match unready.admit(&schema, &work) {
         Err(StoreError::JudgeRefused { .. }) => {}
         Ok(_) => panic!("admit must not yield AdmittedStore on a conflicting stage"),
-        other => panic!("conflict must refuse complete admit, got {other:?}"),
+        Err(error) => panic!("conflict must refuse complete admit, got {error:?}"),
     }
     assert!(
         !path.exists(),
@@ -443,8 +458,8 @@ fn unready_batched_host_deletes_stay_invisible_until_admit() {
 /// cover is the target row (a=2,b=1): Target[b,a]=(1,2) matches the
 /// source projection. A same-order decoy Target(a=1,b=2) matches source
 /// field order, not the containment. Deleting the lawful cover must
-/// refuse on the production unready→admit path (UnindexedRows: no
-/// closed-source index). Verification NotRun.
+/// refuse on the production unready→admit path (`UnindexedRows`: no
+/// closed-source index). Verification `NotRun`.
 fn closed_source_permuted_target() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -473,7 +488,7 @@ fn closed_source_permuted_target() -> Schema {
 
 /// D04 production-store: grouping order is logical. Physical index
 /// availability must not change whether the lawful target (a=2,b=1) is
-/// required. Authored now; verification NotRun.
+/// required. Authored now; verification `NotRun`.
 #[test]
 fn d04_closed_source_permuted_target_deletion_refuses_on_production_store() {
     let schema = closed_source_permuted_target();
@@ -534,7 +549,9 @@ fn d04_closed_source_permuted_target_deletion_refuses_on_production_store() {
                 .target_binding(law.id)
                 .expect("ordinary target uses L01 intern coordinates");
             assert_eq!(
-                binding.physical_values(&[Value::U64(1), Value::U64(2)]).as_deref(),
+                binding
+                    .physical_values(&[Value::U64(1), Value::U64(2)])
+                    .as_deref(),
                 Some(&[Value::U64(2), Value::U64(1)][..]),
                 "Target[b,a]=(1,2) interns as key-order (a=2,b=1)"
             );
@@ -552,7 +569,7 @@ fn d04_closed_source_permuted_target_deletion_refuses_on_production_store() {
             assert_eq!(statement, law.id, "containment names the stranded source");
         }
         Ok(_) => panic!("deleting lawful target (a=2,b=1) must not yield AdmittedStore"),
-        other => panic!("expected JudgeRefused, got {other:?}"),
+        Err(error) => panic!("expected JudgeRefused, got {error:?}"),
     }
     assert!(!path.exists(), "refused admit leaves dest unpublished");
 }

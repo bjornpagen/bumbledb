@@ -308,7 +308,7 @@ pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
 }
 
 fn words_equal(text: TextEq<'_>, string_field: bool, left: u64, right: u64) -> Result<bool, Error> {
-    if string_field || is_scratch_token(left) || is_scratch_token(right) {
+    if string_field {
         text.tokens_equal(left, right)
     } else {
         Ok(left == right)
@@ -329,8 +329,13 @@ fn words_compare(
     }
 }
 
-fn word_in_set(text: TextEq<'_>, string_field: bool, word: u64, set: &[u64]) -> Result<bool, Error> {
-    if string_field || is_scratch_token(word) || set.iter().any(|&c| is_scratch_token(c)) {
+fn word_in_set(
+    text: TextEq<'_>,
+    string_field: bool,
+    word: u64,
+    set: &[u64],
+) -> Result<bool, Error> {
+    if string_field {
         for &elt in set {
             if text.tokens_equal(word, elt)? {
                 return Ok(true);
@@ -456,19 +461,21 @@ where
             WordCmp::Eq => s == *start && e == *end,
             _ => unreachable!("validated: interval constants compare under Eq only"),
         },
-        (Loaded::Block { words, count }, Const::Words(c)) => match op {
-            WordCmp::Eq => words[..usize::from(count)] == **c,
-            WordCmp::Ne => words[..usize::from(count)] != **c,
-            _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-        },
+        (Loaded::Block { words, count }, Const::Words(c)) => {
+            op.compare(&words[..usize::from(count)], c.as_ref())
+        }
         (Loaded::Word(word), Const::WordSet(set)) => word_in_set(text, string_field, word, set)?,
         (Loaded::Byte(byte), Const::WordSet(set)) => set.binary_search(&u64::from(byte)).is_ok(),
         (Loaded::Block { words, count }, Const::WordSet(set)) => span_in_set(&words, count, set),
 
         (Loaded::Word(word), Const::Byte(c)) => op.compare(&word, &u64::from(*c)),
-        (Loaded::Word(word), Const::PendingIntern { bytes }) => {
-            words_compare(text, string_field, op, word, ops.intern(bytes).map_err(Error::from)?)?
-        }
+        (Loaded::Word(word), Const::PendingIntern { bytes }) => words_compare(
+            text,
+            string_field,
+            op,
+            word,
+            ops.intern(bytes).map_err(Error::from)?,
+        )?,
         _ => unreachable!("validated, resolved filter constant"),
     })
 }
@@ -488,11 +495,9 @@ fn fields_compare(
             WordCmp::Ne => a_s != b_s || a_e != b_e,
             _ => unreachable!("validated: no order comparison over intervals"),
         },
-        (Loaded::Block { words: a, count }, Loaded::Block { words: b, .. }) => match op {
-            WordCmp::Eq => a[..usize::from(count)] == b[..usize::from(count)],
-            WordCmp::Ne => a[..usize::from(count)] != b[..usize::from(count)],
-            _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
-        },
+        (Loaded::Block { words: a, count }, Loaded::Block { words: b, .. }) => {
+            op.compare(&a[..usize::from(count)], &b[..usize::from(count)])
+        }
         _ => unreachable!("same-fact comparison joins same-typed fields"),
     })
 }
@@ -697,9 +702,6 @@ pub(crate) fn kernel_scan(
             if image.field_is_string(field.field())
                 && (is_scratch_token(*c) || text.scratch_epoch().is_some())
             {
-                return false;
-            }
-            if is_scratch_token(*c) {
                 return false;
             }
             let (lo, hi) = match op {
@@ -1370,8 +1372,11 @@ mod text_eq_holds {
         assert!(hit, "holds/compare_loaded Eq unifies intern and scratch");
         assert!(!miss, "holds/compare_loaded Ne is the complement");
         let other = store.intern("other", cap.work()).expect("other");
-        assert!(!holds(&predicate(WordCmp::Eq, other), &ops, &[], eq)
-            .expect("infallible")
-            .expect("some"));
+        let eq = TextEq::bind(&fat, Some(&store));
+        assert!(
+            !holds(&predicate(WordCmp::Eq, other), &ops, &[], eq)
+                .expect("infallible")
+                .expect("some")
+        );
     }
 }

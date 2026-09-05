@@ -3,16 +3,16 @@
  * already made `@bjornpagen/bumbledb-*` unresolvable.
  */
 import assert from "node:assert/strict"
+import { bool, str, uuid } from "#fields.ts"
 import { loadNativeBinding, nativeBindingIsLoaded } from "#native.ts"
-import { bool, id128, str } from "#fields.ts"
 import { relation } from "#relation.ts"
+import { Scalar } from "#scalar.ts"
 import { schema } from "#schema.ts"
 import { key } from "#statements.ts"
-import { Scalar } from "#scalar.ts"
 
 assert.equal(nativeBindingIsLoaded(), false, "package import must not load the addon")
 
-const Note = relation("Note", { id: id128, text: str, pinned: bool })
+const Note = relation("Note", { id: uuid, text: str, pinned: bool })
 const Notes = schema("Notes", { Note }, [key(Note, ["id"])])
 assert.equal(Notes.relations.Note.name, "Note")
 const pinned = Scalar.bool(false)

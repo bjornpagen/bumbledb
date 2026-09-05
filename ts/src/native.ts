@@ -13,7 +13,6 @@ import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
 type DbHandle = { readonly __brand: "bumbledb.db" }
 
 /** Admitted owned instance attached through directory publish — not a JS builder. */
-type OwnedHandle = { readonly __brand: "bumbledb.owned" }
 
 /**
  * The sealed per-theory log schema (`crates/bumbledb-log` successor
@@ -38,8 +37,8 @@ interface F64IntervalValue {
 }
 
 /**
- * One marshalled cell. An application-owned Id128 crosses as its
- * canonical 32-lowercase-hex string (chapter 32); there is no fresh
+ * One marshalled cell. An application-owned Uuid crosses as its
+ * canonical hyphenated UUID string (chapter 32); there is no fresh
  * range, reservation counter or issuance value anywhere on this wire.
  */
 type FactValue = boolean | bigint | number | string | Uint8Array | IntervalValue | F64IntervalValue
@@ -217,7 +216,7 @@ type LogChainKind = "wrongParent" | "wrongSequence"
 
 /** The complete database scope of every command/receipt/decision. */
 interface LogIdentity {
-	/** Application-owned Id128, canonical 32-lowercase-hex. */
+	/** Application-owned Uuid, canonical hyphenated UUID. */
 	readonly databaseId: string
 	readonly incarnationId: string
 	/** The core schema fingerprint, 64 lowercase hex characters. */
@@ -234,9 +233,7 @@ interface LogDecisionStamp {
 	readonly hash: Uint8Array
 }
 
-type LogCondition =
-	| { readonly kind: "unconditional" }
-	| { readonly kind: "exactState"; readonly state: LogStateStamp }
+type LogCondition = { readonly kind: "unconditional" } | { readonly kind: "exactState"; readonly state: LogStateStamp }
 
 interface LogCommandId {
 	readonly receiptEpoch: bigint
@@ -364,17 +361,6 @@ interface ManifestRelation {
 	readonly extension?: readonly ManifestRow[]
 }
 
-interface ManifestStatement {
-	readonly id: number
-	readonly kind: StatementKindTag
-	readonly spelling: string
-}
-
-interface Manifest {
-	readonly relations: readonly ManifestRelation[]
-	readonly statements: readonly ManifestStatement[]
-}
-
 interface SealedSide {
 	readonly relation: number
 	readonly projection: readonly number[]
@@ -480,6 +466,7 @@ type ErrorFamilyKind =
 	| "scalar"
 	| "resultBytesOverflow"
 	| "corruption"
+	| "store"
 
 type AdmissionTag = "accepted" | "rejected"
 type WriteTag = "accepted" | "rejected" | "abandoned" | "moved"
@@ -548,6 +535,9 @@ function ensureNativeBinding(): NativeBinding {
 const native: NativeBinding = new Proxy({} as NativeBinding, {
 	get(_target, property, receiver) {
 		return Reflect.get(ensureNativeBinding(), property, receiver)
+	},
+	set(_target, property, value) {
+		return Reflect.set(ensureNativeBinding(), property, value)
 	}
 })
 
@@ -699,7 +689,6 @@ export type {
 	LogStateStamp,
 	NumericCastIr,
 	OpenKind,
-	OwnedHandle,
 	ParsedQuery,
 	PrepareKind,
 	QueryIr,

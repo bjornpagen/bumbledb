@@ -1,7 +1,7 @@
 use crate::encoding::{encode_bool, encode_interval_u64, encode_u64};
 use crate::image::{ColumnWidth, synthesize_closed};
-use crate::work::{CacheLedger, GenerationHandle, GenerationState};
 use crate::ir::Value;
+use crate::work::{CacheLedger, GenerationHandle, GenerationState};
 use bumbledb_theory::schema::{IntervalElement, Row};
 
 use super::*;

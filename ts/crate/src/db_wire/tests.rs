@@ -1,5 +1,5 @@
 //! D01/D07/D12/D18/D25 discriminators for the real addon delivery, draft
-//! and snapshot chain. Authored now; verification NotRun.
+//! and snapshot chain. Authored now; verification `NotRun`.
 //!
 //! Sensitivity (D25): a post-register checkpoint that drops `QueuedOutput`
 //! loses the consumed page. Resource abort must retry the same row;
@@ -11,11 +11,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bumbledb::work::{ExecutionPolicy, WorkContext, WorkError};
-use bumbledb::{Answers, DeliveryTicket, RelationId, Theory as _, Value};
+use bumbledb::{Answers, DeliveryTicket, RelationId, Value};
 
 use super::delivery::{
-    PagePlan, PullOutcome, is_terminal_backing, page_row_cap, plan_page, preview_error_outcome,
-    preview_none_outcome, publish_from_payload, pull_from_payload,
+    PullOutcome, is_terminal_backing, page_row_cap, publish_from_payload, pull_from_payload,
+    register_page,
 };
 use super::*;
 use crate::marshal::ValueOut;
@@ -86,7 +86,8 @@ fn acquire(runtime: &Arc<Runtime>, path: &std::path::Path) -> DirectoryOwner {
 
 fn attach(owner: &DirectoryOwner, descriptor: &bumbledb::SchemaDescriptor) -> ManagedDb {
     let path = owner.child_path("db").expect("child path");
-    let Ok(bumbledb::Admission::Accepted(db)) = crate::Engine::create(&path, descriptor.clone())
+    let Ok(bumbledb::Admission::Accepted(db)) =
+        crate::Engine::create(&path, descriptor.clone(), work())
     else {
         panic!("engine create accepts a fresh store")
     };
@@ -99,7 +100,7 @@ fn insert_rows(db: &ManagedDb, rows: &[[u64; 2]]) {
     let lease = db.access().expect("lease");
     let admitted = lease
         .db()
-        .write(|tx| {
+        .write(work(), |tx| {
             let descriptor = Mini.descriptor();
             let fields = descriptor.relations[0].fields.clone();
             let owned: Vec<[Value; 2]> = rows
@@ -171,16 +172,6 @@ fn submit_publish(runtime: &Arc<Runtime>, cap: Capability) -> Result<Output, Run
         .expect("publish submits");
     rx.recv_timeout(Duration::from_secs(10)).expect("notify");
     runtime.take(&operation)
-}
-
-#[test]
-fn d25_two_rows_fit_alone_not_together() {
-    // Planner still names the joint-overflow split the pull must honor.
-    assert_eq!(plan_page(&[40, 40, 40], 50), PagePlan::Take(1));
-    assert_eq!(plan_page(&[40], 50), PagePlan::Take(1));
-    assert_eq!(plan_page(&[40, 10], 50), PagePlan::Take(2));
-    assert_eq!(plan_page(&[60, 10], 50), PagePlan::OversizedFirst { bytes: 60 });
-    assert_eq!(plan_page(&[], 50), PagePlan::Eof);
 }
 
 #[test]
@@ -309,13 +300,8 @@ fn d12_arm_cancel_after_page_retries_same_first_row() {
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
     let payload = cursor_payload(&runtime, &db);
-    let admission = RegistryAdmission::admit(
-        Arc::clone(&runtime),
-        NativeKind::Cursor,
-        64,
-        payload,
-    )
-    .expect("admit cursor");
+    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, 64, payload)
+        .expect("admit cursor");
 
     runtime.arm_publication_cancel();
     assert!(
@@ -332,7 +318,10 @@ fn d12_arm_cancel_after_page_retries_same_first_row() {
             assert_eq!(queued.rows.len(), 3);
         }
         Ok(Output::Page(None)) => panic!("retry after arm-cancel skipped to EOF"),
-        other => panic!("retry must deliver the same first row, got {other:?}"),
+        other => panic!(
+            "retry must deliver the same first row, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
 
     let _ = admission.request_close();
@@ -355,8 +344,7 @@ fn d12_reject_keeps_row_accept_advances() {
 
     match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("first") {
         PullOutcome::Page { queued, .. } => assert_eq!(first_key(&queued), 1),
-        PullOutcome::Eof => panic!("expected a page"),
-        PullOutcome::Terminal(_) => panic!("expected a page"),
+        PullOutcome::Eof | PullOutcome::Terminal(_) => panic!("expected a page"),
     }
     match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("after abort") {
         PullOutcome::Page { queued, .. } => assert_eq!(first_key(&queued), 1),
@@ -364,24 +352,25 @@ fn d12_reject_keeps_row_accept_advances() {
         PullOutcome::Terminal(_) => panic!("abort is not backing failure"),
     }
 
-    let admission = RegistryAdmission::admit(
-        Arc::clone(&runtime),
-        NativeKind::Cursor,
-        64,
-        payload,
-    )
-    .expect("admit");
+    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, 64, payload)
+        .expect("admit");
     match submit_publish(&runtime, admission.cap()) {
         Ok(Output::Page(Some(queued))) => {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 2);
         }
-        other => panic!("live accept must advance after abort-retry, got {other:?}"),
+        other => panic!(
+            "live accept must advance after abort-retry, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     match submit_publish(&runtime, admission.cap()) {
         Ok(Output::Page(None)) => {}
         Ok(Output::Page(Some(_))) => panic!("accept must not republish the same page"),
-        other => panic!("second pull after accept must be EOF, got {other:?}"),
+        other => panic!(
+            "second pull after accept must be EOF, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     let _ = admission.request_close();
 
@@ -407,8 +396,7 @@ fn d12_publication_boundary_cannot_skip_or_duplicate() {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 3);
         }
-        PullOutcome::Eof => panic!("expected a page"),
-        PullOutcome::Terminal(_) => panic!("expected a page"),
+        PullOutcome::Eof | PullOutcome::Terminal(_) => panic!("expected a page"),
     }
     match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry abort") {
         PullOutcome::Page { queued, .. } => {
@@ -420,24 +408,25 @@ fn d12_publication_boundary_cannot_skip_or_duplicate() {
     }
 
     let payload = cursor_payload(&runtime, &db);
-    let admission = RegistryAdmission::admit(
-        Arc::clone(&runtime),
-        NativeKind::Cursor,
-        64,
-        payload,
-    )
-    .expect("admit");
+    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, 64, payload)
+        .expect("admit");
     match submit_publish(&runtime, admission.cap()) {
         Ok(Output::Page(Some(queued))) => {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 3);
         }
-        other => panic!("live accept must publish one page, got {other:?}"),
+        other => panic!(
+            "live accept must publish one page, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     match submit_publish(&runtime, admission.cap()) {
         Ok(Output::Page(None)) => {}
         Ok(Output::Page(Some(_))) => panic!("success must advance once; no duplicate page"),
-        other => panic!("second pull after accept must be EOF, got {other:?}"),
+        other => panic!(
+            "second pull after accept must be EOF, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     let _ = admission.request_close();
 
@@ -465,10 +454,12 @@ fn d12_overlap_reserve_refusal_retries_same_first_row() {
         assert!(!*drained);
         cursor.rebind_work(&ctx);
         let mut ticket = DeliveryTicket::open(cursor);
-        assert!(ticket
-            .preview_page(&ctx, 1 << 20)
-            .expect("preview")
-            .is_some());
+        assert!(
+            ticket
+                .preview_page(&ctx, 1 << 20)
+                .expect("preview")
+                .is_some()
+        );
         let answers = ticket.adopt().expect("adopt");
         let starved = ExecutionPolicy {
             input_bytes: 16 << 20,
@@ -482,14 +473,16 @@ fn d12_overlap_reserve_refusal_retries_same_first_row() {
         .start()
         .unwrap();
         match register_page(&starved, &answers) {
-            Err(RuntimeError::Work(WorkError::Exhausted {
-                resource: bumbledb::work::Resource::ResultBytes,
-                ..
-            }))
-            | Err(RuntimeError::ResourceLimit {
-                dimension: "resultBytes",
-                ..
-            }) => {}
+            Err(
+                RuntimeError::Work(WorkError::Exhausted {
+                    resource: bumbledb::work::Resource::ResultBytes,
+                    ..
+                })
+                | RuntimeError::ResourceLimit {
+                    dimension: "resultBytes",
+                    ..
+                },
+            ) => {}
             other => panic!("overlap reserve must refuse, got {other:?}"),
         }
         ticket.abort();
@@ -528,10 +521,12 @@ fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
         };
         cursor.rebind_work(&ctx);
         let mut ticket = DeliveryTicket::open(cursor);
-        assert!(ticket
-            .preview_page(&ctx, 1 << 20)
-            .expect("preview")
-            .is_some());
+        assert!(
+            ticket
+                .preview_page(&ctx, 1 << 20)
+                .expect("preview")
+                .is_some()
+        );
         assert!(ticket.adopt().is_some());
         ticket.abort();
     }
@@ -570,22 +565,14 @@ fn d12_backing_failure_stays_terminal() {
     };
     assert!(is_terminal_backing(&store));
     assert!(is_terminal_backing(&corruption));
-    assert!(PullOutcome::Terminal(store.clone())
-        .committed_output()
-        .is_err());
-    match preview_error_outcome(store) {
-        Ok(PullOutcome::Terminal(_)) => {}
-        Ok(PullOutcome::Eof) => panic!("backing failure must not become EOF"),
-        Ok(PullOutcome::Page { .. }) => panic!("backing failure must not become a page"),
-        Err(_) => panic!("backing failure is Terminal, not a resource Err"),
-    }
+    assert!(
+        PullOutcome::Terminal(store.clone())
+            .committed_output()
+            .is_err()
+    );
 
     let cancel = RuntimeError::Work(WorkError::Cancelled);
     assert!(!is_terminal_backing(&cancel));
-    assert!(matches!(
-        preview_error_outcome(cancel),
-        Err(RuntimeError::Work(WorkError::Cancelled))
-    ));
     let budget = RuntimeError::ResourceLimit {
         dimension: "resultBytes",
         used: 0,
@@ -593,66 +580,13 @@ fn d12_backing_failure_stays_terminal() {
         limit: 0,
     };
     assert!(!is_terminal_backing(&budget));
-    assert!(matches!(
-        preview_error_outcome(budget),
-        Err(RuntimeError::ResourceLimit {
-            dimension: "resultBytes",
-            ..
-        })
-    ));
 }
-
-#[test]
-fn d25_terminal_store_error_is_never_eof() {
-    let store = RuntimeError::Engine {
-        kind: crate::tags::error_family::STORE,
-        message: "scratch page unreadable".into(),
-    };
-    assert!(is_terminal_backing(&store));
-    match preview_error_outcome(store) {
-        Ok(PullOutcome::Terminal(RuntimeError::Engine { kind, .. })) => {
-            assert_eq!(kind, crate::tags::error_family::STORE);
-        }
-        Ok(PullOutcome::Eof) => panic!("store failure must not become EOF"),
-        Ok(PullOutcome::Page { .. }) => panic!("store failure must not complete a page"),
-        Err(_) => panic!("store failure is Terminal, not a resource Err"),
-    }
-
-    // Retry after fail-close: preview returns None; still not EOF.
-    match preview_none_outcome() {
-        PullOutcome::Terminal(RuntimeError::ClosedHandle) => {}
-        PullOutcome::Eof => panic!("fail-closed retry must not be lawful EOF"),
-        PullOutcome::Page { .. } => panic!("fail-closed retry must not invent a page"),
-        PullOutcome::Terminal(_) => {}
-    }
-
-    let oversized = RuntimeError::ResourceLimit {
-        dimension: "resultBytes",
-        used: 0,
-        requested: 32,
-        limit: 0,
-    };
-    assert!(!is_terminal_backing(&oversized));
-    assert!(matches!(
-        preview_error_outcome(oversized),
-        Err(RuntimeError::ResourceLimit {
-            dimension: "resultBytes",
-            ..
-        })
-    ));
-}
-
-// ---- D07 drafts ------------------------------------------------------------
 
 fn draft_payload(allowance_input: u64, allowance_rows: u64) -> DraftPayload {
-    let descriptor = Mini.descriptor();
-    let schema = {
-        use bumbledb::schema::ValidateDescriptor as _;
-        descriptor.clone().validate().expect("valid schema")
-    };
+    use bumbledb::schema::ValidateDescriptor as _;
+    let schema = Mini.descriptor().validate().expect("valid schema");
     DraftPayload {
         schema: Arc::new(schema),
-        sealed: Arc::new(crate::seal(descriptor, Vec::new())),
         pending: Vec::new(),
         used_input: 0,
         used_rows: 0,
@@ -674,7 +608,10 @@ fn d07_draft_chunks_share_one_cumulative_budget_and_failure_is_terminal() {
     let rows = vec![vec![Value::U64(1), Value::U64(10)]];
     match ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone(), 60) {
         Ok(Output::Mutation { submitted, .. }) => assert_eq!(submitted, 1),
-        other => panic!("first chunk admits, got {other:?}"),
+        other => panic!(
+            "first chunk admits, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     match ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone(), 60) {
         Err(RuntimeError::ResourceLimit {
@@ -683,7 +620,10 @@ fn d07_draft_chunks_share_one_cumulative_budget_and_failure_is_terminal() {
             assert_eq!(dimension, "inputBytes");
             assert_eq!(used, 60);
         }
-        other => panic!("cumulative budget must refuse, got {other:?}"),
+        other => panic!(
+            "cumulative budget must refuse, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     assert!(matches!(
         ingest_from_payload(&mut payload, &ctx, 0, true, rows, 1),
@@ -715,9 +655,20 @@ fn d07_draft_finish_normalizes_add_wins_and_spends() {
 // ---- D01 / D18 collect + result lifetime -----------------------------------
 
 fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Payload, u64) {
-    let lease = db.access().expect("lease");
-    let Output::Session(opened) = runtime.spawn_read_session_for(db, lease).expect("session")
-    else {
+    let (opened_tx, opened_rx) = std::sync::mpsc::channel();
+    let opening = runtime
+        .open_session(
+            db,
+            policy(),
+            Box::new(move || {
+                opened_tx.send(()).unwrap();
+            }),
+        )
+        .expect("session submits");
+    opened_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("session notify");
+    let Output::Session(opened) = runtime.take(&opening).expect("session") else {
         panic!("expected a session")
     };
     let query = bumbledb::Query {
@@ -797,15 +748,18 @@ fn d18_sealed_results_outlive_their_session_and_collect_is_bounded() {
         Err(RuntimeError::ResourceLimit { dimension, .. }) => {
             assert_eq!(dimension, "resultBytes");
         }
-        other => panic!("zero-byte collect must refuse, got {other:?}"),
+        other => panic!(
+            "zero-byte collect must refuse, got {:?}",
+            other.map(|_| "unexpected successful output")
+        ),
     }
     match collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20).expect("bounded collect") {
         Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
-        other => panic!("expected rows, got {other:?}"),
+        _ => panic!("expected rows"),
     }
     match collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20).expect("second collect") {
         Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
-        other => panic!("expected rows, got {other:?}"),
+        _ => panic!("expected rows"),
     }
 
     drop(db);
@@ -855,19 +809,13 @@ fn d18_queued_output_close_drains_without_wrapper_authority() {
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20]]);
     let (payload, _) = sealed_result(&runtime, &db);
-    let admission = RegistryAdmission::admit(
-        Arc::clone(&runtime),
-        NativeKind::Result,
-        64,
-        payload,
-    )
-    .expect("admit result");
+    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Result, 64, payload)
+        .expect("admit result");
     let cap = admission.cap();
     let (tx, rx) = std::sync::mpsc::channel();
     close_admitted(
         &runtime,
         cap,
-        &admission,
         Box::new(move |report| {
             let _ = tx.send(report);
         }),
@@ -987,9 +935,10 @@ fn the_row_codec_borrows_decoded_values_and_refuses_foreign_records() {
     assert_eq!(decoded.len(), 2);
     assert_eq!(decoded[0], vec![Value::U64(1), Value::U64(10)]);
     assert!(decode_rows_values(&schema, RelationId(1), &bytes, &ctx).is_err());
+    // A different u64 payload is still a lawful canonical change set;
+    // truncation, not arbitrary scalar mutation, is malformed framing.
     let mut tampered = bytes;
-    let last = tampered.len() - 1;
-    tampered[last] ^= 0xff;
+    tampered.pop();
     assert!(decode_rows_values(&schema, RelationId(0), &tampered, &ctx).is_err());
 }
 
@@ -1011,4 +960,83 @@ fn d01_answers_out_charges_empty_page_without_escaping() {
         .expect("empty conversion is a zero-charge owner");
     assert!(rows.is_empty());
     assert_eq!(charge.bytes(), 0);
+}
+
+#[test]
+fn point_read_output_retains_its_own_capacity_charge_after_decode_drops() {
+    bumbledb::schema! {
+        pub OutputRow;
+        relation Entry { id: u64, text: str, bytes: bytes<16> }
+    }
+    let descriptor = OutputRow.descriptor();
+    let fields = &descriptor.relations[0].fields;
+    let values = [
+        Value::U64(7),
+        Value::String("payload".into()),
+        Value::FixedBytes(Box::new([9; 16])),
+    ];
+    let ctx = work();
+    let encoded = bumbledb::canonical::CanonicalRow::encode(fields, &values, &ctx).unwrap();
+    let row = bumbledb::canonical::decode(fields, encoded.as_bytes(), &ctx).unwrap();
+    let output = crate::marshal::row_out_charged(&ctx, &row).expect("admitted output");
+    let capacity = (3 * size_of::<ValueOut>() + 7 + 16) as u64;
+    assert_eq!(output.charge.bytes(), capacity);
+    drop(row);
+    drop(encoded);
+    assert_eq!(ctx.used(bumbledb::work::Resource::WorkingBytes), 0);
+    assert_eq!(ctx.used(bumbledb::work::Resource::ResultBytes), capacity);
+    assert!(matches!(&output.values[1], ValueOut::Text(text) if text == "payload"));
+    assert!(matches!(&output.values[2], ValueOut::Bytes(bytes) if bytes.as_slice() == [9; 16]));
+    drop(output);
+    assert_eq!(ctx.used(bumbledb::work::Resource::ResultBytes), 0);
+
+    let refused = ExecutionPolicy {
+        result_bytes: capacity - 1,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    let encoded = bumbledb::canonical::CanonicalRow::encode(fields, &values, &refused).unwrap();
+    let row = bumbledb::canonical::decode(fields, encoded.as_bytes(), &refused).unwrap();
+    let retained_source = refused.used(bumbledb::work::Resource::WorkingBytes);
+    assert!(matches!(
+        crate::marshal::row_out_charged(&refused, &row),
+        Err(RuntimeError::Work(WorkError::Exhausted {
+            resource: bumbledb::work::Resource::ResultBytes,
+            ..
+        }))
+    ));
+    assert_eq!(refused.used(bumbledb::work::Resource::ResultBytes), 0);
+    assert_eq!(
+        refused.used(bumbledb::work::Resource::WorkingBytes),
+        retained_source
+    );
+}
+
+#[test]
+fn a_cancelled_draft_chunk_spends_the_draft_without_fabricating_usage() {
+    let mut payload = Payload::Draft(draft_payload(1024, 16));
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        ingest_from_payload(
+            &mut payload,
+            &cancelled,
+            0,
+            true,
+            vec![vec![Value::U64(1), Value::U64(2)]],
+            16
+        ),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    let Payload::Draft(entry) = &payload else {
+        panic!("draft")
+    };
+    assert!(entry.ledger.terminal);
+    assert_eq!(entry.used_input, 0);
+    assert_eq!(entry.used_rows, 0);
+    assert!(matches!(
+        finish_from_payload(&mut payload, &work()),
+        Err(RuntimeError::SpentHandle)
+    ));
 }

@@ -21,7 +21,9 @@ mod tests {
     fn corpus_db(tag: &str) -> (std::path::PathBuf, Db<Ledger>) {
         let dir = std::env::temp_dir().join(format!("bumbledb-tripwires-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
-        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
+        let db = Db::create(&dir, Ledger, crate::harness::bench_work())
+            .expect("create")
+            .expect("accepted");
         corpus::load_bumbledb(&db, CFG).expect("load");
         (dir, db)
     }
@@ -37,17 +39,23 @@ mod tests {
                 .iter()
                 .find(|f| f.name == name)
                 .expect("registered");
-            let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+            let mut prepared = db
+                .prepare(&(family.query)(), crate::harness::bench_work())
+                .expect("prepare");
             let sets = (family.params)(&CFG);
             for params in &sets {
                 let args = param_args(params);
-                db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
-                    .expect("warm");
+                db.read(crate::harness::bench_work(), |snap| {
+                    snap.execute_collect(&mut prepared, &args).map(|_| ())
+                })
+                .expect("warm");
             }
             obs::start_capture();
             let args = param_args(&sets[0]);
-            db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
-                .expect("execute");
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute_collect(&mut prepared, &args).map(|_| ())
+            })
+            .expect("execute");
             obs::finish_capture()
                 .iter()
                 .filter(|e| e.point() == point)
@@ -72,13 +80,17 @@ mod tests {
     fn aggregate_family_fold_regimes_are_pinned() {
         let dir = std::env::temp_dir().join("bumbledb-tripwires-elide");
         let _ = std::fs::remove_dir_all(&dir);
-        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
+        let db = Db::create(&dir, Ledger, crate::harness::bench_work())
+            .expect("create")
+            .expect("accepted");
         let regime = |name: &str| {
             let family = families::all()
                 .iter()
                 .find(|f| f.name == name)
                 .expect("registered");
-            let prepared = db.prepare(&(family.query)()).expect("prepares");
+            let prepared = db
+                .prepare(&(family.query)(), crate::harness::bench_work())
+                .expect("prepares");
             prepared.distinct_bindings()
         };
         assert!(regime("balance"), "balance elides the seen set");
@@ -100,21 +112,27 @@ mod tests {
         let (dir, db) = corpus_db("rescan");
         for family in families::all() {
             let query = (family.query)();
-            let mut prepared = db.prepare(&query).expect("prepare");
+            let mut prepared = db
+                .prepare(&query, crate::harness::bench_work())
+                .expect("prepare");
             let sets = (family.params)(&CFG);
 
             for params in &sets {
                 let args = param_args(params);
-                db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
-                    .expect("warm");
+                db.read(crate::harness::bench_work(), |snap| {
+                    snap.execute_collect(&mut prepared, &args).map(|_| ())
+                })
+                .expect("warm");
             }
 
             for cycle in 0..2 {
                 for (set_idx, params) in sets.iter().enumerate() {
                     let args = param_args(params);
                     obs::start_capture();
-                    db.read(|snap| snap.execute_collect(&mut prepared, &args).map(|_| ()))
-                        .expect("execute");
+                    db.read(crate::harness::bench_work(), |snap| {
+                        snap.execute_collect(&mut prepared, &args).map(|_| ())
+                    })
+                    .expect("execute");
                     let events = obs::finish_capture();
                     let builds = events
                         .iter()
@@ -142,12 +160,16 @@ mod tests {
             .iter()
             .find(|f| f.name == "containment_walk")
             .expect("registered");
-        let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+        let mut prepared = db
+            .prepare(&(family.query)(), crate::harness::bench_work())
+            .expect("prepare");
         let sets = (family.params)(&CFG);
         let args = param_args(&sets[0]);
         obs::start_capture();
         let out = db
-            .read(|snap| snap.execute_collect(&mut prepared, &args))
+            .read(crate::harness::bench_work(), |snap| {
+                snap.execute_collect(&mut prepared, &args)
+            })
             .expect("first execute");
         let cold = obs::finish_capture()
             .iter()
@@ -157,19 +179,26 @@ mod tests {
         assert_eq!(cold, 1, "one distinct name, one descent on first touch");
         for params in &sets {
             let warm_args = param_args(params);
-            db.read(|snap| snap.execute_collect(&mut prepared, &warm_args).map(|_| ()))
-                .expect("warm");
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute_collect(&mut prepared, &warm_args).map(|_| ())
+            })
+            .expect("warm");
         }
         obs::start_capture();
         let out = db
-            .read(|snap| snap.execute_collect(&mut prepared, &args))
+            .read(crate::harness::bench_work(), |snap| {
+                snap.execute_collect(&mut prepared, &args)
+            })
             .expect("re-execute");
         let warm = obs::finish_capture()
             .iter()
             .filter(|e| e.point() == obs::names::DICT_RESOLVE)
             .count();
         assert!(out.len() > 1, "a real result set");
-        assert_eq!(warm, 0, "the persistent tier holds: zero descents warm");
+        assert_eq!(
+            warm, 1,
+            "each result owns its bytes: resolve the distinct name once per execution, never once per row"
+        );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

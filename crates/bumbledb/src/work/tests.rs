@@ -58,6 +58,25 @@ fn clones_share_cumulative_work_and_linear_live_bytes() {
 }
 
 #[test]
+fn joining_reservations_releases_the_donor_ledger_reference() {
+    let ctx = policy().start().unwrap();
+    let mut owner = ctx.reserve(ByteKind::Working, 1).unwrap();
+    for _ in 0..9 {
+        owner.join(ctx.reserve(ByteKind::Working, 1).unwrap());
+        assert_eq!(
+            Arc::strong_count(&ctx.0),
+            2,
+            "one context and one live owner"
+        );
+    }
+    assert_eq!(owner.bytes(), 10);
+    assert_eq!(ctx.used(Resource::WorkingBytes), 10);
+    drop(owner);
+    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
+    assert_eq!(Arc::strong_count(&ctx.0), 1);
+}
+
+#[test]
 fn concurrent_admission_cannot_oversubscribe_the_same_allowance() {
     let ctx = policy().start().unwrap();
     let barrier = Arc::new(std::sync::Barrier::new(16));

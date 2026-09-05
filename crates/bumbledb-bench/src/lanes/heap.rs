@@ -173,7 +173,8 @@ fn fact_count(sizes: &Sizes) -> u64 {
 }
 
 fn load_builder(cfg: GenConfig, sizes: &Sizes) -> Result<InstanceBuilder<Ledger>, String> {
-    let mut builder = InstanceBuilder::new(Ledger).map_err(|e| format!("builder: {e:?}"))?;
+    let mut builder = InstanceBuilder::new(Ledger, crate::harness::bench_work())
+        .map_err(|e| format!("builder: {e:?}"))?;
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
         let n = sizes.rows(rel);
@@ -245,38 +246,43 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
     // ENG-008: the no-sync publish surface is deleted; the heap-arm ladder
     // publishes durably (publish_ns prices the durable path — recorded in
     // the artifact by construction).
-    let db = Db::from_instance(&publish_dir, &heap).map_err(|e| format!("from_instance: {e:?}"))?;
+    let db = Db::from_instance(&publish_dir, &heap, crate::harness::bench_work())
+        .map_err(|e| format!("from_instance: {e:?}"))?;
     let publish_ns = u64::try_from(publish_start.elapsed().as_nanos()).expect("fits");
 
     let key = AccountById { id: AccountId(0) };
     let heap_get = harness::measure(proto, || {
-        heap.get(key)
+        heap.get(key, &crate::harness::bench_work())
             .map(|got| u64::from(got.is_some()))
             .map_err(|e| format!("heap get: {e:?}"))
     })?;
     let lmdb_get = harness::measure(proto, || {
-        db.read(|snap| snap.get(key).map(|got| u64::from(got.is_some())))
-            .map_err(|e| format!("lmdb get: {e:?}"))
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.get(key).map(|got| u64::from(got.is_some()))
+        })
+        .map_err(|e| format!("lmdb get: {e:?}"))
     })?;
 
     let fact: Account = heap
-        .get(key)
+        .get(key, &crate::harness::bench_work())
         .map_err(|e| format!("seed get: {e:?}"))?
         .ok_or_else(|| "account 0 missing".to_owned())?;
     let heap_contains = harness::measure(proto, || {
-        heap.contains(&fact)
+        heap.contains(&fact, &crate::harness::bench_work())
             .map(u64::from)
             .map_err(|e| format!("heap contains: {e:?}"))
     })?;
     let lmdb_contains = harness::measure(proto, || {
-        db.read(|snap| snap.contains(&fact).map(u64::from))
-            .map_err(|e| format!("lmdb contains: {e:?}"))
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.contains(&fact).map(u64::from)
+        })
+        .map_err(|e| format!("lmdb contains: {e:?}"))
     })?;
 
     let expected_accounts = sizes.accounts;
     let heap_scan = harness::measure(proto, || {
         let n = heap
-            .scan(ids::ACCOUNT)
+            .scan(ids::ACCOUNT, &crate::harness::bench_work())
             .map_err(|e| format!("heap scan: {e:?}"))?
             .try_fold(0u64, |n, row| {
                 row.map(|_| n + 1).map_err(|e| format!("{e:?}"))
@@ -288,7 +294,7 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
     })?;
     let lmdb_scan = harness::measure(proto, || {
         let n = db
-            .read(|snap| {
+            .read(crate::harness::bench_work(), |snap| {
                 snap.scan(ids::ACCOUNT)?
                     .try_fold(0u64, |acc, row| row.map(|_| acc + 1))
             })

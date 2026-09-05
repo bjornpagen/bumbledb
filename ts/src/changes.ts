@@ -1,5 +1,5 @@
-import { Effect, Exit } from "effect"
 import type { Scope } from "effect"
+import { Effect, Exit } from "effect"
 import { drainClose, releaseOwner } from "#close.ts"
 import type { SchemaId } from "#compile.ts"
 import { Schema as CoreSchema, schemaTables } from "#compile.ts"
@@ -9,10 +9,10 @@ import { lower } from "#lower.ts"
 import type { AnyRelation, Fact } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
 import { assertHostCellFits, cellOf, recordOf } from "#rows.ts"
-import type { CloseReport } from "#runtime-errors.ts"
-import { DbError } from "#runtime-errors.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
 import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import type { CloseReport } from "#runtime-errors.ts"
+import { DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
 import type { Rel } from "#shape.ts"
 
@@ -107,11 +107,7 @@ function hostFactCharge(relation: AnyRelation, record: Readonly<Record<string, u
 		if (value === undefined) {
 			throw refusal("ChangeDraft.ingest", "InvalidArgument")
 		}
-		bytes += assertHostCellFits(
-			`relation ${data.name} field ${declared.name}`,
-			value,
-			CHUNK_BYTES
-		)
+		bytes += assertHostCellFits(`relation ${data.name} field ${declared.name}`, value, CHUNK_BYTES)
 	}
 	return bytes
 }
@@ -134,11 +130,7 @@ function projectFact(relation: AnyRelation, record: Readonly<Record<string, unkn
  * before any string scan or byte copy. A leftover fact that does not fit
  * the current chunk is returned unconverted for the next turn.
  */
-function pullChunk(
-	relation: AnyRelation,
-	iterator: Iterator<object>,
-	pending: object | undefined
-): Chunk {
+function pullChunk(relation: AnyRelation, iterator: Iterator<object>, pending: object | undefined): Chunk {
 	const cells: CellValue[] = []
 	let rows = 0n
 	let bytes = 0n
@@ -217,11 +209,7 @@ function ingest(
 				const chunk = yield* Effect.try({
 					try: () => pullChunk(relation, iterator, leftover),
 					catch: (cause) => (cause instanceof DbError ? cause : refusal(operation, "InvalidArgument"))
-				}).pipe(
-					Effect.catch((error) =>
-						spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))
-					)
-				)
+				}).pipe(Effect.catch((error) => spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))))
 				leftover = chunk.leftover
 				done = chunk.done && leftover === undefined
 				if (chunk.rows === 0n) {
@@ -286,7 +274,8 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 					state.spent = true
 					const wire = yield* nativeOperationWith(
 						"ChangeDraft.finish",
-						(callback) => dbNative.runtimeDraftFinish(state.handle, policyWire(state.policy, "ChangeDraft.finish"), callback),
+						(callback) =>
+							dbNative.runtimeDraftFinish(state.handle, policyWire(state.policy, "ChangeDraft.finish"), callback),
 						dbNative.runtimeChangesTake,
 						(value) => value
 					)
@@ -299,7 +288,9 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 							return Effect.void
 						}
 						internal.closed = true
-						return releaseOwner("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(internal.handle, callback))
+						return releaseOwner("ChangeSet.close", (callback) =>
+							dbNative.runtimeChangesClose(internal.handle, callback)
+						)
 					}),
 				{ interruptible: true }
 			)
@@ -366,5 +357,5 @@ const draftStates = new WeakMap<object, DraftState>()
 
 const ChangeSet = Object.freeze({ builder })
 
-export type { ChangeDraft, ChangeSet }
+export type { ChangeDraft }
 export { ChangeSet, internalChanges }

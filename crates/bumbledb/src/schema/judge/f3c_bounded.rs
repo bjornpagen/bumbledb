@@ -131,8 +131,7 @@ fn beyond_working_budget_admission_spills_and_admits() {
     let schema = text_keyed_schema();
     let state = StoreErrorState(wide_state(4000, false));
     let work = policy(256 << 10, 64 << 20);
-    let verdict =
-        judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged");
+    let verdict = judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged");
     assert_eq!(verdict, Judgment::Admitted);
     assert!(
         work.used(Resource::WorkingBytes) <= 256 << 10,
@@ -199,8 +198,7 @@ fn rejection_diagnostics_are_complete_through_the_disk_tier() {
     let schema = text_keyed_schema();
     let state = StoreErrorState(wide_state(4000, true));
     let work = policy(256 << 10, 64 << 20);
-    let verdict =
-        judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged");
+    let verdict = judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged");
     let Judgment::Rejected(violations) = verdict else {
         panic!("the duplicate text must reject");
     };
@@ -499,12 +497,14 @@ fn judgments_are_deterministic() {
 }
 
 fn clone_map(map: &MapState) -> MapState {
+    use super::CandidateFacts;
     let mut cloned = MapState::new();
     for relation in 0..8u32 {
-        for row in map.rows(RelationId(relation)) {
-            let Ok(values) = row;
-            cloned.insert(RelationId(relation), values.into_vec());
-        }
+        map.visit_rows(RelationId(relation), &mut |values| {
+            cloned.insert(RelationId(relation), values.to_vec());
+            Ok(true)
+        })
+        .unwrap();
     }
     cloned
 }

@@ -166,8 +166,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                         .collect()
                 })
                 .collect();
-            let image = &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
-                .expect("small")];
+            let image =
+                &images[usize::try_from(occurrence.bind.edb().expect("fixture").0).expect("small")];
             Colt::new(
                 apply(
                     image,
@@ -175,7 +175,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                     &[],
                     Vec::new(),
                     image.generation().text_eq(None),
-                ),
+                )
+                .expect("view"),
                 &[],
                 columns,
             )

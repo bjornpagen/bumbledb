@@ -181,7 +181,7 @@ fn render_type(out: &mut String, value_type: &ValueType) {
         ValueType::I64 => out.push_str("\"i64\""),
         ValueType::F64 => out.push_str("\"f64\""),
         ValueType::String => out.push_str("\"string\""),
-        ValueType::Id128 => out.push_str("\"id128\""),
+        ValueType::Uuid => out.push_str("\"uuid\""),
         ValueType::FixedBytes { len } => {
             out.push_str("{\"fixedBytes\":");
             out.push_str(&len.to_string());
@@ -383,7 +383,7 @@ fn parse_type(json: &Json) -> Result<ValueType, TheoryFile> {
             "i64" => Ok(ValueType::I64),
             "f64" => Ok(ValueType::F64),
             "string" => Ok(ValueType::String),
-            "id128" => Ok(ValueType::Id128),
+            "uuid" => Ok(ValueType::Uuid),
             _ => Err(TheoryFile::Shape("unknown scalar type")),
         };
     }
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn note_theory_is_a_descriptor() {
-        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"id128"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
+        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"uuid"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
         let schema = parse(raw).expect("note theory");
         assert_eq!(schema.relations.len(), 1);
         assert_eq!(schema.statements.len(), 1);
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn successor_types_parse_and_fixed_f64_refuses() {
-        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"a","type":"id128"},{"name":"b","type":{"interval":"f64"}},{"name":"c","type":{"fixedInterval":{"element":"i64","width":"4"}}}]}],"statements":[]}"#;
+        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"a","type":"uuid"},{"name":"b","type":{"interval":"f64"}},{"name":"c","type":{"fixedInterval":{"element":"i64","width":"4"}}}]}],"statements":[]}"#;
         let schema = parse(raw).expect("successor types");
         assert_eq!(schema.relations[0].fields.len(), 3);
         let bad = r#"{"relations":[{"name":"n","fields":[{"name":"c","type":{"fixedInterval":{"element":"f64","width":"4"}}}]}],"statements":[]}"#;
@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn render_is_a_deterministic_left_inverse_of_parse() {
-        let raw = r#"{"relations":[{"name":"kind","fields":[{"name":"label","type":"string"}],"extension":[{"handle":"a","values":[{"string":"alpha"}]},{"handle":"b","values":[{"string":"beta"}]}]},{"name":"note","fields":[{"name":"id","type":"id128"},{"name":"kind","type":"u64"},{"name":"score","type":"f64"},{"name":"span","type":{"interval":"u64"}}]}],"statements":[{"functionality":{"relation":1,"projection":[0]}},{"containment":{"source":{"relation":1,"projection":[1]},"target":{"relation":0,"projection":[0]}}},{"capacity":{"target":{"relation":0,"projection":[0]},"weight":"unit","lo":"0","hi":{"lit":"5"},"source":{"relation":1,"projection":[1],"selection":[[2,[{"u64":"1"},{"u64":"2"}]]]}}}]}"#;
+        let raw = r#"{"relations":[{"name":"kind","fields":[{"name":"label","type":"string"}],"extension":[{"handle":"a","values":[{"string":"alpha"}]},{"handle":"b","values":[{"string":"beta"}]}]},{"name":"note","fields":[{"name":"id","type":"uuid"},{"name":"kind","type":"u64"},{"name":"score","type":"f64"},{"name":"span","type":{"interval":"u64"}}]}],"statements":[{"functionality":{"relation":1,"projection":[0]}},{"containment":{"source":{"relation":1,"projection":[1]},"target":{"relation":0,"projection":[0]}}},{"capacity":{"target":{"relation":0,"projection":[0]},"weight":"unit","lo":"0","hi":{"lit":"5"},"source":{"relation":1,"projection":[1],"selection":[[2,[{"u64":"1"},{"u64":"2"}]]]}}}]}"#;
         let descriptor = parse(raw).expect("kitchen descriptor");
         let text = render(&descriptor);
         let reparsed = parse(&text).expect("rendered text parses");

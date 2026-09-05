@@ -20,10 +20,6 @@ describe("pure schema import", () => {
 			encoding: "utf8",
 			env: { ...process.env }
 		})
-		assert.equal(
-			result.status,
-			0,
-			`no-addon child failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-		)
+		assert.equal(result.status, 0, `no-addon child failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
 	})
 })

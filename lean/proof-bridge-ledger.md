@@ -76,7 +76,7 @@ gates. Lean braid theorems cannot certify this machine.
 | --- | --- |
 | Exact `dyn` line counts | Deleted (not a proof) |
 | Wording bans / comment-hygiene tokens | Deleted (not a proof) |
-| Log v3 surface pins / identity emitter / `spec-gen --check` | L08/L21 (wire goldens, not authority theorems) |
+| Current identity emitter / `conformance_v3` test target | L08/L21 (identity goldens, not authority theorems) |
 
 ## Handoffs
 

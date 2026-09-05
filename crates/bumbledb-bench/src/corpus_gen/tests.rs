@@ -21,7 +21,7 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
 
     assert_eq!(
         digest_hex(&a),
-        "666300aae0901a6829a5bd283aacc592a5b3995e114458ca13232ee3415bd54b",
+        "cc7f023f1ce6fc94ad2766ce1e9149555fc2db9286a63deef17e305fc688f2ca",
         "generator output changed — re-baseline deliberately"
     );
 }

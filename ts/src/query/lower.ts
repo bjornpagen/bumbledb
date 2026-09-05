@@ -10,7 +10,6 @@ import {
 	rosterOf,
 	u64 as u64Field
 } from "#fields.ts"
-import { Id128 } from "#id128.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AtomIr,
@@ -56,7 +55,6 @@ import type {
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type { QueryNode } from "#query/compute.ts"
 import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
-import { literalWireOf } from "#scalar.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -86,7 +84,9 @@ import {
 	renderFieldKind,
 	term
 } from "#query/scope.ts"
+import { literalWireOf } from "#scalar.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
+import { Uuid } from "#uuid.ts"
 
 type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], MatchOwner>
 
@@ -207,7 +207,10 @@ interface QueryRuleChain<
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
 
-	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(imported: Q, bindings: B): QueryRuleChain<Rels, P, Classes>
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
+		imported: Q,
+		bindings: B
+	): QueryRuleChain<Rels, P, Classes>
 
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
@@ -337,7 +340,10 @@ interface RecRuleChain<
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
-	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(imported: Q, bindings: B): RecRuleChain<Rels, P, Classes>
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
+		imported: Q,
+		bindings: B
+	): RecRuleChain<Rels, P, Classes>
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
 	): RecRuleChain<Rels, Flatten<P & CondParamsShape<C>>, Classes>
@@ -1958,11 +1964,11 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
 			}
 			return { kind: "f64", value }
 		}
-		case "id128": {
-			if (!Id128.isId128(value)) {
-				throw literalShapeError(context, "an Id128 (32 lowercase hex characters)", value)
+		case "uuid": {
+			if (!Uuid.isUuid(value)) {
+				throw literalShapeError(context, "a UUID (canonical UUID text)", value)
 			}
-			return { kind: "id128", value }
+			return { kind: "uuid", value }
 		}
 		case "str": {
 			if (typeof value !== "string") {

@@ -18,7 +18,7 @@ fn owned_row(row: &[Value]) -> compare::Answer {
 
 /// # Errors
 pub fn posting_multiset_ours(db: &Db<Ledger>) -> Result<Vec<compare::Answer>, String> {
-    db.read(|snap| {
+    db.read(crate::harness::bench_work(), |snap| {
         let mut out = Vec::new();
         for row in snap.scan(ids::POSTING)? {
             out.push(owned_row(&row?));

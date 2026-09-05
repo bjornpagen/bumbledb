@@ -6,11 +6,15 @@ use crate::families::bind_values;
 fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(name);
     let _ = std::fs::remove_dir_all(&dir);
-    let db = Db::create(&dir, bumbledb::Theory::descriptor(super::Rings))
-        .expect("create")
-        .expect("accepted");
+    let db = Db::create(
+        &dir,
+        bumbledb::Theory::descriptor(super::Rings),
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     for (rel, rows) in super::corpus::rows_smoke(7) {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, rows)
                 .map(bumbledb::MutationReport::changed)
         })
@@ -21,10 +25,14 @@ fn smoke_store(name: &str) -> (Db<SchemaDescriptor>, std::path::PathBuf) {
 }
 
 fn run_count(db: &Db<SchemaDescriptor>, query: &Query, params: &[Value]) -> Option<u64> {
-    let mut prepared = db.prepare(query).expect("prepare");
+    let mut prepared = db
+        .prepare(query, crate::harness::bench_work())
+        .expect("prepare");
     let mut buffer = Answers::new();
-    db.read(|snap| snap.execute(&mut prepared, &bind_values(params), &mut buffer))
-        .expect("execute");
+    db.read(crate::harness::bench_work(), |snap| {
+        snap.execute(&mut prepared, &bind_values(params), &mut buffer)
+    })
+    .expect("execute");
     match buffer.len() {
         0 => None,
         1 => match buffer.get(0, 0) {

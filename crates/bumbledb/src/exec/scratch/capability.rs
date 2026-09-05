@@ -4,7 +4,7 @@
 
 use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
 
-use super::{ScratchRelation, DEFAULT_RAM_BYTES};
+use super::{DEFAULT_RAM_BYTES, ScratchRelation};
 
 /// The bounded scratch policy carried beside an operation ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,13 +90,13 @@ impl ScratchCapability {
     /// # Errors
     /// [`WorkError::InvalidTimeout`] for an unrepresentable deadline, or a
     /// scratch policy that exceeds the operation ledger.
-    pub fn start(
-        execution: ExecutionPolicy,
-        scratch: ScratchPolicy,
-    ) -> Result<Self, WorkError> {
+    pub fn start(execution: ExecutionPolicy, scratch: ScratchPolicy) -> Result<Self, WorkError> {
         let work = execution.start()?;
         scratch.enforce(&work)?;
-        Ok(Self { work, policy: scratch })
+        Ok(Self {
+            work,
+            policy: scratch,
+        })
     }
 
     /// Bind scratch to the **execute** ledger. Clones the context (shared

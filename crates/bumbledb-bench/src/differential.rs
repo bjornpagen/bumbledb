@@ -144,7 +144,7 @@ pub fn cited(violations: &bumbledb::Violations, schema: &Schema) -> Vec<Violatio
 }
 
 pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
-    let outcome = db.write(|tx| {
+    let outcome = db.write(crate::harness::bench_work(), |tx| {
         for (rel, fact) in &delta.deletes {
             tx.delete_dyn(*rel, [fact])?;
         }
@@ -176,7 +176,7 @@ pub(crate) fn engine_admit(
         .clone()
         .validate()
         .unwrap_or_else(|err| panic!("complete-admission descriptor re-validates: {err}"));
-    let mut builder = InstanceBuilder::new(schema)
+    let mut builder = InstanceBuilder::new(schema, crate::harness::bench_work())
         .unwrap_or_else(|err| panic!("engine refused a complete-admission schema: {err}"));
     for (rel, fact) in facts {
         if let Err(err) = builder.load_dyn(*rel, [fact.as_slice()]) {
@@ -214,7 +214,7 @@ pub(crate) fn engine_write_from<S>(
     witness: &Witness<S>,
     delta: &Delta,
 ) -> ConditionalVerdict {
-    let outcome = db.write_from(witness, |tx| {
+    let outcome = db.write_from(crate::harness::bench_work(), witness, |tx| {
         for (rel, fact) in &delta.deletes {
             tx.delete_dyn(*rel, [fact])?;
         }
@@ -258,9 +258,13 @@ pub(crate) fn naive_write_from(
 }
 
 pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) -> Answers {
-    let mut prepared = db.prepare(query).expect("differential queries validate");
+    let mut prepared = db
+        .prepare(query, crate::harness::bench_work())
+        .expect("differential queries validate");
     let args = crate::families::param_args(params);
-    let outcome = db.read(|snap| snap.execute_collect(&mut prepared, &args));
+    let outcome = db.read(crate::harness::bench_work(), |snap| {
+        snap.execute_collect(&mut prepared, &args)
+    });
     match outcome {
         Ok(buffer) => Answers::Ok(
             buffer
@@ -286,7 +290,7 @@ fn owned_value(value: AnswerValue<'_>) -> Value {
         AnswerValue::U64(v) => Value::U64(v),
         AnswerValue::I64(v) => Value::I64(v),
         AnswerValue::F64(v) => Value::F64(v),
-        AnswerValue::Id128(v) => Value::Id128(v),
+        AnswerValue::Uuid(v) => Value::Uuid(v),
         AnswerValue::String(v) => Value::String(v.into()),
         AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
         AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),

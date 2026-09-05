@@ -264,10 +264,11 @@ position 0):
 }
 ```
 
-The verdict compares WHOLE, per phase: a key (functionality) violation
-preempts the statement phase on all three oracles
-(`Bumbledb/Txn.lean: judge_key_preempts`); `violations` is the
-rejecting phase's complete set as ascending statement indices. The
+The verdict compares the WHOLE complete violation set in ascending
+statement order (`Bumbledb/Txn.lean: rejection_is_complete`). The historical
+JSON field `phase` is descriptive only: `key` means every violation is a
+functionality statement; `statement` includes non-key or mixed failures.
+It does not select or truncate the checked statements. The
 containment `Direction` is a Rust-side refinement below the Lean
 altitude (the Lean violation sets are per-statement), so a statement
 cited in both directions appears once. Closed-relation writes are
@@ -293,7 +294,7 @@ containments run through `judgeB` on the candidate.
 
 ## Complete-admission cases — instance-lifetime L5
 
-A complete-admission case compares the same two-phase `Txn.judgeB`
+A complete-admission case compares the same complete `Txn.judgeB`
 verdict, but `instance` **is the candidate** — no green pre-state,
 no incremental shortcut. The document reuses the judgment shape
 (`kind` is `"complete"`; `delta` is empty). `finalWorld` is the
@@ -330,7 +331,7 @@ and the calendar Duration pair — the closed-pair sum refutation and
 the R16 fresh-keyed interplay live outside the lane by its own
 fences, as validation-refusal and engine-side unit coverage
 respectively),
-the two-phase preemption mix,
+mixed key and non-key failures,
 set-selections deciding a verdict, the delete-then-reinsert
 touched-group seam, and the permuted-interval lock — a statement
 written `Claim(span, id) <= Slot(span, id)` against the pointwise key

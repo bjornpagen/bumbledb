@@ -16,17 +16,16 @@
 //! leftover `pending_advance`). Terminal backing stays sticky.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use bumbledb::work::{ExecutionPolicy, WorkContext};
-use bumbledb::{ChangeError, ChangeSet, CompleteResult, RelationId, ResultCursor, Value};
+use bumbledb::work::WorkContext;
+use bumbledb::{ChangeError, ChangeSet, CompleteResult, RelationId, ResultCursor, Theory, Value};
 use napi::bindgen_prelude::{Array, BigInt, Buffer, Env, External, Function, Object, Unknown};
 use napi_derive::napi;
 
 use crate::marshal::{self, ValueOut};
 use crate::runtime::registry::{
-    Capability, NativeKind, Payload, RegistryAdmission, ResultState,
-    registry_draft::DraftPayload,
+    Capability, NativeKind, Payload, RegistryAdmission, ResultState, registry_draft::DraftPayload,
 };
 use crate::runtime::{DraftLedger, Output, QueuedOutput, Runtime, RuntimeError};
 use crate::runtime_wire::{
@@ -41,13 +40,11 @@ mod delivery;
 mod draft;
 mod snapshot;
 
-pub(crate) use apply::{apply_change_set, changes_from_payload, inspect_db, integration_error};
+pub(crate) use apply::{apply_change_set, changes_from_payload, inspect_db};
 pub(crate) use close::{close_admitted, spawn_teardown};
 pub(crate) use codec::{decode_rows_values, encode_rows_bytes};
 pub(crate) use delivery::{
-    PagePlan, PullOutcome, accept_publication, collect_from_payload, intersected_result_bytes,
-    is_terminal_backing, plan_page, preview_error_outcome, preview_none_outcome,
-    publish_from_payload, pull_from_payload, register_page, reject_publication,
+    collect_from_payload, intersected_result_bytes, is_terminal_backing, publish_from_payload,
     transfer_from_payload,
 };
 pub(crate) use draft::{finish_from_payload, ingest_from_payload, parse_draft_rows};
@@ -105,7 +102,6 @@ pub(crate) fn snapshot(
 /// `runtime_snapshot_session`.
 pub struct ExecSessionOpened {
     pub session: Arc<crate::runtime::session::SnapshotSession>,
-    pub sealed: Arc<crate::Sealed>,
 }
 
 /// One sealed completed result. Capability routes to the worker table.
@@ -227,22 +223,10 @@ pub(crate) fn value_bytes(value: &Value) -> u64 {
     8 + match value {
         Value::String(text) => text.len() as u64,
         Value::FixedBytes(bytes) => bytes.len() as u64,
-        Value::Id128(_) | Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
+        Value::Uuid(_) | Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
             16
         }
         _ => 8,
-    }
-}
-
-fn hop_policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: 1 << 16,
-        result_bytes: 1 << 20,
-        rows: 1 << 16,
-        work_units: 1 << 16,
-        timeout: Duration::from_secs(10),
     }
 }
 
@@ -395,7 +379,6 @@ pub fn runtime_snapshot_session(
     let session = snapshot(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(session.runtime());
     let shared = Arc::clone(session);
-    let sealed = Arc::clone(&handle.sealed);
     let operation = session
         .submit(
             policy.parse().map_err(|error| thrown(env, error))?,
@@ -403,10 +386,7 @@ pub fn runtime_snapshot_session(
             move |_| {
                 Ok(Box::new(move |context, _access| {
                     context.checkpoint()?;
-                    Ok(Output::ExecSession(ExecSessionOpened {
-                        session: shared,
-                        sealed,
-                    }))
+                    Ok(Output::ExecSession(ExecSessionOpened { session: shared }))
                 }))
             },
         )
@@ -515,7 +495,7 @@ pub fn runtime_result_take(
     match take_output(env, handle)? {
         Output::CompleteResult(result) => {
             let admission = RegistryAdmission::admit(
-                runtime,
+                Arc::clone(&runtime),
                 NativeKind::Result,
                 result.byte_len(),
                 Payload::Result {
@@ -606,7 +586,7 @@ pub fn runtime_cursor_take(
     match take_output(env, handle)? {
         Output::ResultCursor(cursor) => {
             let admission = RegistryAdmission::admit(
-                runtime,
+                Arc::clone(&runtime),
                 NativeKind::Cursor,
                 cursor.byte_len(),
                 Payload::Cursor {
@@ -673,10 +653,10 @@ pub fn runtime_cursor_next(
 pub fn runtime_page_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<Option<Vec<Vec<ValueOut>>>> {
+) -> napi::Result<Option<QueuedOutput>> {
     match take_output(env, handle)? {
-        Output::Page(page) => Ok(page.map(|queued| queued.rows)),
-        Output::Rows(queued) => Ok(Some(queued.rows)),
+        Output::Page(page) => Ok(page),
+        Output::Rows(queued) => Ok(Some(queued)),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
@@ -688,12 +668,7 @@ pub fn runtime_result_close(
     callback: Function<crate::runtime_wire::CloseWire, ()>,
 ) -> napi::Result<()> {
     let shared = result_shared(handle).map_err(|error| thrown(env, error))?;
-    close_admitted(
-        &shared.runtime,
-        shared.cap,
-        &shared._admission,
-        reporter(callback)?,
-    );
+    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
     Ok(())
 }
 
@@ -704,12 +679,7 @@ pub fn runtime_cursor_close(
     callback: Function<crate::runtime_wire::CloseWire, ()>,
 ) -> napi::Result<()> {
     let shared = cursor_shared(handle).map_err(|error| thrown(env, error))?;
-    close_admitted(
-        &shared.runtime,
-        shared.cap,
-        &shared._admission,
-        reporter(callback)?,
-    );
+    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
     Ok(())
 }
 
@@ -797,12 +767,11 @@ pub fn runtime_draft_take(
         Output::Draft(opened) => {
             let sealed = Arc::clone(&opened.sealed);
             let admission = RegistryAdmission::admit(
-                runtime,
+                Arc::clone(&runtime),
                 NativeKind::Draft,
                 0,
                 Payload::Draft(DraftPayload {
                     schema: opened.schema,
-                    sealed: opened.sealed,
                     pending: Vec::new(),
                     used_input: 0,
                     used_rows: 0,
@@ -857,10 +826,12 @@ fn draft_mutation(
         move |context| {
             let parsed = parse_draft_rows(&sealed, relation, stated, &cells, context);
             match parsed {
-                Ok((rows, bytes)) => Ok(Box::new(move |context: &WorkContext, payload, _publication| {
-                    context.checkpoint()?;
-                    ingest_from_payload(payload, context, relation, insert, rows, bytes)
-                })),
+                Ok((rows, bytes)) => Ok(Box::new(
+                    move |context: &WorkContext, payload, _publication| {
+                        context.checkpoint()?;
+                        ingest_from_payload(payload, context, relation, insert, rows, bytes)
+                    },
+                )),
                 Err(error) => Err(error),
             }
         },
@@ -955,7 +926,7 @@ pub fn runtime_changes_take(
         Output::Changes(opened) => {
             let fingerprint = opened.fingerprint.clone();
             let admission = RegistryAdmission::admit(
-                runtime,
+                Arc::clone(&runtime),
                 NativeKind::Changes,
                 opened.changes.as_bytes().len() as u64,
                 Payload::Changes {
@@ -992,59 +963,18 @@ pub fn runtime_draft_close(
     callback: Function<crate::runtime_wire::CloseWire, ()>,
 ) -> napi::Result<()> {
     let shared = draft_shared(handle).map_err(|error| thrown(env, error))?;
-    close_admitted(
-        &shared.runtime,
-        shared.cap,
-        &shared._admission,
-        reporter(callback)?,
-    );
+    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
     Ok(())
 }
 
-/// L14 request: submit a payload job and call [`changes_from_payload`].
-/// This helper hops to the owning worker (not a JS-thread payload lock).
-pub(crate) fn changes_entry(
+/// Route only; the sealed change payload stays on its owning worker.
+pub(crate) fn changes_route(
     handle: &ChangesHandle,
-) -> Result<
-    (
-        ChangeSet,
-        Arc<bumbledb::schema::Schema>,
-        String,
-        Arc<Runtime>,
-    ),
-    RuntimeError,
-> {
+) -> Result<(Arc<Runtime>, Capability), RuntimeError> {
     if handle.identity != identity() {
         return Err(RuntimeError::ForeignRuntime);
     }
-    let runtime = Arc::clone(&handle.shared.runtime);
-    let (tx, rx) = std::sync::mpsc::channel();
-    let operation = runtime.submit_payload(
-        handle.shared.cap,
-        hop_policy(),
-        Box::new({
-            let tx = tx.clone();
-            move || {
-                let _ = tx.send(());
-            }
-        }),
-        move |_| {
-            Ok(Box::new(move |_context, payload, _publication| {
-                Ok(Output::Changes(changes_from_payload(payload)?))
-            }))
-        },
-    )?;
-    rx.recv_timeout(Duration::from_secs(10))
-        .map_err(|_| RuntimeError::Internal)?;
-    match runtime.take(&operation)? {
-        Output::Changes(opened) => Ok((
-            opened.changes,
-            opened.schema,
-            opened.fingerprint,
-            runtime,
-        )),
-        _ => Err(RuntimeError::InvalidArgument),
-    }
+    Ok((Arc::clone(&handle.shared.runtime), handle.shared.cap))
 }
 
 #[napi]
@@ -1057,12 +987,7 @@ pub fn runtime_changes_close(
         return Err(thrown(env, RuntimeError::ForeignRuntime));
     }
     let shared = Arc::clone(&handle.shared);
-    close_admitted(
-        &shared.runtime,
-        shared.cap,
-        &shared._admission,
-        reporter(callback)?,
-    );
+    close_admitted(&shared.runtime, shared.cap, reporter(callback)?);
     Ok(())
 }
 

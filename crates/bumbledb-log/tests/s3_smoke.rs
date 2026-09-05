@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store, StaticKeys};
 use bumbledb::{ExecutionPolicy, WorkContext};
+use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store, StaticKeys};
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore as _, ObjectKind, ReceiveLimits, ReceivedHead,
     ReceivingStore, TransportContext, TransportObservation, get_verified, put_verified,
@@ -114,7 +114,9 @@ fn s3_conditional_create_replace_and_lost_ack_are_typed_outcomes() {
         ConditionalOutcome::Published { version } => version,
         other => panic!("first create publishes: {other:?}"),
     };
-    let second = store.create_head(&head_key, b"rev-1-imposter").expect("second");
+    let second = store
+        .create_head(&head_key, b"rev-1-imposter")
+        .expect("second");
     assert!(
         matches!(
             second,

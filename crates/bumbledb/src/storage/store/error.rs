@@ -96,6 +96,10 @@ pub enum StoreError {
         statement: bumbledb_theory::schema::StatementId,
         detail: &'static str,
     },
+    /// A capacity weight or ceiling asks for the finite duration of a ray.
+    UndefinedDuration {
+        statement: bumbledb_theory::schema::StatementId,
+    },
     /// Work budget, deadline or cancellation stopped the operation.
     Work(WorkError),
     /// A fallible in-memory allocation was refused by the host.
@@ -215,6 +219,9 @@ impl std::fmt::Display for StoreError {
             },
             Self::JudgeRefused { statement, detail } => {
                 write!(f, "judgment refused at statement {}: {detail}", statement.0)
+            }
+            Self::UndefinedDuration { statement } => {
+                write!(f, "statement {} has undefined ray duration", statement.0)
             }
             Self::Work(err) => err.fmt(f),
             Self::Allocation => f.write_str("in-memory allocation refused"),

@@ -19,7 +19,7 @@ impl<S> Run<'_, S> {
         let (ours, theirs): (
             Result<Vec<compare::Answer>, String>,
             Result<Vec<compare::Answer>, String>,
-        ) = match self.db.prepare(case.query) {
+        ) = match self.db.prepare(case.query, crate::harness::bench_work()) {
             Err(e) => (
                 Err(format!("{e}")),
                 Err("not executed: no column types without a prepared query".to_owned()),
@@ -36,7 +36,9 @@ impl<S> Run<'_, S> {
                 let args = param_args(params);
                 let ours = self
                     .db
-                    .read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.execute(&mut prepared, &args, &mut buffer)
+                    })
                     .map(|()| compare::from_answers(&buffer, &types))
                     .map_err(|e| format!("{e}"));
                 let theirs = self

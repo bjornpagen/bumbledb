@@ -439,7 +439,7 @@ fn curve_point<S>(
 ) -> Result<CurvePoint, String> {
     eprintln!("curves: {name} at {scale_label}");
     let mut prepared = db
-        .prepare(&bundle.query)
+        .prepare(&bundle.query, crate::harness::bench_work())
         .map_err(|e| format!("{name}: prepare: {e:?}"))?;
     let types: Vec<ValueType> = prepared
         .signature()
@@ -452,8 +452,10 @@ fn curve_point<S>(
     let mut ours_answers = Vec::with_capacity(bundle.draws.len());
     for draw in &bundle.draws {
         let args = param_args(draw);
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("{name}: execute: {e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("{name}: execute: {e:?}"))?;
         ours_answers.push(compare::from_answers(&buffer, &types));
     }
 
@@ -484,8 +486,10 @@ fn curve_point<S>(
     let (ours, mut ghz) = clockproxy::frequency_checked(|| {
         harness::measure(proto, || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })
     })?;
@@ -567,7 +571,7 @@ fn open_absorbing_lock_window<S: bumbledb::Theory + Copy>(
 ) -> Result<Db<S>, String> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match Db::open(path, theory) {
+        match Db::open(path, theory, crate::harness::bench_work()) {
             Ok(db) => return Ok(db),
             Err(bumbledb::Error::EnvironmentLocked) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(5));
@@ -592,7 +596,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     let types: Vec<ValueType> = {
         let db = open_db()?;
         let prepared = db
-            .prepare(&bundle.query)
+            .prepare(&bundle.query, crate::harness::bench_work())
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         prepared
             .signature()
@@ -610,17 +614,21 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
         let args = param_args(draw);
         let db = open_db()?;
         let mut prepared = db
-            .prepare(&bundle.query)
+            .prepare(&bundle.query, crate::harness::bench_work())
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         let mut buffer = Answers::new();
         let start = Instant::now();
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("warmth execute: {e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("warmth execute: {e:?}"))?;
         let first = elapsed_ns(start);
         std::hint::black_box(buffer.len());
         let start = Instant::now();
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("warmth execute: {e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("warmth execute: {e:?}"))?;
         let second = elapsed_ns(start);
         std::hint::black_box(buffer.len());
         if round >= WARMTH_DISCARDED {
@@ -635,14 +643,16 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     let ours_memoized = {
         let db = open_db()?;
         let mut prepared = db
-            .prepare(&bundle.query)
+            .prepare(&bundle.query, crate::harness::bench_work())
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         let mut rotation = Rotation::new(bundle.draws.clone());
         let mut buffer = Answers::new();
         let measured = harness::measure(MEMO_PROTOCOL, || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })?;
         measured.stats
@@ -1348,7 +1358,9 @@ mod tests {
             .expect("open cal store");
         let conn = open_for_bench(&paths.cal_oracle).expect("open cal oracle");
         let bundle = calendar_bundle("busy_scan", &cfg).expect("bundle");
-        let mut prepared = db.prepare(&bundle.query).expect("prepare");
+        let mut prepared = db
+            .prepare(&bundle.query, crate::harness::bench_work())
+            .expect("prepare");
         let types: Vec<ValueType> = prepared
             .signature()
             .columns
@@ -1359,9 +1371,11 @@ mod tests {
         let mut ours = Vec::new();
         for draw in &bundle.draws {
             let args = param_args(draw);
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("{e:?}"))
-                .expect("execute");
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("{e:?}"))
+            .expect("execute");
             ours.push(compare::from_answers(&buffer, &types));
         }
         let wrong = Translated {

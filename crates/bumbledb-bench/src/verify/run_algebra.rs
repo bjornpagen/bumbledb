@@ -482,7 +482,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
 pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
     for (label, q, expected) in parity_cases() {
         run.cases += 1;
-        let verdict = match db.prepare(&q) {
+        let verdict = match db.prepare(&q, crate::harness::bench_work()) {
             Err(Error::Validation(error)) => error,
             Ok(_) => {
                 parity_bundle(run, label, &q, "engine ACCEPTED a roster rejection");

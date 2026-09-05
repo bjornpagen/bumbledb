@@ -672,11 +672,11 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
                 (_, 0) => Access::Active,
                 (_, 1) => {
                     let operation =
-                        OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+                        OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
                     let intent = match input.tag()? {
                         (_, 0) => FreezeIntent::Migration {
                             plan_set_digest: input.array()?,
-                            target: IncarnationId::from_core(bumbledb::Id128::from_bytes(
+                            target: IncarnationId::from_core(bumbledb::Uuid::from_bytes(
                                 input.array()?,
                             )),
                         },
@@ -708,14 +708,14 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
             })
         }
         (_, 1) => {
-            let operation = OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+            let operation = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
             let reason = match input.tag()? {
                 (_, 0) => DeletedReason::Erasure,
                 (_, 1) => DeletedReason::MigrationAborted {
-                    source_database: super::DatabaseId::from_core(bumbledb::Id128::from_bytes(
+                    source_database: super::DatabaseId::from_core(bumbledb::Uuid::from_bytes(
                         input.array()?,
                     )),
-                    source_incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(
+                    source_incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(
                         input.array()?,
                     )),
                     plan_set_digest: input.array()?,
@@ -729,7 +729,7 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
     let activation = match input.tag()? {
         (_, 0) => Activation::NotActivated,
         (_, 1) => {
-            let operation = OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+            let operation = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
             let target_genesis = DecisionDigest::from_bytes(input.array()?);
             let cause = match input.tag()? {
                 (_, 0) => ActivationCause::Create,
@@ -758,15 +758,15 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use super::super::{DatabaseId, SchemaId};
     use super::*;
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
@@ -779,7 +779,7 @@ mod tests {
                 hash: DecisionDigest::from_bytes([9; 32]),
             },
             Activation::Activated {
-                operation: OperationId::from_core(Id128::from_bytes([4; 16])),
+                operation: OperationId::from_core(Uuid::from_bytes([4; 16])),
                 target_genesis: DecisionDigest::from_bytes([9; 32]),
                 cause: ActivationCause::Create,
             },
@@ -788,7 +788,7 @@ mod tests {
     }
 
     fn op(byte: u8) -> OperationId {
-        OperationId::from_core(Id128::from_bytes([byte; 16]))
+        OperationId::from_core(Uuid::from_bytes([byte; 16]))
     }
 
     #[test]
@@ -818,7 +818,7 @@ mod tests {
         let head = genesis();
         let intent = FreezeIntent::Migration {
             plan_set_digest: [5; 32],
-            target: IncarnationId::from_core(Id128::from_bytes([6; 16])),
+            target: IncarnationId::from_core(Uuid::from_bytes([6; 16])),
         };
         let frozen = match head.freeze(op(10), intent).unwrap() {
             FreezeOutcome::Frozen(frozen) => frozen,
@@ -971,7 +971,7 @@ mod tests {
                     op(1),
                     FreezeIntent::Migration {
                         plan_set_digest: [5; 32],
-                        target: IncarnationId::from_core(Id128::from_bytes([6; 16])),
+                        target: IncarnationId::from_core(Uuid::from_bytes([6; 16])),
                     },
                 )
                 .unwrap()

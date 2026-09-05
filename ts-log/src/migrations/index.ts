@@ -12,18 +12,7 @@
  */
 export type { AdminIdentityOptions } from "#machine.ts"
 export { abortMigration, activateMigration, initialize, migrate, migrationStatus } from "#migration-ops.ts"
-export type {
-	AbortReport,
-	ActivationReport,
-	AdminOutcome,
-	InitializeValue,
-	MigrateValue,
-	MigrationRef,
-	MigrationStatus
-} from "#outcome.ts"
-export type { CompiledChainInput } from "#migrations/codec.ts"
-export type { HeldRepositoryLock, RepositoryExclusion } from "#migrations/lock.ts"
-export { checkMigrations, generateMigrations } from "#migrations/workflow.ts"
+export type { DecodeResult } from "#migrations/decode.ts"
 export {
 	decodeActivationRef,
 	decodeGeneratedMigrations,
@@ -32,7 +21,7 @@ export {
 	decodeReadyToSwitchActivation,
 	decodeRuntimeContract
 } from "#migrations/decode.ts"
-export type { DecodeResult } from "#migrations/decode.ts"
+export type { MigrationIntent, MigrationIntentEntry } from "#migrations/intent.ts"
 export {
 	backfill,
 	convert,
@@ -43,9 +32,9 @@ export {
 	renameRelation,
 	seed
 } from "#migrations/intent.ts"
-export type { MigrationIntent, MigrationIntentEntry } from "#migrations/intent.ts"
-export { EMPTY_THEORY, parseTheory } from "#migrations/theory.ts"
+export type { HeldRepositoryLock, RepositoryExclusion } from "#migrations/lock.ts"
 export type { TheoryResult } from "#migrations/theory.ts"
+export { EMPTY_THEORY, parseTheory } from "#migrations/theory.ts"
 export type {
 	ActivationRef,
 	CheckOptions,
@@ -67,3 +56,13 @@ export type {
 	TheoryRelation,
 	TheorySnapshot
 } from "#migrations/types.ts"
+export { checkMigrations, generateMigrations } from "#migrations/workflow.ts"
+export type {
+	AbortReport,
+	ActivationReport,
+	AdminOutcome,
+	InitializeValue,
+	MigrateValue,
+	MigrationRef,
+	MigrationStatus
+} from "#outcome.ts"

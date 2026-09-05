@@ -40,7 +40,7 @@
 //! agg     := Sum(t) | Mean(t) | Min(t) | Max(t) | Count | Pack(v)
 //!            where t := v | Duration(v)
 //! literal := bool | int | int..int | float | float..float
-//!          | id128:"32 lowercase hex" | "str" | b"bytes"
+//!          | uuid:"canonical UUID" | "str" | b"bytes"
 //!                                        //   float..float is a dense nonempty
 //!                                        //   half-open interval (canonical
 //!                                        //   binary64 endpoints, -0 → +0)
@@ -104,7 +104,7 @@
 //! additionally has `bind(params! { name: value, … })` — order-free typed
 //! named binding: unknown/missing/doubled names are compile errors (a
 //! typestate builder), the value roster is the C05 `BindValue` vocabulary
-//! (`bool`/`u64`/`i64`/`F64`/`f64`/`&str`/`&String`/`Id128`/`&[u8]`/
+//! (`bool`/`u64`/`i64`/`F64`/`f64`/`&str`/`&String`/`Uuid`/`&[u8]`/
 //! `Interval<u64|i64|F64>`, plus `BindValue`/`ParamArg` themselves;
 //! `field in ?p` set params take `&[Value]`), and value-vs-slot TYPE
 //! agreement stays the engine's typed bind error at execution — exactly
@@ -199,9 +199,9 @@ enum Lit {
         end: u64,
     },
 
-    /// `id128:"32 lowercase hex"` — an application-owned 128-bit identity
-    /// literal (the renderer's `id128:…` spelling, quoted for the lexer).
-    Id128([u8; 16]),
+    /// `uuid:"canonical UUID"` — an application-owned 128-bit identity
+    /// literal (the renderer's `uuid:…` spelling, quoted for the lexer).
+    Uuid([u8; 16]),
 
     Str(String),
 
@@ -566,47 +566,33 @@ fn finish_float(tokens: &mut Tokens, start: Lit) -> Parse<Lit> {
     })
 }
 
-/// After the `id128` keyword: `:"32 lowercase hex characters"` — the
+/// After the `uuid` keyword: `:"canonical UUID text"` — the
 /// canonical application-identity literal, validated at expansion.
-fn parse_id128_body(tokens: &mut Tokens, keyword: Span) -> Parse<Lit> {
-    expect_colon(tokens, "the id128 literal's `:`")?;
+fn parse_uuid_body(tokens: &mut Tokens, keyword: Span) -> Parse<Lit> {
+    expect_colon(tokens, "the uuid literal's `:`")?;
     let Some(TokenTree::Literal(lit)) = tokens.next() else {
         return fail(
             keyword,
-            "query!: `id128:` takes a quoted canonical value — `id128:\"…32 lowercase hex…\"`",
+            "query!: `uuid:` takes a quoted canonical value — `uuid:\"…canonical UUID…\"`",
         );
     };
     let text = lit.to_string();
     let Some(hex) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
         return fail(
             lit.span(),
-            "query!: `id128:` takes a quoted canonical value — `id128:\"…32 lowercase hex…\"`",
+            "query!: `uuid:` takes a quoted canonical value — `uuid:\"…canonical UUID…\"`",
         );
     };
-    if hex.len() != 32
-        || !hex
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
-    {
-        return fail(
-            lit.span(),
-            "query!: an Id128 literal is exactly 32 lowercase hex characters — \
-             uppercase, UUID punctuation and other widths refuse",
-        );
-    }
-    let mut bytes = [0u8; 16];
-    for (index, chunk) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-        let high = (chunk[0] as char).to_digit(16).expect("checked hex");
-        let low = (chunk[1] as char).to_digit(16).expect("checked hex");
-        bytes[index] = u8::try_from(high * 16 + low).expect("two hex digits fit a byte");
-    }
-    Ok(Lit::Id128(bytes))
+    let Ok(id) = bumbledb_theory::Uuid::parse_str(hex) else {
+        return fail(lit.span(), "query!: a UUID literal must have UUID syntax");
+    };
+    Ok(Lit::Uuid(id.into_bytes()))
 }
 
 fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
-    if peek_ident_text(tokens).as_deref() == Some("id128") {
-        let keyword = expect_ident(tokens, "`id128`")?;
-        return parse_id128_body(tokens, keyword.span);
+    if peek_ident_text(tokens).as_deref() == Some("uuid") {
+        let keyword = expect_ident(tokens, "`uuid`")?;
+        return parse_uuid_body(tokens, keyword.span);
     }
     if let Some(float) = parse_float(tokens)? {
         return finish_float(tokens, float);
@@ -802,9 +788,7 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
         return Ok(match word.as_str() {
             "true" => SelValue::Lit(Lit::Bool(true)),
             "false" => SelValue::Lit(Lit::Bool(false)),
-            "id128" if peek_punct(tokens, ':') => {
-                SelValue::Lit(parse_id128_body(tokens, name.span)?)
-            }
+            "uuid" if peek_punct(tokens, ':') => SelValue::Lit(parse_uuid_body(tokens, name.span)?),
             _ => {
                 if peek_punct(tokens, ':') {
                     expect_colon(tokens, "the handle path's `::`")?;
@@ -896,8 +880,8 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
         if word == "false" {
             return Ok(Term::Lit(Lit::Bool(false)));
         }
-        if word == "id128" && peek_punct(tokens, ':') {
-            return Ok(Term::Lit(parse_id128_body(tokens, name.span)?));
+        if word == "uuid" && peek_punct(tokens, ':') {
+            return Ok(Term::Lit(parse_uuid_body(tokens, name.span)?));
         }
         if word == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
             return fail(
@@ -1637,8 +1621,8 @@ impl Emitter<'_> {
                  ::bumbledb::F64::from_bits({start}u64), ::bumbledb::F64::from_bits({end}u64))\
                  .expect(\"query! float interval literals are nonempty\"))"
             ),
-            Lit::Id128(bytes) => format!(
-                "{value}::Id128(::bumbledb::Id128::from_bytes(*b\"{}\"))",
+            Lit::Uuid(bytes) => format!(
+                "{value}::Uuid(::bumbledb::Uuid::from_bytes(*b\"{}\"))",
                 bytes.escape_ascii()
             ),
             Lit::Str(text) => {
@@ -2688,9 +2672,9 @@ const SCALAR_ARG_TRAIT: &str = "\
             ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Str(self.as_str())) } \
     } \
     #[allow(dead_code)] \
-    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Id128 { \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Uuid { \
         fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
-            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Id128(self)) } \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Uuid(self)) } \
     } \
     #[allow(dead_code)] \
     impl<'a> __BumbledbScalarArg<'a> for &'a [u8] { \

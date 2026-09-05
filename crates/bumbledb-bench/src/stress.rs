@@ -67,11 +67,11 @@ fn collection_insert_survives_commit_pressure() {
 
     for i in 0..iters {
         let dir = root.join(format!("db-{i}"));
-        let db = Db::create(&dir, Ledger)
+        let db = Db::create(&dir, Ledger, crate::harness::bench_work())
             .expect("create store")
             .expect("accepted");
         let loaded = db
-            .write(|tx| {
+            .write(crate::harness::bench_work(), |tx| {
                 tx.insert_dyn(ids::HOLDER, rows())
                     .map(bumbledb::MutationReport::changed)
             })

@@ -17,7 +17,6 @@ import { Compute } from "#query/compute.ts"
 import type { QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
-import type { Id128 } from "#id128.ts"
 import { Attempt, Learning, Student } from "#test/fixtures/learning.ts"
 
 /** Reads one lowered find term structurally (the wire arm is P06R2's). */
@@ -46,6 +45,7 @@ describe("Compute construction walls (engine result_type parity)", function wall
 	test("negate is defined over i64 and f64 only", function negateWall() {
 		const { units, score } = v(Attempt)
 		assert.throws(function negateU64() {
+			// @ts-expect-error — unsigned negation is not an operation in the scalar algebra
 			Compute.negate(units)
 		}, /negation is defined over i64 and f64 only/)
 		assert.equal(Compute.negate(score).result, "f64")
@@ -122,13 +122,11 @@ describe("computed find lowering (the recorded C05 wire)", function lowering() {
 	test("a compute column lowers to { kind: compute, expr } under a compute head", function wire() {
 		const scaled = query(Learning).rule(function scaledRule(r) {
 			const { id, score, units } = v(Attempt)
-			return r
-				.match(Attempt, { id, score, units })
-				.find({
-					id,
-					scaled: Compute.multiply(score, Compute.f64(2)),
-					exact: Compute.toF64Exact(units)
-				})
+			return r.match(Attempt, { id, score, units }).find({
+				id,
+				scaled: Compute.multiply(score, Compute.f64(2)),
+				exact: Compute.toF64Exact(units)
+			})
 		})
 		const parsed = lowerQuery(scaled) as unknown as {
 			readonly head: ReadonlyArray<{ readonly kind: string }>
@@ -249,7 +247,7 @@ describe("computed find typing (compile-time pins)", function typing() {
 		})
 		type Row = QueryRow<typeof scaled>
 		const witness: Row = {
-			id: "00000000000000000000000000000000" as Id128,
+			id: "00000000-0000-0000-0000-000000000000",
 			scaled: 1.5,
 			exactUnits: 3n,
 			finite: true

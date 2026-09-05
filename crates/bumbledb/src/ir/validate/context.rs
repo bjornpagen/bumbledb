@@ -29,7 +29,7 @@ fn literal_anchor_type(value: &Value) -> ValueType {
         Value::U64(_) => ValueType::U64,
         Value::I64(_) => ValueType::I64,
         Value::F64(_) => ValueType::F64,
-        Value::Id128(_) => ValueType::Id128,
+        Value::Uuid(_) => ValueType::Uuid,
         Value::String(_) => ValueType::String,
 
         Value::FixedBytes(raw) => ValueType::FixedBytes {
@@ -849,7 +849,11 @@ impl Context {
                 let lhs_type = *self.resolved_var_type(*lhs);
                 if !matches!(
                     lhs_type,
-                    ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::Bool
+                    ValueType::U64
+                        | ValueType::I64
+                        | ValueType::F64
+                        | ValueType::Bool
+                        | ValueType::Uuid
                 ) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
@@ -882,7 +886,11 @@ impl Context {
                 let var_type = *self.resolved_var_type(*var);
                 if !matches!(
                     var_type,
-                    ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::Bool
+                    ValueType::U64
+                        | ValueType::I64
+                        | ValueType::F64
+                        | ValueType::Bool
+                        | ValueType::Uuid
                 ) {
                     return Err(ValidationError::IllegalComparison { index });
                 }

@@ -57,8 +57,8 @@ use crate::store::{
     BackendError, ObjectError, ObservedError, ReceiveLimits, ReceivedHead, ReceivingStore,
     TransportContext, get_verified, read_head_bounded,
 };
-use crate::writer::{HostedHistory, LogError};
 use crate::writer::verbs::{ConditionalOutcome, HeadVersion};
+use crate::writer::{HostedHistory, LogError};
 
 use super::executor::{
     AbortReport, ActivateReport, ActivationRef, MigrateOutcome, MigrationError, MigrationStatus,
@@ -123,12 +123,7 @@ where
     /// Read and decode one composed head. A malformed body — a bare control
     /// projection included — is corruption-class at this boundary.
     fn read_head(&self, prefix: &str) -> Result<Option<(HeadVersion, HeadRecord)>, MigrationError> {
-        read_head_record(
-            self.store,
-            prefix,
-            self.limits.envelope_bytes,
-            None,
-        )
+        read_head_record(self.store, prefix, self.limits.envelope_bytes, None)
     }
 
     /// Durably freeze the source under this operation via head CAS.
@@ -469,7 +464,8 @@ where
     C::Error: BackendError + ObservedError,
 {
     if let Some(work) = work {
-        work.checkpoint().map_err(|error| MigrationError::Log(error.into()))?;
+        work.checkpoint()
+            .map_err(|error| MigrationError::Log(error.into()))?;
     }
     match read_head_bounded(
         store,
@@ -479,7 +475,7 @@ where
             receive: ReceiveLimits::capped(cap as u64),
         },
     )
-    .map_err(map_head_object_error)?
+    .map_err(|error| map_head_object_error(&error))?
     {
         ReceivedHead::Absent => Ok(None),
         ReceivedHead::Present { version, body } => {
@@ -489,9 +485,14 @@ where
     }
 }
 
-fn map_head_object_error(error: ObjectError) -> MigrationError {
+fn map_head_object_error(error: &ObjectError) -> MigrationError {
     MigrationError::Log(match error {
-        ObjectError::Backend(_) | ObjectError::Unverified { .. } => LogError::Backend,
+        ObjectError::WalkBudgetExhausted
+        | ObjectError::Backend(_)
+        | ObjectError::Unverified { .. }
+        | ObjectError::Denied { .. }
+        | ObjectError::Bucket { .. }
+        | ObjectError::Region { .. } => LogError::Backend,
         ObjectError::Missing { .. }
         | ObjectError::WrongLength { .. }
         | ObjectError::WrongDigest { .. }
@@ -538,10 +539,10 @@ enum TargetProbe {
     /// No target head exists yet.
     Absent,
     /// Recorded terminal evidence: this operation already activated.
-    AlreadyActivated(MigrateOutcome),
+    AlreadyActivated(Box<MigrateOutcome>),
     /// A live, frozen, not-yet-activated target under EXACTLY this
     /// operation and plan set: verified reuse runs against it.
-    Reusable(HeadRecord),
+    Reusable(Box<HeadRecord>),
 }
 
 fn probe_target<C>(
@@ -573,12 +574,12 @@ where
                 Lifecycle::Live(live) => live.access.mode(),
                 Lifecycle::Deleted { .. } => AccessMode::Deleted,
             };
-            return Ok(TargetProbe::AlreadyActivated(
+            return Ok(TargetProbe::AlreadyActivated(Box::new(
                 MigrateOutcome::AlreadyActivated {
                     activation: control.activation,
                     access,
                 },
-            ));
+            )));
         }
         return Err(MigrationError::TargetConflict);
     }
@@ -603,7 +604,7 @@ where
                         plan_set_digest,
                         target,
                     } if plan_set_digest == psd && target == target_identity.incarnation_id => {
-                        Ok(TargetProbe::Reusable(record))
+                        Ok(TargetProbe::Reusable(Box::new(record)))
                     }
                     _ => Err(MigrationError::PlanSetMismatch),
                 }
@@ -663,7 +664,9 @@ where
     }
     // A migrated hosted target's data plane is its checkpoint: a live head
     // without one has no reconstructible state — corruption-class.
-    let recovery = record.recovery.ok_or(MigrationError::Log(LogError::Corruption))?;
+    let recovery = record
+        .recovery
+        .ok_or(MigrationError::Log(LogError::Corruption))?;
     let checkpoint = recovery
         .checkpoint
         .ok_or(MigrationError::Log(LogError::Corruption))?;
@@ -674,8 +677,8 @@ where
         TransportContext::new(work, ReceiveLimits::exact(checkpoint.length)),
     )
     .map_err(|error| MigrationError::Checkpoint(CheckpointError::Object(error)))?;
-    let ckpt = codec::decode_manifest(charged.as_bytes(), policy.stream)
-        .map_err(MigrationError::Frame)?;
+    let ckpt =
+        codec::decode_manifest(charged.as_bytes(), policy.stream).map_err(MigrationError::Frame)?;
     drop(charged.into_owner());
     if ckpt.identity != expected.identity {
         return Err(MigrationError::TargetConflict);
@@ -691,8 +694,8 @@ where
 
     // Stream, digest-verify and hydrate the complete checkpoint state in
     // bounded batches — never a whole-database RAM materialization.
-    let scratch = TargetNamespace::new(scratch_root, expected.identity.incarnation_id)?
-        .fresh_staging();
+    let scratch =
+        TargetNamespace::new(scratch_root, expected.identity.incarnation_id)?.fresh_staging();
     if let Some(parent) = scratch.parent() {
         std::fs::create_dir_all(parent).map_err(super::lock::NamespaceError::Io)?;
     }
@@ -736,7 +739,7 @@ where
     };
 
     // The authoritative migration history rides the checkpoint's 'm' system rows.
-    let chain = read_chain(&scratch_db, cap)?;
+    let chain = read_chain(&scratch_db, cap, work)?;
     if chain.len() != expected.prior_chain.len() + 1
         || chain[..expected.prior_chain.len()] != *expected.prior_chain
     {
@@ -759,7 +762,7 @@ where
             .validate()
             .map_err(bumbledb::Error::from)?;
         let mut captured = None;
-        scratch_db.read(|read| {
+        scratch_db.read(work.clone(), |read| {
             captured = Some(MigrationState::from_source(read, &schema, work));
             Ok(())
         })?;
@@ -874,7 +877,15 @@ where
         }
     };
     let staged = build_staged(
-        &staging, operation, psd, genesis, target_chain, state, descriptor, limits, work,
+        &staging,
+        operation,
+        psd,
+        genesis,
+        target_chain,
+        state,
+        descriptor,
+        limits,
+        work,
     );
     let outcome = staged.and_then(publish);
     // Staging is private scratch: never adopted by name, always removed.
@@ -971,7 +982,7 @@ where
         let cap = self.cap();
         verify_manifest(plans, cap)?;
         let (_, source) = self.source_head(Some(work))?;
-        let chain = read_chain(self.db.as_ref(), cap)?;
+        let chain = read_chain(self.db.as_ref(), cap, work)?;
         let applied = verify_chain(&chain, plans, cap)?;
         let live = source
             .control
@@ -1040,8 +1051,8 @@ where
         }
         // The local materialization must BE this database before its chain
         // or facts mean anything.
-        let local_control =
-            read_attachment(self.db.as_ref())?.ok_or(MigrationError::Log(LogError::NotInitialized))?;
+        let local_control = read_attachment(self.db.as_ref(), work)?
+            .ok_or(MigrationError::Log(LogError::NotInitialized))?;
         let local_authority = decode_control(&local_control, cap).map_err(LogError::from)?;
         if local_authority.identity != source_identity {
             return Err(MigrationError::Log(LogError::Identity));
@@ -1049,7 +1060,7 @@ where
 
         // The applied prefix decides the exact pending suffix (history
         // records are fixed at genesis; catch-up never changes them).
-        let chain = read_chain(self.db.as_ref(), cap)?;
+        let chain = read_chain(self.db.as_ref(), cap, work)?;
         let applied = verify_chain(&chain, request.manifest, cap)?;
         let total = request.manifest.entries.len() as u64;
         if request.steps.is_empty() {
@@ -1063,8 +1074,7 @@ where
         }
         let first =
             usize::try_from(applied).map_err(|_| MigrationError::WrongSuffix { applied })?;
-        let plans: Vec<&super::plan::Plan> =
-            request.steps.iter().map(|step| &step.plan).collect();
+        let plans: Vec<&super::plan::Plan> = request.steps.iter().map(|step| &step.plan).collect();
         bind_plans(request.manifest, first, &plans, cap)?;
         let psd = plan_set_digest(request.manifest, first, request.steps.len(), cap)?;
 
@@ -1107,7 +1117,7 @@ where
             Some(work),
         )? {
             TargetProbe::AlreadyActivated(outcome) => {
-                return Ok(HostedOutcome::Completed(outcome));
+                return Ok(HostedOutcome::Completed(*outcome));
             }
             // A live matching target is verified under the held freeze below.
             TargetProbe::Absent | TargetProbe::Reusable(_) => {}
@@ -1143,7 +1153,7 @@ where
             Some(work),
         )? {
             TargetProbe::AlreadyActivated(outcome) => {
-                return Ok(HostedOutcome::Completed(outcome));
+                return Ok(HostedOutcome::Completed(*outcome));
             }
             TargetProbe::Reusable(record) => {
                 return verify_published_target(
@@ -1359,7 +1369,7 @@ where
         cap,
         Some(work),
     )? {
-        TargetProbe::AlreadyActivated(outcome) => return Ok(HostedOutcome::Completed(outcome)),
+        TargetProbe::AlreadyActivated(outcome) => return Ok(HostedOutcome::Completed(*outcome)),
         TargetProbe::Reusable(record) => {
             let expected = ExpectedTarget {
                 operation: request.operation,

@@ -782,7 +782,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 unit_slot(1, 2, 300),
             ],
         },
-        // (`lean/Bumbledb/Txn.lean: judge_key_preempts`).
+        // Complete rejection still includes any simultaneous non-key failures.
         JudgmentFixture {
             name: "judgment-fixed-partition-overlap",
             schema: playlist_schema(),
@@ -822,7 +822,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![slot(5, 10, 20)],
             inserts: vec![claim(40, 50, 5)],
         },
-        // (`lean/Bumbledb/Txn.lean: judge_key_preempts` drops the
+        // Multiple key failures and capacity failures remain in one complete result.
         JudgmentFixture {
             name: "judgment-multi-key-collisions",
             schema: playlist_schema(),
@@ -882,7 +882,7 @@ fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::String(_) | Value::Id128(_) | Value::IntervalF64(_) => {
+        Value::String(_) | Value::Uuid(_) | Value::IntervalF64(_) => {
             unreachable!(
                 "judgment fixtures carry no strings, identities or dense intervals — \
                  the Lean judgment grammar spells none of them"
@@ -1112,8 +1112,8 @@ fn grouped(facts: &Facts) -> Vec<(RelationId, Vec<Vec<Value>>)> {
 }
 
 /// The agreed verdict in the lane's shape: the phase is read off the citation
-/// kinds (a rejection is one phase's complete set — keys preempt,
-/// `lean/Bumbledb/Txn.lean: judge_key_preempts`), and the statement-id set
+/// kinds (the all-key flag is descriptive; every violation is retained),
+/// and the statement-id set
 /// deduplicates a containment cited in both directions (the `Direction`
 /// refinement sits below the Lean altitude).
 pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
@@ -1155,7 +1155,7 @@ pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
 )]
 fn render_fixture(fixture: &JudgmentFixture) -> String {
     let dir = ScratchDir::new(&format!("judgment-{}", fixture.name));
-    let db = Db::create(&dir.0, fixture.schema.clone())
+    let db = Db::create(&dir.0, fixture.schema.clone(), crate::harness::bench_work())
         .expect("create judgment fixture store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&fixture.schema);
@@ -1372,7 +1372,7 @@ mod tests {
             .find(|fixture| fixture.name == "judgment-containment-both-directions")
             .expect("the fixture is on the roster");
         let dir = ScratchDir::new("judgment-both-directions-pin");
-        let db = Db::create(&dir.0, fixture.schema.clone())
+        let db = Db::create(&dir.0, fixture.schema.clone(), crate::harness::bench_work())
             .expect("create the pin store")
             .expect("accepted");
         let base = Delta {
@@ -1403,13 +1403,9 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(
-                    directions.len(),
-                    2,
-                    "both directions cited before the dedup"
-                );
-                assert_ne!(
-                    directions[0], directions[1],
-                    "one citation per direction, not a doubled one"
+                    directions,
+                    [Direction::SourceUnsatisfied],
+                    "one canonical final-state citation, independent of delta routing"
                 );
             }
             Verdict::Committed => panic!("the fixture must reject"),
@@ -1454,8 +1450,12 @@ mod tests {
             ],
         };
         let dir = ScratchDir::new("judgment-domain-quantification-pin");
-        let db = Db::create_store_without_admission(&dir.0, schema.clone())
-            .expect("sweeper-fixture birth");
+        let db = Db::create_store_without_admission(
+            &dir.0,
+            schema.clone(),
+            crate::harness::bench_work(),
+        )
+        .expect("sweeper-fixture birth");
         let mut naive = NaiveDb::new(&schema);
         let delta = Delta {
             deletes: vec![],

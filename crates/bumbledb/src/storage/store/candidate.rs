@@ -82,6 +82,9 @@ impl CommitKind {
 /// (`ProjectionId`, routing bytes, optional interval tail). Shared physical
 /// indexes emit once. The store fingerprints and maintains the entries;
 /// projection semantics stay with the schema owner.
+pub type ProjectionEmitter<'a> =
+    &'a mut (dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()> + 'a);
+
 pub trait RowIndexer {
     /// # Errors
     /// Propagates work exhaustion or the emit sink's storage failure.
@@ -90,7 +93,7 @@ pub trait RowIndexer {
         relation: RelationId,
         row: &[u8],
         work: &WorkContext,
-        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
+        emit: super::ProjectionEmitter<'_>,
     ) -> StoreResult<()>;
 }
 
@@ -407,8 +410,9 @@ impl<'store> WriteOwner<'store> {
             // seals never reach this arm (they change no relation's rows).
             for relation in &changed_relations {
                 self.work.step(1)?;
-                let next = super::format::read_relation_version(&inner.meta, &gated.txn, *relation)?
-                    .next()?;
+                let next =
+                    super::format::read_relation_version(&inner.meta, &gated.txn, *relation)?
+                        .next()?;
                 inner
                     .meta
                     .put(
@@ -664,7 +668,10 @@ impl SealedWrite<'_, '_> {
     pub fn commit(self) -> StoreResult<StoreCommit> {
         let report = self.report;
         let application = self.application;
-        self.txn.commit()?;
+        {
+            let _span = crate::obs::span(crate::obs::names::LMDB_COMMIT);
+            self.txn.commit()?;
+        }
         Ok(StoreCommit {
             generation: report.generation(),
             application,

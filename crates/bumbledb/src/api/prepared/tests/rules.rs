@@ -371,7 +371,9 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     let mut prepared = fix.prepare(&union_query()).expect("prepare");
     let (out, report) = fix
         .db
-        .read(|instance| prepared.introspect(instance, &[ParamArg::Scalar(BindValue::I64(0))]))
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
+            prepared.introspect(instance, &[ParamArg::Scalar(BindValue::I64(0))])
+        })
         .expect("introspect");
     assert_eq!(out.len(), 3, "the union");
     assert!(report.contains("query:"), "{report}");

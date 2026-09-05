@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, Id128, RelationId, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::authority::{DeleteOutcome, DeletedReason};
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
@@ -102,8 +102,8 @@ fn receive_head(store: &MemStore, key: &str, work: &WorkContext) -> ReceivedHead
 
 fn identity(db: &Db<SchemaDescriptor>) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(db.schema()),
     }
 }
@@ -122,7 +122,7 @@ fn command(
             identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -152,7 +152,7 @@ fn create<'a>(
         EPOCH,
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([0xc3; 16])),
+        OperationId::from_core(Uuid::from_bytes([0xc3; 16])),
         LIMITS,
         &work(),
     )
@@ -433,7 +433,7 @@ fn read_side_catch_up_routes_stale_caches_and_tombstones_typed() {
         let deleted = match record
             .control
             .delete(
-                OperationId::from_core(Id128::from_bytes([0xee; 16])),
+                OperationId::from_core(Uuid::from_bytes([0xee; 16])),
                 DeletedReason::Erasure,
             )
             .unwrap()

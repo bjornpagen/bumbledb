@@ -1,4 +1,7 @@
 import { Effect } from "effect"
+import { finalizeClose } from "#runtime.ts"
+import type { CloseReport } from "#runtime-errors.ts"
+import { DbError } from "#runtime-errors.ts"
 /**
  * Shared close/drain adapters for scoped core owners (drafts, changes,
  * snapshots, sessions, results, cursors, databases). One policy, chapter
@@ -10,9 +13,6 @@ import { Effect } from "effect"
  * natively; repeated close joins the same stored transition (idempotent).
  */
 import type { CloseWire } from "#runtime-native.ts"
-import { finalizeClose } from "#runtime.ts"
-import type { CloseReport } from "#runtime-errors.ts"
-import { DbError } from "#runtime-errors.ts"
 
 function reportOf(operation: string, wire: CloseWire): CloseReport {
 	if (wire.kind === "failed") {
@@ -27,7 +27,10 @@ function reportOf(operation: string, wire: CloseWire): CloseReport {
  * uninterruptible — a close is a bounded registration/drain handshake, not
  * long maskable work (the native side owns the cleanup deadline).
  */
-function drainClose(operation: string, start: (callback: (report: CloseWire) => void) => void): Effect.Effect<CloseReport> {
+function drainClose(
+	operation: string,
+	start: (callback: (report: CloseWire) => void) => void
+): Effect.Effect<CloseReport> {
 	return Effect.callback<CloseReport>((resume) => {
 		try {
 			start((report) => resume(Effect.succeed(reportOf(operation, report))))
@@ -43,10 +46,7 @@ function drainClose(operation: string, start: (callback: (report: CloseWire) => 
 }
 
 /** The finalizer policy: run the close, then die on incomplete/failed (E stays never). */
-function releaseOwner(
-	operation: string,
-	start: (callback: (report: CloseWire) => void) => void
-): Effect.Effect<void> {
+function releaseOwner(operation: string, start: (callback: (report: CloseWire) => void) => void): Effect.Effect<void> {
 	return drainClose(operation, start).pipe(Effect.flatMap((report) => finalizeClose(operation, report)))
 }
 

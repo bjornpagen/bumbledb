@@ -213,9 +213,9 @@ impl CandidateJudge for CompareJudge<'_> {
                     "canonical evidence bytes must be byte-equal"
                 );
             }
-            (mine, complete) => panic!(
-                "verdicts diverged: production {mine:?} vs reference {complete:?}"
-            ),
+            (mine, complete) => {
+                panic!("verdicts diverged: production {mine:?} vs reference {complete:?}")
+            }
         }
         Ok(production)
     }
@@ -253,7 +253,11 @@ fn compare_and_commit(
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => {
-            prepared.seal(NO_HOST).expect("seal").commit().expect("commit");
+            prepared
+                .seal(NO_HOST)
+                .expect("seal")
+                .commit()
+                .expect("commit");
             true
         }
         Prepared::Rejected(violations) => {
@@ -316,10 +320,9 @@ impl Mirror {
 
 /// One randomized mutation: a handful of adds/removes across all three
 /// relations, biased toward key/containment/capacity collisions.
-fn random_mutation(
-    rng: &mut XorShift,
-    mirror: &Mirror,
-) -> (Vec<(RelationId, Vec<Value>)>, Vec<(RelationId, Vec<Value>)>) {
+type Rows = Vec<(RelationId, Vec<Value>)>;
+
+fn random_mutation(rng: &mut XorShift, mirror: &Mirror) -> (Rows, Rows) {
     let mut adds = Vec::new();
     let mut removes = Vec::new();
     let moves = 1 + rng.below(3);
@@ -334,9 +337,8 @@ fn random_mutation(
             2 => {
                 // Replace: same id, new email — remove + add in one command.
                 if let Some(row) = mirror.sample(rng, USER) {
-                    let id = match row[0] {
-                        Value::U64(id) => id,
-                        _ => unreachable!(),
+                    let Value::U64(id) = row[0] else {
+                        unreachable!()
                     };
                     removes.push((USER, row));
                     adds.push((USER, user(id, &format!("mail{}", rng.below(10)))));
@@ -390,7 +392,9 @@ fn run_differential(store: &Store, schema: &Schema, seed: u64, iterations: u32) 
 fn incremental_judge_matches_the_complete_judge_on_randomized_mutations() {
     let (_dir, path) = store_dir("incremental-differential");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
     run_differential(&store, &schema, 0x00C0_FFEE_D00D_F00D, 90);
 }
 
@@ -411,7 +415,9 @@ fn incremental_judge_matches_the_complete_judge_under_forced_collisions() {
 fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
     let (_dir, path) = store_dir("incremental-multi");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
     assert!(compare_and_commit(
         &store,
         &schema,
@@ -444,11 +450,18 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
     {
         Prepared::Admitted(_) => panic!("this delta violates four statements"),
         Prepared::Rejected(violations) => {
-            let statements: Vec<StatementId> =
-                violations.iter().map(|violation| violation.statement).collect();
+            let statements: Vec<StatementId> = violations
+                .iter()
+                .map(|violation| violation.statement)
+                .collect();
             assert_eq!(
                 statements,
-                vec![StatementId(1), StatementId(2), StatementId(4), StatementId(5)],
+                vec![
+                    StatementId(1),
+                    StatementId(2),
+                    StatementId(4),
+                    StatementId(5)
+                ],
                 "every violated family is named in canonical order"
             );
             assert!(
@@ -470,41 +483,6 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
 /// judgment — reports it offline.
 #[test]
 fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts() {
-    let (_dir, path) = store_dir("incremental-unlawful");
-    let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
-
-    // Seed the unlawful parent: duplicate emails and an orphan booking,
-    // committed past judgment through the permissive test judge.
-    let seeded = build_changes(
-        &schema,
-        &[
-            (USER, user(1, "dup@example")),
-            (USER, user(2, "dup@example")),
-            (BOOKING, booking(99, 0, 1)),
-            (ROOM, room(1)),
-        ],
-        &[],
-    );
-    {
-        let context = work();
-        let mut owner = store.writer(&context).expect("writer");
-        match owner
-            .prepare(&seeded, &UnindexedRows, &AdmitAll)
-            .expect("prepare")
-        {
-            Prepared::Admitted(prepared) => {
-                prepared.seal(NO_HOST).expect("seal").commit().expect("commit");
-            }
-            Prepared::Rejected(never) => match never {},
-        }
-    }
-
-    // A benign mutation touching none of the standing violations: the
-    // production (incremental) judge ADMITS — it may miss what the delta
-    // does not touch — while the complete reference on the SAME candidate
-    // rejects. This divergence is the premise, asserted, not hidden.
-    let benign = build_changes(&schema, &[(USER, user(3, "fresh@example"))], &[]);
     struct PremiseWitness<'s> {
         schema: &'s Schema,
     }
@@ -539,12 +517,55 @@ fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts(
             let SchemaJudgment::Rejected(violations) = reference else {
                 panic!("the complete judge must convict the unlawful parent");
             };
-            let statements: Vec<StatementId> =
-                violations.iter().map(|violation| violation.statement).collect();
+            let statements: Vec<StatementId> = violations
+                .iter()
+                .map(|violation| violation.statement)
+                .collect();
             assert_eq!(statements, vec![USER_EMAIL_KEY, BOOKING_ROOM_EXISTS]);
             Ok(Judgment::Admitted)
         }
     }
+    let (_dir, path) = store_dir("incremental-unlawful");
+    let schema = delta_schema();
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
+
+    // Seed the unlawful parent: duplicate emails and an orphan booking,
+    // committed past judgment through the permissive test judge.
+    let seeded = build_changes(
+        &schema,
+        &[
+            (USER, user(1, "dup@example")),
+            (USER, user(2, "dup@example")),
+            (BOOKING, booking(99, 0, 1)),
+            (ROOM, room(1)),
+        ],
+        &[],
+    );
+    {
+        let context = work();
+        let mut owner = store.writer(&context).expect("writer");
+        match owner
+            .prepare(&seeded, &UnindexedRows, &AdmitAll)
+            .expect("prepare")
+        {
+            Prepared::Admitted(prepared) => {
+                prepared
+                    .seal(NO_HOST)
+                    .expect("seal")
+                    .commit()
+                    .expect("commit");
+            }
+            Prepared::Rejected(never) => match never {},
+        }
+    }
+
+    // A benign mutation touching none of the standing violations: the
+    // production (incremental) judge ADMITS — it may miss what the delta
+    // does not touch — while the complete reference on the SAME candidate
+    // rejects. This divergence is the premise, asserted, not hidden.
+    let benign = build_changes(&schema, &[(USER, user(3, "fresh@example"))], &[]);
     {
         let context = work();
         let mut owner = store.writer(&context).expect("writer");
@@ -613,7 +634,11 @@ fn seed_users(store: &Store, schema: &Schema, from: u64, to: u64) {
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => {
-            prepared.seal(NO_HOST).expect("seal").commit().expect("commit");
+            prepared
+                .seal(NO_HOST)
+                .expect("seal")
+                .commit()
+                .expect("commit");
         }
         Prepared::Rejected(never) => match never {},
     }
@@ -624,7 +649,11 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
         schema,
         cost: std::cell::Cell::new(0),
     };
-    let changes = build_changes(schema, &[(USER, user(id, &format!("solo{id}@example")))], &[]);
+    let changes = build_changes(
+        schema,
+        &[(USER, user(id, &format!("solo{id}@example")))],
+        &[],
+    );
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
     match owner
@@ -646,7 +675,9 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
 fn incremental_judgment_work_is_delta_shaped_not_relation_shaped() {
     let (_dir, path) = store_dir("incremental-workcount");
     let schema = delta_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
 
     // A large booking/room population that a streamed containment/capacity
     // judgment would have to walk — the user mutation must never touch it.

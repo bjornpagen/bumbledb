@@ -406,6 +406,7 @@ fn chunk_geometry_force_iterate_ab() {
         let image = slot.refill(
             &[ValueType::U64, ValueType::U64],
             words.len(),
+            &crate::image::test_generation(),
             words.iter().map(|row| &row[..]),
         );
         let mut graded_best = std::time::Duration::MAX;

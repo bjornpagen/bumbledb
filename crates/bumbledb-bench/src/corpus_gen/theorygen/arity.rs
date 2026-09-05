@@ -10,9 +10,11 @@ use crate::naive::Delta;
 
 use super::super::Rng;
 
-pub const ARITY_WIDTH_BOUND: usize = 496;
+/// Coverage landmark retained from the old inline-key limit, not a schema
+/// restriction: wider determinants use exact-checked fingerprint buckets.
+pub const ARITY_COVERAGE_BYTES: usize = 496;
 
-pub const MAX_MIXED_ARITY: usize = max_mixed_arity();
+pub const MAX_COVERED_ARITY: usize = max_mixed_arity();
 
 const SOURCE: RelationId = RelationId(0);
 const TARGET: RelationId = RelationId(1);
@@ -27,7 +29,7 @@ pub enum SelectionPlacement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArityExpectation {
     Accepted,
-    DeterminantKeyTooWide { width: usize },
+    WideDeterminant { width: usize },
     MissingSourceKey,
     MissingTargetKey,
 }
@@ -63,7 +65,7 @@ pub fn arity_descriptor(
     selection: SelectionPlacement,
     equality: bool,
 ) -> ArityDescriptorCase {
-    assert!((1..=MAX_MIXED_ARITY).contains(&arity));
+    assert!((1..=MAX_COVERED_ARITY).contains(&arity));
     build_case(arity, selection, equality, ArityExpectation::Accepted)
 }
 
@@ -73,11 +75,11 @@ pub fn random_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     let selection = random_selection(rng);
     match rng.range(8) {
         0 => build_case(
-            MAX_MIXED_ARITY + 1,
+            MAX_COVERED_ARITY + 1,
             selection,
             false,
-            ArityExpectation::DeterminantKeyTooWide {
-                width: projection_width(MAX_MIXED_ARITY + 1),
+            ArityExpectation::WideDeterminant {
+                width: projection_width(MAX_COVERED_ARITY + 1),
             },
         ),
         1 => build_case(
@@ -99,7 +101,7 @@ pub fn random_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
             ArityExpectation::Accepted,
         ),
         _ => arity_descriptor(
-            1 + usize::try_from(rng.range(MAX_MIXED_ARITY as u64)).expect("arity fits usize"),
+            1 + usize::try_from(rng.range(MAX_COVERED_ARITY as u64)).expect("arity fits usize"),
             selection,
             false,
         ),
@@ -114,7 +116,7 @@ pub fn random_valid_arity_descriptor(rng: &mut Rng) -> ArityDescriptorCase {
     let arity = if equality {
         equality_arity(rng)
     } else {
-        1 + usize::try_from(rng.range(MAX_MIXED_ARITY as u64)).expect("arity fits usize")
+        1 + usize::try_from(rng.range(MAX_COVERED_ARITY as u64)).expect("arity fits usize")
     };
     arity_descriptor(arity, selection, equality)
 }
@@ -204,7 +206,7 @@ fn build_case(
                     target: source_side,
                 },
             ],
-            ArityExpectation::DeterminantKeyTooWide { .. } => {
+            ArityExpectation::WideDeterminant { .. } => {
                 unreachable!("the width case is a one-way containment")
             }
         }
@@ -310,11 +312,11 @@ fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
         ValueType::FixedBytes { len } => {
             Value::FixedBytes(vec![salt.to_le_bytes()[0]; usize::from(*len)].into())
         }
-        ValueType::Id128 => {
+        ValueType::Uuid => {
             let mut bytes = [0u8; 16];
             bytes[..8].copy_from_slice(&salt.to_be_bytes());
             bytes[8..].copy_from_slice(&salt.wrapping_mul(31).to_be_bytes());
-            Value::Id128(bumbledb::Id128::from_bytes(bytes))
+            Value::Uuid(bumbledb::Uuid::from_bytes(bytes))
         }
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
             unreachable!("the arity mix is scalar")
@@ -346,7 +348,7 @@ fn type_counts(types: &[ValueType]) -> [usize; 6] {
             ValueType::String => 3,
             ValueType::FixedBytes { .. } => 4,
             ValueType::F64 => 5,
-            ValueType::Id128 | ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+            ValueType::Uuid | ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("the arity mix draws no identity or interval columns")
             }
         };
@@ -366,7 +368,7 @@ const fn max_mixed_arity() -> usize {
     let widths = [8, 8, 1, 8, 64];
     let mut arity = 0;
     let mut width = 0;
-    while width + widths[arity % widths.len()] <= ARITY_WIDTH_BOUND {
+    while width + widths[arity % widths.len()] <= ARITY_COVERAGE_BYTES {
         width += widths[arity % widths.len()];
         arity += 1;
     }
@@ -374,7 +376,7 @@ const fn max_mixed_arity() -> usize {
 }
 
 fn equality_arity(rng: &mut Rng) -> usize {
-    [1, 2, 3, MAX_MIXED_ARITY][usize::try_from(rng.range(4)).expect("equality arity index fits")]
+    [1, 2, 3, MAX_COVERED_ARITY][usize::try_from(rng.range(4)).expect("equality arity index fits")]
 }
 
 fn random_selection(rng: &mut Rng) -> SelectionPlacement {
@@ -395,15 +397,16 @@ mod tests {
     use bumbledb::schema::ValidateDescriptor as _;
 
     use super::{
-        ARITY_WIDTH_BOUND, ArityExpectation, MAX_MIXED_ARITY, SelectionPlacement, arity_descriptor,
-        build_case, projection_width, random_arity_descriptor, random_valid_arity_descriptor,
+        ARITY_COVERAGE_BYTES, ArityExpectation, MAX_COVERED_ARITY, SelectionPlacement,
+        arity_descriptor, build_case, projection_width, random_arity_descriptor,
+        random_valid_arity_descriptor,
     };
     use crate::corpus_gen::Rng;
 
     #[test]
     fn seeded_sweep_covers_every_legal_arity_type_selection_and_equality_shape() {
         let mut descriptors = 0;
-        for arity in 1..=MAX_MIXED_ARITY {
+        for arity in 1..=MAX_COVERED_ARITY {
             for selection in [
                 SelectionPlacement::Source,
                 SelectionPlacement::Target,
@@ -415,7 +418,7 @@ mod tests {
                 descriptors += 1;
             }
         }
-        for arity in [1, 2, 3, MAX_MIXED_ARITY] {
+        for arity in [1, 2, 3, MAX_COVERED_ARITY] {
             for selection in [
                 SelectionPlacement::Source,
                 SelectionPlacement::Target,
@@ -441,12 +444,12 @@ mod tests {
                 descriptors += 3;
             }
         }
-        assert_eq!(descriptors, MAX_MIXED_ARITY * 3 + 36);
+        assert_eq!(descriptors, MAX_COVERED_ARITY * 3 + 36);
     }
 
     #[test]
     fn a_few_hundred_seeded_cases_per_rng_arm_receive_the_promised_verdict() {
-        let mut accepted_arities = [false; MAX_MIXED_ARITY + 1];
+        let mut accepted_arities = [false; MAX_COVERED_ARITY + 1];
         let mut hostile_classes = [false; 4];
         for seed in 0..512 {
             let mut valid_rng = Rng::new(seed);
@@ -462,16 +465,13 @@ mod tests {
                     hostile_classes[0] = true;
                     assert!(verdict.is_ok(), "hostile accepted seed {seed}");
                 }
-                ArityExpectation::DeterminantKeyTooWide { width } => {
+                ArityExpectation::WideDeterminant { width } => {
                     hostile_classes[1] = true;
-                    assert!(matches!(
-                        verdict,
-                        Err(SchemaError::Statement {
-                            kind: StatementErrorKind::DeterminantKeyTooWide { width: actual },
-                            ..
-                        })
-                            if actual == width
-                    ));
+                    assert!(width > ARITY_COVERAGE_BYTES);
+                    assert!(
+                        verdict.is_ok(),
+                        "wide determinants use collision-checked fingerprint buckets"
+                    );
                 }
                 ArityExpectation::MissingSourceKey => {
                     hostile_classes[2] = true;
@@ -500,24 +500,21 @@ mod tests {
     }
 
     #[test]
-    fn mixed_width_boundary_and_overflow_diagnostic_are_generated() {
-        assert_eq!(MAX_MIXED_ARITY, 29);
-        assert!(projection_width(MAX_MIXED_ARITY - 1) <= ARITY_WIDTH_BOUND);
-        assert!(projection_width(MAX_MIXED_ARITY) <= ARITY_WIDTH_BOUND);
-        let over_width = projection_width(MAX_MIXED_ARITY + 1);
-        assert!(over_width > ARITY_WIDTH_BOUND);
+    fn wide_determinants_beyond_the_coverage_landmark_remain_legal() {
+        assert_eq!(MAX_COVERED_ARITY, 29);
+        assert!(projection_width(MAX_COVERED_ARITY - 1) <= ARITY_COVERAGE_BYTES);
+        assert!(projection_width(MAX_COVERED_ARITY) <= ARITY_COVERAGE_BYTES);
+        let over_width = projection_width(MAX_COVERED_ARITY + 1);
+        assert!(over_width > ARITY_COVERAGE_BYTES);
         let over = build_case(
-            MAX_MIXED_ARITY + 1,
+            MAX_COVERED_ARITY + 1,
             SelectionPlacement::Both,
             false,
-            ArityExpectation::DeterminantKeyTooWide { width: over_width },
+            ArityExpectation::WideDeterminant { width: over_width },
         );
-        assert!(matches!(
-            over.descriptor.validate(),
-            Err(SchemaError::Statement {
-                kind: StatementErrorKind::DeterminantKeyTooWide { width },
-                ..
-            }) if width == over_width
-        ));
+        assert!(
+            over.descriptor.validate().is_ok(),
+            "wide determinants remain legal through fingerprint routing"
+        );
     }
 }

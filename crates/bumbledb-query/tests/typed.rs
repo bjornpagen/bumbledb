@@ -14,7 +14,7 @@
 //!
 //! Verification: `NotRun` until F3 (campaign phase rule).
 
-use bumbledb::{AnswerValue, Answers, BindValue, Db, Id128, ParamArg, Value};
+use bumbledb::{AnswerValue, Answers, BindValue, Db, Interval, ParamArg, Uuid, Value};
 use bumbledb_query::{params, query};
 
 mod common;
@@ -24,10 +24,10 @@ mod learning {
     bumbledb::schema! {
         pub Learning;
 
-        relation Student { id: id128 as StudentId, name: str, budget: u64 }
+        relation Student { id: uuid as StudentId, name: str, budget: u64 }
         relation Attempt {
-            id: id128 as AttemptId,
-            student: id128 as StudentId,
+            id: uuid as AttemptId,
+            student: uuid as StudentId,
             score: f64,
             units: u64,
             active: interval<i64>,
@@ -42,8 +42,8 @@ mod learning {
 
 use learning::{Attempt, AttemptId, Learning, Student, StudentId};
 
-fn id(byte: u8) -> Id128 {
-    Id128::from_bytes([byte; 16])
+fn id(byte: u8) -> Uuid {
+    Uuid::from_bytes([byte; 16])
 }
 
 fn f(value: f64) -> bumbledb::F64 {
@@ -54,10 +54,10 @@ fn f(value: f64) -> bumbledb::F64 {
 /// 1 / 2 / 3) and a second student with one attempt (score 0.8, units 5).
 fn seeded(tag: &str) -> (TempDir, Db<Learning>) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), Learning)
+    let db = Db::create(dir.path(), Learning, common::work())
         .expect("create the Learning store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([
             &Student {
                 id: StudentId(id(1)),
@@ -121,6 +121,102 @@ fn units_of(out: &Answers) -> Vec<u64> {
     units
 }
 
+#[test]
+fn uuid_join_and_order_compare_the_complete_value_after_reopen() {
+    let dir = TempDir::new("uuid-order-join");
+    let db = Db::create(dir.path(), Learning, common::work())
+        .unwrap()
+        .unwrap();
+    let mut ids = vec![
+        Uuid::nil(),
+        Uuid::from_u128(1),
+        Uuid::from_u128(1 << 64),
+        Uuid::from_u128((1 << 64) + 1),
+        Uuid::parse_str("01890abc-1234-7000-8000-000000000001").unwrap(),
+        Uuid::from_u128(u128::MAX),
+    ];
+    ids.sort_unstable();
+    db.write(common::work(), |tx| {
+        for id in &ids {
+            tx.insert([&Student {
+                id: StudentId(*id),
+                name: "uuid",
+                budget: 10,
+            }])?;
+        }
+        for (index, id) in ids.iter().enumerate().filter(|(index, _)| index % 2 == 1) {
+            tx.insert([&Attempt {
+                id: AttemptId(Uuid::from_u128(index as u128)),
+                student: StudentId(*id),
+                score: f(1.0),
+                units: 1,
+                active: Interval::new(0i64, 1).unwrap(),
+            }])?;
+        }
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    drop(db);
+    let db = Db::open(dir.path(), Learning, common::work()).unwrap();
+    let joined = query!(Learning {
+        (student) | Student(id: student), Attempt(student), student > ?floor;
+    });
+    let mut prepared = db.prepare(&joined, common::work()).unwrap();
+    for floor in &ids {
+        let answers = db
+            .read(common::work(), |frame| {
+                frame.execute_collect(&mut prepared, &[BindValue::Uuid(*floor)])
+            })
+            .unwrap();
+        let mut actual = (0..answers.len())
+            .map(|row| match answers.get(row, 0) {
+                AnswerValue::Uuid(id) => id,
+                other => panic!("UUID result decoded as {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        let expected = ids
+            .iter()
+            .enumerate()
+            .filter(|(index, id)| index % 2 == 1 && *id > floor)
+            .map(|(_, id)| *id)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+    // Cross-occurrence residuals use the wide Free Join comparison, rather
+    // than the single-relation literal filter exercised above.
+    let pairs = query!(Learning {
+        (left, right) | Student(id: left), Student(id: right), left < right;
+    });
+    let mut pairs = db.prepare(&pairs, common::work()).unwrap();
+    let answers = db
+        .read(common::work(), |frame| {
+            frame.execute_collect(&mut pairs, &[] as &[BindValue])
+        })
+        .unwrap();
+    let mut actual = (0..answers.len())
+        .map(|row| {
+            let (AnswerValue::Uuid(left), AnswerValue::Uuid(right)) =
+                (answers.get(row, 0), answers.get(row, 1))
+            else {
+                panic!("UUID pair")
+            };
+            (left, right)
+        })
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let expected = ids
+        .iter()
+        .flat_map(|left| {
+            ids.iter()
+                .filter(move |right| left < *right)
+                .map(move |right| (*left, *right))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+}
+
 /// The chapter 34 shape: named order-free binding produces exactly the
 /// positional bind's answers — `params!` is construction, not a second
 /// bind semantics.
@@ -133,12 +229,14 @@ fn named_binds_match_positional_binds_order_free() {
     assert_eq!(attempts_for.columns(), ["units"]);
 
     let (_dir, db) = seeded("typed-named-binds");
-    let mut prepared = db.prepare(&attempts_for).expect("the template validates");
-    db.read(|snap| {
+    let mut prepared = db
+        .prepare(&attempts_for, common::work())
+        .expect("the template validates");
+    db.read(common::work(), |snap| {
         // Positional: ParamId order is first use (student, then floor).
         let positional = snap.execute_collect(
             &mut prepared,
-            &[BindValue::Id128(id(1)), BindValue::F64(f(0.5))],
+            &[BindValue::Uuid(id(1)), BindValue::F64(f(0.5))],
         )?;
         // Named, REVERSED order: the builder aims each value by name.
         let named = attempts_for.bind(params! { floor: 0.5f64, student: id(1) });
@@ -182,8 +280,10 @@ fn set_params_bind_value_slices() {
     };
 
     let (_dir, db) = seeded("typed-set-binds");
-    let mut prepared = db.prepare(&sized).expect("the template validates");
-    db.read(|snap| {
+    let mut prepared = db
+        .prepare(&sized, common::work())
+        .expect("the template validates");
+    db.read(common::work(), |snap| {
         let small = [Value::U64(1), Value::U64(2)];
         let out = snap.execute_collect(&mut prepared, &sized.bind(params! { sizes: &small }))?;
         assert_eq!(scores_of(&out), expected(&[0.2, 0.6]));
@@ -207,8 +307,10 @@ fn zero_param_templates_bind_empty() {
         "a paramless template has no names"
     );
     let (_dir, db) = seeded("typed-zero-params");
-    let mut prepared = db.prepare(&all).expect("the template validates");
-    db.read(|snap| {
+    let mut prepared = db
+        .prepare(&all, common::work())
+        .expect("the template validates");
+    db.read(common::work(), |snap| {
         let named = all.bind(params! {});
         assert!(named.is_empty(), "no params, no args");
         let out = snap.execute_collect(&mut prepared, &named)?;
@@ -263,12 +365,14 @@ fn wrong_value_kinds_stay_typed_bind_errors() {
         (units) | Attempt(id, student == ?student, units);
     });
     let (_dir, db) = seeded("typed-bind-mismatch");
-    let mut prepared = db.prepare(&attempts_for).expect("the template validates");
-    db.read(|snap| {
+    let mut prepared = db
+        .prepare(&attempts_for, common::work())
+        .expect("the template validates");
+    db.read(common::work(), |snap| {
         let bound = attempts_for.bind(params! { student: 7u64 });
         let error = snap
             .execute_collect(&mut prepared, &bound)
-            .expect_err("a u64 in an id128 slot refuses");
+            .expect_err("a u64 in an uuid slot refuses");
         assert!(
             matches!(error, bumbledb::Error::ParamTypeMismatch { .. }),
             "the C05 typed bind error surfaces: {error:?}"

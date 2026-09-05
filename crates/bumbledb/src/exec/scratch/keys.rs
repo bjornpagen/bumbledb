@@ -16,7 +16,7 @@ pub enum ScratchMapId {
     GroupToToken = 1,
     /// Pack: token (big-endian u64) → exact group-head bytes.
     TokenToGroup = 2,
-    /// Insertion-order log (`seq → row/key bytes`) for SpillSet / projection
+    /// Insertion-order log (`seq → row/key bytes`) for `SpillSet` / projection
     /// drain watermarks. Same env as [`Self::Default`]; not a second relation.
     OrderLog = 3,
     /// Exact text → token for nonresident forward lookup. Same env as

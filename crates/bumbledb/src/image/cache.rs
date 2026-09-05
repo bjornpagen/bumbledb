@@ -18,24 +18,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::image::RelationImage;
-use crate::image::epoch::{CacheGeneration, TextGeneration};
+#[cfg(test)]
+use crate::image::epoch::CacheGeneration;
 use crate::schema::RelationBody;
 use crate::storage::store::RelationVersion;
 use crate::work::CacheLedger;
-use crate::work::cache::{GenerationHandle, GenerationProtocol, WeakGenerationHandle};
+#[cfg(test)]
+use crate::work::cache::WeakGenerationHandle;
+use crate::work::cache::{GenerationHandle, GenerationProtocol};
 use bumbledb_theory::schema::RelationId;
 
 mod get_or_build;
 mod new;
 mod peek;
-
-#[cfg(feature = "trace")]
-mod resident;
-/// Cache observability: real per-op atomics under `trace` (a cost the
-/// off — call sites are written once, `#[cfg]`-free (the obs.rs law).
-/// Reader: the benchmark report.
-/// default build must not carry), a ZST twin with inline empty bodies
-pub mod stats;
 
 #[cfg(test)]
 mod tests;
@@ -89,7 +84,6 @@ impl VersionCache {
 /// `Arc<ImageCache>` handles to the same owner.
 pub struct ImageCache {
     slots: Box<[RelationSlot]>,
-    counters: stats::CacheCounters,
     cache: CacheLedger,
     protocol: GenerationProtocol,
 }
@@ -100,6 +94,7 @@ impl ImageCache {
     }
 
     /// The shared retained-cache ledger every image and text token charges.
+    #[cfg(test)]
     pub(crate) fn cache_ledger(&self) -> &CacheLedger {
         &self.cache
     }
@@ -113,19 +108,16 @@ impl ImageCache {
 
     /// Weak/versioned current generation for idle prepared memo caches.
     #[must_use]
+    #[cfg(test)]
     pub fn weak_current(&self) -> WeakGenerationHandle {
         self.protocol.acquire().downgrade()
     }
 
     /// The current whole-cache generation identity.
     #[must_use]
+    #[cfg(test)]
     pub fn cache_generation(&self) -> CacheGeneration {
         self.protocol.identity()
-    }
-
-    #[must_use]
-    pub fn text_generation(&self) -> TextGeneration {
-        TextGeneration::of(self.cache_generation())
     }
 
     /// Retained cache bytes: the ledger, not map membership. Images held
@@ -148,30 +140,8 @@ impl ImageCache {
         for slot in &self.slots {
             if let RelationSlot::Ordinary(cache) = slot {
                 let mut inner = cache.lock();
-                let evicted = inner.map.len();
                 inner.map.clear();
-                self.counters.evicted(evicted as u64);
             }
         }
-    }
-}
-
-#[cfg(any(test, feature = "trace"))]
-impl ImageCache {
-    /// The rebuild/hit counters: the deterministic regression hook for the
-    /// per-relation invalidation contract (test builds), and the trace-mode
-    /// read side whose recorded reader is the benchmark report (P14
-    /// `--features obs`).
-    #[must_use]
-    #[cfg_attr(
-        all(feature = "trace", not(test)),
-        expect(
-            dead_code,
-            reason = "trace-mode counter read side; the recorded reader is \
-                      the benchmark report (P14 `--features obs`)"
-        )
-    )]
-    pub fn stats(&self) -> stats::CacheStats {
-        self.counters.read()
     }
 }

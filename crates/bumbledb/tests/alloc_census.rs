@@ -783,11 +783,16 @@ bumbledb::schema! {
 
 fn flow_open() {
     let dir = common::TempDir::new("census-open");
-    let db = measured("open", "Db::create(fixture schema, common::work())", true, || {
-        Db::create(dir.path(), schema(), common::work())
-            .expect("create")
-            .expect("accepted")
-    });
+    let db = measured(
+        "open",
+        "Db::create(fixture schema, common::work())",
+        true,
+        || {
+            Db::create(dir.path(), schema(), common::work())
+                .expect("create")
+                .expect("accepted")
+        },
+    );
     drop(db);
     let db = measured("open", "Db::open(existing, common::work())", true, || {
         Db::open(dir.path(), schema(), common::work()).expect("open")
@@ -868,7 +873,10 @@ fn commit_shape(db: &Db<SchemaDescriptor>, label: &str, next_id: &mut u64, k: u6
             Ok(())
         };
         if round == 2 {
-            measured("commit", label, attrib, || db.write(common::work(), body).expect("commit")).unwrap();
+            measured("commit", label, attrib, || {
+                db.write(common::work(), body).expect("commit")
+            })
+            .unwrap();
         } else {
             db.write(common::work(), body).expect("commit").unwrap();
         }
@@ -894,11 +902,15 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
                     label,
                     label.starts_with("windowed append"),
                     || {
-                        db.write(common::work(), |tx| f(tx)).expect("windowed commit").unwrap();
+                        db.write(common::work(), |tx| f(tx))
+                            .expect("windowed commit")
+                            .unwrap();
                     },
                 );
             } else {
-                db.write(common::work(), |tx| f(tx)).expect("windowed commit").unwrap();
+                db.write(common::work(), |tx| f(tx))
+                    .expect("windowed commit")
+                    .unwrap();
             }
         };
         let append = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
@@ -951,10 +963,14 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
         };
         if round == 2 {
             measured("commit", "determinant overwrite (8 tuples)", true, || {
-                db.write(common::work(), seeded).expect("fd overwrite").unwrap();
+                db.write(common::work(), seeded)
+                    .expect("fd overwrite")
+                    .unwrap();
             });
         } else {
-            db.write(common::work(), seeded).expect("fd overwrite").unwrap();
+            db.write(common::work(), seeded)
+                .expect("fd overwrite")
+                .unwrap();
         }
     }
 }

@@ -16,7 +16,7 @@ use crate::schema::{FieldId, StatementDescriptor};
 use crate::storage::store::det_index::determinant_bytes;
 use crate::storage::store::fingerprint::FP_LEN;
 use crate::storage::store::judge_bridge::{SchemaJudge, UnindexedRows};
-use crate::storage::store::keys::{MEMBERSHIP_KEY_LEN, TAG_DETERMINANT};
+use crate::storage::store::keys::TAG_DETERMINANT;
 use crate::work::Resource;
 
 const USER: RelationId = RelationId(0);
@@ -179,8 +179,7 @@ fn committed_bucket(
         .projection_of(statement)
         .expect("a sealed key statement compiles");
     let _ = schema;
-    let projected =
-        determinant_bytes(key, determinant, &context).expect("projected bytes");
+    let projected = determinant_bytes(key, determinant, &context).expect("projected bytes");
     snapshot
         .determinant_candidates(key.id, &projected, &context)
         .expect("bucket enumeration")
@@ -190,7 +189,9 @@ fn committed_bucket(
 fn row_mutations_maintain_schema_determinant_entries_symmetrically() {
     let (_dir, path) = store_dir("schema-indexed-maintenance");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
 
     // Two users (two keys each) and one booking (one key): 5 entries.
     judged_commit(
@@ -301,7 +302,9 @@ impl CandidateJudge for CaptureCompetitors {
 fn judgment_enumeration_sees_all_competitors_without_scanning_the_relation() {
     let (_dir, path) = store_dir("schema-indexed-competitors");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
 
     // Seed a wide relation: 512 committed users with distinct emails.
     let committed_users: Vec<(RelationId, Vec<Value>)> = (0..512u64)
@@ -359,7 +362,9 @@ fn judgment_enumeration_sees_all_competitors_without_scanning_the_relation() {
 fn pointwise_keys_bucket_by_their_scalar_prefix() {
     let (_dir, path) = store_dir("schema-indexed-pointwise");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
     judged_commit(
         &store,
         &schema,
@@ -394,7 +399,9 @@ fn pointwise_keys_bucket_by_their_scalar_prefix() {
 fn long_text_determinants_stay_out_of_lmdb_keys_and_still_resolve() {
     let (_dir, path) = store_dir("schema-indexed-long-text");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
     // Far past the 511-byte LMDB key bound.
     let long_a = "a".repeat(4096) + "@example";
     let long_b = "b".repeat(4096) + "@example";
@@ -490,7 +497,9 @@ fn adopt_snapshot_rebuilds_the_determinant_index() {
     let (_dir, path) = store_dir("schema-indexed-adopt-src");
     let (_dir2, dest_path) = store_dir("schema-indexed-adopt-dest");
     let schema = keyed_schema();
-    let store = Store::create(&path, &schema, MapPolicy::default()).expect("create").0;
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .expect("create")
+        .0;
     judged_commit(
         &store,
         &schema,
@@ -566,7 +575,7 @@ fn visit_determinant_bucket_streams_candidates() {
 }
 
 /// L05 seam: committed visits are named by `ProjectionId`.
-/// Verification NotRun.
+/// Verification `NotRun`.
 #[test]
 fn owned_snapshot_visit_projection_takes_projection_id() {
     let dir = TempDir::new("visit-projection");

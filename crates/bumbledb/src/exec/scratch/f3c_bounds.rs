@@ -4,13 +4,13 @@
 //! batch path.
 
 use super::*;
-use crate::api::prepared::source::UNBOUNDED_POLICY;
-use crate::storage::store::StoreError;
-use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
 use super::{
     ScratchAppend, ScratchCapability, ScratchClaimKey, ScratchExactKey, ScratchMapId,
     ScratchPolicy, ScratchProbe, ScratchTextLookup,
 };
+use crate::api::prepared::source::UNBOUNDED_POLICY;
+use crate::storage::store::StoreError;
+use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
 
 fn work() -> WorkContext {
     UNBOUNDED_POLICY.start().expect("unbounded ledger")
@@ -185,8 +185,8 @@ fn spill_batch_is_exact_including_oversized_keys() {
 #[test]
 fn scratch_capability_opens_the_one_substrate() {
     use crate::exec::scratch::capability::{ScratchCapability, ScratchPolicy};
-    let cap = ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded())
-        .expect("start");
+    let cap =
+        ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("start");
     let mut relation = cap.relation();
     assert!(relation.insert_if_absent(b"k", b"v").expect("insert"));
     assert!(!relation.insert_if_absent(b"k", b"v").expect("dup"));
@@ -224,12 +224,14 @@ fn d03_on_work_shares_the_execute_ledger() {
     let before = work.used(Resource::ScratchBytes);
     let cap = ScratchCapability::on_work(&work, ScratchPolicy::from_work(&work)).expect("on_work");
     assert_eq!(cap.work().used(Resource::ScratchBytes), before);
-    assert_eq!(cap.work().limit(Resource::ScratchBytes), work.limit(Resource::ScratchBytes));
+    assert_eq!(
+        cap.work().limit(Resource::ScratchBytes),
+        work.limit(Resource::ScratchBytes)
+    );
     let mut relation = cap.relation();
     relation.put(b"k", &[0u8; 32]).expect("put");
     assert!(
-        work.used(Resource::ScratchBytes) > before
-            || work.used(Resource::WorkingBytes) > 0,
+        work.used(Resource::ScratchBytes) > before || work.used(Resource::WorkingBytes) > 0,
         "relation charges the execute ledger"
     );
     let twin = ScratchCapability::start(
@@ -248,7 +250,7 @@ fn d03_on_work_shares_the_execute_ledger() {
     );
 }
 
-/// D03: MapFull after reservation and before commit, then a successful
+/// D03: `MapFull` after reservation and before commit, then a successful
 /// retry, charges exactly one committed entry — not the aborted attempt
 /// plus the retry.
 #[test]
@@ -335,7 +337,7 @@ fn d03_shrink_reuses_reserved_pages() {
 #[test]
 fn d03_colliding_wide_keys_and_failed_reservation() {
     let context = ExecutionPolicy {
-        scratch_bytes: super::CHARGE_CHUNK as u64,
+        scratch_bytes: 2 * super::CHARGE_CHUNK as u64,
         ..UNBOUNDED_POLICY
     }
     .start()
@@ -345,8 +347,12 @@ fn d03_colliding_wide_keys_and_failed_reservation() {
     let mut b = a.clone();
     b.push(0x01);
     a.push(0x02);
-    scratch.put_exact(ScratchExactKey::new(&a), b"a").expect("a");
-    scratch.put_exact(ScratchExactKey::new(&b), b"b").expect("b");
+    scratch
+        .put_exact(ScratchExactKey::new(&a), b"a")
+        .expect("a");
+    scratch
+        .put_exact(ScratchExactKey::new(&b), b"b")
+        .expect("b");
     assert_eq!(scratch.len(), 2);
     let mut out = Vec::new();
     assert!(scratch.get(&a, &mut out).expect("get a"));
@@ -356,7 +362,7 @@ fn d03_colliding_wide_keys_and_failed_reservation() {
     let used = context.used(Resource::ScratchBytes);
     let len = scratch.len();
     scratch
-        .put(b"overflow", &[0u8; super::CHARGE_CHUNK])
+        .put(b"overflow", &[0u8; 2 * super::CHARGE_CHUNK])
         .expect_err("policy/ledger refuses");
     assert_eq!(scratch.len(), len);
     assert_eq!(context.used(Resource::ScratchBytes), used);
@@ -378,7 +384,7 @@ fn d03_failed_setup_does_not_touch_unowned_directories() {
     ));
     std::fs::create_dir(&foreign).expect("foreign dir");
     std::fs::write(foreign.join("owned-by-other"), b"keep").expect("marker");
-    let err = ScratchRelation::setup_at(&context, foreign.clone()).expect_err("collision");
+    let err = ScratchRelation::setup_at(&context, &foreign).expect_err("collision");
     assert!(
         foreign.exists(),
         "preexisting directory must survive the refused setup: {err:?}"
@@ -411,12 +417,15 @@ fn d03_repeated_failed_setup_cleans_only_owned_identity() {
         super::fastrand_seed()
     ));
     super::inject_setup_fail_after_exclusive_dir();
-    ScratchRelation::setup_at(&context, owned.clone()).expect_err("injected fail");
+    ScratchRelation::setup_at(&context, &owned).expect_err("injected fail");
     assert!(
         !owned.exists(),
         "owned identity created then failed must be unlinked"
     );
-    assert!(neighbor.exists(), "neighbor directory is not ours to delete");
+    assert!(
+        neighbor.exists(),
+        "neighbor directory is not ours to delete"
+    );
     let _ = std::fs::remove_dir_all(&neighbor);
 }
 
@@ -431,7 +440,7 @@ fn d03_word_claims_and_early_stop_visitor() {
     scratch.put_words(second, b"b").expect("second");
     let mut seen = 0u32;
     scratch
-        .visit(&mut |_key, _value| {
+        .visit(&mut |_key: &[u8], _value: &[u8]| {
             seen += 1;
             Ok(false)
         })
@@ -445,7 +454,9 @@ fn d03_word_claims_and_early_stop_visitor() {
 #[test]
 fn d03_pack_claim_key_is_three_be64_and_inline() {
     assert_eq!(ScratchClaimKey::BYTE_LEN, 24);
-    assert!(ScratchClaimKey::BYTE_LEN <= MAX_INLINE_KEY);
+    const {
+        assert!(ScratchClaimKey::BYTE_LEN <= MAX_INLINE_KEY);
+    }
     let key = ScratchClaimKey::new([7, 10, 20]);
     let bytes = key.encode();
     assert_eq!(&bytes[..8], &7u64.to_be_bytes());
@@ -458,12 +469,6 @@ fn d03_pack_claim_key_is_three_be64_and_inline() {
 fn d03_named_maps_share_one_env() {
     let work = work();
     let mut scratch = ScratchRelation::new(&work, 0);
-    scratch
-        .open_map(ScratchMapId::GroupToToken)
-        .expect("open g2t");
-    scratch
-        .open_map(ScratchMapId::TokenToGroup)
-        .expect("open t2g");
     scratch.force_spill().expect("one env");
     let path = scratch.scratch_path().expect("spilled");
     let claim = ScratchClaimKey::new([1, 0, 8]);
@@ -486,7 +491,11 @@ fn d03_named_maps_share_one_env() {
         .visit_with_lookup(ScratchMapId::Default, &mut |lookup, key, _| {
             seen += 1;
             assert_eq!(ScratchClaimKey::decode(key), Some(claim));
-            assert!(lookup.get(ScratchMapId::TokenToGroup, &1u64.to_be_bytes(), &mut header_out)?);
+            assert!(lookup.get(
+                ScratchMapId::TokenToGroup,
+                &1u64.to_be_bytes(),
+                &mut header_out
+            )?);
             Ok(true)
         })
         .expect("claim cursor + header get");
@@ -500,9 +509,6 @@ fn d03_named_maps_share_one_env() {
 fn d03_order_log_shares_one_env() {
     let work = work();
     let mut scratch = ScratchRelation::new(&work, 0);
-    scratch
-        .open_map(ScratchMapId::OrderLog)
-        .expect("open order log");
     scratch.force_spill().expect("one env");
     let path = scratch.scratch_path().expect("spilled");
     let mut append = ScratchAppend::new(&mut scratch);
@@ -515,13 +521,15 @@ fn d03_order_log_shares_one_env() {
     append.finish().expect("finish");
     assert_eq!(scratch.scratch_path().as_ref(), Some(&path));
     let mut out = Vec::new();
-    assert!(scratch
-        .get_map(ScratchMapId::OrderLog, &0u64.to_be_bytes(), &mut out)
-        .expect("get log"));
+    assert!(
+        scratch
+            .get_map(ScratchMapId::OrderLog, &0u64.to_be_bytes(), &mut out)
+            .expect("get log")
+    );
     assert_eq!(out, b"row-key");
 }
 
-/// Public commit: MapFull after reserve / before txn commit, then retry,
+/// Public commit: `MapFull` after reserve / before txn commit, then retry,
 /// charges once.
 #[test]
 fn d03_public_commit_map_full_charges_once() {
@@ -537,13 +545,19 @@ fn d03_public_commit_map_full_charges_once() {
     seed.put(ScratchMapId::Default, b"seed", &[0u8; 8])
         .expect("stage seed");
     seed.commit(&mut scratch).expect("seed");
+    assert_eq!(scratch.len(), 1);
     let after_seed = context.used(Resource::ScratchBytes);
     scratch.inject_map_full_after_reserve(1);
     let mut batch = ScratchWriteBatch::new();
     batch
-        .put(ScratchMapId::Default, b"retry-key", &[0u8; super::CHARGE_CHUNK])
+        .put(
+            ScratchMapId::Default,
+            b"retry-key",
+            &[0u8; super::CHARGE_CHUNK],
+        )
         .expect("stage");
     batch.commit(&mut scratch).expect("retry commit");
+    assert_eq!(scratch.len(), 2, "only the committed attempt adds a row");
     let once = context.used(Resource::ScratchBytes) - after_seed;
     assert_eq!(
         once,
@@ -551,6 +565,41 @@ fn d03_public_commit_map_full_charges_once() {
         "sensitivity: abort+retry would be {}",
         super::CHARGE_CHUNK as u64 * 2
     );
+}
+
+#[test]
+fn batch_cardinality_counts_distinct_default_keys_on_both_tiers() {
+    for ram_bytes in [usize::MAX, 0] {
+        let context = UNBOUNDED_POLICY.start().expect("work");
+        let mut scratch = ScratchRelation::new(&context, ram_bytes);
+        let wide = vec![b'x'; super::MAX_INLINE_KEY + 1];
+        let mut batch = ScratchWriteBatch::new();
+        for key in [b"small".as_slice(), wide.as_slice()] {
+            batch
+                .put(ScratchMapId::Default, key, b"old")
+                .expect("first");
+            batch
+                .put(ScratchMapId::Default, key, b"new")
+                .expect("overwrite");
+            batch
+                .insert_if_absent(ScratchMapId::Default, key, b"ignored")
+                .expect("duplicate");
+            batch
+                .put(ScratchMapId::OrderLog, key, b"index")
+                .expect("other map");
+        }
+        batch.commit(&mut scratch).expect("commit");
+        assert_eq!(
+            scratch.len(),
+            2,
+            "duplicates and auxiliary maps add no rows"
+        );
+        let mut value = Vec::new();
+        for key in [b"small".as_slice(), wide.as_slice()] {
+            assert!(scratch.get(key, &mut value).expect("stored row"));
+            assert_eq!(value, b"new");
+        }
+    }
 }
 
 /// Mid-stream append refusal stops the walk. Later source rows are not
@@ -570,29 +619,22 @@ fn d03_mid_stream_append_does_not_collect_the_rest() {
         let mut append = ScratchAppend::new(&mut scratch);
         let result = (|| {
             for (index, value) in source.iter().enumerate() {
-                append.append(
-                    ScratchMapId::Default,
-                    &(index as u64).to_be_bytes(),
-                    value,
-                )?;
+                append.append(ScratchMapId::Default, &(index as u64).to_be_bytes(), value)?;
                 accepted += 1;
             }
             append.finish()
         })();
-        assert!(
-            result.is_err(),
-            "a later row exceeds the working allowance"
-        );
+        assert!(result.is_err(), "a later row exceeds the working allowance");
     }
     let mut seen = 0u32;
     scratch
-        .visit(&mut |_, _| {
+        .visit(&mut |_: &[u8], _: &[u8]| {
             seen += 1;
             Ok(true)
         })
         .expect("visit");
     assert!(
-        accepted < source.len() as u32,
+        u64::from(accepted) < source.len() as u64,
         "the walk stopped; remaining source rows were not collected"
     );
     assert!(
@@ -600,8 +642,8 @@ fn d03_mid_stream_append_does_not_collect_the_rest() {
         "scratch holds only the prefix that append retained"
     );
     assert_ne!(
-        seen,
-        source.len() as u32,
+        u64::from(seen),
+        source.len() as u64,
         "the full source is not a silent collection in scratch"
     );
 }
@@ -611,14 +653,15 @@ fn d03_mid_stream_append_does_not_collect_the_rest() {
 #[test]
 fn d03_failed_append_does_not_leave_cache_hit() {
     let work = ExecutionPolicy {
-        working_bytes: 4096,
+        // Forward and reverse tables each reserve one 4 KiB chunk.
+        working_bytes: 8192,
         ..UNBOUNDED_POLICY
     }
     .start()
     .expect("start");
     let capability = ScratchCapability::on_work(&work, ScratchPolicy::from_work(&work))
         .expect("bind live ledger");
-    let mut lookup = ScratchTextLookup::open(&capability).expect("open");
+    let mut lookup = ScratchTextLookup::new(&capability);
     lookup
         .put(b"kept", &1u64.to_be_bytes())
         .expect("first put commits then caches");
@@ -660,9 +703,7 @@ fn d03_value_len_borrows_before_copy() {
         .append(ScratchMapId::Default, b"row", b"abcdef")
         .expect("append");
     append.finish().expect("finish");
-    let probe = rows
-        .value_len(ScratchMapId::Default, b"row")
-        .expect("len");
+    let probe = rows.value_len(ScratchMapId::Default, b"row").expect("len");
     let ScratchProbe::Hit(len) = probe else {
         panic!("committed row must hit");
     };
@@ -693,7 +734,7 @@ fn d03_lookup_work_refusal_is_error_not_miss() {
     .expect("start");
     let capability = ScratchCapability::on_work(&work, ScratchPolicy::from_work(&work))
         .expect("bind live ledger");
-    let mut lookup = ScratchTextLookup::open(&capability).expect("open");
+    let mut lookup = ScratchTextLookup::new(&capability);
     let error = lookup
         .lookup_forward(b"any", |_| Ok(()))
         .expect_err("zero work units refuse the lookup");

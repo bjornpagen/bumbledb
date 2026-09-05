@@ -39,7 +39,7 @@ function input(overrides: Partial<Record<"result" | "requestId", unknown>> = {})
 		id: { receiptEpoch: 1n, requestId: overrides.requestId ?? refWire.requestId },
 		changes,
 		precondition: { kind: "blind" as const },
-		result: overrides.result ?? { attempt: "6f".repeat(16), units: 1n, score: 0.5, pinned: true }
+		result: overrides.result ?? { attempt: "6f6f6f6f-6f6f-6f6f-6f6f-6f6f6f6f6f6f", units: 1n, score: 0.5, pinned: true }
 	} as unknown as CommandInput<typeof schema>
 }
 
@@ -210,7 +210,9 @@ describe("Command.encode / Command.decode", function suite() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
 		const shared = new Uint8Array(new SharedArrayBuffer(4))
-		const exit = await Effect.runPromiseExit(provideRuntime(Effect.scoped(machine.Command.decode(shared, schema, work))))
+		const exit = await Effect.runPromiseExit(
+			provideRuntime(Effect.scoped(machine.Command.decode(shared, schema, work)))
+		)
 		assert.ok(Exit.isFailure(exit))
 		assert.equal(double.calls.length, 0)
 	})

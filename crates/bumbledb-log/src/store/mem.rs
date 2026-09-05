@@ -14,8 +14,8 @@ use crate::writer::verbs::{
 };
 
 use super::receive::{
-    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
-    ReceivingStore, TransportContext, TransportObservation, RECEIVE_CHUNK_BYTES,
+    ObservedError, RECEIVE_CHUNK_BYTES, ReceiveAccumulator, ReceiveFault, ReceivedBody,
+    ReceivedHead, ReceivingStore, TransportContext, TransportObservation,
 };
 
 /// Which verb a scripted fault applies to.
@@ -416,7 +416,11 @@ impl ReceivingStore for MemStore {
         key: &str,
         ctx: TransportContext<'_>,
     ) -> Result<ReceivedBody, MemFault> {
+        ctx.checkpoint()
+            .map_err(|error| mem_receive_fault(Op::GetObject, key, &ReceiveFault::Work(error)))?;
         self.consult_gate(Op::GetObject, key);
+        ctx.checkpoint()
+            .map_err(|error| mem_receive_fault(Op::GetObject, key, &ReceiveFault::Work(error)))?;
         let mut state = self.lock();
         Self::observe(&mut state, Op::GetObject, key);
         if Self::take_fault(&mut state, Op::GetObject).is_some() {
@@ -437,7 +441,13 @@ impl ReceivingStore for MemStore {
         head_key: &str,
         ctx: TransportContext<'_>,
     ) -> Result<ReceivedHead, MemFault> {
+        ctx.checkpoint().map_err(|error| {
+            mem_receive_fault(Op::ReadHead, head_key, &ReceiveFault::Work(error))
+        })?;
         self.consult_gate(Op::ReadHead, head_key);
+        ctx.checkpoint().map_err(|error| {
+            mem_receive_fault(Op::ReadHead, head_key, &ReceiveFault::Work(error))
+        })?;
         let mut state = self.lock();
         Self::observe(&mut state, Op::ReadHead, head_key);
         if Self::take_fault(&mut state, Op::ReadHead).is_some() {
@@ -464,13 +474,13 @@ fn copy_capped(
     let mut acc = ReceiveAccumulator::new(ctx);
     for chunk in bytes.chunks(RECEIVE_CHUNK_BYTES) {
         acc.push(chunk)
-            .map_err(|fault| mem_receive_fault(op, key, fault))?;
+            .map_err(|fault| mem_receive_fault(op, key, &fault))?;
     }
     acc.finish()
-        .map_err(|fault| mem_receive_fault(op, key, fault))
+        .map_err(|fault| mem_receive_fault(op, key, &fault))
 }
 
-fn mem_receive_fault(op: Op, key: &str, fault: ReceiveFault) -> MemFault {
+fn mem_receive_fault(op: Op, key: &str, fault: &ReceiveFault) -> MemFault {
     MemFault::observed(op, key, fault.observation())
 }
 
@@ -482,7 +492,9 @@ mod tests {
     fn conditional_grammar_is_exact_and_versions_are_monotone() {
         let store = MemStore::new();
         assert!(matches!(
-            store.receive_head("p/HEAD", TransportContext::limited(64)).unwrap(),
+            store
+                .receive_head("p/HEAD", TransportContext::limited(64))
+                .unwrap(),
             ReceivedHead::Absent
         ));
         let v1 = match store.create_head("p/HEAD", b"one").unwrap() {
@@ -523,7 +535,7 @@ mod tests {
             .unwrap()
         {
             ReceivedHead::Present { body, .. } => {
-                assert_eq!(body.as_bytes(), b"two", "the CAS landed")
+                assert_eq!(body.as_bytes(), b"two", "the CAS landed");
             }
             ReceivedHead::Absent => panic!("head exists"),
         }
@@ -573,7 +585,7 @@ mod tests {
             "p/objects/1/chunk/aa",
             TransportContext {
                 work: None,
-                receive: ReceiveLimits::capped(4),
+                receive: super::super::receive::ReceiveLimits::capped(4),
             },
         );
         let error = capped.expect_err("cap");
@@ -582,7 +594,7 @@ mod tests {
             "p/objects/1/chunk/zz",
             TransportContext {
                 work: None,
-                receive: ReceiveLimits::capped(8),
+                receive: super::super::receive::ReceiveLimits::capped(8),
             },
         );
         assert_eq!(

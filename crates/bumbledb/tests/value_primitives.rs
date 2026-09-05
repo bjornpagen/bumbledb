@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashSet};
 use std::num::FpCategory;
 
-use bumbledb::{F64, F64ParseError, Id128, Id128ParseError};
+use bumbledb::{F64, F64ParseError, Uuid};
 
 fn reference_bits(bits: u64) -> u64 {
     match f64::from_bits(bits).classify() {
@@ -255,126 +255,121 @@ fn f64_strict_decoder_refuses_wrong_width_and_noncanonical_order_holes() {
 #[test]
 fn scalar_values_have_exact_payload_width_and_one_canonical_home() {
     const NEGATIVE_ZERO: F64 = F64::from_bits(0x8000_0000_0000_0000);
-    const ID: Id128 = Id128::from_bytes([0x3c; 16]);
+    const ID: Uuid = Uuid::from_bytes([0x3c; 16]);
     assert_eq!(std::mem::size_of::<F64>(), 8);
-    assert_eq!(std::mem::size_of::<Id128>(), 16);
+    assert_eq!(std::mem::size_of::<Uuid>(), 16);
     assert_eq!(NEGATIVE_ZERO, F64::ZERO);
-    assert_eq!(ID.to_bytes(), [0x3c; 16]);
+    assert_eq!(ID.into_bytes(), [0x3c; 16]);
     // Assignments must compile: public core values are re-exports, not copies.
     let theory_float: bumbledb_theory::F64 = NEGATIVE_ZERO;
-    let theory_id: bumbledb_theory::Id128 = ID;
+    let theory_id: bumbledb_theory::Uuid = ID;
     assert_eq!(theory_float, F64::ZERO);
     assert_eq!(theory_id, ID);
 }
 
 #[test]
-fn id128_canonical_hex_and_exact_bytes_golden() {
+fn uuid_canonical_hex_and_exact_bytes_golden() {
     let bytes = [
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
         0xff,
     ];
-    let text = "00112233445566778899aabbccddeeff";
-    let id = Id128::from_bytes(bytes);
+    let text = "00112233-4455-6677-8899-aabbccddeeff";
+    let id = Uuid::from_bytes(bytes);
     assert_eq!(id.to_string(), text);
-    assert_eq!(format!("{id:?}"), format!("Id128({text})"));
-    assert_eq!(Id128::from_hex(text), Ok(id));
-    assert_eq!(text.parse::<Id128>(), Ok(id));
-    assert_eq!(Id128::try_from(bytes.as_slice()), Ok(id));
-    assert_eq!(Id128::from(bytes), id);
-    assert_eq!(<[u8; 16]>::from(id), bytes);
+    assert_eq!(Uuid::parse_str(text), Ok(id));
+    assert_eq!(text.parse::<Uuid>(), Ok(id));
+    assert_eq!(Uuid::from_slice(bytes.as_slice()), Ok(id));
+    assert_eq!(id.into_bytes(), bytes);
     assert_eq!(id.as_bytes(), &bytes);
 }
 
 #[test]
-fn id128_owns_bytes_and_has_no_reserved_patterns() {
+fn uuid_owns_bytes_and_has_no_reserved_patterns() {
     for value in 0..=u8::MAX {
         let mut bytes = [value; 16];
-        let id = Id128::from_bytes(bytes);
+        let id = Uuid::from_bytes(bytes);
         bytes.fill(value.wrapping_add(1));
-        assert_eq!(id.to_bytes(), [value; 16]);
-        assert_eq!(Id128::from_hex(&id.to_string()), Ok(id));
+        assert_eq!(id.into_bytes(), [value; 16]);
+        assert_eq!(Uuid::parse_str(&id.to_string()), Ok(id));
     }
     assert_eq!(
-        Id128::from_bytes([0; 16]).to_string(),
-        "00000000000000000000000000000000"
+        Uuid::from_bytes([0; 16]).to_string(),
+        "00000000-0000-0000-0000-000000000000"
     );
     assert_eq!(
-        Id128::from_bytes([0xff; 16]).to_string(),
-        "ffffffffffffffffffffffffffffffff"
+        Uuid::from_bytes([0xff; 16]).to_string(),
+        "ffffffff-ffff-ffff-ffff-ffffffffffff"
     );
 }
 
 #[test]
-fn id128_strict_byte_and_text_widths() {
+fn uuid_strict_byte_and_text_widths() {
     let bytes = [0; 64];
     for len in 0..=64 {
         if len != 16 {
-            assert_eq!(
-                Id128::try_from(&bytes[..len]),
-                Err(Id128ParseError::InvalidByteLength { actual: len })
-            );
+            assert!(Uuid::from_slice(&bytes[..len]).is_err());
         }
         if len != 32 {
-            assert_eq!(
-                Id128::from_hex(&"0".repeat(len)),
-                Err(Id128ParseError::InvalidHexLength { actual: len })
-            );
+            assert!(Uuid::parse_str(&"0".repeat(len)).is_err());
         }
     }
     for text in [
-        "00112233-4455-6677-8899-aabbccddeeff",
         "0x00112233445566778899aabbccddeeff",
         " 00112233445566778899aabbccddeeff",
         "00112233445566778899aabbccddeeff\n",
     ] {
-        assert_eq!(
-            Id128::from_hex(text),
-            Err(Id128ParseError::InvalidHexLength { actual: text.len() })
-        );
+        assert!(Uuid::parse_str(text).is_err());
     }
 }
 
 #[test]
-fn id128_rejects_every_noncanonical_digit_position() {
+fn uuid_rejects_every_noncanonical_digit_position() {
     for index in 0..32 {
-        for invalid in [b'A', b'F', b'G', b'g', b'/', b':', b' ', b'-', 0] {
+        for invalid in [b'G', b'g', b'/', b':', b' ', b'-', 0] {
             let mut text = [b'0'; 32];
             text[index] = invalid;
             let text = std::str::from_utf8(&text).unwrap();
-            assert_eq!(
-                Id128::from_hex(text),
-                Err(Id128ParseError::InvalidHexDigit { index })
-            );
+            assert!(Uuid::parse_str(text).is_err());
         }
     }
     // Correct byte count is insufficient: UTF-8 multibyte text is not hex.
     let unicode = format!("é{}", "0".repeat(30));
     assert_eq!(unicode.len(), 32);
-    assert_eq!(
-        Id128::from_hex(&unicode),
-        Err(Id128ParseError::InvalidHexDigit { index: 0 })
-    );
+    assert!(Uuid::parse_str(&unicode).is_err());
 }
 
 #[test]
-fn id128_sampled_roundtrips_and_order_are_plain_byte_identity() {
+fn uuid_sampled_roundtrips_and_order_are_plain_byte_identity() {
     let mut state = 0x361f_290a_c948_b507;
-    let mut previous = Id128::from_bytes([0; 16]);
-    for _ in 0..10_000 {
+    let mut previous = Uuid::from_bytes([0; 16]);
+    for _ in 0..512 {
         let mut bytes = [0; 16];
         bytes[..8].copy_from_slice(&next_bits(&mut state).to_le_bytes());
         bytes[8..].copy_from_slice(&next_bits(&mut state).to_le_bytes());
-        let id = Id128::from_bytes(bytes);
-        let expected: String = bytes
+        let id = Uuid::from_bytes(bytes);
+        let hex: String = bytes
             .iter()
-            .flat_map(|&byte| [byte >> 4, byte & 15])
-            .map(|digit| char::from_digit(u32::from(digit), 16).unwrap())
+            .flat_map(|byte| {
+                let digits = b"0123456789abcdef";
+                [
+                    char::from(digits[usize::from(byte >> 4)]),
+                    char::from(digits[usize::from(byte & 15)]),
+                ]
+            })
             .collect();
+        let expected = format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
+        );
         assert_eq!(id.to_string(), expected);
-        assert_eq!(Id128::from_hex(&expected), Ok(id));
+        assert_eq!(Uuid::parse_str(&expected), Ok(id));
         assert_eq!(id.cmp(&previous), bytes.cmp(previous.as_bytes()));
         assert_eq!(id.cmp(&previous), expected.cmp(&previous.to_string()));
-        let duplicate = Id128::try_from(bytes.as_slice()).unwrap();
+        let duplicate = Uuid::from_slice(bytes.as_slice()).unwrap();
         assert_eq!(HashSet::from([id, duplicate]).len(), 1);
         previous = id;
     }

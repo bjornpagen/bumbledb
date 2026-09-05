@@ -234,7 +234,8 @@ impl bumbledb::Theory for Target {
 /// construction, not a verdict the caller judges.
 #[must_use]
 pub fn publish_admitted(path: &Path) -> Db<Target> {
-    let mut builder = InstanceBuilder::new(Target).expect("target schema validates");
+    let mut builder = InstanceBuilder::new(Target, crate::harness::bench_work())
+        .expect("target schema validates");
     for i in 0..3 {
         builder
             .load_dyn(
@@ -249,7 +250,7 @@ pub fn publish_admitted(path: &Path) -> Db<Target> {
             panic!("CurrencyBacking seed must admit: {violations}")
         }
     };
-    Db::from_instance(path, &owned).expect("publish admitted target")
+    Db::from_instance(path, &owned, crate::harness::bench_work()).expect("publish admitted target")
 }
 
 /// # Panics
@@ -1042,7 +1043,7 @@ mod tests {
                     let entries = corpus_rows(&domains, ids::JOURNAL_ENTRY);
                     let batches = corpus_rows(&domains, ids::IMPORT_BATCH);
                     let mut next_batch = 0u64;
-                    db.write(|tx| {
+                    db.write(crate::harness::bench_work(), |tx| {
                         for i in 0..entries {
                             let row = corpus_row(cfg, &domains, ids::JOURNAL_ENTRY, i);
                             tx.insert_dyn(ids::JOURNAL_ENTRY, [&row])?;
@@ -1059,7 +1060,7 @@ mod tests {
                 }
                 ids::IMPORT_BATCH => {} // loaded with its entries
                 _ => {
-                    db.write(|tx| {
+                    db.write(crate::harness::bench_work(), |tx| {
                         tx.insert_dyn(rel, corpus_relation_rows(cfg, rel))
                             .map(bumbledb::MutationReport::changed)
                     })

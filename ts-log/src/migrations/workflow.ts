@@ -11,5 +11,5 @@ import { productionCodec } from "#migrations/native.ts"
 
 const production = makeGenerator(productionCodec, productionExclusion)
 
-export const generateMigrations = production.generateMigrations
-export const checkMigrations = production.checkMigrations
+export const generateMigrations: ReturnType<typeof makeGenerator>["generateMigrations"] = production.generateMigrations
+export const checkMigrations: ReturnType<typeof makeGenerator>["checkMigrations"] = production.checkMigrations

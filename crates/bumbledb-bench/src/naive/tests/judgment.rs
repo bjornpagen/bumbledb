@@ -40,7 +40,7 @@ fn source_unsatisfied(statement: u16) -> Violation {
 fn target_required(statement: u16) -> Violation {
     Violation::Containment {
         statement: StatementId(statement),
-        direction: Direction::TargetRequired,
+        direction: Direction::SourceUnsatisfied,
     }
 }
 
@@ -119,6 +119,10 @@ fn matrix_schema() -> SchemaDescriptor {
             },
         ],
         statements: vec![
+            StatementDescriptor::Functionality {
+                relation: TARGET,
+                projection: Box::new([FieldId(0)]),
+            },
             StatementDescriptor::Functionality {
                 relation: KEYED,
                 projection: Box::new([FieldId(0)]),

@@ -6,7 +6,7 @@
 bumbledb::schema! {
     pub Review;
 
-    relation Item { id: u64 as ItemId, fresh, mark: bytes<4> }
+    relation Item { id: u64 as ItemId, mark: bytes<4> }
 
     Item(id | mark == b"toolong!") <= Item(id);
 }

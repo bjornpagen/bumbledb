@@ -17,76 +17,96 @@ const COOKBOOK: &str = include_str!("../../../docs/cookbook.md");
 mod common;
 use common::TempDir;
 
-/// The quickstart fence, compiled from one token stream: the `schema!`
-/// interior at item position, the body in a runnable fn with the fence's
-/// three free names bound the way the prose around the fence describes
-/// them (a store path, no params, a reusable answer buffer). The names
-/// arrive as macro inputs so they share the fence tokens' hygiene.
+/// The documented quickstart is compiled from the same tokens that its drift
+/// check compares. Its test drives the public create/apply/read/close lifecycle.
 macro_rules! quickstart_fence {
-    (free { $path:ident, $params:ident, $results:ident }
-     schema { $($s:tt)* } body { $($b:tt)* }) => {
+    ($($items:tt)*) => {
         mod quickstart {
-            bumbledb::schema! { $($s)* }
-            pub const SCHEMA_SOURCE: &str = stringify!($($s)*);
-            pub const BODY_SOURCE: &str = stringify!($($b)*);
-            pub fn run($path: &std::path::Path) -> Result<usize, Box<dyn std::error::Error>> {
-                let $params: [bumbledb::BindValue<'static>; 0] = [];
-                let mut $results = bumbledb::Answers::default();
-                $($b)*
-                Ok($results.len())
+            $($items)*
+            pub const SOURCE: &str = stringify!($($items)*);
+            pub fn run(path: &std::path::Path) -> Result<usize, Box<dyn std::error::Error>> {
+                let work = crate::common::work();
+                let db = open_ledger(path, work.clone())?;
+                assert!(matches!(seed(&db, &work)?, ApplyOutcome::Accepted { .. }));
+                let q = bumbledb_query::query!(Ledger {
+                    (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
+                });
+                let mut prepared = db.prepare(&q, work.clone())?;
+                let mut results = bumbledb::Answers::default();
+                let params: [bumbledb::BindValue<'static>; 0] = [];
+                db.read(work.clone(), |snap| {
+                    snap.execute(&mut prepared, &params, &mut results)?;
+                    Ok(())
+                })?;
+                assert!(matches!(pin_and_close(&db, &work)?, CloseReport::Closed));
+                Ok(results.len())
             }
         }
     };
 }
 
-quickstart_fence!(
-    free { path, params, results }
-    schema {
-        pub Ledger;
+quickstart_fence! {
+use bumbledb::{ApplyExpected, ApplyOutcome, ChangeSet, ChangeSetBuilder, CloseReport, Db, Fact, WorkContext};
 
-        closed relation Region as RegionId = { Na, Eu, Apac, Latam };
-        closed relation Status as StatusId = { Open, Frozen, Closed };
+bumbledb::schema! {
+    pub Ledger;
 
-        relation Holder {
-            id: u64 as HolderId,
-            name: str,
-            region: u64 as RegionId,
-        }
-        relation Account {
-            id: u64 as AccountId,
-            holder: u64 as HolderId,
-            status: u64 as StatusId,
-            opened_at: i64,
-        }
+    closed relation Region as RegionId = { Na, Eu, Apac, Latam };
+    closed relation Status as StatusId = { Open, Frozen, Closed };
 
-        Holder(id)  -> Holder;
-        Account(id) -> Account;
-
-        Account(holder) <= Holder(id);
-        Holder(region)  <= Region(id);
-        Account(status) <= Status(id);
+    relation Holder {
+        id: u64 as HolderId,
+        name: str,
+        region: u64 as RegionId,
     }
-    body {
-        let db = bumbledb::Db::create(path, Ledger)?.expect("accepted");
-
-        db.write(|tx| {
-            let holder = HolderId(1);
-            tx.insert([&Holder { id: holder, name: "alice", region: Region::Eu.id() }])?;
-            let account = AccountId(1);
-            tx.insert([&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 }])?;
-            Ok(())
-        })?.unwrap();
-
-        let q = bumbledb_query::query!(Ledger {
-            (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
-        });
-        let mut prepared = db.prepare(&q)?;
-        db.read(|snap| {
-            snap.execute(&mut prepared, &params, &mut results)?;
-            Ok(())
-        })?;
+    relation Account {
+        id: u64 as AccountId,
+        holder: u64 as HolderId,
+        status: u64 as StatusId,
+        opened_at: i64,
     }
-);
+
+    Holder(id)   -> Holder;
+    Account(id)  -> Account;
+    Account(holder) <= Holder(id);
+    Holder(region)  <= Region(id);
+    Account(status) <= Status(id);
+}
+
+fn open_ledger(path: &std::path::Path, work: WorkContext) -> bumbledb::Result<Db<Ledger>> {
+    Ok(Db::create(path, Ledger, work)?.expect("empty Ledger admits"))
+}
+
+fn insert_fact<'a, F: Fact<'a>>(
+    draft: &mut ChangeSetBuilder<'_>,
+    fact: &F,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut values = Vec::new();
+    fact.append_values(&mut values)?;
+    draft.insert(F::RELATION, &values)?;
+    Ok(())
+}
+
+fn seed(db: &Db<Ledger>, work: &WorkContext) -> Result<ApplyOutcome, Box<dyn std::error::Error>> {
+    let holder = HolderId(1);
+    let account = AccountId(42);
+    let mut draft = ChangeSet::builder(db.schema(), work.clone());
+    insert_fact(&mut draft, &Holder { id: holder, name: "alice", region: Region::Eu.id() })?;
+    insert_fact(&mut draft, &Account {
+        id: account,
+        holder,
+        status: Status::Open.id(),
+        opened_at: 17_000_000,
+    })?;
+    Ok(db.apply(&draft.finish()?, ApplyExpected::Any, work)?)
+}
+
+fn pin_and_close(db: &Db<Ledger>, work: &WorkContext) -> Result<CloseReport, Box<dyn std::error::Error>> {
+    let snapshot = db.snapshot(work)?;
+    drop(snapshot);
+    Ok(db.close(work))
+}
+}
 
 /// The closed-relation payload fence (`schema!`-interior syntax), spliced
 /// into a compiled schema beside the two open relations its statements
@@ -167,11 +187,7 @@ fn readme_fences() -> Vec<String> {
 fn the_front_page_fences_match_the_compiled_copies() {
     let fences = readme_fences();
     assert_eq!(fences.len(), 2, "the README's rust fence census");
-    let expected_quickstart = format!(
-        "bumbledb::schema!{{{}}}{}",
-        normalize(quickstart::SCHEMA_SOURCE),
-        normalize(quickstart::BODY_SOURCE)
-    );
+    let expected_quickstart = normalize(quickstart::SOURCE);
     assert_eq!(
         normalize(&fences[0]),
         expected_quickstart,

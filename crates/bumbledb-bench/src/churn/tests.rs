@@ -147,14 +147,19 @@ fn churn_stale_removal_refuses_the_whole_cycle() {
     let victim = live.rows()[0];
     engines::apply_ours(&mut lane, std::slice::from_ref(&victim), &[])
         .expect("the live removal commits");
-    let generation = lane.db.generation().expect("generation");
+    let generation = lane
+        .db
+        .generation(crate::harness::bench_work())
+        .expect("generation");
     let refusal = engines::apply_ours(&mut lane, &[victim], &[]);
     assert!(
         refusal.is_err(),
         "a stale removal must refuse the whole cycle"
     );
     assert_eq!(
-        lane.db.generation().expect("generation"),
+        lane.db
+            .generation(crate::harness::bench_work())
+            .expect("generation"),
         generation,
         "a refused cycle must leave the store untouched"
     );

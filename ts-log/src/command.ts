@@ -7,17 +7,21 @@
  * reconstruct a missing payload. Copy `command.ref` and retain it with the
  * original intent BEFORE dispatch.
  */
-import type { Effect, Scope } from "effect"
+
 import type { AnySchema, ExecutionPolicy, NativeRuntime } from "@bjornpagen/bumbledb"
+import type { Effect, Scope } from "effect"
 import type { LogError } from "#errors.ts"
 import { log } from "#production.ts"
-import type { Command as CommandInterface, CommandInput } from "#surface.ts"
+import type { CommandInput, Command as CommandInterface } from "#surface.ts"
 
 /** The owned sealed command value; `ref` is copyable before dispatch. */
 export type Command<S extends AnySchema> = CommandInterface<S>
 
 export const Command: {
-	seal<S extends AnySchema>(input: CommandInput<S>, work: ExecutionPolicy): Effect.Effect<Command<S>, LogError, Scope.Scope>
+	seal<S extends AnySchema>(
+		input: CommandInput<S>,
+		work: ExecutionPolicy
+	): Effect.Effect<Command<S>, LogError, Scope.Scope>
 	encode<S extends AnySchema>(command: Command<S>, work: ExecutionPolicy): Effect.Effect<Uint8Array, LogError>
 	decode<S extends AnySchema>(
 		bytes: Uint8Array,

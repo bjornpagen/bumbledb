@@ -128,7 +128,7 @@ mod tests {
                 RelationDescriptor {
                     extension: None,
                     name: "B".into(),
-                    fields: vec![field("y", ValueType::U64)],
+                    fields: vec![field("y", ValueType::U64), field("payload", ValueType::U64)],
                 },
                 RelationDescriptor {
                     extension: Some(Box::new([
@@ -174,7 +174,7 @@ mod tests {
     }
 
     fn b_fact(y: u64) -> (RelationId, Vec<Value>) {
-        (B, vec![Value::U64(y)])
+        (B, vec![Value::U64(y), Value::U64(0)])
     }
 
     /// C-G03-mutable-support
@@ -298,7 +298,7 @@ mod tests {
         };
         let d2 = Delta {
             deletes: vec![],
-            inserts: vec![b_fact(1)],
+            inserts: vec![(B, vec![Value::U64(0), Value::U64(1)])],
         };
         // The RAW set transformations commute: both orders land one final
         // fact set.

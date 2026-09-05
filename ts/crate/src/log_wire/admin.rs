@@ -20,24 +20,23 @@ use bumbledb_log::checkpointer::{
     CheckpointError, CheckpointKind, CheckpointOutcome, CheckpointPolicy,
 };
 use bumbledb_log::gc::GcPolicy;
-use bumbledb_log::history::authority::{Access, Activation, Lifecycle};
+use bumbledb_log::history::authority::{Access, Lifecycle};
+use bumbledb_log::history::receive_limits_for_object;
 use bumbledb_log::history::{
     DatabaseIdentity, DecisionStamp, OperationId, ReceiptEpoch, StateStamp,
 };
-use bumbledb_log::manifest::{RootKind, RootPolicy};
+use bumbledb_log::manifest::RootPolicy;
 use bumbledb_log::migration::executor::{
-    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationError, MigrationStatus,
-    StepInput, SuffixRequest, activate_target, initialize,
+    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationStatus, StepInput,
+    SuffixRequest, activate_target, initialize,
 };
-use bumbledb_log::migration::hosted::{HostedCutover, HostedMigration, HostedOutcome};
 use bumbledb_log::migration::manifest::{Manifest, parse_manifest, prefix_at};
 use bumbledb_log::migration::plan::parse_plan;
 use bumbledb_log::recovery::{self, RecoveryError};
 use bumbledb_log::store::fence::acquire_repository_lock;
-use bumbledb_log::history::receive_limits_for_object;
-use bumbledb_log::store::{TransportContext, get_verified};
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::s3::S3Store;
+use bumbledb_log::store::{TransportContext, get_verified};
 use bumbledb_log::writer::LocalHistory;
 use napi::bindgen_prelude::{BigInt, Env, External, Function, Object};
 
@@ -51,9 +50,9 @@ use crate::runtime_wire::{
 
 use super::{
     BackendSpec, CredentialsSpec, LIMITS, LogFail, MachineOutput, MachineResult, binding_spec_in,
-    fail_of_log, fail_of_recovery, frame_object, hex16, hex32, identity_in, identity_wire,
-    optional_object, optional_string, optional_u64, protocol, publication_phase_tag, s3_store,
-    stamp_wire, state_wire, stream_limits, targets_root,
+    fail_of_log, frame_object, hex32, identity_in, identity_wire, optional_object, optional_string,
+    protocol, publication_phase_tag, s3_store, stamp_wire, state_wire, stream_limits, targets_root,
+    uuid_text,
 };
 
 // ---------------------------------------------------------------------------
@@ -196,9 +195,6 @@ pub(crate) struct PlansSpec {
     /// entries + 1 rows. Requested `PlansWire` extension (P08/P10); absent
     /// snapshots refuse the verbs that must compile steps.
     snapshots: Vec<String>,
-    /// L15 ScalarNode JSON. Bound against the verified source snapshot
-    /// before any migrate/freeze/initialize artifact is written.
-    compiled_mappings: Vec<u8>,
 }
 
 fn plans_in(obj: &Object, ctx: &str) -> napi::Result<PlansSpec> {
@@ -258,9 +254,6 @@ fn plans_in(obj: &Object, ctx: &str) -> napi::Result<PlansSpec> {
         manifest_text,
         plan_texts,
         snapshots,
-        compiled_mappings: optional_string(obj, "compiledMappings")?
-            .map(String::into_bytes)
-            .unwrap_or_default(),
     })
 }
 
@@ -326,10 +319,10 @@ impl PlansSpec {
             if snapshot_id != entry.to_schema {
                 return Err(protocol(
                     "MigrationDrift",
-                    &format!(
+                    format!(
                         "snapshot {} schema id does not match manifest entry {}",
                         index + 1,
-                        entry.label
+                        entry.label.as_str()
                     ),
                 ));
             }
@@ -342,19 +335,11 @@ impl PlansSpec {
             ));
         }
         for (index, plan) in plans.iter().enumerate() {
-            context.step(1)?;
+            context.step(1).map_err(RuntimeError::from)?;
             bumbledb_log::migration::compile::compile(
                 plan,
                 &descriptors[index],
                 &descriptors[index + 1],
-            )
-            .map_err(|error| protocol("MigrationUnsupported", format!("{error:?}")))?;
-        }
-        if !self.compiled_mappings.is_empty() {
-            crate::migration_wire::bind_compiled_mappings(
-                &self.compiled_mappings,
-                &descriptors[0],
-                context,
             )
             .map_err(|error| protocol("MigrationUnsupported", format!("{error:?}")))?;
         }
@@ -366,13 +351,11 @@ impl PlansSpec {
         manifest_text: String,
         plan_texts: Vec<String>,
         snapshots: Vec<String>,
-        compiled_mappings: Vec<u8>,
     ) -> Self {
         Self {
             manifest_text,
             plan_texts,
             snapshots,
-            compiled_mappings,
         }
     }
 
@@ -468,7 +451,7 @@ fn binding_with_schema_in(env: Env, request: &Object, ctx: &str) -> napi::Result
 }
 
 fn operation_in(request: &Object, ctx: &str) -> napi::Result<OperationId> {
-    Ok(OperationId::from_core(marshal::id128_in(
+    Ok(OperationId::from_core(marshal::uuid_in(
         &marshal::req::<String>(request, "operationId", ctx)?,
         ctx,
     )?))
@@ -525,63 +508,26 @@ enum AdminVerb {
     MigrationStatus {
         binding: BindingSpec,
         plans: PlansSpec,
-        target: MigrationTargetSpec,
     },
     MigrationInitialize {
         binding: BindingSpec,
         operation: OperationId,
         plans: PlansSpec,
-        target: MigrationTargetSpec,
     },
     Migrate {
         binding: BindingSpec,
         operation: OperationId,
         plans: PlansSpec,
         to: Option<String>,
-        target: MigrationTargetSpec,
     },
     MigrationActivate {
         binding: Option<BindingSpec>,
         reference: ActivationRefSpec,
-        target: MigrationTargetSpec,
     },
     MigrationAbort {
         binding: Option<BindingSpec>,
         reference: MigrationRefSpec,
-        target: MigrationTargetSpec,
     },
-}
-
-/// The hosted migration data plane's durable coordinates (the finding-D
-/// bridge half): the planned target incarnation's object prefix (under the
-/// same bucket as the source binding) and its initial open object epoch.
-/// Local bindings never read either; hosted migration verbs REQUIRE the
-/// prefix — the wire supplies it beside the hosted backend spec, and a
-/// missing prefix is a typed pre-dispatch refusal, never a guessed
-/// namespace.
-struct MigrationTargetSpec {
-    prefix: Option<String>,
-    object_epoch: u64,
-}
-
-impl MigrationTargetSpec {
-    /// The target prefix a hosted migration verb requires.
-    fn required_prefix(&self) -> MachineResult<&str> {
-        self.prefix.as_deref().ok_or_else(|| {
-            protocol(
-                "Misuse",
-                "hosted migration verbs need `targetPrefix` (the planned target \
-                 incarnation's object prefix under the source bucket)",
-            )
-        })
-    }
-}
-
-fn migration_target_in(request: &Object, ctx: &str) -> napi::Result<MigrationTargetSpec> {
-    Ok(MigrationTargetSpec {
-        prefix: optional_string(request, "targetPrefix")?,
-        object_epoch: optional_u64(request, "targetObjectEpoch", ctx)?.unwrap_or(1),
-    })
 }
 
 struct ActivationRefSpec {
@@ -624,7 +570,7 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
         "release-root" => AdminVerb::ReleaseRoot {
             binding: binding_with_schema_in(env, request, ctx)?,
             operation: operation_in(request, ctx)?,
-            root: OperationId::from_core(marshal::id128_in(
+            root: OperationId::from_core(marshal::uuid_in(
                 &marshal::req::<String>(request, "root", ctx)?,
                 ctx,
             )?),
@@ -656,7 +602,7 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
                 ctx,
             )?,
             backup: optional_string(request, "backup")?
-                .map(|hex| marshal::id128_in(&hex, ctx).map(OperationId::from_core))
+                .map(|hex| marshal::uuid_in(&hex, ctx).map(OperationId::from_core))
                 .transpose()?,
         },
         "restore" => AdminVerb::Restore {
@@ -689,14 +635,14 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
             },
             operation: operation_in(request, ctx)?,
             backup: optional_string(request, "backup")?
-                .map(|hex| marshal::id128_in(&hex, ctx).map(OperationId::from_core))
+                .map(|hex| marshal::uuid_in(&hex, ctx).map(OperationId::from_core))
                 .transpose()?,
         },
         "erase" => {
             let retain: napi::bindgen_prelude::Array = marshal::req(request, "retainRoots", ctx)?;
             let mut retain_roots = Vec::with_capacity(retain.len() as usize);
             for index in 0..retain.len() {
-                retain_roots.push(OperationId::from_core(marshal::id128_in(
+                retain_roots.push(OperationId::from_core(marshal::uuid_in(
                     &marshal::req_at::<String>(&retain, index, ctx)?,
                     ctx,
                 )?));
@@ -710,28 +656,24 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
         "migration-status" => AdminVerb::MigrationStatus {
             binding: binding_with_schema_in(env, request, ctx)?,
             plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
-            target: migration_target_in(request, ctx)?,
         },
         "migration-initialize" => AdminVerb::MigrationInitialize {
             binding: binding_with_schema_in(env, request, ctx)?,
             operation: operation_in(request, ctx)?,
             plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
-            target: migration_target_in(request, ctx)?,
         },
         "migration-migrate" => AdminVerb::Migrate {
             binding: binding_with_schema_in(env, request, ctx)?,
             operation: operation_in(request, ctx)?,
             plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
             to: optional_string(request, "to")?,
-            target: migration_target_in(request, ctx)?,
         },
         "migration-activate" => {
             let reference: Object = marshal::req(request, "ref", ctx)?;
             AdminVerb::MigrationActivate {
                 binding: optional_binding_in(env, request, ctx)?,
-                target: migration_target_in(request, ctx)?,
                 reference: ActivationRefSpec {
-                    operation: OperationId::from_core(marshal::id128_in(
+                    operation: OperationId::from_core(marshal::uuid_in(
                         &marshal::req::<String>(&reference, "operationId", ctx)?,
                         ctx,
                     )?),
@@ -755,13 +697,12 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
             let reference: Object = marshal::req(request, "ref", ctx)?;
             AdminVerb::MigrationAbort {
                 binding: optional_binding_in(env, request, ctx)?,
-                target: migration_target_in(request, ctx)?,
                 reference: MigrationRefSpec {
                     _identity: identity_in(
                         &marshal::req::<Object>(&reference, "identity", ctx)?,
                         ctx,
                     )?,
-                    operation: OperationId::from_core(marshal::id128_in(
+                    operation: OperationId::from_core(marshal::uuid_in(
                         &marshal::req::<String>(&reference, "operationId", ctx)?,
                         ctx,
                     )?),
@@ -840,13 +781,17 @@ impl AdminDb {
     }
 }
 
-fn open_admin_db(runtime: &Arc<Runtime>, binding: &BindingSpec) -> MachineResult<AdminDb> {
+fn open_admin_db(
+    runtime: &Arc<Runtime>,
+    binding: &BindingSpec,
+    context: &WorkContext,
+) -> MachineResult<AdminDb> {
     let directory = Path::new(&binding.directory);
     if let Some(lease) = runtime.lease_database_at(directory)? {
         // Warm reuse: the registry matched by DIRECTORY alone — the identity
         // gate below is what proves the request names THIS tenant.
         let db = AdminDb::Leased(lease);
-        verify_admin_identity(&db, binding)?;
+        verify_admin_identity(&db, binding, context)?;
         return Ok(db);
     }
     let Some((descriptor, _attrs)) = binding.descriptor.clone() else {
@@ -867,13 +812,13 @@ fn open_admin_db(runtime: &Arc<Runtime>, binding: &BindingSpec) -> MachineResult
     if !ready.exists() {
         return Err(protocol("DatabaseMissing", "no materialization"));
     }
-    let db = crate::Engine::open(&ready, descriptor)
+    let db = crate::Engine::open(&ready, descriptor, context.clone())
         .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
     let db = AdminDb::Transient {
         db: Arc::new(db),
         _lock: held,
     };
-    verify_admin_identity(&db, binding)?;
+    verify_admin_identity(&db, binding, context)?;
     Ok(db)
 }
 
@@ -883,55 +828,6 @@ fn engine_arc(db: &AdminDb) -> Arc<crate::Engine> {
         AdminDb::Leased(lease) => Arc::clone(&lease.inner_arc().db),
         AdminDb::Transient { db, .. } => Arc::clone(db),
     }
-}
-
-/// One opened local materialization of a HOSTED tenant for an admin verb:
-/// the warm registry lease when this runtime already holds the directory,
-/// otherwise the FULL hosted recovery open (`recovery::open_hosted` — the
-/// same machine every hosted history open runs: binding verification and
-/// cold hydration included), under the tenant directory's kernel fence for
-/// exactly this job. The identity gate runs on BOTH paths.
-fn open_hosted_admin_db(
-    runtime: &Arc<Runtime>,
-    binding: &BindingSpec,
-    backend: &Arc<S3Store>,
-    prefix: &str,
-    context: &WorkContext,
-) -> MachineResult<AdminDb> {
-    let directory = Path::new(&binding.directory);
-    if let Some(lease) = runtime.lease_database_at(directory)? {
-        let db = AdminDb::Leased(lease);
-        verify_admin_identity(&db, binding)?;
-        return Ok(db);
-    }
-    let Some((descriptor, _attrs)) = binding.descriptor.clone() else {
-        return Err(protocol(
-            "Misuse",
-            "this admin verb needs the tenant open in this runtime, or the request's \
-             `schema` field (the lowered SchemaSpec)",
-        ));
-    };
-    std::fs::create_dir_all(directory)
-        .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
-    let origin = expected_binding(binding).origin;
-    let recovered = recovery::open_hosted(
-        directory,
-        descriptor,
-        backend,
-        &origin,
-        prefix,
-        LIMITS,
-        stream_limits(context),
-        LIMITS.envelope_bytes,
-        context,
-    )
-    .map_err(fail_of_recovery)?;
-    let db = AdminDb::Transient {
-        db: recovered.db,
-        _lock: recovered.lock,
-    };
-    verify_admin_identity(&db, binding)?;
-    Ok(db)
 }
 
 /// The origin binding the request claims, in the recorded grammar: local
@@ -953,10 +849,13 @@ fn expected_binding(binding: &BindingSpec) -> recovery::OriginBinding {
 }
 
 /// The materialization's recorded origin binding, when one exists.
-fn recorded_binding(db: &crate::Engine) -> MachineResult<Option<recovery::OriginBinding>> {
+fn recorded_binding(
+    db: &crate::Engine,
+    context: &WorkContext,
+) -> MachineResult<Option<recovery::OriginBinding>> {
     let mut owned: Option<Vec<u8>> = None;
     let mut host_error = None;
-    db.read(|read| {
+    db.read(context.clone(), |read| {
         match read.integration_host_record(recovery::BINDING_KEY) {
             Ok(record) => owned = record.map(<[u8]>::to_vec),
             Err(error) => host_error = Some(error),
@@ -987,11 +886,15 @@ fn recorded_binding(db: &crate::Engine) -> MachineResult<Option<recovery::Origin
 ///    backend origin (a hosted cache without a binding record is never
 ///    adopted; a migration-installed local materialization may legitimately
 ///    carry none — its authority identity is the dispositive gate).
-fn verify_admin_identity(db: &AdminDb, binding: &BindingSpec) -> MachineResult<()> {
+fn verify_admin_identity(
+    db: &AdminDb,
+    binding: &BindingSpec,
+    context: &WorkContext,
+) -> MachineResult<()> {
     bumbledb_log::admin::verify_local_identity(db.db(), binding.identity, LIMITS.envelope_bytes)
         .map_err(fail_of_admin)?;
     let expected = expected_binding(binding);
-    match recorded_binding(db.db())? {
+    match recorded_binding(db.db(), context)? {
         Some(recorded) => {
             if recorded != expected {
                 return Err(protocol(
@@ -1019,6 +922,7 @@ fn verify_admin_identity(db: &AdminDb, binding: &BindingSpec) -> MachineResult<(
 /// not validation). `None` for local bindings.
 fn validated_backend(
     binding: &BindingSpec,
+    context: &WorkContext,
 ) -> MachineResult<Option<(Arc<S3Store>, String, bumbledb_log::manifest::HeadRecord)>> {
     let Some((backend, prefix)) = store_of_backend(&binding.backend)? else {
         return Ok(None);
@@ -1028,6 +932,7 @@ fn validated_backend(
         &prefix,
         binding.identity,
         LIMITS.envelope_bytes,
+        context,
     )
     .map_err(fail_of_admin)?;
     Ok(Some((backend, prefix, head)))
@@ -1113,7 +1018,7 @@ fn run_admin(
     match verb {
         AdminVerb::Checkpoint { binding, operation } => {
             let _ = operation;
-            let Some((backend, prefix, _head)) = validated_backend(&binding)? else {
+            let Some((backend, prefix, _head)) = validated_backend(&binding, context)? else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
                         "Misuse",
@@ -1123,7 +1028,7 @@ fn run_admin(
                     phase: PublicationPhase::Prepared,
                 });
             };
-            let db = open_admin_db(runtime, &binding)?;
+            let db = open_admin_db(runtime, &binding, context)?;
             let outcome = bumbledb_log::checkpointer::publish_checkpoint(
                 db.db(),
                 &backend,
@@ -1165,7 +1070,7 @@ fn run_admin(
             label,
         } => match &binding.backend {
             BackendSpec::Local => {
-                let db = open_admin_db(runtime, &binding)?;
+                let db = open_admin_db(runtime, &binding, context)?;
                 let root = bumbledb_log::local_roots::create_restore_point(
                     db.db(),
                     Path::new(&binding.directory),
@@ -1177,14 +1082,14 @@ fn run_admin(
                 )
                 .map_err(fail_of_local_root)?;
                 Ok(AdminOwned::Completed(AdminValueOwned::PinRoot {
-                    root: hex16(root.id.as_core()),
+                    root: uuid_text(root.id.as_core()),
                     at: root.decision,
                     state: root.state,
                 }))
             }
             BackendSpec::Hosted { .. } => {
                 let (backend, prefix, _head) =
-                    validated_backend(&binding)?.expect("hosted backend");
+                    validated_backend(&binding, context)?.expect("hosted backend");
                 map_admin_certainty(
                     bumbledb_log::admin::add_named_root_hosted(
                         &backend,
@@ -1198,7 +1103,7 @@ fn run_admin(
                         context,
                     ),
                     |root| AdminValueOwned::PinRoot {
-                        root: hex16(root.id.as_core()),
+                        root: uuid_text(root.id.as_core()),
                         at: root.recovery.base,
                         state: root.state,
                     },
@@ -1213,7 +1118,7 @@ fn run_admin(
             let _ = operation;
             match &binding.backend {
                 BackendSpec::Local => {
-                    let db = open_admin_db(runtime, &binding)?;
+                    let db = open_admin_db(runtime, &binding, context)?;
                     let report = bumbledb_log::local_roots::release_restore_point(
                         db.db(),
                         Path::new(&binding.directory),
@@ -1223,13 +1128,13 @@ fn run_admin(
                     .map_err(fail_of_local_root)?;
                     let _ = report;
                     Ok(AdminOwned::Completed(AdminValueOwned::ReleaseRoot {
-                        root: hex16(root.as_core()),
+                        root: uuid_text(root.as_core()),
                         was_current_recovery_base: false,
                     }))
                 }
                 BackendSpec::Hosted { .. } => {
                     let (backend, prefix, _head) =
-                        validated_backend(&binding)?.expect("hosted backend");
+                        validated_backend(&binding, context)?.expect("hosted backend");
                     map_admin_certainty(
                         bumbledb_log::admin::release_named_root_hosted(
                             &backend,
@@ -1240,7 +1145,7 @@ fn run_admin(
                             context,
                         ),
                         |released| AdminValueOwned::ReleaseRoot {
-                            root: hex16(root.as_core()),
+                            root: uuid_text(root.as_core()),
                             was_current_recovery_base: released.is_some(),
                         },
                     )
@@ -1249,7 +1154,7 @@ fn run_admin(
         }
         AdminVerb::RotateEpoch { binding, operation } => {
             let _ = operation;
-            let db = open_admin_db(runtime, &binding)?;
+            let db = open_admin_db(runtime, &binding, context)?;
             let authority = bumbledb_log::admin::local_authority(db.db(), LIMITS.envelope_bytes)
                 .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
             let current = match &authority.lifecycle {
@@ -1278,7 +1183,7 @@ fn run_admin(
                 }
                 BackendSpec::Hosted { .. } => {
                     let (backend, prefix, _head) =
-                        validated_backend(&binding)?.expect("hosted backend");
+                        validated_backend(&binding, context)?.expect("hosted backend");
                     map_admin_certainty(
                         bumbledb_log::admin::rotate_receipts_hosted(
                             &backend,
@@ -1302,7 +1207,7 @@ fn run_admin(
             let _ = operation;
             match &binding.backend {
                 BackendSpec::Local => {
-                    let db = open_admin_db(runtime, &binding)?;
+                    let db = open_admin_db(runtime, &binding, context)?;
                     bumbledb_log::admin::retire_receipts_local(
                         db.db(),
                         through,
@@ -1318,8 +1223,13 @@ fn run_admin(
                     // Hosted retirement rides the checkpoint that stops
                     // promising the rows (C08), then applies locally.
                     let (backend, prefix, _head) =
-                        validated_backend(&binding)?.expect("hosted backend");
-                    let db = open_admin_db(runtime, &binding)?;
+                        validated_backend(&binding, context)?.expect("hosted backend");
+                    let db = open_admin_db(runtime, &binding, context)?;
+                    let captured = bumbledb_log::admin::capture_local_parent(
+                        &bumbledb_log::admin::local_authority(db.db(), LIMITS.envelope_bytes)
+                            .map_err(fail_of_admin)?,
+                    )
+                    .map_err(fail_of_admin)?;
                     let outcome = bumbledb_log::checkpointer::publish_checkpoint(
                         db.db(),
                         &backend,
@@ -1342,6 +1252,7 @@ fn run_admin(
                             bumbledb_log::admin::apply_hosted_retirement_locally(
                                 db.db(),
                                 &head.control,
+                                captured,
                                 through,
                                 LIMITS.envelope_bytes,
                                 context,
@@ -1363,7 +1274,7 @@ fn run_admin(
             }
         }
         AdminVerb::CollectGarbage { binding, operation } => {
-            let Some((backend, prefix, _head)) = validated_backend(&binding)? else {
+            let Some((backend, prefix, _head)) = validated_backend(&binding, context)? else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol("Misuse", "LocalHistory holds no object store to collect"),
                     phase: PublicationPhase::Prepared,
@@ -1408,7 +1319,7 @@ fn run_admin(
             operation,
             destination,
         } => {
-            let Some((backend, prefix, head)) = validated_backend(&binding)? else {
+            let Some((backend, prefix, head)) = validated_backend(&binding, context)? else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
                         "Misuse",
@@ -1436,7 +1347,6 @@ fn run_admin(
                     head.control.identity,
                     live.state,
                     root,
-                    head.object_epoch,
                     operation,
                     LIMITS,
                     stream_limits(context),
@@ -1508,9 +1418,9 @@ fn run_admin(
             binding,
             operation,
             retain_roots,
-        } => match validated_backend(&binding)? {
+        } => match validated_backend(&binding, context)? {
             None => {
-                let db = open_admin_db(runtime, &binding)?;
+                let db = open_admin_db(runtime, &binding, context)?;
                 let _ = bumbledb_log::erase::erase_local(
                     db.db(),
                     operation,
@@ -1522,7 +1432,7 @@ fn run_admin(
                     tombstoned: true,
                     retained_roots: retain_roots
                         .iter()
-                        .map(|root| hex16(root.as_core()))
+                        .map(|root| uuid_text(root.as_core()))
                         .collect(),
                     residual: vec![("local-directory".to_string(), binding.directory.clone())],
                 }))
@@ -1573,33 +1483,27 @@ fn run_admin(
                         .residual
                         .retained_roots
                         .iter()
-                        .map(|(id, _)| hex16(id.as_core()))
+                        .map(|(id, _)| uuid_text(id.as_core()))
                         .collect(),
                     residual,
                 }))
             }
         },
-        // `target` is the landed finding-D wire half (MigrationTargetSpec);
-        // the hosted execution arms that consume it are the still-open
-        // finding-D bridge work (P09.md bridge patch). Local verbs never
-        // read it; hosted verbs still refuse typed via require_local.
-        AdminVerb::MigrationStatus { binding, plans, target: _ } => {
+        AdminVerb::MigrationStatus { binding, plans } => {
             migration_status(runtime, &binding, &plans, context)
         }
         AdminVerb::MigrationInitialize {
             binding,
             operation,
             plans,
-            target: _,
         } => migration_initialize(runtime, &binding, operation, &plans, context),
         AdminVerb::Migrate {
             binding,
             operation,
             plans,
             to,
-            target: _,
         } => migrate(runtime, &binding, operation, &plans, to.as_deref(), context),
-        AdminVerb::MigrationActivate { binding, reference, target: _ } => {
+        AdminVerb::MigrationActivate { binding, reference } => {
             let Some(binding) = binding else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
@@ -1619,6 +1523,7 @@ fn run_admin(
                     phase: PublicationPhase::Prepared,
                 });
             };
+            require_local(&binding)?;
             let reference = ActivationRef {
                 operation: reference.operation,
                 plan_set_digest: reference.plan_set_digest,
@@ -1651,7 +1556,7 @@ fn run_admin(
                 activated_now,
             }))
         }
-        AdminVerb::MigrationAbort { binding, reference, target: _ } => {
+        AdminVerb::MigrationAbort { binding, reference } => {
             let Some(binding) = binding else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
@@ -1671,7 +1576,8 @@ fn run_admin(
                     phase: PublicationPhase::Prepared,
                 });
             };
-            let db = open_admin_db(runtime, &binding)?;
+            require_local(&binding)?;
+            let db = open_admin_db(runtime, &binding, context)?;
             let history = local_history_of(&db)?;
             let runner = LocalMigration::new(&history, &targets_root(&binding.directory), LIMITS);
             let report = runner
@@ -1725,9 +1631,7 @@ fn fail_of_admin(error: bumbledb_log::admin::AdminError) -> LogFail {
         AdminError::NotInitialized => protocol("NotInitialized", "open never initializes"),
         AdminError::Checkpoint(checkpoint) => fail_of_checkpoint(checkpoint),
         AdminError::Work(work) => LogFail::Core(RuntimeError::Work(*work)),
-        AdminError::Storage(error) => {
-            LogFail::Core(crate::runtime::session::engine_error(error))
-        }
+        AdminError::Storage(error) => LogFail::Core(crate::runtime::session::engine_error(error)),
         AdminError::Corruption(detail) => protocol("Corruption", *detail),
         AdminError::CasExhausted => LogFail::Structured(super::StructuredReason::Contention {
             attempts: 0,
@@ -1770,16 +1674,6 @@ fn map_admin_certainty<T>(
     }
 }
 
-/// Route one hosted maintenance error through the dispatch fence:
-/// post-dispatch uncertainty becomes an embedded `outcome-unknown` value,
-/// everything else stays a thrown pre-dispatch refusal.
-fn hosted_admin_fence(error: bumbledb_log::admin::AdminError) -> MachineResult<AdminOwned> {
-    Ok(AdminOwned::Failed {
-        fail: fail_of_admin(error),
-        phase: PublicationPhase::DispatchedUnresolved,
-    })
-}
-
 /// The typed checkpoint failure mapping (shared by the checkpoint and
 /// hosted-retirement arms).
 fn fail_of_checkpoint(error: &CheckpointError) -> LogFail {
@@ -1796,46 +1690,6 @@ fn fail_of_checkpoint(error: &CheckpointError) -> LogFail {
     }
 }
 
-/// Route one checkpoint-publication error through the dispatch fence:
-/// `Unresolved` (an explicitly unresolvable dispatched CAS) and
-/// `RebaseExhausted` (chunks + manifest uploaded, multiple CAS attempts
-/// dispatched) are `outcome-unknown`; refusals before any dispatch (no
-/// head, tombstone, corruption, transport read failures) stay thrown.
-fn checkpoint_fence(error: CheckpointError) -> MachineResult<AdminOwned> {
-    if matches!(
-        error,
-        CheckpointError::Unresolved | CheckpointError::RebaseExhausted
-    ) {
-        Ok(AdminOwned::Failed {
-            fail: fail_of_checkpoint(&error),
-            phase: PublicationPhase::DispatchedUnresolved,
-        })
-    } else {
-        Err(fail_of_checkpoint(&error))
-    }
-}
-
-/// A discarded checkpoint candidate is a DEFINITE non-publication
-/// (finding #15): the recovery base never moved and no authoritative
-/// mutation was performed — the staged uploads are collectible orphans.
-/// The wire's admin value roster has no completed(discarded) arm, so the
-/// definite spelling is `not-started` ("this invocation performed no
-/// authoritative mutation"), never `outcome-unknown` (the outcome IS
-/// known).
-fn discarded_checkpoint(current_base_seq: u64, what: &str) -> AdminOwned {
-    AdminOwned::Failed {
-        fail: protocol(
-            "OperationConflict",
-            format!(
-                "{what} discarded: another checkpoint already advanced the recovery base \
-                 past seq {current_base_seq} (definite non-publication; staged objects are \
-                 collectible orphans)"
-            ),
-        ),
-        phase: PublicationPhase::ProvedNonpublication,
-    }
-}
-
 /// The typed identity refusal (REP-011/SDK-016/ARCH-004): the request's
 /// binding named a database/incarnation/schema the selected resource does
 /// not hold. Spelled exactly like the open path's refusals — a wrong
@@ -1848,8 +1702,8 @@ fn fail_of_identity(mismatch: &bumbledb_log::admin::IdentityMismatch) -> LogFail
             format!(
                 "the resource holds a different incarnation of this database (requested {}, \
                  found {})",
-                hex16(mismatch.expected.incarnation_id.as_core()),
-                hex16(mismatch.actual.incarnation_id.as_core()),
+                uuid_text(mismatch.expected.incarnation_id.as_core()),
+                uuid_text(mismatch.actual.incarnation_id.as_core()),
             ),
         ),
         "schema" => protocol(
@@ -1865,8 +1719,8 @@ fn fail_of_identity(mismatch: &bumbledb_log::admin::IdentityMismatch) -> LogFail
             "ForeignIdentity",
             format!(
                 "the resource belongs to a different database (requested {}, found {})",
-                hex16(mismatch.expected.database_id.as_core()),
-                hex16(mismatch.actual.database_id.as_core()),
+                uuid_text(mismatch.expected.database_id.as_core()),
+                uuid_text(mismatch.actual.database_id.as_core()),
             ),
         ),
     }
@@ -1925,7 +1779,7 @@ fn require_local(binding: &BindingSpec) -> MachineResult<()> {
         BackendSpec::Hosted { .. } => Err(protocol(
             "MigrationUnsupported",
             "hosted migration execution awaits the staged hosted data plane (C08); run \
-             the migration against the authoritative local materialization",
+             the local migration API only with an authoritative local history",
         )),
     }
 }
@@ -1937,7 +1791,7 @@ fn migration_status(
     context: &WorkContext,
 ) -> MachineResult<AdminOwned> {
     require_local(binding)?;
-    let db = open_admin_db(runtime, binding)?;
+    let db = open_admin_db(runtime, binding, context)?;
     let history = local_history_of(&db)?;
     let manifest = plans.manifest()?;
     plans.verify_compiled_chain(&manifest, context)?;
@@ -2048,7 +1902,7 @@ fn migrate(
     context: &WorkContext,
 ) -> MachineResult<AdminOwned> {
     require_local(binding)?;
-    let db = open_admin_db(runtime, binding)?;
+    let db = open_admin_db(runtime, binding, context)?;
     let history = local_history_of(&db)?;
     let manifest = plans.manifest()?;
     plans.verify_compiled_chain(&manifest, context)?;
@@ -2125,7 +1979,7 @@ fn migrate(
             })),
         ),
         Ok(MigrateOutcome::ReadyToSwitch { activation_ref, .. }) => {
-            let deployment = root.join(hex16(activation_ref.target.incarnation_id.as_core()));
+            let deployment = root.join(uuid_text(activation_ref.target.incarnation_id.as_core()));
             Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
                 MigrateOwned::ReadyToSwitch {
                     deployment_directory: deployment.to_string_lossy().into_owned(),
@@ -2191,7 +2045,7 @@ fn migration_initialize(
             backend: BackendSpec::Local,
             descriptor: Some((target_descriptor, attrs)),
         };
-        drop(open_admin_db(runtime, &probe)?);
+        drop(open_admin_db(runtime, &probe, context)?);
     }
     let target_incarnation = binding.identity.incarnation_id;
     let root = targets_root(&binding.directory);
@@ -2236,7 +2090,7 @@ fn finish_initialize(
 ) -> MachineResult<AdminOwned> {
     let _ = operation;
     let target_incarnation = binding.identity.incarnation_id;
-    let target_dir = root.join(hex16(target_incarnation.as_core()));
+    let target_dir = root.join(uuid_text(target_incarnation.as_core()));
     let ready = recovery::materialization_path(Path::new(&binding.directory));
     if !ready.exists() {
         if !target_dir.exists() {
@@ -2461,7 +2315,10 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
     let value = match owned {
         AdminOwned::Completed(value) => {
             wire.set("certainty", "completed")?;
-            wire.set("publicationPhase", publication_phase_tag(PublicationPhase::Confirmed))?;
+            wire.set(
+                "publicationPhase",
+                publication_phase_tag(PublicationPhase::Confirmed),
+            )?;
             value
         }
         AdminOwned::Report(value) => {
@@ -2653,7 +2510,7 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
                     binding.set("identity", identity_wire(&env, target)?)?;
                     value.set("deploymentBinding", binding)?;
                     let mut reference = Object::new(&env)?;
-                    reference.set("operationId", hex16(activation.operation.as_core()))?;
+                    reference.set("operationId", uuid_text(activation.operation.as_core()))?;
                     reference.set("planSetDigest", hex32(&activation.plan_set_digest))?;
                     reference.set("target", identity_wire(&env, activation.target)?)?;
                     reference.set("targetGenesis", hex32(activation.target_genesis.as_bytes()))?;
@@ -2666,7 +2523,7 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
                     source_state.set("access", "frozen")?;
                     source_state.set(
                         "operationId",
-                        operation.map(|operation| hex16(operation.as_core())),
+                        operation.map(|operation| uuid_text(operation.as_core())),
                     )?;
                     value.set("sourceState", source_state)?;
                 }
@@ -2682,7 +2539,7 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
             body.set("verb", "migration-activate")?;
             body.set("target", identity_wire(&env, target)?)?;
             body.set("accessMode", access)?;
-            body.set("operationId", hex16(operation.as_core()))?;
+            body.set("operationId", uuid_text(operation.as_core()))?;
             body.set("activatedNow", activated_now)?;
         }
         AdminValueOwned::MigrationAbort {
@@ -2709,7 +2566,7 @@ fn migration_ref_wire(
 ) -> napi::Result<Object<'_>> {
     let mut reference = Object::new(env)?;
     reference.set("identity", identity_wire(env, source)?)?;
-    reference.set("operationId", hex16(operation.as_core()))?;
+    reference.set("operationId", uuid_text(operation.as_core()))?;
     reference.set("planSetDigest", hex32(&plan_set))?;
     reference.set("target", identity_wire(env, target)?)?;
     Ok(reference)

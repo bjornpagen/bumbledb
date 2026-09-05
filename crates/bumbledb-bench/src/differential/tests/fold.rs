@@ -97,7 +97,7 @@ fn stores(
     descriptor: &SchemaDescriptor,
     inserts: Vec<(RelationId, Vec<Value>)>,
 ) -> (Db<SchemaDescriptor>, NaiveDb) {
-    let db = Db::create(dir, descriptor.clone())
+    let db = Db::create(dir, descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(descriptor);
@@ -106,7 +106,7 @@ fn stores(
         inserts,
     };
     naive.apply(&delta).expect("the corpus commits");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for (rel, fact) in &delta.inserts {
             tx.insert_dyn(*rel, [fact])?;
         }
@@ -272,7 +272,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
     let mut naive = NaiveDb::new(&target::descriptor());
     let delta = super::closed::base_delta();
     naive.apply(&delta).expect("the seed commits");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for (rel, fact) in &delta.inserts {
             tx.insert_dyn(*rel, [fact])?;
         }

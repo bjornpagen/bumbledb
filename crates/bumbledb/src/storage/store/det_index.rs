@@ -13,10 +13,11 @@ use bumbledb_theory::schema::{RelationId, StatementId};
 use super::error::{StoreError, StoreResult};
 use super::fingerprint::FP_LEN;
 use crate::schema::compiled::{
-    CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
-    ProjectionBinding, ProjectionId, ProjectionInternKey, VisitControl, VisitOutcome,
+    CompileError, CompiledProjection, CompiledTheory, KeyEncoding, ProjectionId,
     encode_scalar_group,
 };
+#[cfg(test)]
+use crate::schema::compiled::{DistinctnessWitness, VisitControl, VisitOutcome};
 use crate::schema::{FieldDescriptor, Schema};
 use crate::work::WorkContext;
 
@@ -34,32 +35,13 @@ impl DeterminantTable {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn theory(&self) -> &CompiledTheory {
         &self.theory
     }
 
     pub(crate) fn fields_of(&self, relation: RelationId) -> Option<&[FieldDescriptor]> {
         self.theory.fields_of(relation)
-    }
-
-    pub(crate) fn keys_of(
-        &self,
-        relation: RelationId,
-    ) -> impl Iterator<Item = &CompiledProjection> {
-        self.theory
-            .key_projections_of(relation)
-            .iter()
-            .filter_map(|id| self.theory.projection(*id))
-    }
-
-    pub(crate) fn projections_of(
-        &self,
-        relation: RelationId,
-    ) -> impl Iterator<Item = &CompiledProjection> {
-        self.theory
-            .projections_of_relation(relation)
-            .iter()
-            .filter_map(|id| self.theory.projection(*id))
     }
 
     pub(crate) fn projection(&self, id: ProjectionId) -> Option<&CompiledProjection> {
@@ -70,20 +52,9 @@ impl DeterminantTable {
         self.theory.projection_of_statement(statement)
     }
 
+    #[cfg(test)]
     pub(crate) fn source_of(&self, statement: StatementId) -> Option<&CompiledProjection> {
         self.theory.source_projection(statement)
-    }
-
-    pub(crate) fn target_of(&self, statement: StatementId) -> Option<&CompiledProjection> {
-        self.theory.target_projection(statement)
-    }
-
-    pub(crate) fn source_binding(&self, statement: StatementId) -> Option<&ProjectionBinding> {
-        self.theory.source_binding(statement)
-    }
-
-    pub(crate) fn target_binding(&self, statement: StatementId) -> Option<&ProjectionBinding> {
-        self.theory.target_binding(statement)
     }
 
     pub(crate) fn key_for(
@@ -105,7 +76,7 @@ impl DeterminantTable {
         relation: RelationId,
         row: &[u8],
         work: &WorkContext,
-        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
+        emit: super::ProjectionEmitter<'_>,
     ) -> StoreResult<()> {
         let projections: Vec<_> = self.theory.projections_of_relation(relation).to_vec();
         if projections.is_empty() {
@@ -127,7 +98,7 @@ impl DeterminantTable {
         relation: RelationId,
         values: &[crate::Value],
         work: &WorkContext,
-        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
+        emit: super::ProjectionEmitter<'_>,
     ) -> StoreResult<()> {
         for id in self.theory.projections_of_relation(relation) {
             let projection = self.theory.projection(*id).expect("indexed id");
@@ -138,17 +109,6 @@ impl DeterminantTable {
             emit(*id, &projected, tail.as_deref())?;
         }
         Ok(())
-    }
-
-    /// Walk candidates under a compiled witness. Existence-only stops after
-    /// the first sufficient exact witness; `Stop` and source errors halt.
-    pub(crate) fn consume_visits<T, E>(
-        &self,
-        witness: DistinctnessWitness,
-        candidates: impl IntoIterator<Item = T>,
-        visit: &mut dyn FnMut(T) -> Result<VisitControl, E>,
-    ) -> Result<VisitOutcome, E> {
-        CompiledTheory::consume_visits(witness, candidates, visit)
     }
 }
 
@@ -164,14 +124,12 @@ pub(crate) fn determinant_bytes(
     work: &WorkContext,
 ) -> StoreResult<Vec<u8>> {
     match projection.encoding {
-        KeyEncoding::ExactBounded { .. } => encode_scalar_group(values, &projection.scalar_fields)
-            .ok_or(StoreError::ForeignSchema),
+        KeyEncoding::ExactBounded { .. } => {
+            encode_scalar_group(values, &projection.scalar_fields).ok_or(StoreError::ForeignSchema)
+        }
         KeyEncoding::FingerprintBucket => {
-            let row = crate::canonical::CanonicalRow::encode(
-                &projection.scalar_fields,
-                values,
-                work,
-            )?;
+            let row =
+                crate::canonical::CanonicalRow::encode(&projection.scalar_fields, values, work)?;
             Ok(row.as_bytes().to_vec())
         }
     }
@@ -189,14 +147,15 @@ pub(crate) fn fingerprint_routing(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Interval;
     use crate::Value;
     use crate::encoding::encode_u64;
+    use crate::schema::compiled::ProjectionInternKey;
     use crate::schema::compiled::{CompileError, KeyEncoding};
     use crate::schema::tests::{capacity, containment, fd, field, side};
     use crate::schema::{
         IntervalElement, RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _, ValueType,
     };
-    use crate::Interval;
     use crate::work::ExecutionPolicy;
     use bumbledb_theory::schema::FieldId;
     use std::time::Duration;
@@ -217,9 +176,7 @@ mod tests {
 
     fn table(schema: &Schema) -> DeterminantTable {
         DeterminantTable {
-            theory: std::sync::Arc::new(
-                CompiledTheory::compile(schema).expect("projection ids"),
-            ),
+            theory: std::sync::Arc::new(CompiledTheory::compile(schema).expect("projection ids")),
         }
     }
 
@@ -268,10 +225,17 @@ mod tests {
             },
         )
         .expect("T emit");
-        assert_eq!(t_emits.len(), 1, "T key and containment/capacity target share");
+        assert_eq!(
+            t_emits.len(),
+            1,
+            "T key and containment/capacity target share"
+        );
         assert_eq!(t_emits[0].1, encode_u64(9));
         let intern = CompiledTheory::intern_key(det.projection(t_emits[0].0).expect("id"));
-        assert_eq!(intern.encoding, KeyEncoding::ExactBounded { scalar_width: 8 });
+        assert_eq!(
+            intern.encoding,
+            KeyEncoding::ExactBounded { scalar_width: 8 }
+        );
 
         let mut s_emits = Vec::new();
         det.emit_decoded(
@@ -298,7 +262,11 @@ mod tests {
             det.source_of(StatementId(3)).expect("capacity source").id,
             parent
         );
-        assert!(s_emits.iter().any(|(id, bytes)| *id == parent && bytes == &encode_u64(9)));
+        assert!(
+            s_emits
+                .iter()
+                .any(|(id, bytes)| *id == parent && bytes == &encode_u64(9))
+        );
     }
 
     #[test]
@@ -329,7 +297,7 @@ mod tests {
                 )
                 .expect("emit");
             }
-            visits.push((n, count / n as usize));
+            visits.push((n, count / usize::try_from(n).expect("bounded test count")));
         }
         assert!(
             visits.iter().all(|&(_, per_row)| per_row == 1),
@@ -418,30 +386,28 @@ mod tests {
         let det = table(&schema);
         let projection = det.projection_of(StatementId(0)).expect("key").id;
         let mut seen = 0usize;
-        let stopped = det
-            .consume_visits(
-                DistinctnessWitness::ExistenceOnly { projection },
-                0..32,
-                &mut |_| {
-                    seen += 1;
-                    Ok::<_, StoreError>(VisitControl::Sufficient)
-                },
-            )
-            .expect("existence");
+        let stopped = CompiledTheory::consume_visits(
+            DistinctnessWitness::ExistenceOnly { projection },
+            0..32,
+            &mut |_| {
+                seen += 1;
+                Ok::<_, StoreError>(VisitControl::Sufficient)
+            },
+        )
+        .expect("existence");
         assert_eq!(stopped, VisitOutcome::Sufficient { visited: 1 });
         assert_eq!(seen, 1);
 
         seen = 0;
-        let halt = det
-            .consume_visits(
-                DistinctnessWitness::ScalarKeyUnique { projection },
-                0..32,
-                &mut |_| {
-                    seen += 1;
-                    Ok::<_, StoreError>(VisitControl::Stop)
-                },
-            )
-            .expect("stop");
+        let halt = CompiledTheory::consume_visits(
+            DistinctnessWitness::ScalarKeyUnique { projection },
+            0..32,
+            &mut |_| {
+                seen += 1;
+                Ok::<_, StoreError>(VisitControl::Stop)
+            },
+        )
+        .expect("stop");
         assert_eq!(halt, VisitOutcome::Stopped { visited: 1 });
         assert_eq!(seen, 1);
     }

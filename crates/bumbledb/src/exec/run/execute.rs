@@ -363,13 +363,13 @@ impl Executor {
             super::DriveState::Poisoned(super::Poison::SinkStop) => {
                 sink.take_error().map_or(Ok(()), Err)
             }
-            super::DriveState::Poisoned(super::Poison::SinkError) => Err(sink
-                .take_error()
-                .unwrap_or_else(|| {
-                    crate::error::Error::Corruption(
-                        crate::error::CorruptionError::MalformedValue("sink error without payload"),
-                    )
-                })),
+            super::DriveState::Poisoned(super::Poison::SinkError) => {
+                Err(sink.take_error().unwrap_or({
+                    crate::error::Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                        "sink error without payload",
+                    ))
+                }))
+            }
             super::DriveState::Running | super::DriveState::SkipDone => Ok(()),
         }
     }

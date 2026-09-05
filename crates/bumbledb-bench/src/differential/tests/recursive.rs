@@ -203,10 +203,10 @@ fn engine_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let dir = crate::fixture::TempDir::new(&tag);
-    let db = bumbledb::Db::create(dir.path(), descriptor)
+    let db = bumbledb::Db::create(dir.path(), descriptor, crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for node in 0..nodes {
             tx.insert_dyn(NODE, [&[Value::U64(node)]])?;
         }
@@ -438,10 +438,10 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
         .expect("no statements: the fixture commits");
 
     let dir = crate::fixture::TempDir::new("recursive-interval-interior");
-    let db = bumbledb::Db::create(dir.path(), descriptor.clone())
+    let db = bumbledb::Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for (account, (start, end)) in &claims {
             tx.insert_dyn(
                 CLAIM,

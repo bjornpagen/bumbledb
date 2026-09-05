@@ -13,8 +13,14 @@ use super::{NAMESPACES, Namespace, audited_layout, current_layout, successor_lay
 #[test]
 fn live_tags_match_keys_rs() {
     assert_eq!(Namespace::from_census_tag(false, 0x01), Namespace::Fact);
-    assert_eq!(Namespace::from_census_tag(false, 0x02), Namespace::Membership);
-    assert_eq!(Namespace::from_census_tag(false, 0x03), Namespace::Determinant);
+    assert_eq!(
+        Namespace::from_census_tag(false, 0x02),
+        Namespace::Membership
+    );
+    assert_eq!(
+        Namespace::from_census_tag(false, 0x03),
+        Namespace::Determinant
+    );
     assert_eq!(Namespace::from_census_tag(true, 0x01), Namespace::HostMeta);
     assert_eq!(Namespace::from_census_tag(false, 0xFF), Namespace::Unknown);
     assert_eq!(current_layout::KEY_BYTES_FACT_MEMBERSHIP_FP_DET, 69);

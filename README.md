@@ -5,6 +5,12 @@ replaces SQL strings with typed schemas and queries, checks cross-row
 constraints before each commit, and executes complex reads with Free Join over
 LMDB-backed data.
 
+UUID is a first-class, ordered scalar: 16 bytes in the engine, standard
+`uuid::Uuid` in Rust, and structural template-literal UUID strings in TypeScript.
+Generate IDs in the host (including UUIDv7); declare uniqueness with a key.
+Entity-specific Rust newtypes and TypeScript brands never enter the storage
+model. See [value semantics](docs/reference/semantics.md).
+
 The database runs in the application process. Schemas are declared in code,
 records are ordinary Rust structs or TypeScript objects, and prepared queries
 run without parsing or interpreting SQL. Relations use set semantics, so a
@@ -73,7 +79,7 @@ fn seed(db: &Db<Ledger>, work: &WorkContext) -> Result<ApplyOutcome, Box<dyn std
 fn pin_and_close(db: &Db<Ledger>, work: &WorkContext) -> Result<CloseReport, Box<dyn std::error::Error>> {
     let snapshot = db.snapshot(work)?;
     drop(snapshot);
-    Ok(db.close())
+    Ok(db.close(work))
 }
 ```
 

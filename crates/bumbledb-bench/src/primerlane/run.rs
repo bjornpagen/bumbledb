@@ -74,8 +74,8 @@ fn builder_lane(
     phases: &mut Vec<PhaseRow>,
 ) -> Result<(), String> {
     let total: u64 = counts.iter().sum();
-    let mut builder =
-        InstanceBuilder::new(descriptor.clone()).map_err(|e| format!("builder: {e:?}"))?;
+    let mut builder = InstanceBuilder::new(descriptor.clone(), crate::harness::bench_work())
+        .map_err(|e| format!("builder: {e:?}"))?;
     phase(phases, "builder_load", total, alloc, || {
         for (idx, &n) in counts.iter().enumerate() {
             let rel = rel_at(idx);
@@ -95,7 +95,8 @@ fn builder_lane(
         Admission::Rejected(v) => return Err(format!("builder admission rejected: {v}")),
     };
     phase(phases, "builder_publish", total, alloc, || {
-        Db::from_instance(store, &instance).map_err(|e| format!("from_instance: {e:?}"))
+        Db::from_instance(store, &instance, crate::harness::bench_work())
+            .map_err(|e| format!("from_instance: {e:?}"))
     })?;
     Ok(())
 }
@@ -111,7 +112,9 @@ fn delta_lane(
     let total: u64 = counts.iter().sum();
     let seeded: u64 = counts.iter().map(|n| n / 2).sum();
     let db = phase(phases, "delta_create", 0, alloc, || {
-        match Db::create(store, descriptor.clone()).map_err(|e| format!("create: {e:?}"))? {
+        match Db::create(store, descriptor.clone(), crate::harness::bench_work())
+            .map_err(|e| format!("create: {e:?}"))?
+        {
             Admission::Accepted(db) => Ok(db),
             Admission::Rejected(v) => Err(format!("empty admission rejected: {v}")),
         }
@@ -138,7 +141,7 @@ fn commit_halves(
     half: Half,
 ) -> Result<(), String> {
     let committed = db
-        .write(|tx| {
+        .write(crate::harness::bench_work(), |tx| {
             for (idx, &n) in counts.iter().enumerate() {
                 let rel = rel_at(idx);
                 let (start, end) = match half {
@@ -167,7 +170,7 @@ fn scan_lane(
 ) -> Result<(), String> {
     let total: u64 = counts.iter().sum();
     let scanned = phase(phases, "scan_decode", total, alloc, || {
-        db.read(|snap| {
+        db.read(crate::harness::bench_work(), |snap| {
             let mut rows = 0u64;
             for idx in 0..counts.len() {
                 for fact in snap.scan(rel_at(idx))? {

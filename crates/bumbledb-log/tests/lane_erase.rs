@@ -61,7 +61,7 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
         &work(),
     )
     .expect("checkpoint with the value");
-    let pinned = admin::add_named_root_hosted(
+    let pinned = lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x11),
@@ -71,8 +71,7 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("pin");
+    ));
     // Ordinary admitted deletion, then a new checkpoint of the current state.
     mirror.submit(&delete_user(mirror.db(), identity, 2, 42));
     publish_checkpoint(
@@ -92,8 +91,9 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
         .checkpoint
         .expect("ckpt");
     let current_bytes = try_verified(&store, &current_ref).expect("current manifest");
-    let current = bumbledb_log::codec::decode_manifest(current_bytes.as_bytes(), ckpt_policy().stream)
-        .expect("decodes");
+    let current =
+        bumbledb_log::codec::decode_manifest(current_bytes.as_bytes(), ckpt_policy().stream)
+            .expect("decodes");
     drop(current_bytes.into_owner());
     assert_eq!(
         current.rows, 0,
@@ -102,8 +102,8 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
     // The retained root still holds the old state until explicit release.
     let old_ref = pinned.recovery.checkpoint.expect("pinned ckpt");
     let old_bytes = try_verified(&store, &old_ref).expect("old manifest");
-    let old =
-        bumbledb_log::codec::decode_manifest(old_bytes.as_bytes(), ckpt_policy().stream).expect("decodes");
+    let old = bumbledb_log::codec::decode_manifest(old_bytes.as_bytes(), ckpt_policy().stream)
+        .expect("decodes");
     drop(old_bytes.into_owner());
     assert_eq!(
         old.rows, 1,
@@ -127,7 +127,7 @@ fn erase02_tombstone_prevents_publication_preserves_retained_roots_then_collects
         &work(),
     )
     .expect("checkpoint");
-    let retained = admin::add_named_root_hosted(
+    let retained = lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x21),
@@ -137,8 +137,7 @@ fn erase02_tombstone_prevents_publication_preserves_retained_roots_then_collects
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("retained root");
+    ));
     let report = erase_hosted(&store, "t", op(0x23), &[], LIMITS, &gc_policy(), &work())
         .expect("erasure runs");
     assert!(matches!(report.tombstone, DeleteOutcome::Deleted(_)));
@@ -153,7 +152,8 @@ fn erase02_tombstone_prevents_publication_preserves_retained_roots_then_collects
     try_verified(&store, &old_ref).expect("retained closure survives");
     // A delayed old writer cannot publish: ordinary admission refuses on the
     // tombstone, and its stale exact-version CAS loses on the moved head.
-    let refused = admin::hosted_result(admin::fence_revision_hosted(&store, "t", HEAD_CAP, &work()));
+    let refused =
+        admin::hosted_result(admin::fence_revision_hosted(&store, "t", HEAD_CAP, &work()));
     assert!(
         refused.is_err(),
         "no maintenance revives a tombstone: {refused:?}"
@@ -167,8 +167,14 @@ fn erase02_tombstone_prevents_publication_preserves_retained_roots_then_collects
     ));
     // Release the retained root and collect again: former live objects go,
     // the tombstone itself remains.
-    admin::release_named_root_hosted(&store, "t", op(0x21), false, HEAD_CAP, &work())
-        .expect("explicit release");
+    lane_support::completed(admin::release_named_root_hosted(
+        &store,
+        "t",
+        op(0x21),
+        false,
+        HEAD_CAP,
+        &work(),
+    ));
     let final_report = erase_hosted(&store, "t", op(0x23), &[], LIMITS, &gc_policy(), &work())
         .expect("later pass");
     assert!(
@@ -197,7 +203,7 @@ fn erase03_residuals_are_reported_never_a_secure_erasure_claim() {
         &work(),
     )
     .expect("checkpoint");
-    admin::add_named_root_hosted(
+    lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x31),
@@ -207,8 +213,7 @@ fn erase03_residuals_are_reported_never_a_secure_erasure_claim() {
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("retained root");
+    ));
     let report =
         erase_hosted(&store, "t", op(0x33), &[], LIMITS, &gc_policy(), &work()).expect("erasure");
     // The report enumerates what actually remains rather than claiming zero.
@@ -242,7 +247,7 @@ fn erase02_policy_allowed_roots_release_and_erasure_collects_everything_else() {
         &work(),
     )
     .expect("checkpoint");
-    admin::add_named_root_hosted(
+    lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x41),
@@ -252,8 +257,7 @@ fn erase02_policy_allowed_roots_release_and_erasure_collects_everything_else() {
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("root");
+    ));
     let report = erase_hosted(
         &store,
         "t",
@@ -309,7 +313,7 @@ fn erase04_whole_tenant_and_user_level_scopes_are_distinct_operations() {
     // reported, never silently claimed erased.
     let outcome = erase_local(mirror.db(), op(0x51), HEAD_CAP, &work()).expect("local tombstone");
     assert!(matches!(outcome, DeleteOutcome::Deleted(_)));
-    let authority = admin::local_authority(mirror.db(), HEAD_CAP).expect("attachment reads");
+    let authority = admin::local_authority(mirror.db(), HEAD_CAP).expect("authority");
     assert!(
         authority.live().is_err(),
         "the local authority is a terminal tombstone"

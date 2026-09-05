@@ -33,12 +33,7 @@ pub(crate) fn prepare_on<S>(
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let source = QuerySource::store(instance.snapshot(), instance.work());
-    prepare_source(
-        instance.schema_arc(),
-        Arc::clone(instance.cache()),
-        &source,
-        query,
-    )
+    prepare_source(instance.schema_arc(), instance.cache(), &source, query)
 }
 
 impl<S> PreparedQuery<S> {
@@ -60,12 +55,7 @@ impl<S> PreparedQuery<S> {
         query: &Query,
     ) -> Result<Self> {
         let source = QuerySource::store(instance.snapshot(), work);
-        prepare_source(
-            instance.schema_arc(),
-            Arc::clone(instance.cache()),
-            &source,
-            query,
-        )
+        prepare_source(instance.schema_arc(), instance.cache(), &source, query)
     }
 }
 
@@ -78,22 +68,17 @@ pub(crate) fn prepare_owned<S>(
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let source = QuerySource::heap(instance, 0, super::source::heap_default_work());
-    prepare_source(
-        instance.schema_arc(),
-        Arc::clone(instance.cache()),
-        &source,
-        query,
-    )
+    prepare_source(instance.schema_arc(), instance.cache(), &source, query)
 }
 
 fn prepare_source<S>(
     schema: &Arc<Schema>,
-    cache: Arc<ImageCache>,
+    cache: &Arc<ImageCache>,
     source: &QuerySource<'_>,
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let schema = Arc::clone(schema);
-    let images = SourceImages::bind(source, &cache);
+    let images = SourceImages::bind(source, cache);
     let _prepare = obs::span(obs::names::PREPARE);
     let witness = {
         let _s = obs::span(obs::names::VALIDATE);
@@ -135,7 +120,7 @@ fn prepare_source<S>(
     prepare_witnessed(
         pinned,
         &images,
-        Arc::clone(&cache),
+        Arc::clone(cache),
         schema,
         &witness,
         rendered,

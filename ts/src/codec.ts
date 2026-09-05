@@ -1,19 +1,19 @@
-import { Effect, Result, Schema as EffectSchema } from "effect"
+import { Effect, Schema as EffectSchema, Result } from "effect"
+import { schemaTables } from "#compile.ts"
 import { dbNative } from "#db-native.ts"
 import type { AnyField } from "#fields.ts"
 import { isFloatIntervalValue, isIntervalValue, rosterOf } from "#fields.ts"
-import { Id128 } from "#id128.ts"
 import { lower } from "#lower.ts"
 import type { AnyRelation, Fact } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
 import { factOfCells, flatRowsOf } from "#rows.ts"
-import { schemaTables } from "#compile.ts"
-import { DbError } from "#runtime-errors.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
 import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import { DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
-import { f64BitsHex } from "#spec.ts"
 import type { Rel } from "#shape.ts"
+import { f64BitsHex } from "#spec.ts"
+import { Uuid } from "#uuid.ts"
 
 /**
  * Boundary row codecs, derived from the core relation descriptors — never a
@@ -28,7 +28,7 @@ import type { Rel } from "#shape.ts"
  * 2. The schema-tagged JSON VALUE form for HTTP/export boundaries
  *    (chapter 30): every `f64` — finite included — is
  *    `{"$f64":"<16 lowercase hex digits>"}` of canonical binary64 bits;
- *    integers are canonical decimal strings; `Id128` is 32 lowercase hex;
+ *    integers are canonical decimal strings; `Uuid` is canonical UUID;
  *    bytes use ONE strict lowercase-hex encoding; intervals are
  *    `{start,end}` in their element encoding; closed references are handle
  *    names. `JSON.stringify` of raw numbers is NOT the database value
@@ -118,8 +118,8 @@ function encodeBoundaryValue(field: AnyField, value: unknown): unknown {
 			}
 			return { $f64: f64BitsHex(value) }
 		}
-		case "id128": {
-			if (!Id128.isId128(value)) {
+		case "uuid": {
+			if (!Uuid.isUuid(value)) {
 				throw invalid("encodeBoundaryRows")
 			}
 			return value
@@ -195,13 +195,8 @@ function decodeBoundaryValue(field: AnyField, value: unknown): unknown | undefin
 			return decodeInteger(field.kind, value)
 		case "f64":
 			return decodeTaggedF64(value)
-		case "id128": {
-			if (typeof value !== "string") {
-				return undefined
-			}
-			const parsed = Id128.fromHex(value)
-			return Result.isSuccess(parsed) ? parsed.success : undefined
-		}
+		case "uuid":
+			return Uuid.isUuid(value) ? value : undefined
 		case "str":
 			return typeof value === "string" && value.isWellFormed() ? value : undefined
 		case "bytes": {
@@ -342,7 +337,15 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	return yield* nativeOperationWith(
 		"encodeRows",
 		(callback) =>
-			dbNative.runtimeEncodeRows(runtime, policyWire(work, "encodeRows"), spec, relationId, flat.rows, flat.cells, callback),
+			dbNative.runtimeEncodeRows(
+				runtime,
+				policyWire(work, "encodeRows"),
+				spec,
+				relationId,
+				flat.rows,
+				flat.cells,
+				callback
+			),
 		dbNative.runtimeBytesTake,
 		(bytes) => bytes
 	)
@@ -365,7 +368,8 @@ const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(
 	const spec = lower(shape.schema)
 	return yield* nativeOperationWith(
 		"decodeRows",
-		(callback) => dbNative.runtimeDecodeRows(runtime, policyWire(work, "decodeRows"), spec, relationId, input, callback),
+		(callback) =>
+			dbNative.runtimeDecodeRows(runtime, policyWire(work, "decodeRows"), spec, relationId, input, callback),
 		dbNative.runtimeRowsTake,
 		(rows) => Object.freeze(rows.map((row) => factOfCells(shape.relation, row as readonly CellValue[])))
 	)

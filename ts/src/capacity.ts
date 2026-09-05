@@ -339,13 +339,5 @@ function duration<const F extends string>(field: F & PathBan<F>): DurationRef<F>
 	return Object.freeze({ kind: "durationField", field: assertRowLocal(field, "Duration measure") }) as DurationRef<F>
 }
 
-export type {
-	BoundsOnTarget,
-	CapacityWeight,
-	CapacityWindow,
-	DurationRef,
-	FieldRef,
-	UnitDimensionBan,
-	WeightOnSource
-}
+export type { BoundsOnTarget, CapacityWeight, CapacityWindow, DurationRef, FieldRef, UnitDimensionBan, WeightOnSource }
 export { duration, isCapacityWeight, isCapacityWindow, ref, unitWeight, weigh, within }

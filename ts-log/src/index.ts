@@ -9,6 +9,8 @@
  * DbError, …) are the peer @bjornpagen/bumbledb's own exports, never
  * re-exported here.
  */
+
+export type { AdminIdentityOptions, BackupDestination } from "#admin.ts"
 export {
 	backup,
 	checkpoint,
@@ -21,7 +23,6 @@ export {
 	rotateReceiptEpoch,
 	verifyBackup
 } from "#admin.ts"
-export type { AdminIdentityOptions, BackupDestination } from "#admin.ts"
 export type { ProtocolCode } from "#codes.ts"
 export { protocolErrorCodes } from "#codes.ts"
 export { Command } from "#command.ts"
@@ -44,19 +45,19 @@ export {
 	DecisionDigest,
 	IncarnationId,
 	OperationId,
+	PlanSetDigest,
 	parseCommandRef,
 	parseDatabaseIdentity,
 	parseDecisionStamp,
 	parseSchemaId,
 	parseStateStamp,
-	PlanSetDigest,
 	ReceiptEpoch,
+	RequestId,
+	RootId,
 	renderCommandRef,
 	renderDatabaseIdentity,
 	renderDecisionStamp,
 	renderStateStamp,
-	RequestId,
-	RootId,
 	sameCommandRef,
 	sameIdentity
 } from "#identity.ts"
@@ -76,10 +77,10 @@ export type {
 	SubmitOptions
 } from "#options.ts"
 export type {
+	AbortReport,
 	AccessMode,
 	ActivationRef,
 	ActivationReport,
-	AbortReport,
 	AdminOutcome,
 	BackupReport,
 	BackupVerification,
@@ -98,6 +99,7 @@ export type {
 	MigrateValue,
 	MigrationRef,
 	MigrationStatus,
+	PublicationPhase,
 	ReceiptPolicyReport,
 	ReceiptRetirementReport,
 	ReceiptRotationReport,
@@ -109,8 +111,7 @@ export type {
 	SourceAccessReport,
 	SubmitOutcome,
 	TerminalOutcome,
-	TerminalReceipt,
-	PublicationPhase
+	TerminalReceipt
 } from "#outcome.ts"
 export type {
 	Command as CommandValue,
@@ -120,5 +121,5 @@ export type {
 	Precondition,
 	PublishedSnapshot
 } from "#surface.ts"
-export { TenantCache } from "#tenants.ts"
 export type { TenantCacheOptions } from "#tenants.ts"
+export { TenantCache } from "#tenants.ts"

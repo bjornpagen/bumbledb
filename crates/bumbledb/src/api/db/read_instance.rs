@@ -28,14 +28,15 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::api::prepared::{Answers, BindArgs, CompleteResult, ParamArg, PreparedQuery};
+use crate::canonical::DecodedRow;
 use crate::error::{DynIdError, Error, Result};
+use crate::image::cache::ImageCache;
 use crate::ir::{Query, Value};
 use crate::schema::Schema;
 use crate::storage::GenerationId;
 use crate::storage::store::OwnedSnapshot;
 use crate::work::WorkContext;
 use crate::work::cache::GenerationHandle;
-use crate::image::cache::ImageCache;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::closed::ClosedRows;
@@ -120,9 +121,34 @@ impl<S> OwnedRead<S> {
     pub fn get<'pin, K: Key<'pin, Schema = S>>(
         &'pin self,
         key: K,
-        work: &'pin WorkContext,
+        work: &WorkContext,
     ) -> Result<Option<K::Fact>> {
-        self.frame(work).get(key)
+        let relation = <K::Fact as Fact<'pin>>::RELATION;
+        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
+        let mut key_values = Vec::new();
+        key.append_key_values(&mut key_values)?;
+        let result = match get_path::get_with_work(
+            &self.snapshot,
+            self.schema.as_ref(),
+            self.closed.as_ref(),
+            relation,
+            K::STATEMENT,
+            &key_values,
+            work,
+        )? {
+            None => Ok(None),
+            Some(get_path::KeyedRowHit::Closed(row)) => {
+                K::Fact::decode(RowReader::new(&row.canonical)?).map(Some)
+            }
+            Some(get_path::KeyedRowHit::Store(bytes)) => {
+                K::Fact::decode(RowReader::new(bytes)?).map(Some)
+            }
+        };
+        if let Ok(found) = &result {
+            span.set_flag(found.is_some());
+        }
+        span.end();
+        result
     }
 
     /// # Errors
@@ -133,8 +159,30 @@ impl<S> OwnedRead<S> {
         key: StatementId,
         key_values: &[Value],
         work: &WorkContext,
-    ) -> Result<Option<Vec<Value>>> {
-        self.frame(work).get_dyn(relation, key, key_values)
+    ) -> Result<Option<DecodedRow>> {
+        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
+        let bytes = match get_path::get_with_work(
+            &self.snapshot,
+            self.schema.as_ref(),
+            self.closed.as_ref(),
+            relation,
+            key,
+            key_values,
+            work,
+        )? {
+            None => None,
+            Some(get_path::KeyedRowHit::Closed(row)) => Some(row.canonical.as_ref()),
+            Some(get_path::KeyedRowHit::Store(bytes)) => Some(bytes),
+        };
+        let row = bytes
+            .map(|bytes| {
+                crate::canonical::decode(self.schema.relation(relation).fields(), bytes, work)
+                    .map_err(row_error)
+            })
+            .transpose()?;
+        span.set_flag(row.is_some());
+        span.end();
+        Ok(row)
     }
 
     /// # Errors
@@ -176,8 +224,8 @@ impl<S> ReadFrame<'_, S> {
 
     /// The generation this pin witnessed — from the owned snapshot.
     #[must_use]
-    pub fn generation(&self) -> Result<GenerationId> {
-        Ok(self.owner.generation())
+    pub fn generation(&self) -> GenerationId {
+        self.owner.generation()
     }
 
     /// # Errors
@@ -249,21 +297,20 @@ impl<S> ReadFrame<'_, S> {
 
     /// # Errors
     /// Unknown relation, storage failure, or a malformed stored row.
-    pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
+    pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<DecodedRow>> + '_> {
         let Some(relation) = self.owner.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
         if let Some(rows) = self.owner.closed.get(rel) {
-            return Ok(ScanRows::Closed(
-                rows.iter().map(|row| Ok(row.values.to_vec())),
-            ));
+            return Ok(ScanRows::Closed(rows.iter().map(move |row| {
+                crate::canonical::decode(fields, &row.canonical, self.work).map_err(row_error)
+            })));
         }
         let iterator = self.owner.snapshot.rows(rel).map_err(Error::from_store)?;
         Ok(ScanRows::Store(iterator.map(move |entry| {
             let (_, bytes) = entry.map_err(Error::from_store)?;
-            let decoded = crate::canonical::decode(fields, bytes, self.work).map_err(row_error)?;
-            Ok(decoded.values().to_vec())
+            crate::canonical::decode(fields, bytes, self.work).map_err(row_error)
         })))
     }
 
@@ -317,12 +364,6 @@ impl<S> ReadFrame<'_, S> {
 
     /// # Errors
     /// Shape refusals or storage failure.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "a key value is the read's input, spelled `frame.get(id)`: \
-                  generated key structs are small — by-value keeps every \
-                  call site free of `&` noise"
-    )]
     pub fn get<'lease, K: Key<'lease, Schema = S>>(
         &'lease self,
         key: K,
@@ -339,32 +380,7 @@ impl<S> ReadFrame<'_, S> {
         work: &WorkContext,
         key: K,
     ) -> Result<Option<K::Fact>> {
-        let relation = <K::Fact as Fact<'lease>>::RELATION;
-        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
-        let mut key_values = Vec::new();
-        key.append_key_values(&mut key_values)?;
-        let result = match get_path::get_with_work(
-            &self.owner.snapshot,
-            self.owner.schema.as_ref(),
-            self.owner.closed.as_ref(),
-            relation,
-            K::STATEMENT,
-            &key_values,
-            work,
-        )? {
-            None => Ok(None),
-            Some(get_path::KeyedRowHit::Closed(row)) => {
-                K::Fact::decode(RowReader::new(&row.canonical)?).map(Some)
-            }
-            Some(get_path::KeyedRowHit::Store(bytes)) => {
-                K::Fact::decode(RowReader::new(bytes)?).map(Some)
-            }
-        };
-        if let Ok(found) = &result {
-            span.set_flag(found.is_some());
-        }
-        span.end();
-        result
+        self.owner.get(key, work)
     }
 
     /// # Errors
@@ -375,11 +391,8 @@ impl<S> ReadFrame<'_, S> {
         key: StatementId,
         key_values: &[Value],
         work: &WorkContext,
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into_with_work(relation, key, key_values, &mut out, work)?
-            .then_some(out))
+    ) -> Result<Option<DecodedRow>> {
+        self.owner.get_dyn(relation, key, key_values, work)
     }
 
     /// # Errors
@@ -389,60 +402,8 @@ impl<S> ReadFrame<'_, S> {
         relation: RelationId,
         key: StatementId,
         key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>> {
+    ) -> Result<Option<DecodedRow>> {
         self.get_dyn_with_work(relation, key, key_values, self.work)
-    }
-
-    /// # Errors
-    /// Shape refusals or storage failure.
-    pub fn get_dyn_into(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-    ) -> Result<bool> {
-        self.get_dyn_into_with_work(relation, key, key_values, out, self.work)
-    }
-
-    /// As [`Self::get_dyn_into`], under an explicit work context.
-    /// # Errors
-    /// As [`Self::get_dyn_into`].
-    #[doc(hidden)]
-    pub fn get_dyn_into_with_work(
-        &self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-        work: &WorkContext,
-    ) -> Result<bool> {
-        out.clear();
-        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
-        let hit = match get_path::get_with_work(
-            &self.owner.snapshot,
-            self.owner.schema.as_ref(),
-            self.owner.closed.as_ref(),
-            relation,
-            key,
-            key_values,
-            work,
-        )? {
-            None => false,
-            Some(get_path::KeyedRowHit::Closed(row)) => {
-                out.extend(row.values.iter().cloned());
-                true
-            }
-            Some(get_path::KeyedRowHit::Store(bytes)) => {
-                let fields = self.owner.schema.relation(relation).fields();
-                let decoded = crate::canonical::decode(fields, bytes, work).map_err(row_error)?;
-                out.extend(decoded.values().iter().cloned());
-                true
-            }
-        };
-        span.set_flag(hit);
-        span.end();
-        Ok(hit)
     }
 }
 

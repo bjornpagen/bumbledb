@@ -9,10 +9,10 @@
  * (`logRepositoryLockRelease`) runs from Scope. No public lock API.
  */
 import type { ExecutionPolicy, NativeRuntime } from "@bjornpagen/bumbledb"
-import { internalAcquireRepositoryLock } from "@bjornpagen/bumbledb/internal/log"
 import type { RepositoryLock } from "@bjornpagen/bumbledb/internal/log"
-import { Effect } from "effect"
+import { internalAcquireRepositoryLock } from "@bjornpagen/bumbledb/internal/log"
 import type { Scope } from "effect"
+import { Effect } from "effect"
 import type { LogError } from "#errors.ts"
 import { logFailure } from "#errors.ts"
 

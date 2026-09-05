@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict"
 import { createRequire } from "node:module"
-import { Scalar, id128, key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { Scalar, uuid, key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 
 const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
 assert.equal(incrementUnits.kind, "add")
@@ -21,7 +21,7 @@ try {
 }
 assert.ok(refused, "D27: known I64/U64 mixing refuses before native load")
 
-const Units = relation("Units", { id: id128, units: u64, name: str })
+const Units = relation("Units", { id: uuid, units: u64, name: str })
 const theory = schema("UnitsTheory", { Units }, [key(Units, ["id"])])
 assert.equal(theory.name, "UnitsTheory")
 

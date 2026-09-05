@@ -4,9 +4,7 @@ use heed::RoTxn;
 
 use super::candidate::RowIndexer;
 use super::error::{StoreCorruption, StoreError, StoreResult};
-use super::format::{
-    K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, K_NEXT_ROW_ID, K_RELATION_VERSION_TAG,
-};
+use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, K_RELATION_VERSION_TAG};
 use super::keys;
 use super::rows;
 use super::snapshot::OwnedSnapshot;
@@ -36,6 +34,10 @@ impl Store {
     /// (CORE-015).
     /// # Errors
     /// `ForeignSchema`, `DestinationExists`, growth refusals, storage failure.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The fresh-destination capability must be consumed, not borrowed"
+    )]
     pub fn adopt_snapshot(
         &self,
         source: &OwnedSnapshot,
@@ -43,7 +45,7 @@ impl Store {
         indexer: &(impl RowIndexer + ?Sized),
         work: &WorkContext,
     ) -> StoreResult<()> {
-        let _fresh = fresh;
+        let FreshDestination(FreshDestinationToken) = fresh;
         if source.schema_fingerprint() != self.inner.schema_fp {
             return Err(StoreError::ForeignSchema);
         }

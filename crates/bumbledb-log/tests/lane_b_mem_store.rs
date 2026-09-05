@@ -7,12 +7,10 @@ use std::time::Duration;
 
 use bumbledb::work::Resource;
 use bumbledb::{ExecutionPolicy, WorkContext};
-use bumbledb_log::history::DecisionDigest;
 use bumbledb_log::store::mem::{Behavior, MemStore, Op};
 use bumbledb_log::store::{
     ConditionalStore as _, ObjectError, ObjectKind, ObjectRef, ReceiveLimits, ReceivingStore,
-    TransportContext, TransportObservation, fetch_decision, get_verified, object_digest,
-    put_verified,
+    TransportContext, TransportObservation, fetch_decision_ref, get_verified, put_verified,
 };
 
 fn work() -> WorkContext {
@@ -112,35 +110,34 @@ fn get_verified_checks_length_and_domain_separated_digest_before_returning() {
 }
 
 #[test]
-fn fetch_decision_probes_the_bounded_epoch_window_newest_first() {
+fn fetch_decision_uses_one_authenticated_locator_without_epoch_probing() {
     let store = MemStore::new();
     let body = b"decision bytes stand-in";
-    let digest = DecisionDigest::from_bytes(object_digest(ObjectKind::Decision, body));
-    // Staged under epoch 3 of a [1, 5] window.
-    let key = bumbledb_log::store::decision_key("t", 3, &digest);
+    let reference = ObjectRef::of(3, ObjectKind::Decision, body);
+    let key = reference.key("t");
     store.put_object(&key, body).expect("stored");
-    let (epoch, bytes) = fetch_decision(&store, "t", 1, 5, &digest).expect("found");
-    assert_eq!(epoch, 3);
-    assert_eq!(bytes, body);
-    // Absent across the whole window: definite missing after bounded probes.
-    let ghost = DecisionDigest::from_bytes([9; 32]);
-    let missing = fetch_decision(&store, "t", 1, 5, &ghost);
+    let ctx = work();
+    let bytes = fetch_decision_ref(&store, "t", &reference, transport(&ctx)).expect("found");
+    assert_eq!(bytes.as_bytes(), body);
+    let ghost = ObjectRef {
+        epoch: 4,
+        ..reference
+    };
+    let missing = fetch_decision_ref(&store, "t", &ghost, transport(&ctx));
     assert!(matches!(missing, Err(ObjectError::Missing { .. })));
     let probes = store
         .operations()
         .into_iter()
-        .filter(|(op, key)| {
-            *op == Op::GetObject && key.contains(&bumbledb_log::store::hex32(ghost.as_bytes()))
-        })
+        .filter(|(op, key)| *op == Op::GetObject && key == &ghost.key("t"))
         .count();
     assert_eq!(
-        probes, 5,
-        "exactly the window [floor, ceiling], never a slot scan"
+        probes, 1,
+        "one GET at the authenticated locator, never an epoch scan"
     );
     // Corrupt bytes at the address refuse rather than returning.
     assert!(store.corrupt_object(&key, |bytes| bytes[0] ^= 0xff));
     assert!(matches!(
-        fetch_decision(&store, "t", 1, 5, &digest),
+        fetch_decision_ref(&store, "t", &reference, transport(&ctx)),
         Err(ObjectError::WrongDigest { .. })
     ));
 }

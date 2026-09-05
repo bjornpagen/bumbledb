@@ -182,9 +182,11 @@ fn hostile_mutation_lock_shapes_refuse_or_are_inert_for_every_caller() {
     assert_eq!(std::fs::read(&sentinel).expect("sentinel"), b"sentinel");
     // Symlinked object path: refused for read and write, never followed.
     symlink(&sentinel, root.join("redirect")).expect("symlink");
-    assert!(store
-        .receive_object("redirect", TransportContext::limited(64))
-        .is_err());
+    assert!(
+        store
+            .receive_object("redirect", TransportContext::limited(64))
+            .is_err()
+    );
     assert!(store.put_object("redirect", b"x").is_err());
     assert_eq!(std::fs::read(&sentinel).expect("sentinel"), b"sentinel");
     let _ = std::fs::remove_dir_all(&root);

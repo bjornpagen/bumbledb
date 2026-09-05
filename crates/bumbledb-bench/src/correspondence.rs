@@ -3,7 +3,7 @@
 //! L19 removed three-way / cargo oracles from `scripts/lean.sh`. These
 //! cases live here: collision bytes, exact folds, and admission support.
 //! The independent judgment reference is `judge_final_state`, never the
-//! production planner. Verification: **NotRun**.
+//! production planner. Verification: **`NotRun`**.
 
 /// Correspondence ids L20 owns for L21 / spec-census.
 pub const OWNED_CASES: &[&str] = &[
@@ -18,9 +18,7 @@ pub const OWNED_CASES: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::schema::judge::{
-        JudgeBudget, Judgment, MapState, judge_final_state,
-    };
+    use bumbledb::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
     use bumbledb::schema::{
         Bound, FieldId, RelationDescriptor, Schema, SchemaDescriptor, StatementDescriptor,
         ValidateDescriptor as _, ValueType, Weight,
@@ -38,7 +36,7 @@ mod tests {
     const CHILD: RelationId = RelationId(1);
 
     fn work() -> bumbledb::WorkContext {
-        bench_work().expect("correspondence work")
+        bench_work()
     }
 
     fn key_schema() -> Schema {
@@ -46,7 +44,10 @@ mod tests {
             relations: vec![RelationDescriptor {
                 extension: None,
                 name: "Item".into(),
-                fields: vec![field("id", ValueType::U64), field("payload", ValueType::U64)],
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("payload", ValueType::U64),
+                ],
             }],
             statements: vec![StatementDescriptor::Functionality {
                 relation: ITEM,
@@ -119,8 +120,8 @@ mod tests {
         let left = vec![Value::U64(1), Value::U64(10)];
         let right = vec![Value::U64(1), Value::U64(20)];
         let fields = schema.relation_checked(ITEM).expect("item").fields();
-        let left_bytes = bumbledb::canonical::CanonicalRow::encode(fields, &left, &work())
-            .expect("encode left");
+        let left_bytes =
+            bumbledb::canonical::CanonicalRow::encode(fields, &left, &work()).expect("encode left");
         let right_bytes = bumbledb::canonical::CanonicalRow::encode(fields, &right, &work())
             .expect("encode right");
         assert_ne!(
@@ -219,7 +220,7 @@ mod tests {
         );
     }
 
-    /// C-G03-add-wins: one ChangeSet, same exact fact on both sides → Add.
+    /// C-G03-add-wins: one `ChangeSet`, same exact fact on both sides → Add.
     #[test]
     fn c_g03_add_wins_in_one_changeset() {
         let schema = key_schema();

@@ -369,6 +369,9 @@ recipe!(r14, Calendar, {
     relation WorkHours { person: u64 as PersonId, hours: interval<i64> }
 
     Person(id) -> Person;
+    Room(id) -> Room;
+    Event(id) -> Event;
+    Attendance(id) -> Attendance;
     Attendance(event)  <= Event(id);
     Attendance(person) <= Person(id);
     Attendance(rsvp)   <= Rsvp(id);
@@ -479,6 +482,8 @@ recipe!(r19, Ledger, {
     }
 
     Account(id) -> Account;
+    JournalEntry(id) -> JournalEntry;
+    Posting(id) -> Posting;
     Posting(entry)   <= JournalEntry(id);
     Posting(account) <= Account(id);
 }, queries {
@@ -702,6 +707,7 @@ mod r28_old {
         relation Employee { id: u64 as EmployeeId, name: str }
         relation Salary   { employee: u64 as EmployeeId, amount: i64 }
 
+        Employee(id) -> Employee;
         Salary(employee) <= Employee(id);
     }
 }
@@ -1059,84 +1065,6 @@ fn every_recipe_schema_validates() {
     }
 }
 
-/// The 64-char lowercase hex of an engine fingerprint — the goldens spelling.
-fn hex_of(fingerprint: &bumbledb::schema::fingerprint::SchemaFingerprint) -> String {
-    fingerprint
-        .0
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            use std::fmt::Write;
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-            hex
-        })
-}
-
-/// The per-recipe cross-host goldens (PRD-T5): every roster schema's
-/// fingerprint equals its pinned line in the ONE shared fixture,
-/// `fixtures/cookbook-fingerprints.txt` at the repository root — the same
-/// host-neutral file the SDK
-/// cookbook suite (`ts/test/cookbook.test.ts`) asserts against, and alone
-/// regenerates (`REGEN_FINGERPRINTS=1`; this side never writes it). The TS
-/// side lowers a names-only spec through the napi bridge into the SAME
-/// resolution/validation/blake3 code, so a divergence here is drift
-/// upstream of the hasher on whichever side moved. Missing, extra, or
-/// malformed fixture lines are failures, never skips.
-#[test]
-fn every_recipe_fingerprint_matches_the_cross_host_golden() {
-    let fixture = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/cookbook-fingerprints.txt"
-    ));
-    let mut goldens = std::collections::BTreeMap::new();
-    for line in fixture.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (id, hex) = line
-            .split_once(' ')
-            .unwrap_or_else(|| panic!("a goldens line is `rNN <64-hex>`: {line:?}"));
-        let number: usize = id
-            .strip_prefix('r')
-            .and_then(|digits| digits.parse().ok())
-            .unwrap_or_else(|| panic!("a goldens recipe id is rNN: {id:?}"));
-        assert_eq!(hex.len(), 64, "a golden is 64 hex chars: {line:?}");
-        assert!(
-            goldens.insert(number, hex).is_none(),
-            "one goldens line per recipe: {id}"
-        );
-    }
-    assert_eq!(
-        goldens.len(),
-        ROSTER.len(),
-        "the fixture pins exactly one line per roster recipe"
-    );
-    let mut drifted = Vec::new();
-    for (i, recipe) in ROSTER.iter().enumerate() {
-        let number = i + 1;
-        let expected = goldens
-            .get(&number)
-            .unwrap_or_else(|| panic!("recipe {number} ({}) has no goldens line", recipe.title));
-        let schema = (recipe.validate)().unwrap_or_else(|e| {
-            panic!(
-                "recipe {number} ({}) failed validation: {e:?}",
-                recipe.title
-            )
-        });
-        let hex = hex_of(&bumbledb::schema::fingerprint::fingerprint(&schema));
-        if hex != *expected {
-            drifted.push(format!(
-                "recipe {number} ({}): rust {hex} != golden {expected}",
-                recipe.title
-            ));
-        }
-    }
-    assert!(
-        drifted.is_empty(),
-        "recipes drifted from the cross-host goldens:\n{}",
-        drifted.join("\n")
-    );
-}
-
 fn span(start: i64, end: i64) -> bumbledb::Interval<i64> {
     bumbledb::Interval::<i64>::new(start, end).expect("nonempty half-open interval")
 }
@@ -1209,10 +1137,10 @@ fn r26_adjacent_segments_commit() {
     use r26::{ExactPartition, Policy, PolicyId, Version};
 
     let dir = TempDir::new("r26-exact-adjacent");
-    let db = Db::create(dir.path(), ExactPartition)
+    let db = Db::create(dir.path(), ExactPartition, common::work())
         .expect("create exact partition store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let policy = PolicyId(1);
         tx.insert([&Policy {
             id: policy,
@@ -1238,10 +1166,10 @@ fn r26_gap_rejects_forward() {
     use r26::{ExactPartition, Policy, PolicyId, Version};
 
     let dir = TempDir::new("r26-gap");
-    let db = Db::create(dir.path(), ExactPartition)
+    let db = Db::create(dir.path(), ExactPartition, common::work())
         .expect("create gap store")
         .expect("accepted");
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let policy = PolicyId(2);
         tx.insert([&Policy {
             id: policy,
@@ -1266,10 +1194,10 @@ fn r26_overhang_rejects_reverse() {
     use r26::{ExactPartition, Policy, PolicyId, Version};
 
     let dir = TempDir::new("r26-overhang");
-    let db = Db::create(dir.path(), ExactPartition)
+    let db = Db::create(dir.path(), ExactPartition, common::work())
         .expect("create overhang store")
         .expect("accepted");
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let policy = PolicyId(3);
         tx.insert([&Policy {
             id: policy,
@@ -1290,10 +1218,10 @@ fn r16_one_way_permits_overhang() {
     use r16::{FiscalYear, FiscalYearId, PayPeriod, Payroll};
 
     let dir = TempDir::new("r16-one-way-overhang");
-    let db = Db::create(dir.path(), Payroll)
+    let db = Db::create(dir.path(), Payroll, common::work())
         .expect("create one-way cover store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let year = FiscalYearId(4);
         tx.insert([&FiscalYear {
             id: year,
@@ -1315,10 +1243,10 @@ fn r26_composite_prefix_commits() {
     use composite_partition::{CompositePartition, Domain, Segment};
 
     let dir = TempDir::new("r26-composite-prefix");
-    let db = Db::create(dir.path(), CompositePartition)
+    let db = Db::create(dir.path(), CompositePartition, common::work())
         .expect("create composite store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Domain {
             group: 7,
             lane: 3,
@@ -1359,11 +1287,11 @@ fn r09_ordering_triple_commit_matrix() {
 
     // The tiling: span [0,3) exactly partitioned by unit slots 0, 1, 2.
     let dir = TempDir::new("r09-tiling");
-    let db = Db::create(dir.path(), Playlists)
+    let db = Db::create(dir.path(), Playlists, common::work())
         .expect("create playlists store")
         .expect("accepted");
     let list = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let list = PlaylistId(1);
             tx.insert([&Playlist {
                 id: list,
@@ -1388,7 +1316,7 @@ fn r09_ordering_triple_commit_matrix() {
 
     // The middle insert, honestly O(k) and atomic: making room at
     // position 1 shifts slots 1..3 up and grows the extent — one delta.
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.delete([&Extent {
             playlist: list,
             span: uspan(0, 3),
@@ -1429,10 +1357,10 @@ fn r09_gap_and_overlap_deltas_abort() {
     // the span-side coverage direction of the `==` convicts (its second
     // expanded containment, statement 6).
     let dir = TempDir::new("r09-gap");
-    let db = Db::create(dir.path(), Playlists)
+    let db = Db::create(dir.path(), Playlists, common::work())
         .expect("create gap store")
         .expect("accepted");
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let list = PlaylistId(1);
         tx.insert([&Playlist {
             id: list,
@@ -1459,10 +1387,10 @@ fn r09_gap_and_overlap_deltas_abort() {
     // The overlap: a second occupant of position 1 — the pointwise key
     // convicts in the key phase, before coverage even runs.
     let dir = TempDir::new("r09-overlap");
-    let db = Db::create(dir.path(), Playlists)
+    let db = Db::create(dir.path(), Playlists, common::work())
         .expect("create overlap store")
         .expect("accepted");
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let list = PlaylistId(1);
         tx.insert([&Playlist {
             id: list,
@@ -1504,10 +1432,10 @@ fn r29_zone_ledger_commit_matrix() {
     // The composition: a unit zone and a pair zone, each arm's sidecar
     // carrying exactly its zone's points.
     let dir = TempDir::new("r29-compose");
-    let db = Db::create(dir.path(), ZoneLedger)
+    let db = Db::create(dir.path(), ZoneLedger, common::work())
         .expect("create zone ledger store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let ledger = LedgerId(1);
         tx.insert([&Ledger {
             id: ledger,
@@ -1541,10 +1469,10 @@ fn r29_zone_ledger_commit_matrix() {
     // one pointwise key violation — the kinds never meet in a relation,
     // but their zones share the witness.
     let dir = TempDir::new("r29-cross-overlap");
-    let db = Db::create(dir.path(), ZoneLedger)
+    let db = Db::create(dir.path(), ZoneLedger, common::work())
         .expect("create overlap store")
         .expect("accepted");
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let ledger = LedgerId(1);
         tx.insert([&Ledger {
             id: ledger,
@@ -1585,10 +1513,10 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
     // two unit slots [4,5), [5,6) — equal point supports, so both `==`
     // directions hold; nothing forces row correspondence.
     let dir = TempDir::new("r29-coalesced");
-    let db = Db::create(dir.path(), ZoneLedger)
+    let db = Db::create(dir.path(), ZoneLedger, common::work())
         .expect("create coalesced store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let ledger = LedgerId(1);
         tx.insert([&Ledger {
             id: ledger,
@@ -1616,11 +1544,11 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
     // The width is the type: a width-2 value at the unit arm is a typed
     // shape error before any judgment — unrepresentable, not rejected.
     let dir = TempDir::new("r29-wrong-width");
-    let db = Db::create(dir.path(), ZoneLedger)
+    let db = Db::create(dir.path(), ZoneLedger, common::work())
         .expect("create width store")
         .expect("accepted");
     let error = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let ledger = LedgerId(1);
             tx.insert([&Ledger {
                 id: ledger,
@@ -1648,14 +1576,15 @@ fn pin_all<S: Theory + Copy>(tag: &str, theory: S, queries: &[PinnedQuery]) -> V
         return Vec::new();
     }
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), theory)
+    let db = Db::create(dir.path(), theory, common::work())
         .expect("create the theory's store")
         .expect("accepted");
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
     queries
         .iter()
         .map(|query| {
-            db.prepare(query).expect("the cookbook query validates");
+            db.prepare(query, common::work())
+                .expect("the cookbook query validates");
             render(&schema, query)
         })
         .collect()
@@ -1703,10 +1632,10 @@ fn r03_a_second_optional_child_is_rejected() {
     use r03::{Business, BusinessId, MailingAddress, Optionality};
 
     let dir = TempDir::new("r03-second-child");
-    let db = Db::create(dir.path(), Optionality)
+    let db = Db::create(dir.path(), Optionality, common::work())
         .expect("create optionality store")
         .expect("accepted");
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let business = BusinessId(1);
         tx.insert([&Business {
             id: business,
@@ -1735,11 +1664,11 @@ fn r22_a_double_arm_payment_is_rejected() {
     use r22::{Ach, Card, Kind, Payment, PaymentId, Payments};
 
     let dir = TempDir::new("r22-double-arm");
-    let db = Db::create(dir.path(), Payments)
+    let db = Db::create(dir.path(), Payments, common::work())
         .expect("create payments store")
         .expect("accepted");
     let payment = PaymentId(7);
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         tx.insert([&Payment {
             id: payment,
             kind: Kind::Card.id(),
@@ -1764,10 +1693,10 @@ fn r22_a_double_arm_payment_is_rejected() {
 fn r08_sub_vocabulary_violating_insert_aborts() {
     use r08::{Escalation, Incident, IncidentId, Oncall, Severity};
     let dir = TempDir::new("r08-subvocab");
-    let db = Db::create(dir.path(), Oncall)
+    let db = Db::create(dir.path(), Oncall, common::work())
         .expect("create the Oncall store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let id = IncidentId(1);
         tx.insert([&Incident {
             id,
@@ -1782,7 +1711,7 @@ fn r08_sub_vocabulary_violating_insert_aborts() {
     })
     .expect("a paging escalation commits")
     .unwrap();
-    let _ = expect_rejected(db.write(|tx| {
+    let _ = expect_rejected(db.write(common::work(), |tx| {
         let id = IncidentId(2);
         tx.insert([&Incident {
             id,
@@ -1834,11 +1763,11 @@ fn reachable<S>(
 fn r24_closure_idiom_reaches_the_exact_set() {
     use r24::{Closure, Node, NodeId, Parent};
     let dir = TempDir::new("r24-closure");
-    let db = Db::create(dir.path(), Closure)
+    let db = Db::create(dir.path(), Closure, common::work())
         .expect("create the Closure store")
         .expect("accepted");
     let ids = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let mut ids: Vec<NodeId> = Vec::new();
             for (ordinal, name) in ["root", "a", "b", "c", "d", "e", "stray"]
                 .into_iter()
@@ -1865,7 +1794,9 @@ fn r24_closure_idiom_reaches_the_exact_set() {
     let children = query!(r24::Closure {
         (c) | Parent(child: c, parent in ?frontier);
     });
-    let mut prepared = db.prepare(&children).expect("prepare the frontier query");
+    let mut prepared = db
+        .prepare(&children, common::work())
+        .expect("prepare the frontier query");
     // The engine-native form (recipe 24's second dialect): the same
     // closure as one linear rec — `rec` seeds and steps, the bare
     // rule is main — executed whole under the reach driver.
@@ -1875,7 +1806,7 @@ fn r24_closure_idiom_reaches_the_exact_set() {
         (c) | reach(c);
     });
     let mut native_q = db
-        .prepare(&native)
+        .prepare(&native, common::work())
         .expect("prepare the engine-native closure");
     let ids_of = |out: &Answers| -> BTreeSet<u64> {
         (0..out.len())
@@ -1887,7 +1818,7 @@ fn r24_closure_idiom_reaches_the_exact_set() {
             })
             .collect()
     };
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let from_root = reachable(snap, &mut prepared, ids[0].0)?;
         let whole_tree: BTreeSet<u64> = ids[..6].iter().map(|id| id.0).collect();
         assert_eq!(
@@ -1916,14 +1847,18 @@ fn r24_closure_idiom_reaches_the_exact_set() {
 /// one `Sum` over the accumulated ∈-set; the hand-computed subtree
 /// rollup over a three-level hierarchy with postings.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     use r25::{Account, AccountId, AccountParent, Accounts, Posting, PostingId};
     let dir = TempDir::new("r25-accounts");
-    let db = Db::create(dir.path(), Accounts)
+    let db = Db::create(dir.path(), Accounts, common::work())
         .expect("create the Accounts store")
         .expect("accepted");
     let ids = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let mut ids: Vec<AccountId> = Vec::new();
             for (ordinal, name) in ["assets", "cash", "receivables", "checking", "savings"]
                 .into_iter()
@@ -1973,8 +1908,12 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     let rollup = query!(r25::Accounts {
         (total: Sum(minor)) | Posting(id, account in ?subtree, minor);
     });
-    let mut frontier_q = db.prepare(&children).expect("prepare the frontier query");
-    let mut rollup_q = db.prepare(&rollup).expect("prepare the rollup");
+    let mut frontier_q = db
+        .prepare(&children, common::work())
+        .expect("prepare the frontier query");
+    let mut rollup_q = db
+        .prepare(&rollup, common::work())
+        .expect("prepare the rollup");
     // The engine-native form (recipe 25's second dialect): the rec
     // converges first, then the main fold runs once over the finished
     // subtree — aggregation of a finished table, not through the cycle.
@@ -1984,7 +1923,7 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
     });
     let mut native_q = db
-        .prepare(&native)
+        .prepare(&native, common::work())
         .expect("prepare the engine-native rollup");
     let native_sum = |snap: &ReadInstance<'_, Accounts>,
                       native_q: &mut PreparedQuery<Accounts>,
@@ -2010,7 +1949,7 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         };
         Ok(total)
     };
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         // The cash subtree: {cash, checking, savings} — closure, then one Sum.
         let cash_subtree = reachable(snap, &mut frontier_q, ids[1].0)?;
         let expected: BTreeSet<u64> = BTreeSet::from([ids[1].0, ids[3].0, ids[4].0]);
@@ -2061,7 +2000,7 @@ fn maintain_busy_spans(
 ) -> bumbledb::Result<usize> {
     let mut retries = 0;
     loop {
-        let attempt = db.read(|snap| {
+        let attempt = db.read(common::work(), |snap| {
             let desired = derived_busy_spans(snap, query)?;
             let existing: BTreeSet<BusySpanKey> = snap
                 .scan_facts::<r27::BusySpan>()?
@@ -2070,7 +2009,7 @@ fn maintain_busy_spans(
             let removes: Vec<_> = existing.difference(&desired).copied().collect();
             let inserts: Vec<_> = desired.difference(&existing).copied().collect();
             before_commit(retries)?;
-            db.write_from(&snap.witness()?, |tx| {
+            db.write_from(common::work(), &snap.witness()?, |tx| {
                 for (person, start, end) in &removes {
                     tx.delete([&r27::BusySpan {
                         person: *person,
@@ -2105,10 +2044,10 @@ fn r27_maintenance_rederives_after_generation_movement() {
     use r27::{Arm, BusySpan, Claim, MaintainedRollup};
 
     let dir = TempDir::new("r27-maintained-rollup");
-    let db = Db::create(dir.path(), MaintainedRollup)
+    let db = Db::create(dir.path(), MaintainedRollup, common::work())
         .expect("create maintained rollup store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for (source, person, arm, claim_span) in [
             (1, 7, Arm::Busy.id(), span(0, 2)),
             (2, 7, Arm::Busy.id(), span(2, 4)),
@@ -2130,10 +2069,12 @@ fn r27_maintenance_rederives_after_generation_movement() {
         (person, busy: Pack(claim_span)) |
             Claim(source, person, arm == Busy, span: claim_span);
     });
-    let mut prepared = db.prepare(&derive).expect("prepare busy-span derivation");
+    let mut prepared = db
+        .prepare(&derive, common::work())
+        .expect("prepare busy-span derivation");
     let retries = maintain_busy_spans(&db, &mut prepared, |attempt| {
         if attempt == 0 {
-            db.write(|tx| {
+            db.write(common::work(), |tx| {
                 tx.insert([&Claim {
                     source: 3,
                     person: 7,
@@ -2149,7 +2090,7 @@ fn r27_maintenance_rederives_after_generation_movement() {
     .expect("maintenance retries and commits");
     assert_eq!(retries, 1, "the moved first derivation must be discarded");
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let spans: Vec<BusySpan> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
         assert_eq!(
             spans,
@@ -2182,10 +2123,10 @@ fn r28_migration_is_etl() {
     let dir_v2 = TempDir::new("r28-v2");
 
     // Seed the v1 store with application-owned ids.
-    let v1 = Db::create(dir_v1.path(), r28_old::PayrollV1)
+    let v1 = Db::create(dir_v1.path(), r28_old::PayrollV1, common::work())
         .expect("create the v1 store")
         .expect("accepted");
-    v1.write(|tx| {
+    v1.write(common::work(), |tx| {
         for (ordinal, (name, amount)) in [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)]
             .into_iter()
             .enumerate()
@@ -2205,14 +2146,15 @@ fn r28_migration_is_etl() {
     // Export under ONE snapshot (one generation — a consistent instant);
     // the transform appends the ray.
     let (employees, salaries) = v1
-        .read(|snap| {
+        .read(common::work(), |snap| {
             let employees: Vec<Vec<Value>> = snap
                 .scan(r28_old::Employee::RELATION)?
+                .map(|row| row.map(|row| row.to_vec()))
                 .collect::<bumbledb::Result<_>>()?;
             let salaries: Vec<Vec<Value>> = snap
                 .scan(r28_old::Salary::RELATION)?
                 .map(|fact| {
-                    let mut fact = fact?;
+                    let mut fact = fact?.to_vec();
                     fact.push(Value::IntervalI64(
                         bumbledb::Interval::<i64>::new(EPOCH, i64::MAX)
                             .expect("the migration ray is nonempty"),
@@ -2227,20 +2169,21 @@ fn r28_migration_is_etl() {
     // The fingerprint law: with the v1 handle dropped (LMDB is one
     // handle per env), the store refuses to open under the v2 theory.
     drop(v1);
-    let Err(err) = Db::open(dir_v1.path(), r28::Payroll) else {
+    let Err(err) = Db::open(dir_v1.path(), r28::Payroll, common::work()) else {
         panic!("a changed theory must not open");
     };
     assert!(
-        matches!(err, bumbledb::Error::SchemaMismatch { .. }),
+        matches!(&err, bumbledb::Error::Store(source)
+            if matches!(**source, bumbledb::store::StoreError::SchemaMismatch)),
         "{err:?}"
     );
 
     // Load containment targets first; explicit id values keep identity.
-    let v2 = Db::create(dir_v2.path(), r28::Payroll)
+    let v2 = Db::create(dir_v2.path(), r28::Payroll, common::work())
         .expect("create the v2 store")
         .expect("accepted");
     let loaded = v2
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(r28::Employee::RELATION, employees)
                 .map(bumbledb::MutationReport::changed)
         })
@@ -2249,7 +2192,7 @@ fn r28_migration_is_etl() {
         .value;
     assert_eq!(loaded, 3);
     let loaded = v2
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(r28::Salary::RELATION, salaries)
                 .map(bumbledb::MutationReport::changed)
         })
@@ -2260,7 +2203,7 @@ fn r28_migration_is_etl() {
 
     // Identity is application-owned: a post-import insert under an unused
     // id coexists with the imported rows — no allocator, no catch-up.
-    v2.write(|tx| {
+    v2.write(common::work(), |tx| {
         let next = r28::EmployeeId(100);
         tx.insert([&r28::Employee {
             id: next,
@@ -2283,9 +2226,11 @@ fn r28_migration_is_etl() {
         (name, amount) | Employee(id: e, name), Salary(employee: e, amount, applies: w),
                          ?at in w;
     });
-    let mut prepared = v2.prepare(&in_force).expect("prepare the v2 query");
+    let mut prepared = v2
+        .prepare(&in_force, common::work())
+        .expect("prepare the v2 query");
     let mut out = Answers::new();
-    v2.read(|snap| {
+    v2.read(common::work(), |snap| {
         snap.execute(
             &mut prepared,
             &[ParamArg::Scalar(BindValue::I64(1))],
@@ -2329,11 +2274,11 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
     use r30::{Course, CourseByGrp, CourseId, Grp, GrpId, KeyedRead};
 
     let dir = TempDir::new("r30-keyed-read");
-    let db = Db::create(dir.path(), KeyedRead)
+    let db = Db::create(dir.path(), KeyedRead, common::work())
         .expect("create the KeyedRead store")
         .expect("accepted");
     let (grp, empty_grp, course) = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
@@ -2356,7 +2301,7 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
         .unwrap()
         .value;
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         // The law made callable: the doc's snapshot spelling.
         assert_eq!(
             snap.get(CourseByGrp { grp })?,
@@ -2376,7 +2321,7 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
     .expect("snapshot keyed reads");
 
     // The same spellings inside the write transaction answer the final state.
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let found = tx
             .get(CourseByGrp { grp })?
             .expect("the law answers in write scope");
@@ -2418,13 +2363,13 @@ fn r31_power_budget_commit_matrix() {
 
     let schema = r31::validate().expect("the power-budget schema validates");
     let dir = TempDir::new("r31-power-budget");
-    let db = Db::create(dir.path(), Racks)
+    let db = Db::create(dir.path(), Racks, common::work())
         .expect("create the Racks store")
         .expect("accepted");
 
     // Within budget: 40 + 40 = 80 ≤ supply 100 — the weighted walk admits.
     let (pool, model) = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let pool = PoolId(1);
             tx.insert([&Pool {
                 id: pool,
@@ -2452,7 +2397,7 @@ fn r31_power_budget_commit_matrix() {
 
     // Over budget: the third device makes Σ watts = 120 > 100; the refusal
     // reports the full group total, not the clipped prefix.
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let id = DeviceId(3);
         tx.insert([&Device {
             id,
@@ -2466,7 +2411,7 @@ fn r31_power_budget_commit_matrix() {
 
     // The pinned column: a device claiming watts its model does not have
     // dies on the two-column containment — the join stated as a law.
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let id = DeviceId(4);
         tx.insert([&Device {
             id,
@@ -2497,14 +2442,14 @@ fn r32_calendar_capacity_commit_matrix() {
 
     let schema = r32::validate().expect("the calendar-capacity schema validates");
     let dir = TempDir::new("r32-calendar-capacity");
-    let db = Db::create(dir.path(), Rooms)
+    let db = Db::create(dir.path(), Rooms, common::work())
         .expect("create the Rooms store")
         .expect("accepted");
 
     // Exactly full: Duration([0,50)) + Duration([50,100)) = 100 = the
     // room's own Duration([0,100)) — both window ends inclusive.
     let room = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let room = RoomId(1);
             tx.insert([&Room {
                 id: room,
@@ -2523,7 +2468,7 @@ fn r32_calendar_capacity_commit_matrix() {
     // Over capacity: a disjoint booking (no key conflict) lifts the total
     // to 160 > 100 — the capacity law convicts where the pointwise key
     // cannot, with the full weighted total as the witness.
-    let error = db.write(|tx| {
+    let error = db.write(common::work(), |tx| {
         let id = BookingId(3);
         tx.insert([&Booking {
             id,

@@ -7,14 +7,14 @@
 //! schema! {
 //!     pub Ledger;
 //!
-//!     relation Holder  { id: id128 as HolderId, name: str }
+//!     relation Holder  { id: uuid as HolderId, name: str }
 //!     relation Account {
-//!         id:     id128 as AccountId,
-//!         holder: id128 as HolderId,
+//!         id:     uuid as AccountId,
+//!         holder: uuid as HolderId,
 //!         kind:   u64 as KindId,
 //!         active: interval<i64> as ActiveDuring,
 //!     }
-//!     relation SavingsTerms { account: id128 as AccountId, rate_bps: i64 }
+//!     relation SavingsTerms { account: uuid as AccountId, rate_bps: i64 }
 //!
 //!     Holder(id) -> Holder;
 //!     Account(id) -> Account;
@@ -24,7 +24,7 @@
 //! }
 //! ```
 //! Keys are DECLARED statements (`R(X) -> R;`); there is no `fresh`
-//! modifier and the database issues no identity — `id128` fields carry
+//! modifier and the database issues no identity — `uuid` fields carry
 //! ordinary application-owned values.
 //! The header `pub Ledger;` is the invocation's first item and names the
 //! schema: it expands to `pub struct Ledger;` implementing
@@ -56,7 +56,7 @@ use bumbledb_theory::schema::{
     FixedIntervalElement, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
     StatementDescriptor, ValueType, Weight,
 };
-use bumbledb_theory::{F64, Id128, Interval, Value};
+use bumbledb_theory::{F64, Interval, Uuid, Value};
 use proc_macro::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -91,7 +91,7 @@ enum FieldTy {
     U64,
     I64,
     F64,
-    Id128,
+    Uuid,
     Str,
 
     FixedBytes(u64),
@@ -291,7 +291,7 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
     let ty_name = expect_ident(
         tokens,
-        "a type (bool/u64/i64/f64/id128/str/bytes<N>/interval)",
+        "a type (bool/u64/i64/f64/uuid/str/bytes<N>/interval)",
     );
     reject_deleted_word(&ty_name);
     let ty = match ty_name.as_str() {
@@ -299,7 +299,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         "u64" => FieldTy::U64,
         "i64" => FieldTy::I64,
         "f64" => FieldTy::F64,
-        "id128" => FieldTy::Id128,
+        "uuid" => FieldTy::Uuid,
         "str" => FieldTy::Str,
 
         "bytes" => {
@@ -360,12 +360,12 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 FieldTy::U64
                     | FieldTy::I64
                     | FieldTy::F64
-                    | FieldTy::Id128
+                    | FieldTy::Uuid
                     | FieldTy::FixedBytes(_)
                     | FieldTy::Interval(_)
                     | FieldTy::FixedInterval(..)
             ),
-            "schema!: `as NewType` applies to u64/i64/f64/id128/bytes<N>/interval fields only"
+            "schema!: `as NewType` applies to u64/i64/f64/uuid/bytes<N>/interval fields only"
         );
         field.newtype = Some(expect_ident(tokens, "a newtype name"));
     }
@@ -383,7 +383,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 assert_ne!(
                     word, "fresh",
                     "schema!: the `fresh` modifier is deleted — the database issues \
-                     no identity; use an application-owned `id128` field and declare \
+                     no identity; use an application-owned `uuid` field and declare \
                      the key: `R(id) -> R;`"
                 );
                 panic!("schema!: unknown field modifier `{word}` (field modifiers do not exist)");
@@ -1145,19 +1145,19 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
             i64_text(*negative, text).unwrap_or_else(|| literal_mismatch(relation, field)),
         ),
         (FieldTy::F64, Literal::Float(value)) => Value::F64(*value),
-        (FieldTy::Id128, Literal::Bytes(text)) => {
+        (FieldTy::Uuid, Literal::Bytes(text)) => {
             let bytes = unescape_bytes(text);
             let Ok(array) = <[u8; 16]>::try_from(bytes.as_slice()) else {
                 literal_mismatch(relation, field)
             };
-            Value::Id128(Id128::from_bytes(array))
+            Value::Uuid(Uuid::from_bytes(array))
         }
-        (FieldTy::Id128, Literal::Str(text)) => {
+        (FieldTy::Uuid, Literal::Str(text)) => {
             let hex = unescape_str(text);
-            let Ok(id) = Id128::from_hex(&hex) else {
+            let Ok(id) = Uuid::parse_str(&hex) else {
                 literal_mismatch(relation, field)
             };
-            Value::Id128(id)
+            Value::Uuid(id)
         }
         (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text)),
 
@@ -1340,7 +1340,7 @@ fn field_value_type(relation: &str, field: &Field) -> ValueType {
         FieldTy::U64 => ValueType::U64,
         FieldTy::I64 => ValueType::I64,
         FieldTy::F64 => ValueType::F64,
-        FieldTy::Id128 => ValueType::Id128,
+        FieldTy::Uuid => ValueType::Uuid,
         FieldTy::Str => ValueType::String,
         FieldTy::FixedBytes(len) => ValueType::FixedBytes {
             len: u16::try_from(*len).unwrap_or_else(|_| {
@@ -1968,7 +1968,7 @@ fn value_type_tokens(value_type: &ValueType) -> String {
         ValueType::U64 => format!("{path}::U64"),
         ValueType::I64 => format!("{path}::I64"),
         ValueType::F64 => format!("{path}::F64"),
-        ValueType::Id128 => format!("{path}::Id128"),
+        ValueType::Uuid => format!("{path}::Uuid"),
         ValueType::String => format!("{path}::String"),
         ValueType::FixedBytes { len } => format!("{path}::FixedBytes {{ len: {len} }}"),
         ValueType::Interval { element } => {
@@ -2010,8 +2010,8 @@ fn value_tokens(value: &Value) -> String {
             "{path}::FixedBytes(::std::boxed::Box::from(&b\"{}\"[..]))",
             bytes.escape_ascii()
         ),
-        Value::Id128(id) => format!(
-            "{path}::Id128(::bumbledb::Id128::from_bytes(*b\"{}\"))",
+        Value::Uuid(id) => format!(
+            "{path}::Uuid(::bumbledb::Uuid::from_bytes(*b\"{}\"))",
             id.as_bytes().escape_ascii()
         ),
         Value::IntervalU64(interval) => {
@@ -2307,7 +2307,7 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
                 FieldTy::U64 => ("u64".to_owned(), "u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), "i64".to_owned(), false),
                 FieldTy::F64 => ("f64".to_owned(), "::bumbledb::F64".to_owned(), false),
-                FieldTy::Id128 => ("id128".to_owned(), "::bumbledb::Id128".to_owned(), true),
+                FieldTy::Uuid => ("uuid".to_owned(), "::bumbledb::Uuid".to_owned(), true),
                 FieldTy::FixedBytes(len) => (format!("bytes<{len}>"), format!("[u8; {len}]"), true),
                 FieldTy::Interval(element) => (
                     format!("interval<{}>", element_rust(element)),
@@ -2319,7 +2319,7 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
                     format!("::bumbledb::Interval<{}>", element_rust(element.element())),
                     true,
                 ),
-                _ => unreachable!("parser restricts `as` to u64/i64/f64/id128/bytes<N>/interval"),
+                _ => unreachable!("parser restricts `as` to u64/i64/f64/uuid/bytes<N>/interval"),
             };
             if let Some((existing, ..)) = newtypes.get(name) {
                 assert!(
@@ -2457,8 +2457,8 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
         Value::String(text) => {
             format!("\"{}\"", text.escape_default())
         }
-        Value::Id128(id) => format!(
-            "::bumbledb::Id128::from_bytes(*b\"{}\")",
+        Value::Uuid(id) => format!(
+            "::bumbledb::Uuid::from_bytes(*b\"{}\")",
             id.as_bytes().escape_ascii()
         ),
         Value::FixedBytes(bytes) => format!("*b\"{}\"", bytes.escape_ascii()),
@@ -2505,7 +2505,7 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::U64 => "u64".to_owned(),
         FieldTy::I64 => "i64".to_owned(),
         FieldTy::F64 => "::bumbledb::F64".to_owned(),
-        FieldTy::Id128 => "::bumbledb::Id128".to_owned(),
+        FieldTy::Uuid => "::bumbledb::Uuid".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
         FieldTy::Interval(element) => {
@@ -2538,7 +2538,7 @@ fn append_value_stmt(field: &Field, idx: usize, cx: &EncodeCx<'_>) -> String {
         FieldTy::U64 => format!("::bumbledb::Value::U64({access})"),
         FieldTy::I64 => format!("::bumbledb::Value::I64({access})"),
         FieldTy::F64 => format!("::bumbledb::Value::F64({access})"),
-        FieldTy::Id128 => format!("::bumbledb::Value::Id128({access})"),
+        FieldTy::Uuid => format!("::bumbledb::Value::Uuid({access})"),
         FieldTy::Str => format!("::bumbledb::Value::String(::std::boxed::Box::from({access}))"),
         FieldTy::FixedBytes(_) => {
             format!("::bumbledb::Value::FixedBytes(::std::boxed::Box::from(&{access}[..]))")
@@ -2573,7 +2573,7 @@ fn decode_stmt(field: &Field) -> String {
         FieldTy::U64 => wrap("row.next_u64()?".to_owned()),
         FieldTy::I64 => wrap("row.next_i64()?".to_owned()),
         FieldTy::F64 => wrap("row.next_f64()?".to_owned()),
-        FieldTy::Id128 => wrap("row.next_id128()?".to_owned()),
+        FieldTy::Uuid => wrap("row.next_uuid()?".to_owned()),
         FieldTy::Str => "row.next_str()?".to_owned(),
         FieldTy::Interval(element) => wrap(format!(
             "row.next_interval_{}()?",

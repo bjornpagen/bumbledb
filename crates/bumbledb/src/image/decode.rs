@@ -111,7 +111,7 @@ pub(super) fn decode_plan(
                 },
                 // Sixteen exact identity bytes over two word columns:
                 // verbatim big-endian words, no pad bytes to check.
-                (ColumnWidth::Words { .. }, ValueType::Id128) => Decode::FixedBytes {
+                (ColumnWidth::Words { .. }, ValueType::Uuid) => Decode::FixedBytes {
                     offset,
                     starts: (0..2).map(|i| words_start(columns[first + i])).collect(),
                     pad_mask: 0,

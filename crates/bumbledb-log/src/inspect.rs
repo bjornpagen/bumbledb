@@ -353,8 +353,8 @@ mod tests {
 
     fn genesis_head() -> HeadRecord {
         let identity = DatabaseIdentity {
-            database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         };
         let control = HeadAuthority::genesis(
@@ -387,7 +387,7 @@ mod tests {
         let deleted = head
             .control
             .delete(
-                OperationId::from_core(bumbledb::Id128::from_bytes([7; 16])),
+                OperationId::from_core(bumbledb::Uuid::from_bytes([7; 16])),
                 crate::history::authority::DeletedReason::Erasure,
             )
             .unwrap();

@@ -1,8 +1,8 @@
 //! D06/D26 public-path discriminators: complete admit, no-clobber install.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::store::{InstallOutcome, MapPolicy, StoreError, UnreadyStore};
 use bumbledb::{ApplyExpected, ApplyOutcome, ChangeSet, Db, Theory, Value, WorkContext};
-use bumbledb::schema::ValidateDescriptor as _;
 
 mod common;
 
@@ -105,8 +105,12 @@ fn d06_two_installers_never_overwrite() {
 
 /// After complete admit+install, ordinary apply is incremental: a new
 /// email commits, a duplicate email is `InvariantRejected`, and the
-/// owned pin still sees only the admitted rows. Verification NotRun.
+/// owned pin still sees only the admitted rows. Verification `NotRun`.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn apply_after_admit_install_rejects_conflict_and_pins() {
     let dir = common::TempDir::new("gate-apply-after-admit");
     let dest = dir.path().join("store");
@@ -176,24 +180,30 @@ fn apply_after_admit_install_rejects_conflict_and_pins() {
     let pin = db.owned_read().expect("pin");
     assert_eq!(pin.count(bumbledb::RelationId(0)).expect("count"), 2);
     let frame = pin.frame(&ctx);
-    assert!(frame
-        .contains_dyn(
-            bumbledb::RelationId(0),
-            &[Value::U64(1), Value::String("a@ex".into())]
-        )
-        .expect("first remains"));
-    assert!(frame
-        .contains_dyn(
-            bumbledb::RelationId(0),
-            &[Value::U64(2), Value::String("b@ex".into())]
-        )
-        .expect("second remains"));
-    assert!(!frame
-        .contains_dyn(
-            bumbledb::RelationId(0),
-            &[Value::U64(3), Value::String("a@ex".into())]
-        )
-        .expect("conflict never landed"));
+    assert!(
+        frame
+            .contains_dyn(
+                bumbledb::RelationId(0),
+                &[Value::U64(1), Value::String("a@ex".into())]
+            )
+            .expect("first remains")
+    );
+    assert!(
+        frame
+            .contains_dyn(
+                bumbledb::RelationId(0),
+                &[Value::U64(2), Value::String("b@ex".into())]
+            )
+            .expect("second remains")
+    );
+    assert!(
+        !frame
+            .contains_dyn(
+                bumbledb::RelationId(0),
+                &[Value::U64(3), Value::String("a@ex".into())]
+            )
+            .expect("conflict never landed")
+    );
     let empty = ChangeSet::builder(db.schema(), ctx.clone())
         .finish()
         .expect("empty");
@@ -207,12 +217,14 @@ fn apply_after_admit_install_rejects_conflict_and_pins() {
         | ApplyOutcome::Moved { .. } => panic!("empty apply under the pin's witness is NoChange"),
     }
     assert!(pin.generation_handle().strong_count() >= 1);
-    match db.close() {
+    let close_work = work();
+    close_work.cancel();
+    match db.close(&close_work) {
         bumbledb::CloseReport::Incomplete {
             live_transactions, ..
         } => assert!(live_transactions >= 1),
         bumbledb::CloseReport::Closed => panic!("close cannot complete under a live pin"),
     }
     drop(pin);
-    assert_eq!(db.close(), bumbledb::CloseReport::Closed);
+    assert_eq!(db.close(&work()), bumbledb::CloseReport::Closed);
 }

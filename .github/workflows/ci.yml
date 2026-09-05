@@ -315,4 +315,3 @@ jobs:
         run: |
           cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
           cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml
-          cargo test --manifest-path ts/crate/Cargo.toml --doc

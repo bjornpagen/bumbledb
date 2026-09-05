@@ -8,3 +8,4 @@ npm/*/
 npm/darwin-arm64/bumbledb.node
 npm/linux-arm64/bumbledb.node
 npm/linux-x64/bumbledb.node
+npm/*/.native-provenance.json

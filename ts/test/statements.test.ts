@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { Result } from "effect"
 
 import * as capacityModule from "#capacity.ts"
 import { duration, ref, weigh, within } from "#capacity.ts"
@@ -57,7 +58,10 @@ function buildMastery() {
 	)
 	const Certificate = relation("Certificate", { id: u64, grade: Grade.id })
 	const psiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
-	const psiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), { from: on(Certificate, "grade"), within: within(0n, 1n) })
+	const psiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), {
+		from: on(Certificate, "grade"),
+		within: within(0n, 1n)
+	})
 	const Mastery = schema("Mastery", { Grade, Certificate }, [psiContainment, psiCapacity])
 	return { Grade, Certificate, psiContainment, psiCapacity, Mastery }
 }
@@ -235,6 +239,8 @@ describe("renderStatement", function describeRender() {
 	test("each statement form renders its canonical 70-api spelling", function probeCanonicalSpellings() {
 		const { statements } = buildLedger()
 		assert.deepStrictEqual(statements.map(renderStatement), [
+			"Holder(id) -> Holder",
+			"Account(id) -> Account",
 			"SavingsTerms(account) -> SavingsTerms",
 			"Account(holder) <= Holder(id)",
 			"Account(kind) <= Kind(id)",
@@ -255,27 +261,53 @@ describe("renderStatement", function describeRender() {
 		const { Holder, Account } = buildLedger()
 		const target = on(Holder, "id")
 		const source = on(Account, "holder")
-		assert.equal(renderStatement(capacity(target, { from: source, within: within(1n) })), "Holder(id) <={1} Account(holder)")
-		assert.equal(renderStatement(capacity(target, { from: source, within: within(0n) })), "Holder(id) <={0} Account(holder)")
-		assert.equal(renderStatement(capacity(target, { from: source, within: within(1n, 3n) })), "Holder(id) <={1..3} Account(holder)")
-		assert.equal(renderStatement(capacity(target, { from: source, within: within(0n, 4n) })), "Holder(id) <={0..4} Account(holder)")
+		assert.equal(
+			renderStatement(capacity(target, { from: source, within: within(1n) })),
+			"Holder(id) <={1} Account(holder)"
+		)
+		assert.equal(
+			renderStatement(capacity(target, { from: source, within: within(0n) })),
+			"Holder(id) <={0} Account(holder)"
+		)
+		assert.equal(
+			renderStatement(capacity(target, { from: source, within: within(1n, 3n) })),
+			"Holder(id) <={1..3} Account(holder)"
+		)
+		assert.equal(
+			renderStatement(capacity(target, { from: source, within: within(0n, 4n) })),
+			"Holder(id) <={0..4} Account(holder)"
+		)
 
 		const { Pool, Device, Room, Booking } = buildRacks()
 		assert.equal(
-			renderStatement(capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, 20n) })),
+			renderStatement(
+				capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, 20n) })
+			),
 			"Pool(id) <=[watts]{0..20} Device(pool)"
 		)
 		assert.equal(
-			renderStatement(capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref("supply")) })),
+			renderStatement(
+				capacity(on(Pool, "id"), {
+					from: on(Device, "pool"),
+					weight: weigh("watts"),
+					within: within(0n, ref("supply"))
+				})
+			),
 			"Pool(id) <=[watts]{0..supply} Device(pool)"
 		)
 		assert.equal(
-			renderStatement(capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(1n, "*") })),
+			renderStatement(
+				capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(1n, "*") })
+			),
 			"Pool(id) <=[watts]{1..*} Device(pool)"
 		)
 		assert.equal(
 			renderStatement(
-				capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, duration("span")) })
+				capacity(on(Room, "id"), {
+					from: on(Booking, "room"),
+					weight: weigh(duration("booked")),
+					within: within(0n, duration("span"))
+				})
 			),
 			"Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)"
 		)
@@ -284,7 +316,7 @@ describe("renderStatement", function describeRender() {
 	test("literal sets and interval literals render in macro notation", function probeSelectionRendering() {
 		const { Account, SavingsTerms } = buildLedger()
 		const setFace = on(Account.where({ kind: ["Checking", "Savings"] }), "id")
-		const spanFace = on(Account.where({ active: span(0n, 10n) }), "id")
+		const spanFace = on(Account.where({ active: Result.getOrThrow(span(0n, 10n)) }), "id")
 		const target = on(SavingsTerms, "account")
 		assert.equal(
 			renderStatement(contained(setFace, target)),
@@ -443,7 +475,11 @@ function capacityWallsAreTyped(): unknown[] {
 	const { Pool, Device, Room, Booking } = buildRacks()
 	return [
 		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref("supply")) }),
-		capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, duration("span")) }),
+		capacity(on(Room, "id"), {
+			from: on(Booking, "room"),
+			weight: weigh(duration("booked")),
+			within: within(0n, duration("span"))
+		}),
 		// @ts-expect-error — the weight names a field of the SOURCE's own row: Device has no field `nope`
 		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("nope"), within: within(0n, 3n) }),
 		// @ts-expect-error — a weight is u64-encoded: an interval field needs the Duration(...) spelling
@@ -452,10 +488,18 @@ function capacityWallsAreTyped(): unknown[] {
 		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh(duration("pool")), within: within(0n, 3n) }),
 		// @ts-expect-error — a dependent bound names a field of the TARGET's own row: Pool has no field `nope`
 		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref("nope")) }),
-		// @ts-expect-error — ref() reads a u64 field of the TARGET row: span is an interval (write duration("span"))
-		capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, ref("span")) }),
-		// @ts-expect-error — duration() bounds by an interval field's measure: supply is a u64 (write ref("supply"))
-		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, duration("supply")) })
+		capacity(on(Room, "id"), {
+			from: on(Booking, "room"),
+			weight: weigh(duration("booked")),
+			// @ts-expect-error — ref() reads u64, not an interval; use duration("span")
+			within: within(0n, ref("span"))
+		}),
+		capacity(on(Pool, "id"), {
+			from: on(Device, "pool"),
+			weight: weigh("watts"),
+			// @ts-expect-error — duration() reads an interval, not u64; use ref("supply")
+			within: within(0n, duration("supply"))
+		})
 	]
 }
 
@@ -508,7 +552,11 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		})
 		assert.equal(renderStatement(unitFloorTwo), "Pool(id) <={2..*} Device(pool)")
 
-		const weighted = capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(computed(1n), "*") })
+		const weighted = capacity(on(Pool, "id"), {
+			from: on(Device, "pool"),
+			weight: weigh("watts"),
+			within: within(computed(1n), "*")
+		})
 		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")
 	})
 
@@ -519,7 +567,11 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 			return capacity(on(Room, "id"), { from: on(Booking, "room"), within: within(0n, duration("span")) })
 		}, /mixes dimensions \(C18\) — weigh the source with weigh\(duration\(field\)\), or bound by a u64 field or literal/)
 
-		const weighted = capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, duration("span")) })
+		const weighted = capacity(on(Room, "id"), {
+			from: on(Booking, "room"),
+			weight: weigh(duration("booked")),
+			within: within(0n, duration("span"))
+		})
 		assert.equal(renderStatement(weighted), "Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)")
 	})
 
@@ -535,22 +587,42 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 	test("the weight and dependent-bound walls hold at construction for untyped callers", function probeCapacityRuntimeTwins() {
 		const { Pool, Device, Room, Booking } = buildRacks()
 		assert.throws(function weightOffRoster() {
-			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh(computedName("nope")), within: within(0n, 3n) })
+			capacity(on(Pool, "id"), {
+				from: on(Device, "pool"),
+				weight: weigh(computedName("nope")),
+				within: within(0n, 3n)
+			})
 		}, /Device has no field nope — a weight names a field of the SOURCE's own row/)
 		assert.throws(function weightNotU64() {
 			capacity(on(Room, "id"), { from: on(Room, "id"), weight: weigh(computedName("span")), within: within(0n, 3n) })
 		}, /Room\.span is interval, not u64 — a weight is u64-encoded/)
 		assert.throws(function durationWeightNotInterval() {
-			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh(duration(computedName("pool"))), within: within(0n, 3n) })
+			capacity(on(Pool, "id"), {
+				from: on(Device, "pool"),
+				weight: weigh(duration(computedName("pool"))),
+				within: within(0n, 3n)
+			})
 		}, /Device\.pool is u64, not an interval — Duration\(\.\.\.\) weighs/)
 		assert.throws(function boundOffRoster() {
-			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref(computedName("nope"))) })
+			capacity(on(Pool, "id"), {
+				from: on(Device, "pool"),
+				weight: weigh("watts"),
+				within: within(0n, ref(computedName("nope")))
+			})
 		}, /Pool has no field nope — a dependent bound names a field of the TARGET's own row/)
 		assert.throws(function boundNotU64() {
-			capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, ref(computedName("span"))) })
+			capacity(on(Room, "id"), {
+				from: on(Booking, "room"),
+				weight: weigh(duration("booked")),
+				within: within(0n, ref(computedName("span")))
+			})
 		}, /Room\.span is interval, not u64 — a dependent bound reads a u64 field/)
 		assert.throws(function durationBoundNotInterval() {
-			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, duration(computedName("supply"))) })
+			capacity(on(Pool, "id"), {
+				from: on(Device, "pool"),
+				weight: weigh("watts"),
+				within: within(0n, duration(computedName("supply")))
+			})
 		}, /Pool\.supply is u64, not an interval — Duration\(\.\.\.\) bounds/)
 	})
 
@@ -573,6 +645,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	test("a statement over an undeclared relation is rejected with the statement rendered", function probeMembership() {
 		const { Kind, Holder, Account } = buildLedger()
 		assert.throws(function undeclaredRelation() {
+			// @ts-expect-error — undeclared targets also have no declared target key
 			schema("Broken", { Kind, Account }, [contained(on(Account, "holder"), on(Holder, "id"))])
 		}, /relation Holder is not declared in this schema — Account\(holder\) <= Holder\(id\)/)
 	})
@@ -581,7 +654,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		const impostor = relation("Holder", { id: u64 })
 		const declared = relation("Holder", { id: u64 })
 		assert.throws(function differentValue() {
-			schema("Broken", { Holder: declared }, [contained(on(impostor, "id"), on(declared, "id"))])
+			schema("Broken", { Holder: declared }, [key(declared, ["id"]), contained(on(impostor, "id"), on(declared, "id"))])
 		}, /different relation value named Holder/)
 	})
 
@@ -603,6 +676,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
 		assert.throws(function duplicateStatement() {
 			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [
+				key(Holder, ["id"]),
 				contained(on(Account, "holder"), on(Holder, "id")),
 				contained(on(Account, "holder"), on(Holder, "id"))
 			])
@@ -836,6 +910,7 @@ export {
 	capacityWallsAreTyped,
 	closedPayloadColumnsPairStructurally,
 	closedSelectionsAreTyped,
+	equivalentSpellingsLowerToTheCanonicalLaw,
 	facesArePairedStructurally,
 	fieldReferencesAreTypeChecked,
 	psiFacesArePairedStructurally,

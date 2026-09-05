@@ -1,7 +1,7 @@
 //! The cache-scoped text interner: successor of the deleted persisted
 //! dictionary (ENG-006). Stored rows own their text inline; the query
 //! engine joins on fixed 64-bit words, so every distinct text observed
-//! during one [`TextGeneration`] receives one dense token. Token equality
+//! during one [`GenerationHandle`] receives one dense token. Token equality
 //! is text equality by construction — the map is keyed by full text bytes,
 //! never a hash verdict (Q-COLLISION).
 //!
@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::exec::scratch::ScratchCapability;
-use crate::image::epoch::TextGeneration;
 use crate::image::NonresidentTextStore;
 use crate::work::{
     CacheError, CacheLedger, CacheReservation, GenerationHandle, WorkContext, WorkError,
@@ -35,6 +34,7 @@ impl ResidentTextExhausted {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn generation(&self) -> &GenerationHandle {
         &self.generation
     }
@@ -44,7 +44,7 @@ impl ResidentTextExhausted {
     /// without going through this refusal.
     #[must_use]
     pub fn open_nonresident(&self, capability: &ScratchCapability) -> NonresidentTextStore {
-        NonresidentTextStore::bind(capability, &self.generation)
+        NonresidentTextStore::new(capability, &self.generation)
     }
 }
 
@@ -56,6 +56,7 @@ pub enum ResidentAdmit<T> {
 }
 
 impl<T> ResidentAdmit<T> {
+    #[cfg(test)]
     pub fn expect_ready(self, msg: &str) -> T {
         match self {
             Self::Ready(value) => value,
@@ -87,39 +88,16 @@ pub const fn is_resident_token(token: u64) -> bool {
     token != SENTINEL_WORD && token & SCRATCH_TOKEN_TAG == 0
 }
 
-/// One append-only exact text→token map for a single [`TextGeneration`].
-#[derive(Debug)]
+/// One append-only exact text→token map owned by a single [`GenerationHandle`].
+#[derive(Debug, Default)]
 pub(crate) struct TextInterner {
-    generation: TextGeneration,
     map: HashMap<Arc<str>, u64>,
     texts: Vec<Arc<str>>,
     bytes: usize,
     charges: Vec<CacheReservation>,
 }
 
-impl Default for TextInterner {
-    fn default() -> Self {
-        Self::new(TextGeneration::initial())
-    }
-}
-
 impl TextInterner {
-    #[must_use]
-    pub(crate) fn new(generation: TextGeneration) -> Self {
-        Self {
-            generation,
-            map: HashMap::new(),
-            texts: Vec::new(),
-            bytes: 0,
-            charges: Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn generation(&self) -> TextGeneration {
-        self.generation
-    }
-
     /// The token of `text`, minting one if absent. Never returns
     /// [`SENTINEL_WORD`]. A mint reserves retained bytes against the cache
     /// ledger; a repeated intern of a known text charges no retention.
@@ -143,9 +121,7 @@ impl TextInterner {
         let retained = text.len()
             + std::mem::size_of::<Arc<str>>()
             + std::mem::size_of::<HashMap<Arc<str>, u64>>().min(64);
-        let charge = cache
-            .reserve(retained as u64)
-            .map_err(InternError::Cache)?;
+        let charge = cache.reserve(retained as u64).map_err(InternError::Cache)?;
         let owned: Arc<str> = Arc::from(text);
         self.map
             .try_reserve(1)
@@ -201,6 +177,7 @@ impl TextInterner {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> usize {
         self.bytes
     }
@@ -234,11 +211,6 @@ impl<'a> InternerHandle<'a> {
     /// and call [`ResidentTextExhausted::open_nonresident`].
     /// # Errors
     /// Stopped work only. Cache/allocation refusal is `BeyondMemory`.
-    pub fn intern_text(&self, text: &str) -> crate::error::Result<ResidentAdmit<u64>> {
-        self.intern_or_spill(text)
-    }
-
-    /// Same as [`Self::intern_text`]: the named production spill seam.
     pub fn intern_or_spill(&self, text: &str) -> crate::error::Result<ResidentAdmit<u64>> {
         match self
             .generation
@@ -246,17 +218,15 @@ impl<'a> InternerHandle<'a> {
             .intern(text, self.work, self.generation.ledger())
         {
             Ok(token) => Ok(ResidentAdmit::Ready(token)),
-            Err(InternError::Cache(_)) | Err(InternError::Allocation) => {
-                Ok(ResidentAdmit::BeyondMemory(ResidentTextExhausted::new(
-                    self.generation.clone(),
-                )))
-            }
+            Err(InternError::Cache(_) | InternError::Allocation) => Ok(
+                ResidentAdmit::BeyondMemory(ResidentTextExhausted::new(self.generation.clone())),
+            ),
             Err(InternError::Work(work)) => Err(crate::error::Error::from(InternError::Work(work))),
         }
     }
 
     /// # Errors
-    /// As [`Self::intern_text`].
+    /// As [`Self::intern_or_spill`].
     pub fn latch(&self, bytes: &[u8]) -> crate::error::Result<ResidentAdmit<u64>> {
         let text = std::str::from_utf8(bytes)
             .expect("IR string literals are UTF-8 by construction (Value::String)");
@@ -269,23 +239,6 @@ impl<'a> InternerHandle<'a> {
 
     pub(crate) fn lookup_word(&self, text: &str) -> u64 {
         self.generation.resolver().lookup_word(text)
-    }
-
-    /// Exact generation-aware comparison: same resolver uses token
-    /// identity; distinct generations compare canonical bytes.
-    #[must_use]
-    pub(crate) fn tokens_equal(&self, left: u64, other: &Self, right: u64) -> bool {
-        self.generation.tokens_equal(left, other.generation, right)
-    }
-
-    /// The one production equality, including an optional live scratch store.
-    /// Stamp memos with `eq.scratch_epoch()`; do not recover epoch from a token.
-    #[must_use]
-    pub fn text_eq<'b>(
-        &'b self,
-        scratch: Option<&'b crate::image::NonresidentTextStore>,
-    ) -> crate::image::TextEq<'b> {
-        crate::image::TextEq::bind(self.generation, scratch)
     }
 }
 
@@ -308,10 +261,7 @@ impl From<InternError> for crate::error::Error {
             InternError::Work(work) => {
                 crate::error::Error::from_store(crate::storage::store::StoreError::Work(work))
             }
-            InternError::Cache(_) => {
-                crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
-            }
-            InternError::Allocation => {
+            InternError::Cache(_) | InternError::Allocation => {
                 crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
             }
         }
@@ -385,9 +335,7 @@ mod tests {
     #[test]
     fn retained_tokens_are_charged_to_the_cache_ledger() {
         let work = work();
-        let cache = CacheLedger::new(CachePolicy {
-            cache_bytes: 4096,
-        });
+        let cache = CacheLedger::new(CachePolicy { cache_bytes: 4096 });
         let mut interner = TextInterner::default();
         interner.intern("stable", &work, &cache).expect("mint");
         let charged = cache.used();
@@ -449,8 +397,8 @@ mod tests {
         );
     }
 
-    /// Production-path discriminator: intern_or_spill refusal — not a
-    /// test-only `NonresidentTextStore::bind` — opens scratch and compares
+    /// Production-path discriminator: `intern_or_spill` refusal — not a
+    /// test-only `NonresidentTextStore::new` — opens scratch and compares
     /// via `tokens_equal_resident` / `GenerationHandle::tokens_equal`.
     #[test]
     fn d02_production_intern_or_spill_reaches_scratch_resolver() {
@@ -559,7 +507,7 @@ mod tests {
         assert!(is_scratch_token(scratch_tok));
         assert!(NonresidentTextStore::owns_token(scratch_tok));
         assert!(store.live(scratch_tok));
-        assert_eq!(crate::image::scratch_token_epoch(scratch_tok), None);
+
         assert_ne!(intern_tok, scratch_tok);
         assert!(
             crate::image::TextEq::bind(&generation, Some(&store))

@@ -222,10 +222,11 @@ use tax::{Status, Tax};
 /// theory (prepare runs the validation roster).
 fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), theory)
+    let db = Db::create(dir.path(), theory, common::work())
         .expect("create the theory's store")
         .expect("accepted");
-    db.prepare(query).expect("the golden query validates");
+    db.prepare(query, common::work())
+        .expect("the golden query validates");
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
     render(&schema, query)
 }
@@ -900,6 +901,7 @@ mod primer {
             state: u64 as StateId,
         }
 
+        Grp(id) -> Grp;
         Produces(grp) <= Grp(id);
         Requires(consumer) <= Grp(id);
         Requires(state) <= State(id);

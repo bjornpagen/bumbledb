@@ -1,6 +1,6 @@
 /**
  * D20/D27 discriminators: every snapshot is mandatory; native verify/append
- * receive the full snapshot chain plus `compiledMappings` JSON over every
+ * receive the full snapshot chain plus canonical plan expressions over every
  * plan; symbolic source-field arithmetic is passed through before any
  * manifest write; empty source is not a shortcut; edited/missing snapshots
  * refuse. Uses the production codec (actual native compile).
@@ -12,15 +12,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
-import { NativeRuntime, Scalar, key, relation, schema, u64 } from "@bjornpagen/bumbledb"
 import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
+import { key, NativeRuntime, relation, Scalar, schema, u64 } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
 import { ProtocolError } from "#errors.ts"
+import { planExpressionOf } from "#migrations/expr.ts"
+import { makeGenerator } from "#migrations/generate.ts"
 import { backfill, convert, migrationIntent } from "#migrations/intent.ts"
 import { productionExclusion } from "#migrations/lock.ts"
 import { productionCodec } from "#migrations/native.ts"
-import { makeGenerator } from "#migrations/generate.ts"
-import { planExpressionOf } from "#migrations/expr.ts"
 
 const Units0 = relation("Stock", { id: u64, units: u64 })
 const AppUnits0 = schema("Units", { Stock: Units0 }, [key(Units0, ["id"])])
@@ -65,7 +65,7 @@ function expectRefusal(exit: Exit.Exit<unknown, unknown>, tag: string): void {
 	assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit), "expected a typed refusal")
 	const failure = Exit.findErrorOption(exit)
 	assert.ok(failure._tag === "Some")
-	assert.ok(failure.value instanceof ProtocolError)
+	assert.ok(failure.value instanceof ProtocolError, JSON.stringify(failure.value))
 	assert.equal(failure.value.reason._tag, tag)
 }
 
@@ -153,7 +153,7 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 			"MigrationDrift"
 		)
 		assert.equal(await readFile(path.join(directory, "manifest.json"), "utf8"), manifestBefore)
-		await writeFile(path.join(directory, "meta", "base.schema.json"), "{ \"relations\": [] }\n", "utf8")
+		await writeFile(path.join(directory, "meta", "base.schema.json"), '{ "relations": [] }\n', "utf8")
 		expectRefusal(
 			await Effect.runPromiseExit(
 				provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work }))

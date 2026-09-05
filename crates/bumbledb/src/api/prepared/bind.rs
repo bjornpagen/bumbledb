@@ -25,10 +25,16 @@ impl<S> PreparedQuery<S> {
     }
 
     /// Drop the execution-local scratch store only after forgetting every
-    /// memo that named its tokens. Next execute must not reuse `TAG`.
+    /// memo that named its tokens. Scratch literal templates keep their
+    /// original bytes; only the per-execution resolved slots contain tags.
     pub(super) fn release_text_store(&mut self) {
         if self.nonresident.is_some() {
-            unlatch_scratch_literals(self);
+            self.visit_rules_mut(|rule| {
+                if let PreparedRule::FreeJoin(fj) = rule {
+                    forget_resolved_text(fj);
+                }
+            });
+            self.visit_rec_arms_mut(|arm| forget_resolved_text(&mut arm.rule));
         }
         for memo in &mut self.param_word_memo {
             if memo.word.is_some_and(crate::image::is_scratch_token) {
@@ -51,35 +57,37 @@ impl<S> PreparedQuery<S> {
             return Ok(());
         };
         for idx in 0..self.params.len() {
-            let string_param = match &self.params[idx] {
+            let string_param = matches!(
+                &self.params[idx],
                 super::ParamSpec::Scalar {
                     ty: ValueType::String,
                     ..
-                }
-                | super::ParamSpec::Set {
+                } | super::ParamSpec::Set {
                     elem: ValueType::String,
                     ..
-                } => true,
-                _ => false,
-            };
+                }
+            );
             if !string_param {
                 continue;
             }
             match &mut self.resolved_params[idx] {
-                Const::Word(word) if crate::image::is_resident_token(*word) => {
-                    let Some(text) = interner.with_text(*word, |text| text.to_owned()) else {
+                Const::Word(token) if crate::image::is_resident_token(*token) => {
+                    let Some(text) = interner.with_text(*token, std::borrow::ToOwned::to_owned)
+                    else {
                         continue;
                     };
-                    *word = store.intern(&text, work)?;
+                    *token = store.intern(&text, work)?;
                     if let Some(memo) = self.param_word_memo.get_mut(idx) {
-                        memo.word = Some(*word);
+                        memo.word = Some(*token);
                         memo.epoch = Some(store.epoch());
                     }
                 }
                 Const::WordSet(words) => {
                     for word in words.iter_mut() {
                         if crate::image::is_resident_token(*word) {
-                            let Some(text) = interner.with_text(*word, |text| text.to_owned()) else {
+                            let Some(text) =
+                                interner.with_text(*word, std::borrow::ToOwned::to_owned)
+                            else {
                                 continue;
                             };
                             *word = store.intern(&text, work)?;
@@ -224,7 +232,10 @@ impl<S> PreparedQuery<S> {
                     } else if crate::image::is_scratch_token(*word) {
                         // Execution-local: bound to the minting store's owner epoch.
                         memo.word = Some(*word);
-                        memo.epoch = self.nonresident.as_ref().map(|store| store.epoch());
+                        memo.epoch = self
+                            .nonresident
+                            .as_ref()
+                            .map(crate::image::NonresidentTextStore::epoch);
                     } else {
                         memo.word = None;
                         memo.epoch = None;
@@ -252,7 +263,7 @@ impl<S> PreparedQuery<S> {
 
         let element_width = match expected {
             ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(*len),
-            ValueType::Id128 => 2,
+            ValueType::Uuid => 2,
             _ => 1,
         };
 
@@ -356,14 +367,13 @@ fn element_words(
         out.extend_from_slice(&words[..count]);
         return Ok(Some(count));
     }
-    let Some(resolved) =
-        convert_scalar(interner, store, work, element_view(value), expected)?
+    let Some(resolved) = convert_scalar(interner, store, work, element_view(value), expected)?
     else {
         return Ok(None);
     };
     Ok(Some(match resolved {
-        Const::Word(word) => {
-            out.push(word);
+        Const::Word(scalar) => {
+            out.push(scalar);
             1
         }
         Const::Byte(byte) => {
@@ -373,7 +383,7 @@ fn element_words(
         Const::Interval { .. } => {
             unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
         }
-        // Id128 elements are two-word spans, exactly like bytes<16>.
+        // Uuid elements are two-word spans, exactly like bytes<16>.
         Const::Words(words) => {
             out.extend_from_slice(&words);
             words.len()
@@ -384,156 +394,157 @@ fn element_words(
     }))
 }
 
-pub(super) fn resolve_filters(
-    interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
-    work: &WorkContext,
-    plan: &mut crate::plan::fj::ValidatedPlan,
-    params: &[Const],
-    missed: &[bool],
-    out_filters: &mut [Vec<FilterPredicate>],
-    out_selections: &mut [Vec<Vec<u64>>],
-    latched: &mut u32,
-) -> Result<bool> {
-    for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
-        if occurrence.role.discharged() {
-            debug_assert!(occurrence.selections.is_empty());
-            continue;
-        }
+/// One execution's literal-resolution context, shared by resident and fallback paths.
+pub(super) struct LiteralResolution<'a, 'generation> {
+    pub interner: &'a InternerHandle<'generation>,
+    pub store: &'a mut Option<crate::image::NonresidentTextStore>,
+    pub work: &'a WorkContext,
+    pub params: &'a [Const],
+    pub missed: &'a [bool],
+    pub latched: &'a mut u32,
+}
 
-        let negated = occurrence.role == crate::ir::normalize::Role::Negated;
-        let filters = &mut out_filters[occ_idx];
-        if filters.len() != occurrence.filters.len() {
-            filters.clear();
-            filters.extend(occurrence.filters.iter().cloned());
-        }
-        for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
-            if !resolve_filter_admitted(
-                interner, store, work, template, params, missed, negated, slot, latched,
-            )? {
-                return Ok(false);
+impl LiteralResolution<'_, '_> {
+    pub(super) fn filters(
+        &mut self,
+        plan: &mut crate::plan::fj::ValidatedPlan,
+        out_filters: &mut [Vec<FilterPredicate>],
+        out_selections: &mut [Vec<Vec<u64>>],
+    ) -> Result<bool> {
+        for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
+            if occurrence.role.discharged() {
+                debug_assert!(occurrence.selections.is_empty());
+                continue;
+            }
+
+            let negated = occurrence.role == crate::ir::normalize::Role::Negated;
+            let filters = &mut out_filters[occ_idx];
+            if filters.len() != occurrence.filters.len() {
+                filters.clear();
+                filters.extend(occurrence.filters.iter().cloned());
+            }
+            for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
+                if !self.filter(template, negated, slot)? {
+                    return Ok(false);
+                }
+            }
+            let selections = &mut out_selections[occ_idx];
+            if selections.len() != occurrence.selections.len() {
+                selections.clear();
+                selections.resize_with(occurrence.selections.len(), Vec::new);
+            }
+            debug_assert!(
+                !negated || occurrence.selections.is_empty(),
+                "negated occurrences keep Eq-constants in their filters"
+            );
+            for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
+                if !self.selection(selection, words)? {
+                    return Ok(false);
+                }
             }
         }
-        let selections = &mut out_selections[occ_idx];
-        if selections.len() != occurrence.selections.len() {
-            selections.clear();
-            selections.resize_with(occurrence.selections.len(), Vec::new);
-        }
-        debug_assert!(
-            !negated || occurrence.selections.is_empty(),
-            "negated occurrences keep Eq-constants in their filters"
-        );
-        for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
-            if !resolve_selection_into(
-                interner, store, work, selection, params, missed, words, latched,
-            )? {
-                return Ok(false);
+        Ok(true)
+    }
+
+    pub(super) fn filter(
+        &mut self,
+        template: &mut FilterPredicate,
+        negated: bool,
+        slot: &mut FilterPredicate,
+    ) -> Result<bool> {
+        match crate::image::view::resolve_filter_into(
+            self.interner,
+            template,
+            self.params,
+            self.missed,
+            negated,
+            slot,
+            self.latched,
+        )? {
+            crate::image::ResidentAdmit::Ready(keep) => Ok(keep),
+            crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
+                let opened = super::text::install(self.store, &exhausted, self.work)?;
+                let (field, op, bytes) = match template {
+                    FilterPredicate::Compare {
+                        field,
+                        op,
+                        value: Const::PendingIntern { bytes },
+                    } => (*field, *op, bytes),
+                    _ => unreachable!("only a pending text literal can exhaust the interner"),
+                };
+                let text = std::str::from_utf8(bytes)
+                    .expect("IR string literals are UTF-8 by construction");
+                let word = opened.intern(text, self.work)?;
+                // Scratch words are execution-local: write the slot, keep
+                // PendingIntern on the template so the next execute re-interns.
+                *slot = FilterPredicate::Compare {
+                    field,
+                    op,
+                    value: Const::Word(word),
+                };
+                Ok(true)
             }
         }
     }
-    Ok(true)
-}
 
-pub(super) fn resolve_filter_admitted(
-    interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
-    work: &WorkContext,
-    template: &mut FilterPredicate,
-    params: &[Const],
-    missed: &[bool],
-    negated: bool,
-    slot: &mut FilterPredicate,
-    latched: &mut u32,
-) -> Result<bool> {
-    loop {
-        match crate::image::view::resolve_filter_into(
-            interner, template, params, missed, negated, slot, latched,
-        )? {
-            crate::image::ResidentAdmit::Ready(keep) => return Ok(keep),
-            crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
-                let opened = super::text::install(store, &exhausted, work)?;
-                let pending = match template {
-                    FilterPredicate::Compare {
-                        value: Const::PendingIntern { bytes },
-                        ..
-                    } => Some(bytes.clone()),
-                    _ => None,
-                };
-                let Some(bytes) = pending else {
-                    return Ok(true);
-                };
-                let text = std::str::from_utf8(&bytes)
-                    .expect("IR string literals are UTF-8 by construction");
-                let word = opened.intern(text, work)?;
-                // Scratch words are execution-local: write the slot, keep
-                // PendingIntern on the template so the next execute re-interns.
-                if let FilterPredicate::Compare { value, .. } = slot {
-                    *value = Const::Word(word);
-                }
+    pub(super) fn selection(
+        &mut self,
+        selection: &mut crate::plan::fj::Selection,
+        out: &mut Vec<u64>,
+    ) -> Result<bool> {
+        out.clear();
+
+        if let Const::PendingIntern { bytes } = &selection.value {
+            let text = std::str::from_utf8(bytes)
+                .expect("IR string literals are UTF-8 by construction (Value::String)");
+            let word = super::text::intern_admitted(self.interner, self.store, text, self.work)?;
+            if crate::image::is_resident_token(word) {
+                selection.value = Const::Word(word);
+                *self.latched += 1;
+                obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
+            } else {
+                out.push(word);
                 return Ok(true);
             }
         }
-    }
-}
-
-pub(super) fn resolve_selection_into(
-    interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
-    work: &WorkContext,
-    selection: &mut crate::plan::fj::Selection,
-    params: &[Const],
-    missed: &[bool],
-    out: &mut Vec<u64>,
-    latched: &mut u32,
-) -> Result<bool> {
-    out.clear();
-
-    if let Const::PendingIntern { bytes } = &selection.value {
-        let text = std::str::from_utf8(bytes)
-            .expect("IR string literals are UTF-8 by construction (Value::String)");
-        let word = super::text::intern_admitted(interner, store, text, work)?;
-        if crate::image::is_resident_token(word) {
-            selection.value = Const::Word(word);
-            *latched += 1;
-            obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
-        } else {
-            out.push(word);
-            return Ok(true);
-        }
-    }
-    let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
-        Const::Word(word) => out.push(*word),
-        Const::Byte(byte) => out.push(u64::from(*byte)),
-        Const::Words(words) => out.extend_from_slice(words),
-        Const::Interval { start, end } => out.extend([*start, *end]),
-        Const::WordSet(_) | Const::Param(_) | Const::ParamSet(_) | Const::PendingIntern { .. } => {
-            unreachable!("bind resolved params to column form")
-        }
-    };
-    match &selection.value {
-        value @ (Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. }) => {
-            push_const(value, out);
-        }
-        Const::Param(param) => {
-            if missed[usize::from(param.0)] {
-                return Ok(false);
+        let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
+            Const::Word(word) => out.push(*word),
+            Const::Byte(byte) => out.push(u64::from(*byte)),
+            Const::Words(words) => out.extend_from_slice(words),
+            Const::Interval { start, end } => out.extend([*start, *end]),
+            Const::WordSet(_)
+            | Const::Param(_)
+            | Const::ParamSet(_)
+            | Const::PendingIntern { .. } => {
+                unreachable!("bind resolved parameters to column form")
             }
-            push_const(&params[usize::from(param.0)], out);
-        }
-        Const::ParamSet(param) => {
-            if missed[usize::from(param.0)] {
-                return Ok(false);
+        };
+        match &selection.value {
+            value
+            @ (Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. }) => {
+                push_const(value, out);
             }
-            let Const::WordSet(words) = &params[usize::from(param.0)] else {
-                unreachable!("validated: a set param resolves to a word set")
-            };
-            out.extend_from_slice(words);
-        }
+            Const::Param(param) => {
+                if self.missed[usize::from(param.0)] {
+                    return Ok(false);
+                }
+                push_const(&self.params[usize::from(param.0)], out);
+            }
+            Const::ParamSet(param) => {
+                if self.missed[usize::from(param.0)] {
+                    return Ok(false);
+                }
+                let Const::WordSet(words) = &self.params[usize::from(param.0)] else {
+                    unreachable!("validated: a set param resolves to a word set")
+                };
+                out.extend_from_slice(words);
+            }
 
-        Const::WordSet(words) => out.extend_from_slice(words),
-        Const::PendingIntern { .. } => unreachable!("latched above"),
+            Const::WordSet(words) => out.extend_from_slice(words),
+            Const::PendingIntern { .. } => unreachable!("latched above"),
+        }
+        Ok(true)
     }
-    Ok(true)
 }
 
 fn element_view(value: &Value) -> BindValue<'_> {
@@ -542,7 +553,7 @@ fn element_view(value: &Value) -> BindValue<'_> {
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
         Value::F64(v) => BindValue::F64(*v),
-        Value::Id128(id) => BindValue::Id128(*id),
+        Value::Uuid(id) => BindValue::Uuid(*id),
         Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
@@ -563,8 +574,8 @@ fn convert_scalar(
         (BindValue::U64(v), ValueType::U64) => Const::Word(v),
         (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
         (BindValue::F64(v), ValueType::F64) => Const::Word(v.to_order_key()),
-        (BindValue::Id128(id), ValueType::Id128) => {
-            let bytes = id.to_bytes();
+        (BindValue::Uuid(id), ValueType::Uuid) => {
+            let bytes = id.into_bytes();
             let hi = u64::from_be_bytes(bytes[..8].try_into().expect("sixteen bytes"));
             let lo = u64::from_be_bytes(bytes[8..].try_into().expect("sixteen bytes"));
             Const::Words(Box::from([hi, lo]))
@@ -655,32 +666,7 @@ fn param_memo_live(
     }
 }
 
-fn unlatch_scratch_literals<S>(query: &mut PreparedQuery<S>) {
-    let mut store = match query.nonresident.take() {
-        Some(store) => store,
-        None => return,
-    };
-    query.visit_rules_mut(|rule| {
-        if let PreparedRule::FreeJoin(fj) = rule {
-            unlatch_free_join(fj, &mut store);
-        }
-    });
-    query.visit_rec_arms_mut(|arm| unlatch_free_join(&mut arm.rule, &mut store));
-    query.nonresident = Some(store);
-}
-
-fn unlatch_free_join(
-    rule: &mut super::FreeJoinRule,
-    store: &mut crate::image::NonresidentTextStore,
-) {
-    for occurrence in rule.plan.occurrences_mut() {
-        for filter in &mut occurrence.filters {
-            unlatch_filter(filter, store);
-        }
-        for selection in &mut occurrence.selections {
-            unlatch_const(&mut selection.value, store);
-        }
-    }
+fn forget_resolved_text(rule: &mut super::FreeJoinRule) {
     for filters in &mut rule.resolved_filters {
         filters.clear();
     }
@@ -688,28 +674,4 @@ fn unlatch_free_join(
         selections.clear();
     }
     rule.resolution = super::ResolutionState::Pending;
-}
-
-fn unlatch_filter(
-    filter: &mut FilterPredicate,
-    store: &mut crate::image::NonresidentTextStore,
-) {
-    if let FilterPredicate::Compare { value, .. } = filter {
-        unlatch_const(value, store);
-    }
-}
-
-fn unlatch_const(value: &mut Const, store: &mut crate::image::NonresidentTextStore) {
-    let Const::Word(token) = *value else {
-        return;
-    };
-    if !crate::image::is_scratch_token(token) {
-        return;
-    }
-    let mut bytes = Vec::new();
-    if store.resolve(token, &mut bytes).ok() == Some(true) {
-        *value = Const::PendingIntern {
-            bytes: bytes.into_boxed_slice(),
-        };
-    }
 }

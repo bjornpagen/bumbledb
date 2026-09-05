@@ -8,8 +8,17 @@
  * canonical plan data and the native executor evaluates them; there is no
  * migration-only expression interpreter.
  */
+
+import type {
+	AnyRelation,
+	Fact,
+	RelationFields,
+	ScalarExpr,
+	ScalarKind,
+	Schema,
+	SchemaRelations
+} from "@bjornpagen/bumbledb"
 import { AuthoringError } from "@bjornpagen/bumbledb"
-import type { AnyRelation, Fact, ScalarExpr, Schema, SchemaRelations } from "@bjornpagen/bumbledb"
 
 export type MigrationIntentEntry =
 	| { readonly kind: "rename-relation"; readonly from: string; readonly to: string }
@@ -20,13 +29,13 @@ export type MigrationIntentEntry =
 			readonly kind: "backfill"
 			readonly relation: string
 			readonly field: string
-			readonly expression: ScalarExpr<unknown>
+			readonly expression: ScalarExpr
 	  }
 	| {
 			readonly kind: "convert"
 			readonly relation: string
 			readonly field: string
-			readonly expression: ScalarExpr<unknown>
+			readonly expression: ScalarExpr
 	  }
 	| {
 			readonly kind: "seed"
@@ -45,6 +54,13 @@ export interface MigrationIntent<Rels extends SchemaRelations> {
 }
 
 const MAX_NAME = 255
+
+/** Known expression kinds must match the target descriptor, not its host primitive. */
+type TargetKind<R extends AnyRelation, K extends keyof RelationFields<R>> = RelationFields<R>[K] extends {
+	readonly closed: unknown
+}
+	? never
+	: Extract<RelationFields<R>[K]["kind"], ScalarKind>
 
 function name(context: string, value: string): string {
 	if (typeof value !== "string" || value.length === 0 || value.length > MAX_NAME || value.includes("\0")) {
@@ -113,7 +129,7 @@ export function dropField(relation: AnyRelation | string, field: string): Migrat
 export function backfill<R extends AnyRelation, K extends keyof Fact<R> & string>(
 	relation: R,
 	field: K,
-	expression: ScalarExpr<Fact<R>[K]> | ScalarExpr<"unresolved">
+	expression: ScalarExpr<NoInfer<TargetKind<R, K>> | "unresolved">
 ): MigrationIntentEntry {
 	return Object.freeze({
 		kind: "backfill" as const,
@@ -132,7 +148,7 @@ export function backfill<R extends AnyRelation, K extends keyof Fact<R> & string
 export function convert<R extends AnyRelation, K extends keyof Fact<R> & string>(
 	relation: R,
 	field: K,
-	expression: ScalarExpr<Fact<R>[K]> | ScalarExpr<"unresolved">
+	expression: ScalarExpr<NoInfer<TargetKind<R, K>> | "unresolved">
 ): MigrationIntentEntry {
 	return Object.freeze({
 		kind: "convert" as const,

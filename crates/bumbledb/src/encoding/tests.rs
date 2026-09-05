@@ -903,26 +903,26 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     }
 }
 
-/// Id128 physical words: the sixteen exact bytes, byte order = total
+/// Uuid physical words: the sixteen exact bytes, byte order = total
 /// order; decode is total and returns the same identity (E-CODEC).
 #[test]
-fn id128_field_roundtrips_verbatim_and_orders_by_bytes() {
-    use bumbledb_theory::Id128;
-    let layout = FactLayout::new(&[ValueType::Id128, ValueType::U64]);
+fn uuid_field_roundtrips_verbatim_and_orders_by_bytes() {
+    use bumbledb_theory::Uuid;
+    let layout = FactLayout::new(&[ValueType::Uuid, ValueType::U64]);
     assert_eq!(layout.fact_width(), 24);
-    let id = Id128::from_bytes(*b"exact-sixteen-b!");
+    let id = Uuid::from_bytes(*b"exact-sixteen-b!");
     let mut fact = Vec::new();
-    encode_fact(&[ValueRef::Id128(id), ValueRef::U64(9)], &layout, &mut fact);
-    assert_eq!(&fact[..16], &id.to_bytes()[..]);
-    assert_eq!(decode_id128(layout.encoded(&fact), 0), id);
+    encode_fact(&[ValueRef::Uuid(id), ValueRef::U64(9)], &layout, &mut fact);
+    assert_eq!(&fact[..16], &id.into_bytes()[..]);
+    assert_eq!(decode_uuid(layout.encoded(&fact), 0), id);
     assert_eq!(
         decode_field(layout.encoded(&fact), 0),
-        Ok(ValueRef::Id128(id))
+        Ok(ValueRef::Uuid(id))
     );
     // Byte order is the one total order: no reinterpretation, no words.
-    let smaller = Id128::from_bytes([0x00; 16]);
-    let larger = Id128::from_bytes([0xff; 16]);
-    assert!(encode_id128(smaller) < encode_id128(larger));
+    let smaller = Uuid::from_bytes([0x00; 16]);
+    let larger = Uuid::from_bytes([0xff; 16]);
+    assert!(encode_uuid(smaller) < encode_uuid(larger));
     assert_eq!(smaller.cmp(&larger), std::cmp::Ordering::Less);
 }
 

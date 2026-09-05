@@ -139,10 +139,10 @@ pub fn decode_backup_manifest(bytes: &[u8]) -> Result<BackupManifest, FrameError
         BACKUP_KIND,
         MANIFEST_CAP,
     )?;
-    let operation = OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+    let operation = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
     let identity = DatabaseIdentity {
-        database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
-        incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
+        incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
         schema_id: SchemaId(input.array()?),
     };
     let base = DecisionStamp {
@@ -154,7 +154,7 @@ pub fn decode_backup_manifest(bytes: &[u8]) -> Result<BackupManifest, FrameError
         hash: DecisionDigest::from_bytes(input.array()?),
     };
     let state = StateStamp {
-        incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
         data_revision: input.u64()?,
     };
     let checkpoint = match input.tag()? {
@@ -287,53 +287,9 @@ where
     Ok(length)
 }
 
-/// Copy one decision object by authenticated locator and verify it from the
-/// destination.
-fn copy_decision_by_ref<Src, Dst>(
-    source: &Src,
-    source_prefix: &str,
-    destination: &Dst,
-    dest_prefix: &str,
-    reference: &ObjectRef,
-    work: &WorkContext,
-) -> Result<CopiedDecision, BackupError>
-where
-    Src: ReceivingStore,
-    Src::Error: BackendError + ObservedError,
-    Dst: ReceivingStore,
-    Dst::Error: BackendError + ObservedError,
-{
-    work.checkpoint()?;
-    let transport = TransportContext::new(work, ReceiveLimits::exact(reference.length));
-    let bytes = get_verified(source, source_prefix, reference, transport)?;
-    let key = reference.key(dest_prefix);
-    destination
-        .put_object(&key, bytes.as_bytes())
-        .map_err(backend_error)
-        .map_err(BackupError::Object)?;
-    let copied = get_verified(
-        destination,
-        dest_prefix,
-        reference,
-        TransportContext::new(work, ReceiveLimits::exact(reference.length)),
-    )
-    .map_err(|_| BackupError::Incomplete { key: key.clone() })?;
-    if copied.as_bytes() != bytes.as_bytes() {
-        return Err(BackupError::Incomplete { key });
-    }
-    drop(copied.into_owner());
-    drop(bytes.into_owner());
-    Ok(CopiedDecision {
-        epoch: reference.epoch,
-        digest: DecisionDigest::from_bytes(reference.digest),
-        length: reference.length,
-    })
-}
-
 /// Stream-copy one tail decision while walking. Newest-first; the caller
 /// reverses metadata after the walk.
-struct CopyTail<'a, Src, Dst> {
-    source: std::marker::PhantomData<&'a Src>,
+struct CopyTail<'a, Dst> {
     destination: &'a Dst,
     dest_prefix: &'a str,
     work: &'a WorkContext,
@@ -342,10 +298,8 @@ struct CopyTail<'a, Src, Dst> {
     decisions: &'a mut Vec<CopiedDecision>,
 }
 
-impl<Src, Dst> ChainVisitor for CopyTail<'_, Src, Dst>
+impl<Dst> ChainVisitor for CopyTail<'_, Dst>
 where
-    Src: ReceivingStore,
-    Src::Error: BackendError + ObservedError,
     Dst: ReceivingStore,
     Dst::Error: BackendError + ObservedError,
 {
@@ -366,8 +320,7 @@ where
             self.dest_prefix,
             &reference,
             TransportContext::new(self.work, ReceiveLimits::exact(reference.length)),
-        )
-        .map_err(|_| ObjectError::Missing { key: key.clone() })?;
+        )?;
         if copied.as_bytes() != bytes {
             return Err(ObjectError::WrongDigest { key });
         }
@@ -411,7 +364,6 @@ pub fn backup_root<Src, Dst>(
     identity: DatabaseIdentity,
     state: StateStamp,
     root: &RecoveryRoot,
-    epoch_ceiling: u64,
     operation: OperationId,
     limits: Limits,
     stream: StreamLimits,
@@ -476,12 +428,11 @@ where
     //    time — no whole-tail body Vec.
     let mut decisions = Vec::new();
     if root.tip != root.base {
-        let tip_object = root.tip_object.ok_or(BackupError::Corrupt(
-            "suffix root missing tip ObjectRef",
-        ))?;
+        let tip_object = root
+            .tip_object
+            .ok_or(BackupError::Corrupt("suffix root missing tip ObjectRef"))?;
         let mut walk_budget = root.tail_count().saturating_add(8);
         let mut copier = CopyTail {
-            source: std::marker::PhantomData,
             destination,
             dest_prefix,
             work,
@@ -648,9 +599,8 @@ where
             return Err(PinnedBackupError::Admin(error));
         }
     };
-    // The head names the identity and the epoch ceiling for tail-decision
-    // probes; every object of the pinned closure lives at an epoch at or
-    // below the current one, and the pin keeps it protected from here on.
+    // The head names the identity; authenticated ObjectRefs locate every
+    // tail decision directly. The pin protects this exact closure from GC.
     let (head, _) = crate::checkpointer::read_live_head(source, source_prefix, head_cap, work)
         .map_err(crate::admin::AdminError::from)?;
     // 2. Copy the PINNED closure — not the moving live recovery root.
@@ -662,7 +612,6 @@ where
         head.control.identity,
         root.state,
         &root.recovery,
-        head.object_epoch,
         operation,
         limits,
         stream,
@@ -912,12 +861,9 @@ where
                 return Some(Err(BackupError::Object(error)));
             }
         };
-        let envelope = match decision::decode_decision(body.as_bytes(), self.limits) {
-            Ok(envelope) => envelope,
-            Err(_) => {
-                self.done = true;
-                return Some(Err(BackupError::Corrupt("backed-up decision malformed")));
-            }
+        let Ok(envelope) = decision::decode_decision(body.as_bytes(), self.limits) else {
+            self.done = true;
+            return Some(Err(BackupError::Corrupt("backed-up decision malformed")));
         };
         if envelope.parent != self.expected {
             self.done = true;
@@ -944,8 +890,8 @@ mod tests {
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
@@ -953,7 +899,7 @@ mod tests {
     #[test]
     fn backup_manifests_roundtrip_and_truncations_refuse() {
         let manifest = BackupManifest {
-            operation: OperationId::from_core(bumbledb::Id128::from_bytes([7; 16])),
+            operation: OperationId::from_core(bumbledb::Uuid::from_bytes([7; 16])),
             identity: identity(),
             base: DecisionStamp {
                 seq: 4,
@@ -995,11 +941,11 @@ mod tests {
     fn manifest_keys_are_operation_scoped_protocol_names() {
         let a = backup_manifest_key(
             "dest",
-            OperationId::from_core(bumbledb::Id128::from_bytes([1; 16])),
+            OperationId::from_core(bumbledb::Uuid::from_bytes([1; 16])),
         );
         let b = backup_manifest_key(
             "dest",
-            OperationId::from_core(bumbledb::Id128::from_bytes([2; 16])),
+            OperationId::from_core(bumbledb::Uuid::from_bytes([2; 16])),
         );
         assert_ne!(a, b);
         assert!(a.starts_with("dest/backup/"));

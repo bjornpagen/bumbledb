@@ -24,20 +24,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange, HostSealError};
-use bumbledb::schema::Schema;
-use bumbledb::schema::Theory;
 use bumbledb::schema::RelationId;
+use bumbledb::schema::Schema;
+use bumbledb::schema::{Theory, ValidateDescriptor as _};
 use bumbledb::store::{
-    HostWindow, InstallOutcome as StoreInstall, MapPolicy, StageReader, StageWriter,
-    StagingCleanup, Store, UnreadyStore,
+    HostWindow, InstallOutcome as StoreInstall, MapPolicy, StageReader, StageWriter, Store,
+    UnreadyStore,
 };
-use bumbledb::{ChangeSet, Db, ScratchRelation, WorkContext, WorkError};
 use bumbledb::work::{ChargedBytes, DEFAULT_RAM_BYTES};
+use bumbledb::{ChangeSet, Db, ScratchRelation, WorkContext, WorkError};
 
 use crate::apply::{self, ApplyError};
 use crate::checkpointer::read_live_head;
 use crate::codec::{self, StreamLimits, StreamSink};
-use crate::history::authority::{Activation, HeadAuthority, Lifecycle, LiveAuthority, encode_control};
+use crate::history::authority::{
+    Activation, HeadAuthority, Lifecycle, LiveAuthority, encode_control,
+};
 use crate::history::command::{
     Command, Limits, ReceiptMetadata, UnverifiedOutcome, UnverifiedReceiptEnvelope, encode_receipt,
 };
@@ -45,14 +47,14 @@ use crate::history::decision;
 use crate::history::locator::ChainVisitor;
 use crate::history::receipt::receipt_key;
 use crate::history::{DatabaseIdentity, DecisionStamp, FrameError, HeadRevision};
-use crate::writer::LogError;
-use crate::store::ObjectRef;
 use crate::manifest::{GcPhase, HeadRecord};
+use crate::store::ObjectRef;
 use crate::store::fence::{DirectoryLock, acquire_directory};
 use crate::store::{
     BackendError, ObjectError, ObservedError, ReceiveLimits, ReceivingStore, TransportContext,
     get_verified,
 };
+use crate::writer::LogError;
 
 /// The host-record key of the origin/identity binding. Outside the `m`/`r`
 /// system namespaces: bindings are host-local and never part of the logical
@@ -106,10 +108,10 @@ pub fn decode_binding(bytes: &[u8]) -> Result<OriginBinding, FrameError> {
         .map_err(|_| FrameError::Truncated { at: 0 })?
         .into();
     let identity = DatabaseIdentity {
-        database_id: crate::history::DatabaseId::from_core(bumbledb::Id128::from_bytes(
+        database_id: crate::history::DatabaseId::from_core(bumbledb::Uuid::from_bytes(
             input.array()?,
         )),
-        incarnation_id: crate::history::IncarnationId::from_core(bumbledb::Id128::from_bytes(
+        incarnation_id: crate::history::IncarnationId::from_core(bumbledb::Uuid::from_bytes(
             input.array()?,
         )),
         schema_id: crate::history::SchemaId(input.array()?),
@@ -273,19 +275,17 @@ pub fn write_binding<S>(
 ///
 /// # Errors
 /// `UnidentifiedCache` / `ForeignCache` refusals precede every read.
-pub fn verify_binding<S>(db: &Db<S>, expected: &OriginBinding) -> Result<(), RecoveryError> {
-    let mut owned = None;
-    db.read(|read| {
-        match read.integration_host_record(BINDING_KEY) {
-            Ok(record) => owned = record.map(<[u8]>::to_vec),
-            Err(_) => owned = None,
-        }
-        Ok(())
-    })?;
-    let Some(bytes) = owned else {
-        return Err(RecoveryError::Refused(RecoveryRefusal::UnidentifiedCache));
-    };
-    let cached = decode_binding(&bytes)?;
+pub fn verify_binding<S>(
+    db: &Db<S>,
+    expected: &OriginBinding,
+    work: &WorkContext,
+) -> Result<(), RecoveryError> {
+    let snapshot = db.snapshot(work)?;
+    let frame = snapshot.frame(work);
+    let bytes = frame
+        .integration_host_record(BINDING_KEY)?
+        .ok_or(RecoveryError::Refused(RecoveryRefusal::UnidentifiedCache))?;
+    let cached = decode_binding(bytes)?;
     if cached != *expected {
         return Err(RecoveryError::Refused(RecoveryRefusal::ForeignCache {
             cached: Box::new(cached),
@@ -361,7 +361,7 @@ where
     let ready = materialization_path(directory);
     let db = if ready.exists() {
         let db = Arc::new(Db::open(&ready, schema, work.clone())?);
-        verify_binding(&db, &expected)?;
+        verify_binding(&db, &expected, work)?;
         db
     } else {
         // BuildingOrCatchingUp: hydrate the unpublished sibling of `<dir>/db`.
@@ -435,17 +435,15 @@ fn store_recovery_error(error: bumbledb::store::StoreError) -> RecoveryError {
 fn map_store_install(outcome: StoreInstall) -> Result<Store, RecoveryError> {
     match outcome {
         StoreInstall::Installed(store) => Ok(store),
-        StoreInstall::SettlementFailed { dest, detail } => {
-            Err(RecoveryError::Storage(bumbledb::Error::from_store(
-                match detail {
-                    bumbledb::store::StoreError::DestinationExists { .. } => detail,
-                    other => bumbledb::store::StoreError::InstallSettlementFailed {
-                        path: dest,
-                        detail: Box::new(other),
-                    },
+        StoreInstall::SettlementFailed { dest, detail } => Err(RecoveryError::Storage(
+            bumbledb::Error::Store(Box::new(match detail {
+                bumbledb::store::StoreError::DestinationExists { .. } => detail,
+                other => bumbledb::store::StoreError::InstallSettlementFailed {
+                    path: dest,
+                    detail: Box::new(other),
                 },
-            )))
-        }
+            })),
+        )),
         StoreInstall::NotInstalled { cleanup, detail } => {
             cleanup.abandon();
             Err(store_recovery_error(detail))
@@ -459,12 +457,12 @@ pub(crate) fn settlement_failed(
     dest: PathBuf,
     detail: bumbledb::store::StoreError,
 ) -> RecoveryError {
-    RecoveryError::Storage(bumbledb::Error::from_store(
+    RecoveryError::Storage(bumbledb::Error::Store(Box::new(
         bumbledb::store::StoreError::InstallSettlementFailed {
             path: dest,
             detail: Box::new(detail),
         },
-    ))
+    )))
 }
 
 /// Open and verify a destination this attempt already published.
@@ -551,7 +549,7 @@ impl StagedPopulation {
         })
     }
 
-    /// Bounded inspect of the unpublished owner: export / host_scan of the
+    /// Bounded inspect of the unpublished owner: export / `host_scan` of the
     /// staging sibling, not a ready [`Db`] and not a lawful-parent mint.
     pub(crate) fn inspect<R>(
         &self,
@@ -611,12 +609,6 @@ impl StagedPopulation {
             .map_err(store_recovery_error)?;
         map_store_install(admitted.install(&schema, MapPolicy::default(), work))
     }
-
-    /// Abandon an unpublished stage: transfer the cleanup owner, never a path.
-    #[must_use]
-    pub(crate) fn abandon(self) -> StagingCleanup {
-        self.unready.abandon()
-    }
 }
 
 /// Begin population in a private staging directory for `dest`. Only the
@@ -632,60 +624,16 @@ pub(crate) fn begin_staged<S>(
 where
     S: Theory,
 {
-    let schema = theory.descriptor().validate().map_err(RecoveryError::Storage)?;
+    let schema = theory
+        .descriptor()
+        .validate()
+        .map_err(|error| RecoveryError::Storage(error.into()))?;
     let unready = UnreadyStore::begin(dest, &schema, MapPolicy::default(), work)
         .map_err(store_recovery_error)?;
     Ok(StagedPopulation { unready, schema })
 }
 
-/// Create a fresh judged database at `path` (a blank state that violates the
-/// schema's laws refuses with evidence). Use [`begin_staged`] for hydration
-/// and restore paths that import a complete final state.
-///
-/// # Errors
-/// Storage refusals; judged violations refuse creation.
-pub(crate) fn create_judged<S>(path: &Path, schema: S, work: &WorkContext) -> Result<Arc<Db<S>>, RecoveryError>
-where
-    S: Theory,
-{
-    match Db::create(path, schema, work.clone())? {
-        bumbledb::Admission::Accepted(db) => Ok(Arc::new(db)),
-        bumbledb::Admission::Rejected(_) => {
-            if path.exists() {
-                let _ = fs::remove_dir_all(path);
-            }
-            Err(RecoveryError::InvariantViolation)
-        }
-    }
-}
-
-/// Host-record / control update on an already-admitted [`Db`]. The store
-/// has a lawful parent; this is not the unready complete-admission path.
-///
-/// # Errors
-/// Judged invariant violations refuse installation with evidence.
-pub(crate) fn install_judged<S>(
-    db: &Db<S>,
-    records: &[HostRecordChange<'_>],
-    control: &[u8],
-    work: &WorkContext,
-) -> Result<(), RecoveryError> {
-    let empty = ChangeSet::builder(db.schema(), work.clone())
-        .finish()
-        .map_err(RecoveryError::Changes)?;
-    let mut session = db.integration_writer(work)?;
-    let prepared = match session.prepare(&empty)? {
-        bumbledb::Admission::Accepted(prepared) => prepared,
-        bumbledb::Admission::Rejected(_) => return Err(RecoveryError::InvariantViolation),
-    };
-    prepared
-        .seal(HostChanges {
-            records,
-            attachment: AttachmentChange::Put(control),
-        })?
-        .commit()?;
-    Ok(())
-}
+type FactObserver<'a> = dyn FnMut(u32, &[u8]) + 'a;
 
 struct BatchImportSink<'a> {
     staged: &'a StagedPopulation,
@@ -695,7 +643,7 @@ struct BatchImportSink<'a> {
     fact_bytes: usize,
     rows: u64,
     keep: &'a mut dyn FnMut(&[u8], &[u8]) -> bool,
-    on_fact: Option<&'a mut dyn FnMut(u32, &[u8])>,
+    on_fact: Option<&'a mut FactObserver<'a>>,
     system: Vec<(Vec<u8>, Vec<u8>)>,
     system_bytes: usize,
 }
@@ -703,7 +651,7 @@ struct BatchImportSink<'a> {
 impl BatchImportSink<'_> {
     /// Sort one bounded fact batch, decode through the core codec, and apply
     /// via [`ChangeSet::builder`] as an unjudged candidate. No handmade
-    /// ChangeSet header.
+    /// `ChangeSet` header.
     fn flush_facts(&mut self) -> Result<(), RecoveryError> {
         if self.facts.is_empty() {
             return Ok(());
@@ -797,14 +745,14 @@ impl StreamSink for BatchImportSink<'_> {
 /// # Errors
 /// Digest/counter disagreement is corruption-class; the target stays an
 /// unactivated scratch on every failure.
-pub(crate) fn import_stream<E, B>(
-    staged: &StagedPopulation,
+pub(crate) fn import_stream<'a, E, B>(
+    staged: &'a StagedPopulation,
     manifest: &codec::CheckpointManifest,
     chunks: impl IntoIterator<Item = Result<B, E>>,
-    keep: &mut dyn FnMut(&[u8], &[u8]) -> bool,
-    on_fact: Option<&mut dyn FnMut(u32, &[u8])>,
+    keep: &'a mut dyn FnMut(&[u8], &[u8]) -> bool,
+    on_fact: Option<&'a mut FactObserver<'a>>,
     stream: StreamLimits,
-    work: &WorkContext,
+    work: &'a WorkContext,
 ) -> Result<(), RecoveryError>
 where
     E: Into<RecoveryError>,
@@ -907,7 +855,9 @@ pub(crate) fn apply_unready_decision(
     work.checkpoint().map_err(RecoveryError::Work)?;
     let envelope = decision::decode_decision(decision_bytes, limits)?;
     if envelope.identity != authority_before.identity {
-        return Err(RecoveryError::Apply(ApplyError::Command(LogError::Identity)));
+        return Err(RecoveryError::Apply(ApplyError::Command(
+            LogError::Identity,
+        )));
     }
     if apply::already_at(authority_before, envelope.stamp()) {
         return Ok(*authority_before);
@@ -1061,12 +1011,8 @@ where
                 "checkpoint disagrees with recovery base",
             ));
         }
-        let owners = fetch_charged_chunks(
-            backend,
-            binding.prefix.as_ref(),
-            &manifest.chunks,
-            work,
-        )?;
+        let owners =
+            fetch_charged_chunks(backend, binding.prefix.as_ref(), &manifest.chunks, work)?;
         // Filter receipt rows by the CAPTURED TARGET head's retirement
         // policy — the stream digests still cover the UNFILTERED records.
         let retired_through = live.receipts.retired_through();
@@ -1078,7 +1024,9 @@ where
         import_stream(
             &staged,
             &manifest,
-            owners.iter().map(|charged| Ok::<_, RecoveryError>(charged.as_bytes())),
+            owners
+                .iter()
+                .map(|charged| Ok::<_, RecoveryError>(charged.as_bytes())),
             &mut keep,
             None,
             stream,
@@ -1186,8 +1134,7 @@ where
         return Err(RecoveryError::Refused(RecoveryRefusal::DatabaseMissing));
     }
     let db = Arc::new(Db::open(&ready, schema, work.clone())?);
-    verify_binding(&db, expected)?;
-    let _ = work;
+    verify_binding(&db, expected, work)?;
     Ok((lock, db))
 }
 

@@ -28,7 +28,12 @@ const LIT_FALSE = { kind: "literal", value: { bool: false } } as const
 
 describe("structural inference", function suite() {
 	test("unchanged relations are preserved automatically with identity projections", function unchanged() {
-		const prev = snap(rel("Note", [["id", "u64"], ["body", "string"]]))
+		const prev = snap(
+			rel("Note", [
+				["id", "u64"],
+				["body", "string"]
+			])
+		)
 		const diff = diffSchemas(prev, prev, [])
 		assert.deepEqual(diff.requirements, [])
 		assert.deepEqual(diff.destructive, [])
@@ -67,7 +72,11 @@ describe("structural inference", function suite() {
 			["map-relation"]
 		)
 		// Flipping closedness is not a supported transform.
-		const flipped = diffSchemas(snap(rel("Kind", [["label", "string"]], true)), snap(rel("Kind", [["label", "string"]])), [])
+		const flipped = diffSchemas(
+			snap(rel("Kind", [["label", "string"]], true)),
+			snap(rel("Kind", [["label", "string"]])),
+			[]
+		)
 		assert.equal(flipped.requirements[0]?.code, "unsupported")
 	})
 })
@@ -75,7 +84,12 @@ describe("structural inference", function suite() {
 describe("ambiguity and loss refuse without typed intent", function suite() {
 	test("a new required field needs a backfill; no zero/null is fabricated", function missing() {
 		const prev = snap(rel("Note", [["id", "u64"]]))
-		const next = snap(rel("Note", [["id", "u64"], ["pinned", "bool"]]))
+		const next = snap(
+			rel("Note", [
+				["id", "u64"],
+				["pinned", "bool"]
+			])
+		)
 		const diff = diffSchemas(prev, next, [])
 		assert.deepEqual(
 			diff.requirements.map((entry) => [entry.code, entry.relation, entry.field]),
@@ -122,7 +136,12 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 	})
 
 	test("a removed field refuses without dropField; acknowledged loss is recorded once", function removedField() {
-		const prev = snap(rel("Note", [["id", "u64"], ["draft", "bool"]]))
+		const prev = snap(
+			rel("Note", [
+				["id", "u64"],
+				["draft", "bool"]
+			])
+		)
 		const next = snap(rel("Note", [["id", "u64"]]))
 		const diff = diffSchemas(prev, next, [])
 		assert.deepEqual(
@@ -173,17 +192,20 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 	test("backfill contradicting a live type change and convert on a new field are conflicts", function misuse() {
 		// backfill where a type change is live on the field: a genuinely
 		// contradictory intent (the change needs convert), never stale.
-		const changed = diffSchemas(
-			snap(rel("M", [["x", "i64"]])),
-			snap(rel("M", [["x", "f64"]])),
-			[{ kind: "backfill", relation: "M", field: "x", expression: LIT_FALSE } as unknown as MigrationIntentEntry]
-		)
+		const changed = diffSchemas(snap(rel("M", [["x", "i64"]])), snap(rel("M", [["x", "f64"]])), [
+			{ kind: "backfill", relation: "M", field: "x", expression: LIT_FALSE } as unknown as MigrationIntentEntry
+		])
 		assert.deepEqual(
 			changed.requirements.map((entry) => [entry.code, entry.field]),
 			[["conflicting-intent", "x"]]
 		)
 		const prev = snap(rel("M", [["x", "i64"]]))
-		const next = snap(rel("M", [["x", "i64"], ["y", "i64"]]))
+		const next = snap(
+			rel("M", [
+				["x", "i64"],
+				["y", "i64"]
+			])
+		)
 		const wrongConvert = diffSchemas(prev, next, [
 			{ kind: "convert", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry
 		])
@@ -194,7 +216,12 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 		// The already-recorded shape: after 'add y with backfill' was generated
 		// and recorded, rerunning with the same intent sees y unchanged on both
 		// sides — stale-intent with remediation, not conflicting-intent.
-		const applied = snap(rel("M", [["x", "i64"], ["y", "i64"]]))
+		const applied = snap(
+			rel("M", [
+				["x", "i64"],
+				["y", "i64"]
+			])
+		)
 		const rerun = diffSchemas(applied, applied, [
 			{ kind: "backfill", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry
 		])
@@ -202,21 +229,37 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 			rerun.requirements.map((entry) => [entry.code, entry.relation, entry.field]),
 			[["stale-intent", "M", "y"]]
 		)
-		assert.ok(rerun.requirements[0] !== undefined && rerun.requirements[0].detail.includes("must be removed"))
+		assert.ok(rerun.requirements[0]?.detail.includes("must be removed"))
 		assert.equal(rerun.identity, true)
 		// Staleness on one field never hides live changes elsewhere: the stale
 		// entry and the live missing-backfill both appear, deterministically.
-		const mixed = diffSchemas(applied, snap(rel("M", [["x", "i64"], ["y", "i64"], ["z", "i64"]])), [
-			{ kind: "backfill", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry
-		])
+		const mixed = diffSchemas(
+			applied,
+			snap(
+				rel("M", [
+					["x", "i64"],
+					["y", "i64"],
+					["z", "i64"]
+				])
+			),
+			[{ kind: "backfill", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry]
+		)
 		assert.deepEqual(
 			mixed.requirements.map((entry) => [entry.code, entry.field]),
-			[["stale-intent", "y"], ["missing-backfill", "z"]]
+			[
+				["stale-intent", "y"],
+				["missing-backfill", "z"]
+			]
 		)
 	})
 
 	test("same-schema convert records units+1, not an identity no-op drop", function sameSchemaConvert() {
-		const attempt = snap(rel("Attempt", [["id", "u64"], ["units", "u64"]]))
+		const attempt = snap(
+			rel("Attempt", [
+				["id", "u64"],
+				["units", "u64"]
+			])
+		)
 		const increment = {
 			kind: "add",
 			left: { kind: "field", name: "units" },
@@ -245,7 +288,12 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 	test("an already-applied field rename reruns as exactly one stale entry, no conflict", function renameRerun() {
 		// After renameField(body → text) was recorded and applied, prev and next
 		// both spell the field 'text': `from` is gone, `to` exists on both sides.
-		const applied = snap(rel("Note", [["id", "u64"], ["text", "string"]]))
+		const applied = snap(
+			rel("Note", [
+				["id", "u64"],
+				["text", "string"]
+			])
+		)
 		const rerun = diffSchemas(applied, applied, [{ kind: "rename-field", relation: "Note", from: "body", to: "text" }])
 		assert.deepEqual(
 			rerun.requirements.map((entry) => [entry.code, entry.relation, entry.field]),
@@ -255,9 +303,19 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 
 	test("backfill referencing unknown source fields is unsupported, not guessed", function unknownRef() {
 		const prev = snap(rel("M", [["x", "i64"]]))
-		const next = snap(rel("M", [["x", "i64"], ["y", "i64"]]))
+		const next = snap(
+			rel("M", [
+				["x", "i64"],
+				["y", "i64"]
+			])
+		)
 		const diff = diffSchemas(prev, next, [
-			{ kind: "backfill", relation: "M", field: "y", expression: { kind: "field", name: "ghost" } } as MigrationIntentEntry
+			{
+				kind: "backfill",
+				relation: "M",
+				field: "y",
+				expression: { kind: "field", name: "ghost" }
+			} as MigrationIntentEntry
 		])
 		assert.deepEqual(
 			diff.requirements.map((entry) => entry.code),
@@ -266,8 +324,18 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 	})
 
 	test("field renames validate both endpoints and conflicts", function fieldRename() {
-		const prev = snap(rel("Note", [["id", "u64"], ["body", "string"]]))
-		const next = snap(rel("Note", [["id", "u64"], ["text", "string"]]))
+		const prev = snap(
+			rel("Note", [
+				["id", "u64"],
+				["body", "string"]
+			])
+		)
+		const next = snap(
+			rel("Note", [
+				["id", "u64"],
+				["text", "string"]
+			])
+		)
 		const renamed = diffSchemas(prev, next, [{ kind: "rename-field", relation: "Note", from: "body", to: "text" }])
 		assert.deepEqual(renamed.requirements, [])
 		const map = renamed.operations[0]

@@ -23,7 +23,7 @@ fn a_thousand_queries_validate_and_translate() {
     let mut naive_routed = 0u64;
     for i in 0..N {
         let query = random_query(&mut rng, CFG);
-        if let Err(error) = db.prepare(&query) {
+        if let Err(error) = db.prepare(&query, crate::harness::bench_work()) {
             panic!("query {i} fails validation: {error:?}\n{query:#?}");
         }
 
@@ -190,9 +190,13 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
     for _i in 0..N {
         let (query, _, tags) = random_query_tagged(&mut rng, CFG);
         let Some(variant) = tags.ground else { continue };
-        let mut prepared = db.prepare(&query).expect("grounding shapes validate");
-        db.read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
-            .expect("grounding shapes execute (empty store)");
+        let mut prepared = db
+            .prepare(&query, crate::harness::bench_work())
+            .expect("grounding shapes validate");
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
+        })
+        .expect("grounding shapes execute (empty store)");
         match variant {
             GroundVariant::Walk | GroundVariant::DuHeader | GroundVariant::DuChild => {
                 eliminated += 1;
@@ -443,7 +447,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     let dir = crate::fixture::TempDir::new("recursive-arm-engine");
     let engine = target::publish_admitted(dir.path());
     engine
-        .write(|tx| {
+        .write(crate::harness::bench_work(), |tx| {
             for rel in [target::ids::ORG, target::ids::ORG_PARENT] {
                 for fact in target::corpus_relation_rows(cfg, rel) {
                     tx.insert_dyn(rel, [&fact])?;
@@ -626,10 +630,10 @@ fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
 
     const CHAIN: u64 = 66_000;
     let dir = crate::fixture::TempDir::new("querygen-rounds-budget");
-    let db = bumbledb::Db::create(dir.path(), BudgetChain)
+    let db = bumbledb::Db::create(dir.path(), BudgetChain, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for n in 0..CHAIN {
             tx.insert([&ChainEdge { src: n, dst: n + 1 }])?;
         }
@@ -675,9 +679,11 @@ fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
             conditions: vec![],
         }],
     };
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .expect("prepare");
     let error = db
-        .read(|snap| {
+        .read(crate::harness::bench_work(), |snap| {
             snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
                 .map(|_| ())
         })

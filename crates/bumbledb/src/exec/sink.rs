@@ -263,11 +263,9 @@ impl SpillSet {
                         if spilled.ordered {
                             let seq = spilled.entries.to_be_bytes();
                             let mut append = ScratchAppend::new(&mut spilled.set);
-                            if let Err(error) = append.append(
-                                ScratchMapId::OrderLog,
-                                &seq,
-                                key_bytes,
-                            ) {
+                            if let Err(error) =
+                                append.append(ScratchMapId::OrderLog, &seq, key_bytes)
+                            {
                                 drop(append);
                                 self.error = Some(error);
                                 return false;
@@ -300,9 +298,6 @@ impl SpillSet {
         );
         let mut set = crate::exec::scratch::ScratchRelation::new(&budget.work, 0);
         set.force_spill()?;
-        if self.ordered {
-            set.open_map(ScratchMapId::OrderLog)?;
-        }
         let mut entries: u64 = 0;
         let mut key_bytes = Vec::new();
         let mut append = ScratchAppend::new(&mut set);
@@ -314,11 +309,7 @@ impl SpillSet {
                 }
                 append.append(ScratchMapId::Default, &key_bytes, &[])?;
                 if self.ordered {
-                    append.append(
-                        ScratchMapId::OrderLog,
-                        &entries.to_be_bytes(),
-                        &key_bytes,
-                    )?;
+                    append.append(ScratchMapId::OrderLog, &entries.to_be_bytes(), &key_bytes)?;
                 }
                 entries += 1;
             }
@@ -379,7 +370,7 @@ impl SpillSet {
                 spilled.set.visit_map_from(
                     ScratchMapId::OrderLog,
                     &(since as u64).to_be_bytes(),
-                    &mut |_, row| {
+                    &mut |_: &[u8], row: &[u8]| {
                         words.clear();
                         for chunk in row.as_chunks::<8>().0 {
                             words.push(u64::from_be_bytes(*chunk));
@@ -598,6 +589,10 @@ pub(in crate::exec::sink) enum GroupState {
 /// (run.rs's skip-absorption arm), so even a skip signaled by mistake
 /// would be absorbed at its producing node.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent aggregate capabilities and terminal flags are not mutually exclusive states"
+)]
 pub struct AggregateSink {
     dedup: DedupState,
     finds: Vec<SinkSpec>,

@@ -32,7 +32,7 @@ pub fn create_ours(
         .map(RelationId)
         .filter(|rel| *rel != ids::POSTING_TAG)
     {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, corpus_gen::relation_rows(r#gen, rel))
                 .map(bumbledb::MutationReport::changed)
         })
@@ -109,7 +109,7 @@ pub fn apply_ours(
     let base = lane.last_minted + 1;
     let added = lane
         .db
-        .write(|tx| {
+        .write(crate::harness::bench_work(), |tx| {
             for removal in removals {
                 if tx.delete([removal])?.changed() == 0 {
                     return Err(bumbledb::Error::from(std::io::Error::other(

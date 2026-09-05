@@ -35,7 +35,7 @@ pub fn load_stores(
         ids::VERDICT,
     ];
     for rel in order {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, corpus::relation_rows(sizes, rel))
                 .map(bumbledb::MutationReport::changed)
         })

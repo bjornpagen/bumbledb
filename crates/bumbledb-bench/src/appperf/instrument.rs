@@ -13,7 +13,7 @@ use bumbledb::work::{Resource, WorkContext};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterEntry {
     pub projection: ProjectionId,
-    pub relation: u16,
+    pub relation: u32,
     pub scalar_fields: usize,
     pub routing_bytes: usize,
     pub interval_tail_bytes: u8,
@@ -126,11 +126,10 @@ mod tests {
     #[test]
     fn full_walk_does_not_treat_sufficient_as_stop() {
         let items = [1u32, 2, 3];
-        let (outcome, counted) =
-            count_visits(DistinctnessWitness::FullRowEquality, items, |_| {
-                Ok::<_, ()>(VisitControl::Sufficient)
-            })
-            .expect("visit");
+        let (outcome, counted) = count_visits(DistinctnessWitness::FullRowEquality, items, |_| {
+            Ok::<_, ()>(VisitControl::Sufficient)
+        })
+        .expect("visit");
         assert_eq!(counted, 3);
         assert_eq!(outcome, VisitOutcome::Exhausted { visited: 3 });
     }

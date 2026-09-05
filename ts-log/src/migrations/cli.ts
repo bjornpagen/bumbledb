@@ -8,7 +8,6 @@ import * as path from "node:path"
 import { pathToFileURL } from "node:url"
 import type { AnySchema, ExecutionPolicy } from "@bjornpagen/bumbledb"
 import { Effect } from "effect"
-import type { LogError } from "#errors.ts"
 import type { MigrationIntent } from "#migrations/intent.ts"
 import type { CheckReport, GenerationReport } from "#migrations/types.ts"
 import { checkMigrations, generateMigrations } from "#migrations/workflow.ts"
@@ -127,7 +126,9 @@ export const loadAuthoring = Effect.fn("bumbledb-log.cli.loadAuthoring")(functio
 	const exportName = cli.exportName ?? (loaded.default !== undefined ? "default" : "schema")
 	const candidate = loaded[exportName]
 	if (!isSchemaValue(candidate)) {
-		return yield* Effect.fail(`export ${exportName} of ${cli.schemaPath} is not a schema value (declare it with schema(...))`)
+		return yield* Effect.fail(
+			`export ${exportName} of ${cli.schemaPath} is not a schema value (declare it with schema(...))`
+		)
 	}
 	const intentName = cli.intentName ?? "evolution"
 	const intentCandidate = loaded[intentName]

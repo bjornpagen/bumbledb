@@ -13,12 +13,12 @@
 
 use std::path::Path;
 
-use bumbledb::integration::HostRecordChange;
+use crate::recovery::{StagedPopulation, begin_staged};
+use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange};
 use bumbledb::scalar::ScalarEvaluator;
-use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
 use bumbledb::schema::RelationId;
+use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
 use bumbledb::{Admission, ChangeSet, Db, Violations, WorkContext, WorkError};
-use crate::recovery::{begin_staged, StagedPopulation};
 
 use crate::history::authority::{
     Access, ActivateOutcome, Activation, ActivationCause, DeleteOutcome, DeletedReason,
@@ -298,7 +298,7 @@ impl<'h, S> LocalMigration<'h, S> {
         work.checkpoint()?;
         verify_manifest(manifest, self.limits.envelope_bytes)?;
         let authority = self.source.authority()?;
-        let chain = read_chain(self.source.db(), self.limits.envelope_bytes)?;
+        let chain = read_chain(self.source.db(), self.limits.envelope_bytes, work)?;
         let applied = verify_chain(&chain, manifest, self.limits.envelope_bytes)?;
         let live = authority
             .live()
@@ -360,7 +360,7 @@ impl<'h, S> LocalMigration<'h, S> {
         }
 
         // The applied prefix decides the exact pending suffix.
-        let chain = read_chain(self.source.db(), cap)?;
+        let chain = read_chain(self.source.db(), cap, work)?;
         let applied = verify_chain(&chain, request.manifest, cap)?;
         let total = request.manifest.entries.len() as u64;
         if request.steps.is_empty() {
@@ -415,6 +415,7 @@ impl<'h, S> LocalMigration<'h, S> {
             target_identity,
             last_descriptor,
             cap,
+            work,
         )? {
             return Ok(outcome);
         }
@@ -622,9 +623,12 @@ impl<'h, S> LocalMigration<'h, S> {
         work: &WorkContext,
     ) -> Result<MigrateOutcome, MigrationError> {
         let cap = self.limits.envelope_bytes;
-        let target_db: Db<SchemaDescriptor> =
-            Db::open(&namespace.target_dir(), last_descriptor.clone())?;
-        let control = read_attachment(&target_db)?.ok_or(MigrationError::TargetConflict)?;
+        let target_db: Db<SchemaDescriptor> = Db::open(
+            &namespace.target_dir(),
+            last_descriptor.clone(),
+            work.clone(),
+        )?;
+        let control = read_attachment(&target_db, work)?.ok_or(MigrationError::TargetConflict)?;
         let authority = decode_control(&control, cap).map_err(LogError::from)?;
         if authority.identity != target_identity {
             return Err(MigrationError::TargetConflict);
@@ -671,7 +675,7 @@ impl<'h, S> LocalMigration<'h, S> {
         // Verify the recorded output: chain extension plus the actual
         // canonical state digest. Same operation/source/plan with
         // conflicting completed output refuses (never overwrite).
-        let target_chain = read_chain(&target_db, cap)?;
+        let target_chain = read_chain(&target_db, cap, work)?;
         if target_chain.len() != source_chain.len() + 1 {
             return Err(MigrationError::OutputMismatch);
         }
@@ -688,7 +692,7 @@ impl<'h, S> LocalMigration<'h, S> {
         let mut recomputed: Option<[u8; 32]> = None;
         {
             let mut captured = None;
-            target_db.read(|read| {
+            target_db.read(work.clone(), |read| {
                 captured = Some(MigrationState::from_source(read, &schema, work));
                 Ok(())
             })?;
@@ -778,8 +782,11 @@ pub fn activate_target(
         drop(lock);
         return Err(MigrationError::StaleActivationRef);
     }
-    let target_db: Db<SchemaDescriptor> =
-        Db::open(&namespace.target_dir(), target_descriptor.clone())?;
+    let target_db: Db<SchemaDescriptor> = Db::open(
+        &namespace.target_dir(),
+        target_descriptor.clone(),
+        work.clone(),
+    )?;
     let report = with_authority(&target_db, limits, work, |authority| {
         if authority.identity != reference.target {
             return Err(MigrationError::StaleActivationRef);
@@ -826,7 +833,7 @@ pub fn activate_target(
     // above is the authority; a crash before this write heals on the next
     // matching activate retry (the Keep path re-records it).
     let recorded =
-        read_attachment(&target_db)?.ok_or(MigrationError::Log(LogError::NotInitialized))?;
+        read_attachment(&target_db, work)?.ok_or(MigrationError::Log(LogError::NotInitialized))?;
     let recorded = decode_control(&recorded, cap).map_err(LogError::from)?;
     if matches!(recorded.activation, Activation::Activated { .. }) {
         namespace.record_activation(&lock, &recorded, cap)?;
@@ -863,25 +870,28 @@ pub fn fence_target(
         };
     }
     if namespace.target_exists() {
-        let target_db: Db<SchemaDescriptor> =
-            match Db::open(&namespace.target_dir(), target_descriptor.clone()) {
-                Ok(db) => db,
-                // A live owner holds the published target open. Recorded
-                // activation evidence means activation already won this
-                // namespace (a served target is never automatically
-                // aborted); without it, the typed open refusal stands.
-                Err(error) if store_locked(&error) => {
-                    if let Some(recorded) = namespace.read_activation(cap)? {
-                        return Err(if recorded.identity == planned_identity {
-                            MigrationError::ActivationWon
-                        } else {
-                            MigrationError::TargetConflict
-                        });
-                    }
-                    return Err(error.into());
+        let target_db: Db<SchemaDescriptor> = match Db::open(
+            &namespace.target_dir(),
+            target_descriptor.clone(),
+            work.clone(),
+        ) {
+            Ok(db) => db,
+            // A live owner holds the published target open. Recorded
+            // activation evidence means activation already won this
+            // namespace (a served target is never automatically
+            // aborted); without it, the typed open refusal stands.
+            Err(error) if store_locked(&error) => {
+                if let Some(recorded) = namespace.read_activation(cap)? {
+                    return Err(if recorded.identity == planned_identity {
+                        MigrationError::ActivationWon
+                    } else {
+                        MigrationError::TargetConflict
+                    });
                 }
-                Err(error) => return Err(error.into()),
-            };
+                return Err(error.into());
+            }
+            Err(error) => return Err(error.into()),
+        };
         return with_authority(&target_db, limits, work, |authority| {
             if authority.identity != planned_identity {
                 return Err(MigrationError::TargetConflict);
@@ -1065,16 +1075,19 @@ pub(super) fn capture_source<S>(
 ) -> Result<MigrationState, MigrationError> {
     let schema = db.schema();
     let mut captured: Option<Result<MigrationState, StateError>> = None;
-    db.read(|read| {
+    db.read(work.clone(), |read| {
         captured = Some(MigrationState::from_source(read, schema, work));
         Ok(())
     })?;
     Ok(captured.ok_or(MigrationError::Log(LogError::Corruption))??)
 }
 
-pub(super) fn read_attachment<S>(db: &Db<S>) -> Result<Option<Vec<u8>>, MigrationError> {
+pub(super) fn read_attachment<S>(
+    db: &Db<S>,
+    work: &WorkContext,
+) -> Result<Option<Vec<u8>>, MigrationError> {
     let mut owned = None;
-    db.read(|read| {
+    db.read(work.clone(), |read| {
         owned = read.integration_host_attachment()?.map(<[u8]>::to_vec);
         Ok(())
     })?;
@@ -1142,12 +1155,13 @@ fn published_terminal_evidence(
     target_identity: DatabaseIdentity,
     descriptor: &SchemaDescriptor,
     cap: usize,
+    work: &WorkContext,
 ) -> Result<Option<MigrateOutcome>, MigrationError> {
     if !namespace.target_exists() {
         return Ok(None);
     }
     let target_db: Db<SchemaDescriptor> =
-        match Db::open(&namespace.target_dir(), descriptor.clone()) {
+        match Db::open(&namespace.target_dir(), descriptor.clone(), work.clone()) {
             Ok(db) => db,
             Err(error) if store_locked(&error) => {
                 return locked_target_evidence(namespace, operation, target_identity, cap, error)
@@ -1155,7 +1169,7 @@ fn published_terminal_evidence(
             }
             Err(error) => return Err(error.into()),
         };
-    let control = read_attachment(&target_db)?.ok_or(MigrationError::TargetConflict)?;
+    let control = read_attachment(&target_db, work)?.ok_or(MigrationError::TargetConflict)?;
     let authority = decode_control(&control, cap).map_err(LogError::from)?;
     if authority.identity != target_identity {
         return Err(MigrationError::TargetConflict);
@@ -1190,10 +1204,14 @@ fn published_terminal_evidence(
 }
 
 /// Read the complete migration history chain from one coherent snapshot.
-pub(super) fn read_chain<S>(db: &Db<S>, cap: usize) -> Result<Vec<HistoryRecord>, MigrationError> {
+pub(super) fn read_chain<S>(
+    db: &Db<S>,
+    cap: usize,
+    work: &WorkContext,
+) -> Result<Vec<HistoryRecord>, MigrationError> {
     let mut rows: Vec<Vec<u8>> = Vec::new();
     let mut host_error = None;
-    db.read(|read| {
+    db.read(work.clone(), |read| {
         let mut index = 0u64;
         loop {
             match read.integration_host_record(&history_key(index)) {
@@ -1236,7 +1254,8 @@ fn with_authority<S, T>(
     transition: impl FnOnce(HeadAuthority) -> Result<Transition<T>, MigrationError>,
 ) -> Result<T, MigrationError> {
     let mut session = db.integration_writer(work)?;
-    let control = read_attachment(db)?.ok_or(MigrationError::Log(LogError::NotInitialized))?;
+    let control =
+        read_attachment(db, work)?.ok_or(MigrationError::Log(LogError::NotInitialized))?;
     let authority = decode_control(&control, limits.envelope_bytes).map_err(LogError::from)?;
     match transition(authority)? {
         Transition::Keep(value) => Ok(value),
@@ -1272,7 +1291,7 @@ fn read_published_ready(
 ) -> Result<MigrateOutcome, MigrationError> {
     let cap = limits.envelope_bytes;
     let target_db: Db<SchemaDescriptor> =
-        match Db::open(&namespace.target_dir(), descriptor.clone()) {
+        match Db::open(&namespace.target_dir(), descriptor.clone(), work.clone()) {
             Ok(db) => db,
             // A live owner holds the published target open (the activated
             // database being served): recorded activation evidence resolves
@@ -1282,7 +1301,7 @@ fn read_published_ready(
             }
             Err(error) => return Err(error.into()),
         };
-    let control = read_attachment(&target_db)?.ok_or(MigrationError::TargetConflict)?;
+    let control = read_attachment(&target_db, work)?.ok_or(MigrationError::TargetConflict)?;
     let authority = decode_control(&control, cap).map_err(LogError::from)?;
     if authority.identity != target_identity {
         return Err(MigrationError::TargetConflict);
@@ -1317,7 +1336,7 @@ fn read_published_ready(
             && target == target_identity.incarnation_id => {}
         _ => return Err(MigrationError::TargetConflict),
     }
-    let chain = read_chain(&target_db, cap)?;
+    let chain = read_chain(&target_db, cap, work)?;
     let Some(HistoryRecord::Applied(applied_record)) = chain.last() else {
         return Err(MigrationError::OutputMismatch);
     };
@@ -1329,7 +1348,7 @@ fn read_published_ready(
         .validate()
         .map_err(bumbledb::Error::from)?;
     let mut captured = None;
-    target_db.read(|read| {
+    target_db.read(work.clone(), |read| {
         captured = Some(MigrationState::from_source(read, &schema, work));
         Ok(())
     })?;

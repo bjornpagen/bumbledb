@@ -22,6 +22,7 @@ pub struct StoreCensusSource<'a> {
 impl<'a> StoreCensusSource<'a> {
     /// # Errors
     /// Storage or stopped work.
+    #[must_use]
     pub fn open(snapshot: &'a OwnedSnapshot, work: &'a WorkContext, map: MapReport) -> Self {
         Self {
             snapshot,

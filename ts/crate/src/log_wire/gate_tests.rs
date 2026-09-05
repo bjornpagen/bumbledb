@@ -71,8 +71,8 @@ fn unique_dir(tag: &str) -> std::path::PathBuf {
 
 fn identity_of(descriptor: &bumbledb::SchemaDescriptor, seed: u8) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes([seed; 16])),
-        incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes([seed ^ 0xff; 16])),
+        database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes([seed; 16])),
+        incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes([seed ^ 0xff; 16])),
         schema_id: bumbledb_log::schema_file::schema_id(descriptor).expect("valid schema"),
     }
 }
@@ -93,7 +93,7 @@ fn open_spec_for(
         discard_mismatched: false,
         creation: create.then(|| {
             (
-                OperationId::from_core(bumbledb::Id128::from_bytes([seed.wrapping_add(1); 16])),
+                OperationId::from_core(bumbledb::Uuid::from_bytes([seed.wrapping_add(1); 16])),
                 artifact,
             )
         }),
@@ -147,7 +147,7 @@ fn seal_command(
             identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::new(1).expect("one"),
-                request_id: RequestId::from_core(bumbledb::Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(bumbledb::Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -202,19 +202,8 @@ fn decided_stamp(owned: &SubmitOwned) -> DecisionStamp {
     }
 }
 
-fn at_least(
-    resource: &Arc<HistoryResource>,
-    stamp: DecisionStamp,
-    work: &WorkContext,
-) -> MachineResult<SnapshotOwned> {
-    let (kind, lease) = resource.kind_and_lease().expect("live history");
-    let outcome = open_published_snapshot(
-        resource,
-        &kind,
-        lease,
-        ConsistencySpec::AtLeast(stamp),
-        work,
-    );
+fn at_least(resource: &Arc<HistoryResource>, stamp: DecisionStamp) -> MachineResult<SnapshotOwned> {
+    let outcome = super::tests::snapshot_via_worker(resource, ConsistencySpec::AtLeast(stamp));
     if let Ok(snapshot) = &outcome {
         begin_snapshot_teardown(&snapshot.session);
     }
@@ -264,7 +253,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
     assert_eq!(stamps[2].seq, 3);
 
     // A valid RETAINED ancestor accepts, with at-least freshness provenance.
-    let snapshot = at_least(&opened.resource, stamps[0], &work).expect("retained ancestor");
+    let snapshot = at_least(&opened.resource, stamps[0]).expect("retained ancestor");
     assert!(matches!(
         snapshot.freshness,
         FreshnessOwned::AtLeast { requested } if requested == stamps[0]
@@ -278,7 +267,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
         hash: DecisionDigest::from_bytes([0xEE; 32]),
     };
     assert_ne!(forged_old.hash, stamps[0].hash, "the forgery is real");
-    match at_least(&opened.resource, forged_old, &work) {
+    match at_least(&opened.resource, forged_old) {
         Err(fail) => assert_eq!(protocol_code(&fail), "WrongLineage"),
         Ok(_) => panic!("an older wrong-hash stamp must NEVER be accepted"),
     }
@@ -288,7 +277,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
         seq: stamps[2].seq,
         hash: DecisionDigest::from_bytes([0xDD; 32]),
     };
-    match at_least(&opened.resource, forged_tip, &work) {
+    match at_least(&opened.resource, forged_tip) {
         Err(fail) => assert_eq!(protocol_code(&fail), "WrongLineage"),
         Ok(_) => panic!("a same-seq wrong-hash stamp must refuse"),
     }
@@ -305,13 +294,13 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
         LIMITS.envelope_bytes,
     )
     .expect("genesis stamp");
-    let accepted = at_least(&opened.resource, genesis, &work).expect("own genesis is an ancestor");
+    let accepted = at_least(&opened.resource, genesis).expect("own genesis is an ancestor");
     assert!(matches!(
         accepted.freshness,
         FreshnessOwned::AtLeast { requested } if requested == genesis
     ));
     let mut foreign_identity = identity;
-    foreign_identity.database_id = DatabaseId::from_core(bumbledb::Id128::from_bytes([0x77; 16]));
+    foreign_identity.database_id = DatabaseId::from_core(bumbledb::Uuid::from_bytes([0x77; 16]));
     let foreign_genesis = genesis_stamp(
         &GenesisRecord {
             identity: foreign_identity,
@@ -322,7 +311,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
         LIMITS.envelope_bytes,
     )
     .expect("foreign genesis stamp");
-    match at_least(&opened.resource, foreign_genesis, &work) {
+    match at_least(&opened.resource, foreign_genesis) {
         Err(fail) => assert_eq!(protocol_code(&fail), "WrongLineage"),
         Ok(_) => panic!("a foreign database's genesis stamp must refuse"),
     }
@@ -333,7 +322,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
         seq: 99,
         hash: DecisionDigest::from_bytes([9; 32]),
     };
-    match at_least(&opened.resource, future, &work) {
+    match at_least(&opened.resource, future) {
         Err(LogFail::Structured(StructuredReason::NotYetAvailable {
             requested_seq,
             captured_seq,
@@ -385,7 +374,7 @@ fn at_least_with_pruned_evidence_is_witness_unavailable_never_a_claim() {
     }
     let valid_old = stamps[0];
     // Retained: the valid old stamp accepts.
-    assert!(at_least(&opened.resource, valid_old, &work).is_ok());
+    assert!(at_least(&opened.resource, valid_old).is_ok());
 
     // Rotate the receipt epoch forward and retire epoch 1: exactly the
     // retained receipt rows below the frontier are deleted in ONE
@@ -409,7 +398,7 @@ fn at_least_with_pruned_evidence_is_witness_unavailable_never_a_claim() {
     // The SAME valid historical stamp is now unwitnessable: explicitly
     // WitnessUnavailable — not accepted (that would be a claimed validation
     // over pruned evidence) and not corruption.
-    match at_least(&opened.resource, valid_old, &work) {
+    match at_least(&opened.resource, valid_old) {
         Err(fail) => assert_eq!(protocol_code(&fail), "WitnessUnavailable"),
         Ok(_) => panic!("pruned evidence must never validate a historical stamp"),
     }
@@ -426,7 +415,7 @@ fn at_least_with_pruned_evidence_is_witness_unavailable_never_a_claim() {
         LIMITS.envelope_bytes,
     )
     .expect("genesis stamp");
-    assert!(at_least(&opened.resource, genesis, &work).is_ok());
+    assert!(at_least(&opened.resource, genesis).is_ok());
 
     assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
@@ -538,7 +527,7 @@ fn rejected_submissions_expose_the_complete_decoded_violation_set() {
 }
 
 #[test]
-fn d13_resolve_keeps_found_when_diagnostic_budget_fails() {
+fn d13_resolve_refuses_incomplete_evidence_and_retry_returns_found() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("d13-resolve");
     std::fs::create_dir_all(&base).unwrap();
@@ -566,7 +555,10 @@ fn d13_resolve_keeps_found_when_diagnostic_budget_fails() {
                 TerminalOutcome::InvariantRejected { .. }
             ));
         }
-        other => panic!("violating submit still decides, got {other:?}"),
+        SubmitOwned::NotSubmitted { fail, phase, .. }
+        | SubmitOwned::OutcomeUnknown { fail, phase, .. } => {
+            panic!("violating submit must decide, got {phase:?}: {fail:?}")
+        }
     }
     let starved = ExecutionPolicy {
         input_bytes: 32,
@@ -579,21 +571,21 @@ fn d13_resolve_keeps_found_when_diagnostic_budget_fails() {
     }
     .start()
     .expect("starved work");
-    match run_history_verb(
-        &opened.resource,
-        HistoryVerb::Resolve(reference),
-        &starved,
-    ) {
-        Ok(Output::Machine(MachineOutput::Resolve(owned))) => match owned.outcome {
-            ResolveOutcome::Found(_) => {
-                let _ = owned.violations;
-            }
-            other => panic!("starved diagnostics must not drop Found, got {other:?}"),
-        },
-        Ok(Output::Machine(MachineOutput::Admin(_))) => {
-            panic!("diagnostic failure must not rewrite a found receipt into admin fail");
+    assert!(
+        matches!(
+            run_history_verb(&opened.resource, HistoryVerb::Resolve(reference), &starved),
+            Err(RuntimeError::Work(_))
+        ),
+        "incomplete rejection evidence must refuse through the work channel"
+    );
+    match run_history_verb(&opened.resource, HistoryVerb::Resolve(reference), &work)
+        .expect("retry with sufficient budget")
+    {
+        Output::Machine(MachineOutput::Resolve(owned)) => {
+            assert!(matches!(owned.outcome, ResolveOutcome::Found(_)));
+            assert!(!owned.violations.expect("complete evidence").rows.is_empty());
         }
-        other => panic!("resolve must stay a resolve output, got ok={}", other.is_ok()),
+        _ => panic!("retry must return the retained receipt and evidence"),
     }
 
     assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);
@@ -679,7 +671,7 @@ fn malformed_evidence_bytes_refuse_typed_never_an_empty_rejection() {
     // it against GateMini (which has only statement 0).
     let dir = unique_dir("f-foreign");
     std::fs::create_dir_all(&dir).unwrap();
-    let db = bumbledb::Db::create(&dir.join("db"), pair.clone())
+    let db = bumbledb::Db::create(&dir.join("db"), pair.clone(), work.clone())
         .expect("create")
         .expect("admits");
     let mut session = db.integration_writer(&work).expect("writer");
@@ -725,7 +717,7 @@ fn malformed_evidence_bytes_refuse_typed_never_an_empty_rejection() {
 // A REFUSED open must synchronously release its installed directory owner:
 // before the F3 repair, the foreign-identity refusal returned while the
 // registry entry was still draining, so the immediately following
-// wrong-incarnation open misreported DirectoryBusy instead of WrongLineage.
+// wrong-incarnation open misreported DirectoryBusy instead of the binding mismatch.
 #[test]
 fn refused_opens_release_the_directory_synchronously() {
     let runtime = Runtime::start(options()).unwrap();
@@ -741,21 +733,20 @@ fn refused_opens_release_the_directory_synchronously() {
     .expect("creates");
     assert_eq!(drain_resource(&created.resource), CloseReport::Closed);
     let mut foreign = open_spec_for(GateMini.descriptor(), &dir, false, 3);
-    foreign.identity.database_id = DatabaseId::from_core(bumbledb::Id128::from_bytes([9; 16]));
+    foreign.identity.database_id = DatabaseId::from_core(bumbledb::Uuid::from_bytes([9; 16]));
     match open_history(&runtime, &foreign, &work) {
-        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "ForeignIdentity"),
+        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "CacheIdentityMismatch"),
         Err(other) => panic!("foreign got other error: {other:?}"),
         Ok(_) => panic!("foreign accepted"),
     }
     let mut lineage = open_spec_for(GateMini.descriptor(), &dir, false, 3);
-    lineage.identity.incarnation_id =
-        IncarnationId::from_core(bumbledb::Id128::from_bytes([8; 16]));
+    lineage.identity.incarnation_id = IncarnationId::from_core(bumbledb::Uuid::from_bytes([8; 16]));
     match open_history(&runtime, &lineage, &work) {
-        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "WrongLineage"),
+        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "CacheIdentityMismatch"),
         Err(LogFail::Core(core)) => {
-            panic!("the refusal must be typed WrongLineage, got core {core:?}")
+            panic!("the refusal must be typed CacheIdentityMismatch, got core {core:?}")
         }
-        Err(other) => panic!("the refusal must be typed WrongLineage, got {other:?}"),
+        Err(other) => panic!("the refusal must be typed CacheIdentityMismatch, got {other:?}"),
         Ok(_) => panic!("a different incarnation must refuse"),
     }
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
@@ -792,7 +783,10 @@ fn submit_owned_carries_publication_phase() {
         SubmitOwned::Decided { phase, .. } => {
             assert_eq!(phase, PublicationPhase::Confirmed);
         }
-        other => panic!("expected a decided submit with confirmed phase, got {other:?}"),
+        SubmitOwned::NotSubmitted { fail, phase, .. }
+        | SubmitOwned::OutcomeUnknown { fail, phase, .. } => {
+            panic!("expected confirmed decision, got {phase:?}: {fail:?}")
+        }
     }
 
     assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);

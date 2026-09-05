@@ -211,7 +211,7 @@ fn commit_engine(
     // engines pay symmetric per-row work inside the samples.
     let mut mint = writebench::PostingMint::probe(db)?;
     harness::measure(proto, || {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             for _ in 0..batch {
                 let id = mint.next();
                 tx.insert([&writebench::prepared_posting(rng, &sizes, id)])?;
@@ -268,7 +268,7 @@ fn seed_delete_rows(
     while remaining > 0 {
         let chunk = remaining.min(1024);
         let committed = db
-            .write(|tx| {
+            .write(crate::harness::bench_work(), |tx| {
                 let mut out = Vec::with_capacity(usize::try_from(chunk).expect("small chunk"));
                 for _ in 0..chunk {
                     let id = mint.next();
@@ -317,7 +317,7 @@ fn delete_recorded(
     recorded: &mut VecDeque<Posting>,
     batch: u32,
 ) -> Result<u64, String> {
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for _ in 0..batch {
             let victim = recorded
                 .pop_front()
@@ -423,7 +423,9 @@ fn verify_insert_stream_pair(
         .open(&dir, Ledger)
         .map_err(|e| format!("insert_stream re-open ({}): {e}", lane.label()))?;
     let ours = db
-        .read(|snap| Ok(snap.scan(ids::POSTING)?.count()))
+        .read(crate::harness::bench_work(), |snap| {
+            Ok(snap.scan(ids::POSTING)?.count())
+        })
         .map_err(|e| format!("insert_stream re-scan: {e:?}"))? as u64;
     let conn = Connection::open(scratch.join("insert-stream-oracle-0.sqlite"))
         .map_err(|e| format!("insert_stream oracle re-open: {e}"))?;
@@ -468,8 +470,10 @@ fn verify_post_state(
     corpus_ceiling: u64,
     expected_postings: u64,
 ) -> Result<(), String> {
-    let engine_rows: Vec<Vec<Value>> = db
-        .read(|snap| snap.scan(ids::POSTING)?.collect())
+    let engine_rows: Vec<bumbledb::canonical::DecodedRow> = db
+        .read(crate::harness::bench_work(), |snap| {
+            snap.scan(ids::POSTING)?.collect()
+        })
         .map_err(|e| format!("engine scan: {e:?}"))?;
     let ours_count = engine_rows.len() as u64;
     let theirs_count: i64 = conn
@@ -992,11 +996,11 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger)
+        let db = Db::create(&dir.join("db"), Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         for rel in writebench::non_posting_relations() {
-            db.write(|tx| {
+            db.write(crate::harness::bench_work(), |tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))
                     .map(bumbledb::MutationReport::changed)
             })
@@ -1007,7 +1011,7 @@ mod tests {
         let mut rng = Rng::new(cfg.seed ^ DELETE_SEED ^ 1);
         let mut mint = writebench::PostingMint::probe(&db).expect("probe");
         let posting = db
-            .write(|tx| {
+            .write(crate::harness::bench_work(), |tx| {
                 let posting = writebench::prepared_posting(&mut rng, &sizes, mint.next());
                 tx.insert([&posting])?;
                 Ok(posting)
@@ -1020,7 +1024,9 @@ mod tests {
             delete_recorded(&db, &mut recorded, 1).expect("live delete"),
             1
         );
-        let generation = db.generation().expect("generation");
+        let generation = db
+            .generation(crate::harness::bench_work())
+            .expect("generation");
         let refusal = delete_recorded(&db, &mut recorded, 1);
         let err = refusal.expect_err("a no-op delete must abort the transaction");
         assert!(
@@ -1028,7 +1034,8 @@ mod tests {
             "a refused delete is the Io sentinel (the message is not on the wire): {err}"
         );
         assert_eq!(
-            db.generation().expect("generation"),
+            db.generation(crate::harness::bench_work())
+                .expect("generation"),
             generation,
             "a refused delete leaves the store untouched"
         );
@@ -1043,7 +1050,7 @@ mod tests {
             seed: 1,
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger)
+        let db = Db::create(&dir.join("db"), Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         corpus::load_bumbledb(&db, cfg).expect("load");

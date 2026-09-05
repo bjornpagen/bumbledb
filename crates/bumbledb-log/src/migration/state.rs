@@ -81,8 +81,8 @@ impl StagedRelation {
         let mut err = None;
         self.scratch
             .borrow_mut()
-            .for_each(&mut |key, _value| {
-                match bumbledb::canonical::decode(fields, key, work) {
+            .for_each(
+                &mut |key, _value| match bumbledb::canonical::decode(fields, key, work) {
                     Ok(decoded) => match visit(decoded.values()) {
                         Ok(cont) => Ok(cont),
                         Err(error) => {
@@ -94,8 +94,8 @@ impl StagedRelation {
                         err = Some(StateError::Row(error));
                         Ok(false)
                     }
-                }
-            })
+                },
+            )
             .map_err(StateError::Core)?;
         if let Some(error) = err {
             return Err(error);

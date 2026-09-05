@@ -14,7 +14,14 @@
  * they implement, pinned by the authored roster test against
  * `logErrorCodes()`.
  */
-import type { OperationHandle, RuntimeHandle, PolicyWire, CloseWire, Violation } from "@bjornpagen/bumbledb"
+import type { Violation } from "@bjornpagen/bumbledb"
+import type {
+	CloseWire,
+	OperationHandle,
+	PolicyWire,
+	RuntimeHandle,
+	SnapshotHandle
+} from "@bjornpagen/bumbledb/internal/log"
 import { runtimeNative } from "@bjornpagen/bumbledb/internal/log"
 
 // ── Handles ────────────────────────────────────────────────────────────────
@@ -22,13 +29,6 @@ import { runtimeNative } from "@bjornpagen/bumbledb/internal/log"
 /** An owner history or an independently spent cache borrow. */
 export interface HistoryCapability {
 	readonly __logHistory: unique symbol
-}
-export interface LogSnapshotHandle {
-	readonly __logSnapshot: unique symbol
-}
-/** The published core read transaction behind a log snapshot. */
-export interface CoreSnapshotHandle {
-	readonly __coreSnapshot: unique symbol
 }
 export interface CommandHandle {
 	readonly __logCommand: unique symbol
@@ -139,11 +139,7 @@ export type HealthWire =
 	| { readonly kind: "ready"; readonly at: StampWire }
 	| { readonly kind: "unavailable"; readonly error: ErrorWire }
 
-export type PublicationPhaseWire =
-	| "prepared"
-	| "dispatchedUnresolved"
-	| "confirmed"
-	| "provedNonpublication"
+export type PublicationPhaseWire = "prepared" | "dispatchedUnresolved" | "confirmed" | "provedNonpublication"
 
 export type SubmitWire =
 	| {
@@ -220,8 +216,7 @@ export type HistoryResultWire =
 	| { readonly verb: "inspect"; readonly inspection: HistoryInspectionWire }
 	| {
 			readonly verb: "snapshot"
-			readonly snapshot: LogSnapshotHandle
-			readonly core: CoreSnapshotHandle
+			readonly snapshot: SnapshotHandle
 			readonly provenance: ProvenanceWire
 	  }
 
@@ -442,7 +437,12 @@ export type AdminValueWire =
 			readonly bytes: bigint
 			readonly manifestDigest: string
 	  }
-	| { readonly verb: "restore"; readonly identity: IdentityWire; readonly genesis: string; readonly binding: BindingWire }
+	| {
+			readonly verb: "restore"
+			readonly identity: IdentityWire
+			readonly genesis: string
+			readonly binding: BindingWire
+	  }
 	| {
 			readonly verb: "erase"
 			readonly tombstoned: boolean
@@ -490,7 +490,11 @@ export type MigrationStatusWire =
 			readonly error: ErrorWire
 			readonly sourceState: SourceAccessWire
 	  }
-	| { readonly kind: "ready-to-switch"; readonly operationRef: MigrationRefWire; readonly activation: ActivationRefWire }
+	| {
+			readonly kind: "ready-to-switch"
+			readonly operationRef: MigrationRefWire
+			readonly activation: ActivationRefWire
+	  }
 	| { readonly kind: "activated"; readonly operationRef: MigrationRefWire; readonly target: IdentityWire }
 	| { readonly kind: "aborted"; readonly operationRef: MigrationRefWire }
 	| { readonly kind: "outcome-unknown"; readonly operationRef: MigrationRefWire; readonly error: ErrorWire }
@@ -500,7 +504,11 @@ export type MigrationStatusWire =
 export type AdminResultWire =
 	| { readonly certainty: "completed"; readonly value: AdminValueWire; readonly publicationPhase: PublicationPhaseWire }
 	| { readonly certainty: "not-started"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
-	| { readonly certainty: "outcome-unknown"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
+	| {
+			readonly certainty: "outcome-unknown"
+			readonly error: ErrorWire
+			readonly publicationPhase: PublicationPhaseWire
+	  }
 	| { readonly certainty: "report"; readonly value: AdminValueWire }
 
 // ── The verb roster ────────────────────────────────────────────────────────
@@ -526,7 +534,7 @@ export interface LogNative {
 	): OperationHandle
 	logHistoryResult(operation: OperationHandle): HistoryResultWire
 	logHistoryClose(history: HistoryCapability, callback: (report: CloseWire) => void): void
-	logSnapshotClose(snapshot: LogSnapshotHandle, callback: (report: CloseWire) => void): void
+	runtimeSnapshotClose(snapshot: SnapshotHandle, callback: (report: CloseWire) => void): void
 
 	/**
 	 * Seals over the ALREADY-REGISTERED native change: the change handle is a

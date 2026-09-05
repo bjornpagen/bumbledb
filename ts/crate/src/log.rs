@@ -24,15 +24,15 @@
 use std::sync::Arc;
 
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::{Id128, Schema, SchemaFingerprint, WorkContext};
+use bumbledb::{Schema, SchemaFingerprint, Uuid, WorkContext};
 use bumbledb_log::history::authority::{
     Access, Activation, ActivationCause, DeletedReason, FreezeIntent, HeadAuthority, Lifecycle,
     LiveAuthority, decode_control, encode_control,
 };
 use bumbledb_log::history::command::{Command, CommandError, CommandMetadata, Limits};
 use bumbledb_log::history::decision::{
-    ChainError, DecisionParts, GenesisProvenance, GenesisRecord, blank_initial_digests,
-    decode_decision, decode_genesis, encode_decision, encode_genesis, genesis_stamp, verify_step,
+    ChainError, GenesisProvenance, GenesisRecord, blank_initial_digests, decode_decision,
+    decode_genesis, encode_genesis, genesis_stamp, verify_step,
 };
 use bumbledb_log::history::receipt::{
     ReceiptRowError, decode_receipt_row, decode_receipt_row_at, encode_receipt_row, receipt_key,
@@ -183,14 +183,14 @@ fn fingerprint_in(hex: &str) -> napi::Result<[u8; 32]> {
     Ok(out)
 }
 
-fn id128_field(obj: &Object, key: &str, ctx: &str) -> napi::Result<Id128> {
-    marshal::id128_in(&marshal::req::<String>(obj, key, ctx)?, ctx)
+fn uuid_field(obj: &Object, key: &str, ctx: &str) -> napi::Result<Uuid> {
+    marshal::uuid_in(&marshal::req::<String>(obj, key, ctx)?, ctx)
 }
 
 fn identity_in(obj: &Object, ctx: &str) -> napi::Result<DatabaseIdentity> {
     Ok(DatabaseIdentity {
-        database_id: DatabaseId::from_core(id128_field(obj, "databaseId", ctx)?),
-        incarnation_id: IncarnationId::from_core(id128_field(obj, "incarnationId", ctx)?),
+        database_id: DatabaseId::from_core(uuid_field(obj, "databaseId", ctx)?),
+        incarnation_id: IncarnationId::from_core(uuid_field(obj, "incarnationId", ctx)?),
         schema_id: SchemaFingerprint(fingerprint_in(&marshal::req::<String>(
             obj, "schemaId", ctx,
         )?)?),
@@ -206,13 +206,13 @@ fn epoch_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<ReceiptEpoch> {
 fn command_id_in(obj: &Object, ctx: &str) -> napi::Result<CommandId> {
     Ok(CommandId {
         receipt_epoch: epoch_in(obj, "receiptEpoch", ctx)?,
-        request_id: RequestId::from_core(id128_field(obj, "requestId", ctx)?),
+        request_id: RequestId::from_core(uuid_field(obj, "requestId", ctx)?),
     })
 }
 
 fn state_in(obj: &Object, ctx: &str) -> napi::Result<StateStamp> {
     Ok(StateStamp {
-        incarnation: IncarnationId::from_core(id128_field(obj, "incarnation", ctx)?),
+        incarnation: IncarnationId::from_core(uuid_field(obj, "incarnation", ctx)?),
         data_revision: marshal::u64_in(&marshal::req::<BigInt>(obj, "dataRevision", ctx)?, ctx)?,
     })
 }
@@ -345,40 +345,14 @@ impl OwnedOutcome {
             },
         })
     }
-
-    fn unverified(
-        &self,
-    ) -> Result<bumbledb_log::history::command::UnverifiedOutcome<'_>, &'static str> {
-        use bumbledb_log::history::command::UnverifiedOutcome;
-        Ok(match self {
-            Self::Committed {
-                added,
-                removed,
-                result,
-            } => UnverifiedOutcome::Committed {
-                changed: ChangeSummary::new(*added, *removed).ok_or("emptyChangeSummary")?,
-                result,
-            },
-            Self::NoChange { result } => UnverifiedOutcome::NoChange { result },
-            Self::PreconditionFailed { expected, observed } => {
-                UnverifiedOutcome::PreconditionFailed {
-                    expected: *expected,
-                    observed: *observed,
-                }
-            }
-            Self::InvariantRejected { evidence } => UnverifiedOutcome::InvariantRejected {
-                core_evidence: evidence,
-            },
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Outbound wire rendering.
 // ---------------------------------------------------------------------------
 
-fn hex32(id: Id128) -> String {
-    marshal::id128_hex(id)
+fn uuid_text(id: Uuid) -> String {
+    id.to_string()
 }
 
 fn hex64(bytes: &[u8; 32]) -> String {
@@ -393,15 +367,18 @@ fn hex64(bytes: &[u8; 32]) -> String {
 
 fn identity_out(env: &Env, identity: DatabaseIdentity) -> napi::Result<Object<'_>> {
     let mut obj = Object::new(env)?;
-    obj.set("databaseId", hex32(identity.database_id.as_core()))?;
-    obj.set("incarnationId", hex32(identity.incarnation_id.as_core()))?;
+    obj.set("databaseId", uuid_text(identity.database_id.as_core()))?;
+    obj.set(
+        "incarnationId",
+        uuid_text(identity.incarnation_id.as_core()),
+    )?;
     obj.set("schemaId", hex64(&identity.schema_id.0))?;
     Ok(obj)
 }
 
 fn state_out(env: &Env, state: StateStamp) -> napi::Result<Object<'_>> {
     let mut obj = Object::new(env)?;
-    obj.set("incarnation", hex32(state.incarnation.as_core()))?;
+    obj.set("incarnation", uuid_text(state.incarnation.as_core()))?;
     obj.set("dataRevision", BigInt::from(state.data_revision))?;
     Ok(obj)
 }
@@ -420,7 +397,7 @@ fn reference_out(env: &Env, reference: CommandRef) -> napi::Result<Object<'_>> {
         "receiptEpoch",
         BigInt::from(reference.id.receipt_epoch.get()),
     )?;
-    obj.set("requestId", hex32(reference.id.request_id.as_core()))?;
+    obj.set("requestId", uuid_text(reference.id.request_id.as_core()))?;
     obj.set("digest", Buffer::from(reference.digest.as_bytes().to_vec()))?;
     Ok(obj)
 }
@@ -670,7 +647,7 @@ fn intent_in(obj: &Object, ctx: &str) -> napi::Result<FreezeIntent> {
                 &marshal::req::<Uint8Array>(obj, "planSetDigest", ctx)?,
                 ctx,
             )?,
-            target: IncarnationId::from_core(id128_field(obj, "target", ctx)?),
+            target: IncarnationId::from_core(uuid_field(obj, "target", ctx)?),
         }),
         other => Err(marshal::err(format!(
             "bumbledb-log marshal: {ctx}: unknown freeze intent `{other}`"
@@ -683,7 +660,7 @@ fn access_in(obj: &Object, ctx: &str) -> napi::Result<Access> {
     match kind.as_str() {
         "active" => Ok(Access::Active),
         "frozen" => Ok(Access::Frozen {
-            operation: OperationId::from_core(id128_field(obj, "operation", ctx)?),
+            operation: OperationId::from_core(uuid_field(obj, "operation", ctx)?),
             intent: intent_in(&marshal::req::<Object>(obj, "intent", ctx)?, ctx)?,
         }),
         other => Err(marshal::err(format!(
@@ -724,12 +701,12 @@ fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
             let reason = match reason_kind.as_str() {
                 "erasure" => DeletedReason::Erasure,
                 "migrationAborted" => DeletedReason::MigrationAborted {
-                    source_database: DatabaseId::from_core(id128_field(
+                    source_database: DatabaseId::from_core(uuid_field(
                         &reason_obj,
                         "sourceDatabase",
                         ctx,
                     )?),
-                    source_incarnation: IncarnationId::from_core(id128_field(
+                    source_incarnation: IncarnationId::from_core(uuid_field(
                         &reason_obj,
                         "sourceIncarnation",
                         ctx,
@@ -746,7 +723,7 @@ fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
                 }
             };
             Lifecycle::Deleted {
-                operation: OperationId::from_core(id128_field(&lifecycle_obj, "operation", ctx)?),
+                operation: OperationId::from_core(uuid_field(&lifecycle_obj, "operation", ctx)?),
                 reason,
             }
         }
@@ -779,7 +756,7 @@ fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
                 }
             };
             Activation::Activated {
-                operation: OperationId::from_core(id128_field(&activation_obj, "operation", ctx)?),
+                operation: OperationId::from_core(uuid_field(&activation_obj, "operation", ctx)?),
                 target_genesis: DecisionDigest::from_bytes(digest_in(
                     &marshal::req::<Uint8Array>(&activation_obj, "targetGenesis", ctx)?,
                     ctx,
@@ -817,7 +794,7 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
                 Access::Active => access.set("kind", "active")?,
                 Access::Frozen { operation, intent } => {
                     access.set("kind", "frozen")?;
-                    access.set("operation", hex32(operation.as_core()))?;
+                    access.set("operation", uuid_text(operation.as_core()))?;
                     let mut intent_obj = Object::new(env)?;
                     match intent {
                         FreezeIntent::Erasure => intent_obj.set("kind", "erasure")?,
@@ -828,7 +805,7 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
                             intent_obj.set("kind", "migration")?;
                             intent_obj
                                 .set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
-                            intent_obj.set("target", hex32(target.as_core()))?;
+                            intent_obj.set("target", uuid_text(target.as_core()))?;
                         }
                     }
                     access.set("intent", intent_obj)?;
@@ -847,7 +824,7 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
         }
         Lifecycle::Deleted { operation, reason } => {
             lifecycle.set("kind", "deleted")?;
-            lifecycle.set("operation", hex32(operation.as_core()))?;
+            lifecycle.set("operation", uuid_text(operation.as_core()))?;
             let mut reason_obj = Object::new(env)?;
             match reason {
                 DeletedReason::Erasure => reason_obj.set("kind", "erasure")?,
@@ -857,8 +834,8 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
                     plan_set_digest,
                 } => {
                     reason_obj.set("kind", "migrationAborted")?;
-                    reason_obj.set("sourceDatabase", hex32(source_database.as_core()))?;
-                    reason_obj.set("sourceIncarnation", hex32(source_incarnation.as_core()))?;
+                    reason_obj.set("sourceDatabase", uuid_text(source_database.as_core()))?;
+                    reason_obj.set("sourceIncarnation", uuid_text(source_incarnation.as_core()))?;
                     reason_obj.set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
                 }
             }
@@ -875,7 +852,7 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
             cause,
         } => {
             activation.set("kind", "activated")?;
-            activation.set("operation", hex32(operation.as_core()))?;
+            activation.set("operation", uuid_text(operation.as_core()))?;
             activation.set(
                 "targetGenesis",
                 Buffer::from(target_genesis.as_bytes().to_vec()),
@@ -964,12 +941,12 @@ fn genesis_in(obj: &Object) -> napi::Result<GenesisRecord> {
             )?,
         },
         "migration" => GenesisProvenance::Migration {
-            source_database: DatabaseId::from_core(id128_field(
+            source_database: DatabaseId::from_core(uuid_field(
                 &provenance_obj,
                 "sourceDatabase",
                 ctx,
             )?),
-            source_incarnation: IncarnationId::from_core(id128_field(
+            source_incarnation: IncarnationId::from_core(uuid_field(
                 &provenance_obj,
                 "sourceIncarnation",
                 ctx,
@@ -1052,8 +1029,8 @@ impl napi::bindgen_prelude::ToNapiValue for GenesisWire {
                 plan_set_digest,
             } => {
                 provenance.set("kind", "migration")?;
-                provenance.set("sourceDatabase", hex32(source_database.as_core()))?;
-                provenance.set("sourceIncarnation", hex32(source_incarnation.as_core()))?;
+                provenance.set("sourceDatabase", uuid_text(source_database.as_core()))?;
+                provenance.set("sourceIncarnation", uuid_text(source_incarnation.as_core()))?;
                 provenance.set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
             }
         }
@@ -1156,7 +1133,7 @@ pub fn log_blank_digests() -> BlankDigests {
 pub struct OwnedRef {
     identity: DatabaseIdentity,
     epoch: u64,
-    request: Id128,
+    request: Uuid,
     digest: [u8; 32],
 }
 
@@ -1175,7 +1152,7 @@ impl OwnedRef {
 pub struct OwnedCommand {
     metadata_identity: DatabaseIdentity,
     epoch: u64,
-    request: Id128,
+    request: Uuid,
     condition: Condition,
     changes: Vec<u8>,
     result: Vec<u8>,
@@ -1202,7 +1179,6 @@ pub enum LogOutput {
     /// Command parsed through the core's strict change decoder.
     Command(Box<OwnedCommand>),
     /// Decision framed: envelope bytes, digest, stamp sequence.
-    Decision { bytes: Vec<u8>, digest: [u8; 32] },
     /// Decision decoded (and, on the verify lane, chain-checked).
     Decoded(Box<OwnedDecision>),
     /// A domain refusal from the grammar (identity-table kind).
@@ -1358,72 +1334,6 @@ pub fn runtime_log_command_parse(
     Ok(operation_handle(runtime, operation))
 }
 
-/// Frames one immutable decision envelope on the executor.
-/// Internal surface: not part of the SDK's documented API.
-#[napi]
-#[doc(hidden)]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
-pub fn runtime_log_decision_encode(
-    env: Env,
-    handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
-    parts: Object,
-    command_bytes: Unknown,
-    limits: Object,
-    callback: Function<(), ()>,
-) -> napi::Result<External<OperationHandle>> {
-    let ctx = "decision parts";
-    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let limits = limits_in(&limits)?;
-    let identity = identity_in(&marshal::req::<Object>(&parts, "identity", ctx)?, ctx)?;
-    let seq = marshal::u64_in(&marshal::req::<BigInt>(&parts, "seq", ctx)?, ctx)?;
-    let parent = stamp_in(&marshal::req::<Object>(&parts, "parent", ctx)?, ctx)?;
-    let before_state = state_in(&marshal::req::<Object>(&parts, "beforeState", ctx)?, ctx)?;
-    let after_state = state_in(&marshal::req::<Object>(&parts, "afterState", ctx)?, ctx)?;
-    let outcome = outcome_in(&marshal::req::<Object>(&parts, "outcome", ctx)?, ctx)?;
-    let command_bytes = unshared_input(env, command_bytes, runtime.options.chunk_bytes)?;
-    let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            |context| {
-                context.input(command_bytes.len() as u64)?;
-                let command_bytes = command_bytes.to_vec();
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    let unverified = match outcome.unverified() {
-                        Ok(unverified) => unverified,
-                        Err(kind) => {
-                            return refused(kind, format!("bumbledb-log decision refusal: {kind}"));
-                        }
-                    };
-                    let parts = DecisionParts {
-                        identity,
-                        seq,
-                        parent,
-                        before_state,
-                        after_state,
-                        canonical_command: &command_bytes,
-                        outcome: unverified,
-                    };
-                    match encode_decision(parts, limits) {
-                        Ok(bytes) => {
-                            let digest = *bumbledb_log::history::decision::decision_digest(&bytes)
-                                .as_bytes();
-                            Ok(Output::Log(LogOutput::Decision { bytes, digest }))
-                        }
-                        Err(error) => refused(
-                            frame_kind(&error),
-                            format!("bumbledb-log decision refusal: {error:?}"),
-                        ),
-                    }
-                }))
-            },
-        )
-        .map_err(|error| thrown(env, error))?;
-    Ok(operation_handle(runtime, operation))
-}
-
 fn decode_owned_decision(bytes: &[u8], limits: Limits) -> Result<Output, RuntimeError> {
     match decode_decision(bytes, limits) {
         Ok(envelope) => {
@@ -1531,7 +1441,7 @@ fn reference_wire<'env>(env: &'env Env, reference: &OwnedRef) -> napi::Result<Ob
     let mut obj = Object::new(env)?;
     obj.set("identity", identity_out(env, reference.identity)?)?;
     obj.set("receiptEpoch", BigInt::from(reference.epoch))?;
-    obj.set("requestId", hex32(reference.request))?;
+    obj.set("requestId", uuid_text(reference.request))?;
     obj.set("digest", Buffer::from(reference.digest.to_vec()))?;
     Ok(obj)
 }
@@ -1553,7 +1463,7 @@ pub fn runtime_log_take(env: Env, handle: &External<OperationHandle>) -> napi::R
             obj.set("ok", true)?;
             obj.set("identity", identity_out(&env, command.metadata_identity)?)?;
             obj.set("receiptEpoch", BigInt::from(command.epoch))?;
-            obj.set("requestId", hex32(command.request))?;
+            obj.set("requestId", uuid_text(command.request))?;
             let mut condition = Object::new(&env)?;
             match command.condition {
                 Condition::Unconditional => condition.set("kind", "unconditional")?,
@@ -1566,11 +1476,6 @@ pub fn runtime_log_take(env: Env, handle: &External<OperationHandle>) -> napi::R
             obj.set("changes", Buffer::from(command.changes))?;
             obj.set("result", Buffer::from(command.result))?;
             obj.set("ref", reference_wire(&env, &command.reference)?)?;
-        }
-        Output::Log(LogOutput::Decision { bytes, digest }) => {
-            obj.set("ok", true)?;
-            obj.set("bytes", Buffer::from(bytes))?;
-            obj.set("digest", Buffer::from(digest.to_vec()))?;
         }
         Output::Log(LogOutput::Decoded(decision)) => {
             obj.set("ok", true)?;

@@ -24,8 +24,8 @@ use std::sync::Mutex;
 use super::fence::{acquire_mutation, sync_parent, synced_temp};
 use super::key_ok;
 use super::receive::{
-    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
-    ReceivingStore, TransportContext, TransportObservation, RECEIVE_CHUNK_BYTES,
+    ObservedError, RECEIVE_CHUNK_BYTES, ReceiveAccumulator, ReceiveFault, ReceivedBody,
+    ReceivedHead, ReceivingStore, TransportContext, TransportObservation,
 };
 use crate::writer::verbs::{
     ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, PutOutcome,
@@ -143,7 +143,8 @@ impl FsStore {
     }
 
     fn fail(op: &'static str, key: &str, source: io::Error) -> FsError {
-        Self::fail_obs(op, key, source, observe_io(&source))
+        let observation = observe_io(&source);
+        Self::fail_obs(op, key, source, observation)
     }
 
     fn fail_obs(
@@ -210,14 +211,20 @@ fn open_object(path: &Path) -> io::Result<Option<File>> {
     Ok(Some(file))
 }
 
+#[expect(
+    clippy::large_stack_arrays,
+    reason = "One fixed streaming buffer avoids per-object heap allocation; this path is not recursive"
+)]
 fn receive_file(file: &mut File, acc: &mut ReceiveAccumulator<'_>) -> Result<(), ReceiveFault> {
     let mut chunk = [0u8; RECEIVE_CHUNK_BYTES];
     loop {
         acc.checkpoint()?;
-        let want = acc
-            .remaining()
-            .saturating_add(1)
-            .min(RECEIVE_CHUNK_BYTES as u64) as usize;
+        let want = usize::try_from(
+            acc.remaining()
+                .saturating_add(1)
+                .min(RECEIVE_CHUNK_BYTES as u64),
+        )
+        .expect("bounded by the fixed receive buffer");
         if want == 0 {
             return Err(ReceiveFault::Capped {
                 cap: acc.len(),
@@ -236,6 +243,7 @@ fn receive_path(
     path: &Path,
     ctx: TransportContext<'_>,
 ) -> Result<Option<ReceivedBody>, ReceiveFault> {
+    ctx.checkpoint().map_err(ReceiveFault::Work)?;
     let Some(mut file) = open_object(path).map_err(ReceiveFault::Io)? else {
         return Ok(None);
     };
@@ -244,6 +252,10 @@ fn receive_path(
     Ok(Some(acc.finish()?))
 }
 
+#[expect(
+    clippy::large_stack_arrays,
+    reason = "One fixed streaming buffer avoids per-object heap allocation; this path is not recursive"
+)]
 fn file_content_version(path: &Path) -> io::Result<Option<HeadVersion>> {
     let Some(mut file) = open_object(path)? else {
         return Ok(None);
@@ -262,6 +274,10 @@ fn file_content_version(path: &Path) -> io::Result<Option<HeadVersion>> {
     ))))
 }
 
+#[expect(
+    clippy::large_stack_arrays,
+    reason = "One fixed streaming buffer avoids per-object heap allocation; this path is not recursive"
+)]
 fn contents_equal(path: &Path, expected: &[u8]) -> io::Result<Option<bool>> {
     let Some(mut file) = open_object(path)? else {
         return Ok(None);
@@ -362,8 +378,8 @@ impl ConditionalStore for FsStore {
         let path = self.path_of("replace_head", head_key)?;
         let _lock = acquire_mutation(&self.root, head_key)
             .map_err(|e| Self::fail("replace_head", head_key, e))?;
-        let current = file_content_version(&path)
-            .map_err(|e| Self::fail("replace_head", head_key, e))?;
+        let current =
+            file_content_version(&path).map_err(|e| Self::fail("replace_head", head_key, e))?;
         match self.inject(Phase::HeadObserved, head_key) {
             Inject::Continue => {}
             Inject::Error => {
@@ -641,9 +657,11 @@ mod tests {
         assert_eq!(fs::read(&sentinel).unwrap(), b"sentinel");
         // A symlinked object path refuses reads and writes.
         symlink(&sentinel, root.join("v")).unwrap();
-        assert!(store
-            .receive_object("v", TransportContext::limited(64))
-            .is_err());
+        assert!(
+            store
+                .receive_object("v", TransportContext::limited(64))
+                .is_err()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -675,7 +693,7 @@ mod tests {
                 "t/objects/1/chunk/aa",
                 TransportContext {
                     work: None,
-                    receive: ReceiveLimits::capped(4),
+                    receive: super::super::receive::ReceiveLimits::capped(4),
                 },
             )
             .expect_err("cap");
@@ -685,7 +703,7 @@ mod tests {
                 "t/objects/1/chunk/zz",
                 TransportContext {
                     work: None,
-                    receive: ReceiveLimits::capped(8),
+                    receive: super::super::receive::ReceiveLimits::capped(8),
                 },
             )
             .expect_err("missing");

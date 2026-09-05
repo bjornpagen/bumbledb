@@ -12,7 +12,7 @@
 //! | `F64` | canonical total-order key |
 //! | `String` | interner token ([`TextInterner`]); scans use lookup-only |
 //! | `Bytes<N>` | ⌈N/8⌉ zero-padded big-endian words |
-//! | `Id128` | two big-endian words (byte order = total order) |
+//! | `Uuid` | two big-endian words (byte order = total order) |
 //! | `Interval<U64/I64/F64>` | two order words (start, end) |
 //! | `FixedInterval` | two order words (canonical rows carry both bounds) |
 //!
@@ -72,12 +72,12 @@ impl TextWords<'_> {
                 generation,
             } => match interner.intern(text, work, generation.ledger()) {
                 Ok(token) => Ok(ResidentAdmit::Ready(token)),
-                Err(crate::image::intern::InternError::Cache(_))
-                | Err(crate::image::intern::InternError::Allocation) => {
-                    Ok(ResidentAdmit::BeyondMemory(
-                        crate::image::ResidentTextExhausted::new((*generation).clone()),
-                    ))
-                }
+                Err(
+                    crate::image::intern::InternError::Cache(_)
+                    | crate::image::intern::InternError::Allocation,
+                ) => Ok(ResidentAdmit::BeyondMemory(
+                    crate::image::ResidentTextExhausted::new((*generation).clone()),
+                )),
                 Err(error) => Err(Error::from(error)),
             },
             Self::Lookup(interner) => Ok(ResidentAdmit::Ready(interner.lookup_word(text))),
@@ -93,9 +93,12 @@ const fn corrupt(what: &'static str) -> Error {
 }
 
 fn row_error(error: crate::canonical::RowError) -> Error {
-    Error::from_store(crate::storage::store::StoreError::Changes(
-        crate::changes::ChangeError::Row(error),
-    ))
+    match error {
+        crate::canonical::RowError::Work(error) => {
+            Error::from_store(crate::storage::store::StoreError::Work(error))
+        }
+        _ => corrupt("stored interval violates its field domain"),
+    }
 }
 
 struct Reader<'a> {
@@ -135,10 +138,6 @@ pub(crate) const fn i64_word(value: i64) -> u64 {
 /// # Errors
 /// Typed corruption for any malformed stored byte; work/allocation refusal
 /// from interning.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the per-type decode arms are one linear wire table"
-)]
 pub(crate) fn row_words(
     fields: &[FieldDescriptor],
     bytes: &[u8],
@@ -206,7 +205,7 @@ pub(crate) fn row_words(
                 .map_err(row_error)?;
                 out.extend([start, end]);
             }
-            (8, ValueType::Id128) => {
+            (8, ValueType::Uuid) => {
                 let raw: [u8; 16] = reader.word()?;
                 out.push(u64::from_be_bytes(
                     raw[..8].try_into().expect("sixteen bytes"),
@@ -378,18 +377,9 @@ mod string_field_tests {
     #[test]
     fn d02_row_words_string_field_marks_string_columns() {
         let row = RowWords::new(&[ValueType::U64, ValueType::String, ValueType::I64]);
-        assert!(!Operands::string_field(
-            &row,
-            OperandAddr::from(FieldId(0))
-        ));
-        assert!(Operands::string_field(
-            &row,
-            OperandAddr::from(FieldId(1))
-        ));
-        assert!(!Operands::string_field(
-            &row,
-            OperandAddr::from(FieldId(2))
-        ));
+        assert!(!Operands::string_field(&row, OperandAddr::from(FieldId(0))));
+        assert!(Operands::string_field(&row, OperandAddr::from(FieldId(1))));
+        assert!(!Operands::string_field(&row, OperandAddr::from(FieldId(2))));
         assert!(row.field_is_string(FieldId(1)));
         assert!(!row.field_is_string(FieldId(0)));
     }

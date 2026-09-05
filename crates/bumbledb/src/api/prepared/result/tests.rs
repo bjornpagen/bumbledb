@@ -66,8 +66,12 @@ fn ram_and_scratch_backings_agree_on_every_cell() {
     let mut scratch = scratch;
     assert_eq!(ram.len(), 32);
     assert_eq!(scratch.len(), 32);
-    let a = ram.collect(u64::MAX).expect("collect RAM");
-    let b = scratch.collect(u64::MAX).expect("collect scratch");
+    let a = ram
+        .collect_with_work(u64::MAX, &work, u64::MAX)
+        .expect("collect RAM");
+    let b = scratch
+        .collect_with_work(u64::MAX, &work, u64::MAX)
+        .expect("collect scratch");
     assert_rows(&a, 32);
     assert_rows(&b, 32);
 }
@@ -77,10 +81,12 @@ fn collect_cap_refuses_and_leaves_the_backing_available() {
     let work = work();
     let mut sealed =
         CompleteResult::seal(sample_answers(10), heap_identity(), &work, 0).expect("seal");
-    let refused = sealed.collect(5);
+    let refused = sealed.collect_with_work(5, &work, u64::MAX);
     assert!(matches!(refused, Err(Error::ResultBytesOverflow)));
     // The sealed backing is still whole after the cap refusal.
-    let collected = sealed.collect(10).expect("collect after refusal");
+    let collected = sealed
+        .collect_with_work(10, &work, u64::MAX)
+        .expect("collect after refusal");
     assert_rows(&collected, 10);
 }
 
@@ -92,7 +98,7 @@ fn the_cursor_consumes_the_result_and_frames_the_terminal_page() {
     let mut delivered = 0u64;
     let mut pages = 0;
     let mut saw_terminal = false;
-    while let Some(page) = cursor.next_page().expect("page") {
+    while let Some(page) = cursor.next_page_with_work(&work, u64::MAX).expect("page") {
         pages += 1;
         delivered += page.rows.len() as u64;
         if page.terminal {
@@ -103,7 +109,10 @@ fn the_cursor_consumes_the_result_and_frames_the_terminal_page() {
     assert_eq!(pages, 3, "7 rows over pages of 3");
     assert!(saw_terminal, "the terminal frame is explicit");
     assert!(
-        cursor.next_page().expect("spent cursor").is_none(),
+        cursor
+            .next_page_with_work(&work, u64::MAX)
+            .expect("spent cursor")
+            .is_none(),
         "a drained cursor stays drained"
     );
 }
@@ -115,7 +124,10 @@ fn an_empty_result_still_frames_completion() {
     answers.begin(2);
     let sealed = CompleteResult::seal(answers, heap_identity(), &work, usize::MAX).expect("seal");
     let mut cursor = sealed.into_cursor(4);
-    let page = cursor.next_page().expect("page").expect("one frame");
+    let page = cursor
+        .next_page_with_work(&work, u64::MAX)
+        .expect("page")
+        .expect("one frame");
     assert!(page.rows.is_empty());
     assert!(page.terminal, "empty complete sets are still complete");
 }
@@ -147,7 +159,7 @@ fn rebinding_re_homes_retained_scratch_reads_onto_a_fresh_ledger() {
 
     // Un-rebound, retained scratch reads still consult the exhausted
     // execute ledger — the typed refusal, with the backing left whole.
-    let refused = sealed.collect(u64::MAX);
+    let refused = sealed.collect_with_work(u64::MAX, &execute, u64::MAX);
     assert!(
         matches!(refused, Err(Error::Store(_))),
         "reads under the exhausted execute ledger refuse typed"
@@ -156,9 +168,18 @@ fn rebinding_re_homes_retained_scratch_reads_onto_a_fresh_ledger() {
     // Re-homed onto the retaining caller's fresh ledger, the same sealed
     // rows read whole — repeatedly (collect leaves the backing).
     let retained = work();
-    sealed.rebind_work(&retained);
-    assert_rows(&sealed.collect(u64::MAX).expect("collect rebound"), 16);
-    assert_rows(&sealed.collect(u64::MAX).expect("collect again"), 16);
+    assert_rows(
+        &sealed
+            .collect_with_work(u64::MAX, &retained, u64::MAX)
+            .expect("collect rebound"),
+        16,
+    );
+    assert_rows(
+        &sealed
+            .collect_with_work(u64::MAX, &retained, u64::MAX)
+            .expect("collect again"),
+        16,
+    );
     assert_eq!(
         sealed.byte_len(),
         charge,
@@ -176,15 +197,19 @@ fn rebinding_re_homes_retained_scratch_reads_onto_a_fresh_ledger() {
     }
     .start()
     .expect("start");
-    cursor.rebind_work(&zero_work);
     assert!(
-        matches!(cursor.next_page(), Err(Error::Store(_))),
+        matches!(
+            cursor.next_page_with_work(&zero_work, u64::MAX),
+            Err(Error::Store(_))
+        ),
         "cursor pages charge the ledger the cursor is bound to"
     );
-    cursor.rebind_work(&work());
     let mut delivered = 0u64;
     let mut saw_terminal = false;
-    while let Some(page) = cursor.next_page().expect("page") {
+    while let Some(page) = cursor
+        .next_page_with_work(&retained, u64::MAX)
+        .expect("page")
+    {
         delivered += page.rows.len() as u64;
         if page.terminal {
             saw_terminal = true;
@@ -194,11 +219,11 @@ fn rebinding_re_homes_retained_scratch_reads_onto_a_fresh_ledger() {
     assert!(saw_terminal, "the rebound cursor completes with its frame");
 }
 
-/// Rebinding a RAM-backed result is a harmless no-op: RAM reads never
-/// consult a ledger, so a retained RAM result reads whole even under an
-/// exhausted execute ledger, before and after rebinding.
+/// RAM and scratch results both require fresh delivery work. Exhausting the
+/// execute budget cannot poison the retained result, or exempt a RAM copy
+/// from the caller's work limit.
 #[test]
-fn ram_backed_results_read_without_a_ledger_and_rebind_is_a_no_op() {
+fn ram_backed_results_require_delivery_work_and_retry_under_a_fresh_ledger() {
     let execute = crate::work::ExecutionPolicy {
         work_units: 4096,
         ..UNBOUNDED_POLICY
@@ -208,9 +233,23 @@ fn ram_backed_results_read_without_a_ledger_and_rebind_is_a_no_op() {
     let mut sealed = CompleteResult::seal(sample_answers(8), heap_identity(), &execute, usize::MAX)
         .expect("seal RAM");
     while execute.step(1).is_ok() {}
-    assert_rows(&sealed.collect(u64::MAX).expect("RAM collect"), 8);
-    sealed.rebind_work(&work());
-    assert_rows(&sealed.collect(u64::MAX).expect("still whole"), 8);
+    assert!(matches!(
+        sealed.collect_with_work(u64::MAX, &execute, u64::MAX),
+        Err(Error::Store(_))
+    ));
+    let retained = work();
+    assert_rows(
+        &sealed
+            .collect_with_work(u64::MAX, &retained, u64::MAX)
+            .expect("RAM collect"),
+        8,
+    );
+    assert_rows(
+        &sealed
+            .collect_with_work(u64::MAX, &retained, u64::MAX)
+            .expect("still whole"),
+        8,
+    );
 }
 
 #[test]
@@ -230,7 +269,7 @@ fn sealed_results_charge_the_result_ledger() {
 
 /// D12/D25: two rows that fit individually but not together become two
 /// successful pages. Predelivery refusal after copy returns no data and
-/// retries at the same row. Verification: NotRun.
+/// retries at the same row. Verification: `NotRun`.
 #[test]
 fn d25_two_row_page_cap_and_predelivery_abort() {
     let work = work();
@@ -289,9 +328,12 @@ fn d25_two_row_page_cap_and_predelivery_abort() {
     cursor.inject_backing_failure(Error::Corruption(
         crate::error::CorruptionError::MalformedValue("result row sequence"),
     ));
-    assert!(cursor.next_page().is_err(), "backing failure is failed");
     assert!(
-        cursor.next_page().is_err(),
+        cursor.next_page_with_work(&work, u64::MAX).is_err(),
+        "backing failure is failed"
+    );
+    assert!(
+        cursor.next_page_with_work(&work, u64::MAX).is_err(),
         "a failed cursor never becomes EOF"
     );
     assert!(
@@ -302,18 +344,24 @@ fn d25_two_row_page_cap_and_predelivery_abort() {
 
 /// Oversized first row: fit is refused from the sealed lengths, the
 /// cursor stays on that row, and a later admitted pull still delivers it.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn oversized_first_row_refuses_with_cursor_unchanged() {
     let work = work();
     let mut answers = Answers::new();
     answers.begin(1);
-    answers.push_value(&AnswerValue::String("this-row-is-too-large-for-eight-bytes"));
+    answers.push_value(&AnswerValue::String(
+        "this-row-is-too-large-for-eight-bytes",
+    ));
     answers.push_value(&AnswerValue::String("ok"));
     for ram_allowance in [usize::MAX, 0] {
-        let sealed =
-            CompleteResult::seal(clone_answers(&answers), heap_identity(), &work, ram_allowance)
-                .expect("seal");
+        let sealed = CompleteResult::seal(
+            clone_answers(&answers),
+            heap_identity(),
+            &work,
+            ram_allowance,
+        )
+        .expect("seal");
         let mut cursor = sealed.into_cursor(8);
         let mut ticket = DeliveryTicket::open(&mut cursor);
         let before = work.used(crate::work::Resource::ResultBytes);
@@ -347,8 +395,13 @@ fn oversized_first_row_refuses_with_cursor_unchanged() {
             .next_page_with_work(&work, 1024)
             .expect("retry")
             .expect("row still there");
-        assert_eq!(retry.rows.len(), 1);
-        assert_eq!(retry.rows.get(0, 0), AnswerValue::String("this-row-is-too-large-for-eight-bytes"));
+        assert_eq!(retry.rows.len(), 2);
+        assert_eq!(
+            retry.rows.get(0, 0),
+            AnswerValue::String("this-row-is-too-large-for-eight-bytes")
+        );
+        assert_eq!(retry.rows.get(1, 0), AnswerValue::String("ok"));
+        assert!(retry.terminal);
     }
 }
 
@@ -366,7 +419,7 @@ fn clone_answers(answers: &Answers) -> Answers {
 /// Several rows that jointly fit become one page. Size comes from the
 /// sealed cells / one scratch load — the page is not encoded into an
 /// uncharged Vec and then rejected. `into_cursor(page_rows)` is the cap.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn multirow_page_fits_under_byte_allowance() {
     let work = work();
@@ -377,9 +430,13 @@ fn multirow_page_fits_under_byte_allowance() {
     answers.push_value(&AnswerValue::U64(3));
     // One U64 encodes as 9 bytes; three fit in 32. Row cap 2 must win.
     for ram_allowance in [usize::MAX, 0] {
-        let sealed =
-            CompleteResult::seal(clone_answers(&answers), heap_identity(), &work, ram_allowance)
-                .expect("seal");
+        let sealed = CompleteResult::seal(
+            clone_answers(&answers),
+            heap_identity(),
+            &work,
+            ram_allowance,
+        )
+        .expect("seal");
         let mut cursor = sealed.into_cursor(2);
         let mut ticket = DeliveryTicket::open(&mut cursor);
         let preview = ticket
@@ -393,14 +450,17 @@ fn multirow_page_fits_under_byte_allowance() {
         );
         assert_eq!(preview.get(0, 0), AnswerValue::U64(1));
         assert_eq!(preview.get(1, 0), AnswerValue::U64(2));
-        assert_eq!(cursor.debug_next_row(), 0);
+        assert_eq!(ticket.cursor.debug_next_row(), 0);
         assert!(
             ticket.preview_charged_bytes() > 0,
             "multirow preview reserved before copy"
         );
         let adopted = ticket.adopt().expect("adopt");
         let charge = work
-            .reserve(crate::work::ByteKind::Result, super::logical_bytes_for_test(&adopted))
+            .reserve(
+                crate::work::ByteKind::Result,
+                super::logical_bytes_for_test(&adopted),
+            )
             .expect("register output");
         drop(charge);
         ticket.commit();
@@ -421,8 +481,8 @@ fn multirow_page_fits_under_byte_allowance() {
 #[test]
 fn cancelled_preview_aborts_without_advancing() {
     let work = work();
-    let sealed = CompleteResult::seal(sample_answers(3), heap_identity(), &work, usize::MAX)
-        .expect("seal");
+    let sealed =
+        CompleteResult::seal(sample_answers(3), heap_identity(), &work, usize::MAX).expect("seal");
     let mut cursor = sealed.into_cursor(8);
     work.cancel();
     let mut ticket = DeliveryTicket::open(&mut cursor);
@@ -440,7 +500,7 @@ fn cursor_next_for_test(cursor: &ResultCursor) -> u64 {
 
 /// Preview growth is reserved onto the ticket before copy; abort refunds
 /// that owner. An oversized first row never takes a charge.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn preview_growth_is_charged_and_oversized_leaves_no_uncharged_alloc() {
     let work = work();
@@ -509,7 +569,7 @@ fn preview_growth_is_charged_and_oversized_leaves_no_uncharged_alloc() {
 /// caller cap but cannot reserve overlap, then retry the **same** cursor
 /// with sufficient resources and receive the same first row. A budget
 /// refusal is not a sticky cursor failure.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn resource_refusal_retries_same_first_row() {
     let seal = work();
@@ -518,9 +578,13 @@ fn resource_refusal_retries_same_first_row() {
     answers.push_value(&AnswerValue::String("first-row-payload"));
     answers.push_value(&AnswerValue::String("second"));
     for ram_allowance in [usize::MAX, 0] {
-        let sealed =
-            CompleteResult::seal(clone_answers(&answers), heap_identity(), &seal, ram_allowance)
-                .expect("seal");
+        let sealed = CompleteResult::seal(
+            clone_answers(&answers),
+            heap_identity(),
+            &seal,
+            ram_allowance,
+        )
+        .expect("seal");
         let mut cursor = sealed.into_cursor(8);
         let tight = crate::work::ExecutionPolicy {
             result_bytes: 8,
@@ -536,38 +600,39 @@ fn resource_refusal_retries_same_first_row() {
             "row fits the caller cap but cannot reserve result overlap"
         );
         drop(ticket);
-        assert_eq!(
-            cursor.debug_next_row(),
-            0,
-            "resource abort leaves next_row"
-        );
+        assert_eq!(cursor.debug_next_row(), 0, "resource abort leaves next_row");
         let retry = cursor
             .next_page_with_work(&seal, 1024)
             .expect("retry after resource abort must not be a failed cursor")
             .expect("same first row");
-        assert_eq!(retry.rows.len(), 1);
+        assert_eq!(retry.rows.len(), 2);
         assert_eq!(
             retry.rows.get(0, 0),
             AnswerValue::String("first-row-payload")
         );
+        assert_eq!(retry.rows.get(1, 0), AnswerValue::String("second"));
+        assert!(retry.terminal);
     }
 }
 
 /// True backing / corruption failure stays terminal: later pulls return
 /// that error, never EOF or a successful page.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn backing_failure_stays_terminal() {
     let work = work();
-    let sealed = CompleteResult::seal(sample_answers(2), heap_identity(), &work, usize::MAX)
-        .expect("seal");
+    let sealed =
+        CompleteResult::seal(sample_answers(2), heap_identity(), &work, usize::MAX).expect("seal");
     let mut cursor = sealed.into_cursor(8);
     cursor.inject_backing_failure(Error::Corruption(
         crate::error::CorruptionError::MalformedValue("result row sequence"),
     ));
-    assert!(cursor.next_page().is_err(), "injected backing failure");
     assert!(
-        cursor.next_page().is_err(),
+        cursor.next_page_with_work(&work, u64::MAX).is_err(),
+        "injected backing failure"
+    );
+    assert!(
+        cursor.next_page_with_work(&work, u64::MAX).is_err(),
         "a failed cursor never becomes EOF"
     );
     assert!(
@@ -579,7 +644,7 @@ fn backing_failure_stays_terminal() {
 
 /// Adopt-and-abort discards the ticket-local pending advance. A fresh
 /// unpreviewed ticket's `commit` must not steal that abandoned page.
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn adopt_and_abort_leaves_nothing_a_fresh_ticket_can_commit() {
     let work = work();
@@ -588,9 +653,13 @@ fn adopt_and_abort_leaves_nothing_a_fresh_ticket_can_commit() {
     answers.push_value(&AnswerValue::String("only"));
     answers.push_value(&AnswerValue::String("next"));
     for ram_allowance in [usize::MAX, 0] {
-        let sealed =
-            CompleteResult::seal(clone_answers(&answers), heap_identity(), &work, ram_allowance)
-                .expect("seal");
+        let sealed = CompleteResult::seal(
+            clone_answers(&answers),
+            heap_identity(),
+            &work,
+            ram_allowance,
+        )
+        .expect("seal");
         let mut cursor = sealed.into_cursor(8);
         let mut ticket = DeliveryTicket::open(&mut cursor);
         ticket
@@ -619,7 +688,7 @@ fn adopt_and_abort_leaves_nothing_a_fresh_ticket_can_commit() {
 /// Large spilled results have no resident per-row length directory.
 /// Paging must stay inside the working-memory envelope (not 8 bytes ×
 /// row count of extra resident index).
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn spilled_results_stay_within_working_memory_envelope() {
     let work = work();
@@ -673,7 +742,7 @@ fn encoded_value_len_matches_the_codec() {
         AnswerValue::I64(-3),
         AnswerValue::String("fit-check"),
         AnswerValue::FixedBytes(&[1, 2, 3, 4]),
-        AnswerValue::Id128(bumbledb_theory::Id128::from_bytes([0; 16])),
+        AnswerValue::Uuid(bumbledb_theory::Uuid::from_bytes([0; 16])),
     ];
     for value in values {
         buf.clear();

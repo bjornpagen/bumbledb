@@ -80,8 +80,8 @@ pub mod current_layout {
     pub const EXACT_U64_ROUTING: u64 = 8;
     /// Fingerprint routing width (BLAKE3 truncated, exact-checked).
     pub const FINGERPRINT_ROUTING: u64 = 16;
-    /// Application Id128 stored width (not a physical row id).
-    pub const ID128_WIDTH: u64 = 16;
+    /// Application Uuid stored width (not a physical row id).
+    pub const UUID_WIDTH: u64 = 16;
 
     #[must_use]
     pub const fn fact_entry(payload: u64) -> u64 {

@@ -14,9 +14,9 @@ use super::{
     RelationId, Schema, SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor,
     StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight, value_matches,
 };
-use crate::schema::compiled::{LMDB_KEY_LIMIT, select_key_encoding_width};
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
+use crate::schema::compiled::{LMDB_KEY_LIMIT, select_key_encoding_width};
 use bumbledb_theory::Value;
 
 /// Physical LMDB key bound for one key statement's scalar determinant (chapter
@@ -390,7 +390,7 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             Value::IntervalU64(_) => 5,
             Value::IntervalI64(_) => 6,
             Value::F64(_) => 7,
-            Value::Id128(_) => 8,
+            Value::Uuid(_) => 8,
             Value::IntervalF64(_) => 9,
         }
     }
@@ -399,7 +399,7 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
         (Value::F64(x), Value::F64(y)) => x.cmp(y),
-        (Value::Id128(x), Value::Id128(y)) => x.cmp(y),
+        (Value::Uuid(x), Value::Uuid(y)) => x.cmp(y),
         (Value::String(x), Value::String(y)) => x.cmp(y),
         (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
         (Value::IntervalU64(x), Value::IntervalU64(y)) => {
@@ -569,7 +569,11 @@ fn validate_functionality(
     let scalar_fields: Vec<_> = projection
         .ordered()
         .iter()
-        .filter(|field| !relation.fields[usize::from(field.0)].value_type.is_interval())
+        .filter(|field| {
+            !relation.fields[usize::from(field.0)]
+                .value_type
+                .is_interval()
+        })
         .map(|field| relation.fields[usize::from(field.0)].clone())
         .collect();
     let routing = select_key_encoding_width(&scalar_fields);
@@ -1533,9 +1537,7 @@ fn derived_columns(decl: &RelationDescriptor) -> usize {
             .fields
             .iter()
             .map(|field| match field.value_type {
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Id128 => {
-                    2
-                }
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Uuid => 2,
                 ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len).max(1),
                 _ => 1,
             })

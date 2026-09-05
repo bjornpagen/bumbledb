@@ -51,17 +51,16 @@ scripts/check.sh
 # runs scripts/spec-census.sh). lean.sh is not a cargo-test owner —
 # correspondence::OWNED_CASES live in crates/bumbledb-bench and run
 # under workspace nextest above. No dyn/wording census.
-# Identity/surface goldens moved here — census no longer runs spec-gen --check.
+# Current identity goldens run in the workspace conformance_v3 test target.
 echo "==> scripts/lean.sh"
 scripts/lean.sh
-echo "==> spec-gen --check (v3 identity/surface goldens; not authority theorems)"
-python3 scripts/spec-gen.py --check
 
 echo "==> bridge: Rust tests in the parallel process pool (ts/crate)"
 cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml
 
-echo "==> bridge: Rust documentation tests (ts/crate)"
-cargo test --manifest-path ts/crate/Cargo.toml --doc
+# The bridge is cdylib-only; rustdoc cannot run doctests for that target.
+# Public Rust examples run in the workspace doctests above, and SDK examples
+# run through the TypeScript and packed-consumer lanes below.
 
 echo "==> ts/ (test, typecheck, lint; no second native rebuild)"
 (cd ts && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)

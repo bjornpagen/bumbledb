@@ -23,7 +23,7 @@ pub enum StoreMode {
 impl StoreMode {
     /// # Errors
     pub fn create<S: Theory>(self, path: &Path, schema: S) -> Result<Db<S>, String> {
-        match Db::create(path, schema) {
+        match Db::create(path, schema, crate::harness::bench_work()) {
             Err(error) => Err(format!("create ({}): {error:?}", self.label())),
             Ok(Admission::Accepted(db)) => Ok(db),
             Ok(Admission::Rejected(violations)) => Err(format!(
@@ -35,7 +35,8 @@ impl StoreMode {
 
     /// # Errors
     pub fn open<S: Theory>(self, path: &Path, schema: S) -> Result<Db<S>, String> {
-        Db::open(path, schema).map_err(|error| format!("open ({}): {error:?}", self.label()))
+        Db::open(path, schema, crate::harness::bench_work())
+            .map_err(|error| format!("open ({}): {error:?}", self.label()))
     }
 
     #[must_use]

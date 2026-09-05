@@ -114,7 +114,11 @@ fn decode_narrow_claim(key: &[u8], group_bytes: usize) -> Result<(u64, u64)> {
     if key.len() != group_bytes + 16 {
         return Err(corrupt());
     }
-    let start = u64::from_be_bytes(key[group_bytes..group_bytes + 8].try_into().expect("eight bytes"));
+    let start = u64::from_be_bytes(
+        key[group_bytes..group_bytes + 8]
+            .try_into()
+            .expect("eight bytes"),
+    );
     let end = u64::from_be_bytes(key[group_bytes + 8..].try_into().expect("eight bytes"));
     Ok((start, end))
 }
@@ -378,10 +382,6 @@ impl AggregateSink {
             let mut table = ScratchRelation::new(&budget.work, 0);
             let pack_wide_mode = matches!(&self.group_state, GroupState::Pack { .. })
                 && pack_requires_wide(self.key_scratch.len());
-            if pack_wide_mode {
-                table.open_map(ScratchMapId::GroupToToken)?;
-                table.open_map(ScratchMapId::TokenToGroup)?;
-            }
             table.force_spill()?;
             self.spill = Some(Box::new(GroupSpill {
                 table,
@@ -435,11 +435,8 @@ impl AggregateSink {
                         spill.groups += 1;
                     }
                     let mut append = ScratchAppend::new(&mut spill.table);
-                    match append.append(
-                        ScratchMapId::Default,
-                        &spill.key_bytes,
-                        &spill.value_bytes,
-                    ) {
+                    match append.append(ScratchMapId::Default, &spill.key_bytes, &spill.value_bytes)
+                    {
                         Ok(()) => append.finish(),
                         Err(error) => {
                             drop(append);
@@ -540,7 +537,11 @@ fn flush_pack_claims(
                     return Err(corrupt());
                 }
                 tokens[group_idx] = u64::from_be_bytes(
-                    spill.value_bytes.as_slice().try_into().expect("eight bytes"),
+                    spill
+                        .value_bytes
+                        .as_slice()
+                        .try_into()
+                        .expect("eight bytes"),
                 );
             } else {
                 let token = spill.next_pack_token;
@@ -632,7 +633,11 @@ fn finalize_pack_wide(
                         emit,
                     )?;
                 }
-                if !lookup.get(ScratchMapId::TokenToGroup, &token.to_be_bytes(), &mut header)? {
+                if !lookup.get(
+                    ScratchMapId::TokenToGroup,
+                    &token.to_be_bytes(),
+                    &mut header,
+                )? {
                     return Err(corrupt());
                 }
                 decode_key(&header, &mut group_header)?;

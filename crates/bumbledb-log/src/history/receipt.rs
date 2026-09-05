@@ -46,7 +46,7 @@ pub fn parse_receipt_key(key: &[u8]) -> Option<CommandId> {
     request.copy_from_slice(&key[9..]);
     Some(CommandId {
         receipt_epoch: epoch,
-        request_id: super::RequestId::from_core(bumbledb::Id128::from_bytes(request)),
+        request_id: super::RequestId::from_core(bumbledb::Uuid::from_bytes(request)),
     })
 }
 
@@ -182,7 +182,7 @@ pub fn retired(id: CommandId, retired_through: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use super::super::{
         DatabaseId, DatabaseIdentity, DecisionDigest, DecisionStamp, IncarnationId, ReceiptEpoch,
@@ -199,8 +199,8 @@ mod tests {
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
@@ -210,7 +210,7 @@ mod tests {
             identity: identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::new(epoch).unwrap(),
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             digest: super::super::CommandDigest::from_bytes([9; 32]),
         }
@@ -301,7 +301,7 @@ mod tests {
         });
         let bytes = encode_receipt_row(&row, LIMITS).unwrap();
         let mut foreign = row.command;
-        foreign.identity.incarnation_id = IncarnationId::from_core(Id128::from_bytes([8; 16]));
+        foreign.identity.incarnation_id = IncarnationId::from_core(Uuid::from_bytes([8; 16]));
         assert_eq!(
             decode_receipt_row(foreign, &bytes, LIMITS),
             Err(ReceiptRowError::ForeignRow)

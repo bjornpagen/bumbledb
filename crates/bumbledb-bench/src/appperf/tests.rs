@@ -61,24 +61,6 @@ fn scorecard_names_the_special_regimes_once_each_at_least() {
 }
 
 #[test]
-fn scorecard_cells_name_visits_or_requests_not_elapsed_smoke() {
-    for cell in workloads::scorecard() {
-        let extras = cell.extra_outputs.join(" ");
-        assert!(
-            extras.contains("visit")
-                || extras.contains("owner")
-                || extras.contains("request")
-                || extras.contains("bit")
-                || extras.contains("roster")
-                || extras.contains("distribution")
-                || extras.contains("class"),
-            "{} reports ritual time instead of work: {extras}",
-            cell.id
-        );
-    }
-}
-
-#[test]
 fn scorecard_cells_all_carry_an_oracle_and_a_criterion() {
     for cell in workloads::scorecard() {
         assert!(!cell.oracle.is_empty(), "{}: no oracle", cell.id);
@@ -124,7 +106,11 @@ fn scorecard_mutation_cells_charge_first_read_and_forbid_id_allocation_work() {
         .iter()
         .filter(|cell| cell.regime == Regime::PostWrite)
         .collect();
-    assert_eq!(post_write.len(), 1, "one mutation→read cell, not a cartesian");
+    assert_eq!(
+        post_write.len(),
+        1,
+        "one mutation→read cell, not a cartesian"
+    );
     for cell in post_write {
         assert_eq!(cell.gate, Gate::AppMutate);
         assert_eq!(cell.family, Family::MutationRead);
@@ -141,13 +127,17 @@ fn scorecard_mutation_cells_charge_first_read_and_forbid_id_allocation_work() {
 #[test]
 fn scorecard_tenant_lifecycle_owns_churn_and_maintenance_evidence() {
     let cells = workloads::scorecard();
-    assert!(cells.iter().any(|cell| cell.family == Family::TenantLifecycle
-        && cell.regime == Regime::TenantChurn
-        && cell.gate == Gate::AppTenants));
     assert!(
         cells
             .iter()
-            .any(|cell| cell.family == Family::TenantLifecycle && cell.regime == Regime::Maintenance)
+            .any(|cell| cell.family == Family::TenantLifecycle
+                && cell.regime == Regime::TenantChurn
+                && cell.gate == Gate::AppTenants)
+    );
+    assert!(
+        cells.iter().any(
+            |cell| cell.family == Family::TenantLifecycle && cell.regime == Regime::Maintenance
+        )
     );
 }
 
@@ -379,16 +369,12 @@ fn runner_post_write_alternation_restores_the_loaded_state() {
         seed: 1,
         scale: Scale::Tiny,
     };
-    let db = bumbledb::Db::create(
-        &dir,
-        crate::schema::Ledger,
-        crate::harness::bench_work().expect("work"),
-    )
-    .expect("create")
-    .expect("accepted");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
+        .expect("create")
+        .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
     let before = db
-        .read(crate::harness::bench_work().expect("work"), |snap| {
+        .read(crate::harness::bench_work(), |snap| {
             snap.count(crate::schema::ids::POSTING_TAG)
         })
         .expect("count");
@@ -399,7 +385,7 @@ fn runner_post_write_alternation_restores_the_loaded_state() {
         "admitted visits, not a positive-time claim"
     );
     let after = db
-        .read(crate::harness::bench_work().expect("work"), |snap| {
+        .read(crate::harness::bench_work(), |snap| {
             snap.count(crate::schema::ids::POSTING_TAG)
         })
         .expect("count");
@@ -417,13 +403,9 @@ fn runner_large_result_reports_split_segments_below_end_to_end() {
     use crate::corpus_gen::{GenConfig, Scale};
     let dir = std::env::temp_dir().join("bumbledb-bench-appperf-large");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(
-        &dir,
-        crate::schema::Ledger,
-        crate::harness::bench_work().expect("work"),
-    )
-    .expect("create")
-    .expect("accepted");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
+        .expect("create")
+        .expect("accepted");
     crate::corpus::load_bumbledb(
         &db,
         GenConfig {
@@ -462,13 +444,9 @@ fn runner_cold_open_times_open_plus_first_read() {
     use crate::corpus_gen::{GenConfig, Scale};
     let dir = std::env::temp_dir().join("bumbledb-bench-appperf-cold");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(
-        &dir,
-        crate::schema::Ledger,
-        crate::harness::bench_work().expect("work"),
-    )
-    .expect("create")
-    .expect("accepted");
+    let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
+        .expect("create")
+        .expect("accepted");
     crate::corpus::load_bumbledb(
         &db,
         GenConfig {

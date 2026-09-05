@@ -5,6 +5,8 @@
  * execution live in `@bjornpagen/bumbledb-log/migrations` and the native
  * codec. Importing this module performs no native work.
  */
+
+export type { MigrationIntent, MigrationIntentEntry } from "#migrations/intent.ts"
 export {
 	backfill,
 	convert,
@@ -15,4 +17,3 @@ export {
 	renameRelation,
 	seed
 } from "#migrations/intent.ts"
-export type { MigrationIntent, MigrationIntentEntry } from "#migrations/intent.ts"

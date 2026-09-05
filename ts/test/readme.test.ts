@@ -26,6 +26,7 @@ test("every ts fence in README.md type-checks against src/index.ts at HEAD", fun
 
 	const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-readme-"))
 	try {
+		fs.symlinkSync(path.join(packageRoot, "node_modules"), path.join(projectDir, "node_modules"), "dir")
 		const files = fences.map(function writeFence(body, index) {
 			const file = path.join(projectDir, `fence-${index}.ts`)
 			fs.writeFileSync(file, body)

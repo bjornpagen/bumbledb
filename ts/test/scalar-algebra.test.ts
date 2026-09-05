@@ -4,14 +4,13 @@
  * and query variable leaves through Compute. Construction is constant work
  * against cached summaries — not a whole-tree re-judgment.
  *
- * Verification: NotRun
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import { Compute } from "#query/compute.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
-import { Scalar, scalarAuthoringWork, type ScalarExpr } from "#scalar.ts"
+import { Scalar, type ScalarExpr, scalarAuthoringWork } from "#scalar.ts"
 import { Attempt, Learning } from "#test/fixtures/learning.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -68,7 +67,7 @@ describe("migration Scalar (field leaves, kind-indexed literals)", function migr
 		assert.ok(unresolved)
 	})
 
-	test("D27: Scalar.add(Scalar.field(\"units\"), Scalar.u64(1n)) constructs unresolved", function fieldArithmetic() {
+	test('D27: Scalar.add(Scalar.field("units"), Scalar.u64(1n)) constructs unresolved', function fieldArithmetic() {
 		const expr = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
 		assert.equal(expr.kind, "add")
 		assert.equal(expr.result, "unresolved")
@@ -121,13 +120,12 @@ describe("migration Scalar (field leaves, kind-indexed literals)", function migr
 
 	test("negate, predicates and bool walls match the engine roster", function operatorWalls() {
 		assert.throws(function negateU64() {
-			Scalar.negate(Scalar.u64(1n) as ScalarExpr<"i64" | "f64">)
+			// @ts-expect-error — unsigned negation is refused statically and dynamically
+			Scalar.negate(Scalar.u64(1n))
 		}, /negation is defined over i64 and f64 only/)
 		assert.throws(function boolAdd() {
-			Scalar.add(
-				Scalar.bool(true) as ScalarExpr<"u64" | "i64" | "f64">,
-				Scalar.bool(false) as ScalarExpr<"u64" | "i64" | "f64">
-			)
+			// @ts-expect-error — boolean operands are not numeric
+			Scalar.add(Scalar.bool(true), Scalar.bool(false))
 		}, /bool, not numeric/)
 		const overField = Scalar.negate(Scalar.field("delta"))
 		assert.equal(overField.result, "unresolved")
@@ -181,11 +179,12 @@ describe("query Compute (variable leaves, shared roster)", function queryCompute
 			const { id, units } = v(Attempt)
 			return r.match(Attempt, { id, units }).find({ id, doubled: Compute.multiply(units, Compute.u64(2n)) })
 		})
-		const parsed = lowerQuery(q) as unknown as {
-			readonly rules: ReadonlyArray<{ readonly finds: readonly unknown[] }>
-		}
-		const term = parsed.rules[0]?.finds[1] as { readonly expr?: { readonly value?: unknown } }
-		assert.deepEqual(term?.expr?.value, { kind: "u64", value: 2n })
+		const term = lowerQuery(q).rules[0]?.finds[1]
+		assert.equal(term?.kind, "compute")
+		assert.ok(term?.kind === "compute")
+		assert.equal(term.expr.kind, "multiply")
+		assert.ok(term.expr.kind === "multiply")
+		assert.deepEqual(term.expr.right, { kind: "literal", value: { kind: "u64", value: 2n } })
 	})
 })
 

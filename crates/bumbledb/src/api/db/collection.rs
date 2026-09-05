@@ -13,7 +13,7 @@ use crate::ir::Value;
 use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, RelationId, ValueMismatch, ValueType, value_matches,
 };
-use bumbledb_theory::{F64, Id128, Interval};
+use bumbledb_theory::{F64, Interval, Uuid};
 
 pub(super) fn shape_mismatch(
     rel: RelationId,
@@ -34,7 +34,7 @@ enum Cell {
     U64(u64),
     I64(i64),
     F64(F64),
-    Id128(Id128),
+    Uuid(Uuid),
     IntervalU64(Interval<u64>),
     IntervalI64(Interval<i64>),
     IntervalF64(Interval<F64>),
@@ -128,7 +128,7 @@ impl AcceptedCollection {
                 Cell::U64(value) => Value::U64(value),
                 Cell::I64(value) => Value::I64(value),
                 Cell::F64(value) => Value::F64(value),
-                Cell::Id128(value) => Value::Id128(value),
+                Cell::Uuid(value) => Value::Uuid(value),
                 Cell::IntervalU64(interval) => Value::IntervalU64(interval),
                 Cell::IntervalI64(interval) => Value::IntervalI64(interval),
                 Cell::IntervalF64(interval) => Value::IntervalF64(interval),
@@ -246,7 +246,7 @@ impl<'s> CollectionBuilder<'s> {
             Value::U64(value) => Cell::U64(*value),
             Value::I64(value) => Cell::I64(*value),
             Value::F64(value) => Cell::F64(*value),
-            Value::Id128(value) => Cell::Id128(*value),
+            Value::Uuid(value) => Cell::Uuid(*value),
             Value::String(text) => self.land_str(text)?,
             Value::FixedBytes(raw) => self.land_bytes(raw)?,
             Value::IntervalU64(interval) => Cell::IntervalU64(*interval),
@@ -284,8 +284,8 @@ impl<'s> CollectionBuilder<'s> {
 
     /// # Errors
     /// Arity/type refusals.
-    pub fn push_id128(&mut self, value: Id128) -> Result<()> {
-        self.push_scalar(&Value::Id128(value), Cell::Id128(value))
+    pub fn push_uuid(&mut self, value: Uuid) -> Result<()> {
+        self.push_scalar(&Value::Uuid(value), Cell::Uuid(value))
     }
 
     /// # Errors

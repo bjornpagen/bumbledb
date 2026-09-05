@@ -49,7 +49,7 @@ deny-delete policy for the data-plane roles.
 1. `restore(...)` creates a NEW WRITABLE INCARNATION from verified backup
    bytes. It never mutates the source lineage in place; prior history is
    preserved and restore provenance is recorded.
-2. Application `Id128` values are preserved byte-for-byte; applied
+2. Application `Uuid` values are preserved byte-for-byte; applied
    migration history and activation markers ride along (seeds are NOT
    re-run on restore).
 3. Re-point the application's tenant binding at the restored incarnation

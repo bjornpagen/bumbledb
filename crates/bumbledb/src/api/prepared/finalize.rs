@@ -3,8 +3,8 @@ use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
 use crate::error::Result;
 use crate::exec::sink::ProjectionSink;
-use crate::image::intern::InternerHandle;
 use crate::image::NonresidentTextStore;
+use crate::image::intern::InternerHandle;
 use crate::ir::validate::SignatureColumn;
 
 /// Reverses if: a profiled finalize shows the String/FixedBytes match arms'
@@ -16,6 +16,10 @@ use crate::ir::validate::SignatureColumn;
 /// grows and past-allowance rows continue in the scratch backing — the
 /// column-major bulk fill is bypassed there, since it materializes the
 /// whole set before any charge could refuse.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+)]
 pub(super) fn finalize(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
@@ -51,7 +55,15 @@ pub(super) fn finalize(
                 Err(error)
             } else if sink.spilled() {
                 // The spilled drain is row-major across both tiers.
-                drain_spilled_answers(out, interner, store.as_deref_mut(), memo, columns, sink, charge)
+                drain_spilled_answers(
+                    out,
+                    interner,
+                    store.as_deref_mut(),
+                    memo,
+                    columns,
+                    sink,
+                    charge,
+                )
             } else if let Some(charge) = charge {
                 // Charged construction is row-major: note every row so the
                 // budget can refuse (and the backing can spill) before the
@@ -66,7 +78,7 @@ pub(super) fn finalize(
                         columns,
                         answer,
                     )
-                        .and_then(|()| charge.note_row(out, memo));
+                    .and_then(|()| charge.note_row(out, memo));
                     if result.is_err() {
                         break;
                     }
@@ -181,9 +193,9 @@ fn fill_fixed_column(
                 slots[col] = Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?);
             }
         }
-        ValueType::Id128 => {
+        ValueType::Uuid => {
             for (slots, answer) in rows {
-                slots[col] = Answers::id128_cell(answer[word], answer[word + 1]);
+                slots[col] = Answers::uuid_cell(answer[word], answer[word + 1]);
             }
             return Ok(2);
         }
@@ -228,7 +240,7 @@ fn push_resolved_answer(
                 Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?),
                 1,
             ),
-            ValueType::Id128 => (Answers::id128_cell(answer[word], answer[word + 1]), 2),
+            ValueType::Uuid => (Answers::uuid_cell(answer[word], answer[word + 1]), 2),
             ValueType::Interval { element, .. } => (
                 Answers::interval_cell(*element, answer[word], answer[word + 1]),
                 2,
@@ -238,7 +250,8 @@ fn push_resolved_answer(
                 2,
             ),
             ValueType::String => {
-                let (start, len) = memo.resolve(interner, store.as_deref_mut(), answer[word], out)?;
+                let (start, len) =
+                    memo.resolve(interner, store.as_deref_mut(), answer[word], out)?;
                 (Cell::String { start, len }, 1)
             }
             ValueType::FixedBytes { len } => {

@@ -18,7 +18,7 @@ const verbs = [
 	"logHistoryCall",
 	"logHistoryResult",
 	"logHistoryClose",
-	"logSnapshotClose",
+	"runtimeSnapshotClose",
 	"logCommandSeal",
 	"logCommandDecode",
 	"logCommandTake",

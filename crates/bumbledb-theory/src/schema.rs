@@ -72,7 +72,7 @@ pub enum ValueType {
     /// The application-owned 128-bit identity scalar: sixteen exact bytes.
     /// Nominal host wrappers lower here; the name is not a second kernel,
     /// and no database issuance/reservation authority exists for it.
-    Id128,
+    Uuid,
 
     FixedBytes {
         len: u16,
@@ -98,7 +98,7 @@ impl ValueType {
         match self {
             Self::Bool => 1,
             Self::U64 | Self::I64 | Self::F64 | Self::String | Self::FixedInterval { .. } => 8,
-            Self::Id128 | Self::Interval { .. } => 16,
+            Self::Uuid | Self::Interval { .. } => 16,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
         }
     }
@@ -133,7 +133,7 @@ impl ValueType {
 }
 
 /// One field: name + structural type. There is no generation attribute:
-/// the database issues no identity; application-owned [`crate::Id128`]
+/// the database issues no identity; application-owned [`crate::Uuid`]
 /// values (or any declared key domain) arrive as ordinary input, and key
 /// laws are declared statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,7 +166,7 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
         | (Value::U64(_), ValueType::U64)
         | (Value::I64(_), ValueType::I64)
         | (Value::F64(_), ValueType::F64)
-        | (Value::Id128(_), ValueType::Id128)
+        | (Value::Uuid(_), ValueType::Uuid)
         | (Value::String(_), ValueType::String)
         | (
             Value::IntervalU64(_),
@@ -459,7 +459,7 @@ mod tests {
         RelationId, Row, SchemaDescriptor, StatementDescriptor, ValueMismatch, ValueType,
         value_matches,
     };
-    use crate::{F64, Id128, Interval, Value};
+    use crate::{F64, Interval, Uuid, Value};
 
     fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
         FieldDescriptor {
@@ -477,7 +477,7 @@ mod tests {
             relations: vec![
                 RelationDescriptor {
                     name: "Student".into(),
-                    fields: vec![field("id", ValueType::Id128)],
+                    fields: vec![field("id", ValueType::Uuid)],
                     extension: None,
                 },
                 RelationDescriptor {
@@ -496,7 +496,7 @@ mod tests {
         };
         let materialized = descriptor.materialized_statements();
         // Closed auto-handle key first, then the one declared key. The
-        // ordinary Id128 relation receives no automatic statement.
+        // ordinary Uuid relation receives no automatic statement.
         assert_eq!(materialized.len(), 2);
         assert!(matches!(
             &materialized[0],
@@ -510,15 +510,15 @@ mod tests {
 
     #[test]
     fn value_matches_covers_the_new_scalars_and_refuses_cross_kinds() {
-        let id = Value::Id128(Id128::from_bytes([7; 16]));
-        assert_eq!(value_matches(&id, &ValueType::Id128), Ok(()));
-        // Id128 is nominal: not raw bytes<16>, not an integer pair.
+        let id = Value::Uuid(Uuid::from_bytes([7; 16]));
+        assert_eq!(value_matches(&id, &ValueType::Uuid), Ok(()));
+        // UUID is a primitive scalar: not raw bytes<16>, not an integer pair.
         assert_eq!(
             value_matches(&id, &ValueType::FixedBytes { len: 16 }),
             Err(ValueMismatch::Type)
         );
         assert_eq!(
-            value_matches(&Value::FixedBytes(Box::from([0u8; 16])), &ValueType::Id128),
+            value_matches(&Value::FixedBytes(Box::from([0u8; 16])), &ValueType::Uuid),
             Err(ValueMismatch::Type)
         );
 
@@ -571,6 +571,6 @@ mod tests {
         assert!(dense.is_interval());
         assert!(!dense.is_discrete_interval());
         assert_eq!(dense.width(), 16);
-        assert_eq!(ValueType::Id128.width(), 16);
+        assert_eq!(ValueType::Uuid.width(), 16);
     }
 }

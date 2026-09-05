@@ -64,17 +64,11 @@ impl SubmitCertainty {
 #[derive(Debug)]
 pub enum AdminCertainty<T> {
     /// Pre-dispatch refusal; no CAS was dispatched this invocation.
-    NotStarted {
-        error: crate::admin::AdminError,
-    },
+    NotStarted { error: crate::admin::AdminError },
     /// Dispatched; this invocation could not establish the outcome.
-    OutcomeUnknown {
-        error: crate::admin::AdminError,
-    },
+    OutcomeUnknown { error: crate::admin::AdminError },
     /// The transition completed (evidence or fresh publication).
-    Completed {
-        value: T,
-    },
+    Completed { value: T },
 }
 
 impl<T> AdminCertainty<T> {
@@ -125,6 +119,10 @@ impl CoveredNegativeProof {
     /// Build a covered-loss proof only when the version token was consumed
     /// and the same snapshot still retains this command's epoch.
     #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
+    )]
     pub fn try_covered_loss(
         command: CommandRef,
         consumed_version: Box<[u8]>,

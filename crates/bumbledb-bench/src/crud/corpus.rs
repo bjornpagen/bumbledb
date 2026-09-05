@@ -54,7 +54,7 @@ pub fn load_stores(
     std::fs::create_dir_all(dir).map_err(|e| format!("crud scratch: {e}"))?;
     let db = lane.store_mode().create(&dir.join("db"), CrudWorld)?;
     for rel in [ids::DOC, ids::COUNTER] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, relation_rows(sizes, seed, rel))
                 .map(bumbledb::MutationReport::changed)
         })

@@ -21,10 +21,16 @@ describe("module boundaries", function suite() {
 	})
 
 	test("the /schema module exports only the pure intent constructors", function pure() {
-		assert.deepEqual(
-			Object.keys(schemaModule).sort(),
-			["backfill", "convert", "dropField", "dropRelation", "migrationIntent", "renameField", "renameRelation", "seed"]
-		)
+		assert.deepEqual(Object.keys(schemaModule).sort(), [
+			"backfill",
+			"convert",
+			"dropField",
+			"dropRelation",
+			"migrationIntent",
+			"renameField",
+			"renameRelation",
+			"seed"
+		])
 	})
 
 	test("generator entrypoints exist once, bound over the one production codec", function generator() {

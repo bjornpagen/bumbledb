@@ -49,7 +49,7 @@ Lean qualification proves current premises and empirical correspondence
 `scripts/spec-census.sh` constructor tokens). `lean.sh` is not a
 cargo-test owner. Exact `dyn` counts, wording bans and deleted-path
 census are deleted. Identity/surface goldens are
-`python3 scripts/spec-gen.py --check`, not census.
+`cargo nextest run -p bumbledb-log --test conformance_v3`, not census.
 
 ## Execution lanes
 
@@ -84,7 +84,7 @@ to claim every environment passed. Final execution order:
    census. `lean.sh` does not cargo-test L20
    `correspondence::OWNED_CASES` — those seven `C-*` tests live in
    `bumbledb-bench`. Identity/surface goldens:
-   `python3 scripts/spec-gen.py --check`.
+   `cargo nextest run -p bumbledb-log --test conformance_v3`.
 5. Fresh packed core/log installed outside the workspace;
    `ManagedRuntime.make(NativeRuntime.layer(...))` for specimens that no
    longer self-provide; D07 tiny collect must fail; D27 addon-unavailable
@@ -194,8 +194,8 @@ production planner. L20 executable census of seven ids is
 `lean.sh`): `C-D04-collision-bytes`, `C-D19-cancel`,
 `C-D19-mean-once`, `C-D19-merge-not-idemp`,
 `C-G03-mutable-support`, `C-G03-add-wins`, `C-G03-raw-commute`.
-`python3 scripts/spec-gen.py --check` holds historical v3
-identity/surface bytes; it is not log authority.
+`cargo nextest run -p bumbledb-log --test conformance_v3` checks the current
+identity roster and native-bridge twin; it is not log authority.
 
 ## Discriminators (D01–D29)
 

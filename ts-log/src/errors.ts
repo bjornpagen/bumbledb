@@ -6,11 +6,12 @@
  * Effect `Schema.TaggedError` values with a tagged reason; any displayed
  * `.code` is derived from the reason tag and there is no second mutable
  * classification authority. Terminal receipts are data in A, never errors.
- * After dispatch, submit/admin interruption is an `outcome-unknown` (or
- * decided) arm under the original identity; finalizer defects stay in `Cause`.
+ * Submit/admin interruption and finalizer defects stay in `Cause`.
+ * Resolve the original command/operation identity after cancellation;
+ * cancellation cannot establish whether publication happened.
  */
-import { dbError, DbError } from "@bjornpagen/bumbledb"
-import { Schema } from "effect"
+import { DbError, dbError } from "@bjornpagen/bumbledb"
+import { type Cause, Schema } from "effect"
 import { protocolErrorCodes } from "#codes.ts"
 
 const Contention = Schema.Struct({
@@ -91,9 +92,7 @@ type StructuredTag = (typeof structured)[number]
 type PlainTag = Exclude<(typeof protocolErrorCodes)[number], StructuredTag>
 const PlainReason = Schema.Struct({
 	_tag: Schema.Literals(
-		protocolErrorCodes.filter(
-			(code): code is PlainTag => !(structured as readonly string[]).includes(code)
-		)
+		protocolErrorCodes.filter((code): code is PlainTag => !(structured as readonly string[]).includes(code))
 	)
 })
 
@@ -111,10 +110,16 @@ export const ProtocolReason = Schema.Union([
 ])
 export type ProtocolReason = typeof ProtocolReason.Type
 
-export class ProtocolError extends Schema.TaggedError<ProtocolError>()("ProtocolError", {
+const ProtocolErrorBase: Schema.Class<
+	ProtocolError,
+	Schema.TaggedStruct<"ProtocolError", { operation: typeof Schema.String; reason: typeof ProtocolReason }>,
+	Cause.YieldableError
+> = Schema.TaggedError<ProtocolError>()("ProtocolError", {
 	operation: Schema.String,
 	reason: ProtocolReason
-}) {
+})
+
+export class ProtocolError extends ProtocolErrorBase {
 	get code() {
 		return this.reason._tag
 	}

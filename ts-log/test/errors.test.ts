@@ -109,7 +109,10 @@ describe("roster hygiene", function suite() {
 		// for-literal in order; this pin records the agreed size (33 after
 		// MaterializationStale landed beside MaintenanceRequired).
 		assert.equal(protocolErrorCodes.length, 33)
-		assert.equal(protocolErrorCodes.indexOf("MaterializationStale"), protocolErrorCodes.indexOf("MaintenanceRequired") + 1)
+		assert.equal(
+			protocolErrorCodes.indexOf("MaterializationStale"),
+			protocolErrorCodes.indexOf("MaintenanceRequired") + 1
+		)
 	})
 
 	test("the roster is unique and never respells a core code", function hygiene() {

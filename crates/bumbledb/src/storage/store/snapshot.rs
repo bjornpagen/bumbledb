@@ -36,8 +36,8 @@ use super::fingerprint::FP_LEN;
 use super::format::{
     CoreStoreId, EnvironmentId, K_ATTACHMENT, K_HOST_RECORD_TAG, RowId, StoreIdentity,
 };
-use super::host::{HostResume, HostWindow};
 use super::gate::GatePass;
+use super::host::{HostResume, HostWindow};
 use super::keys::{self, HOST_KEY_MAX};
 use super::rows;
 use super::store_env::{StoreInner, read_generation};
@@ -409,6 +409,7 @@ impl OwnedSnapshot {
     }
 
     /// The store's compiled theory (projection table and law adjacency).
+    #[cfg(test)]
     pub(crate) fn compiled(&self) -> &crate::schema::CompiledTheory {
         self.inner.det.theory()
     }

@@ -19,7 +19,12 @@ impl From<heed::Error> for Error {
 impl Error {
     /// Box a successor-store condition into the shared error surface.
     pub(crate) fn from_store(error: crate::storage::store::StoreError) -> Self {
-        Self::Store(Box::new(error))
+        match error {
+            crate::storage::store::StoreError::UndefinedDuration { statement } => {
+                Self::CapacityRayMeasure { statement }
+            }
+            other => Self::Store(Box::new(other)),
+        }
     }
 }
 

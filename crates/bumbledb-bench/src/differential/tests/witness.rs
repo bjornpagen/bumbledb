@@ -30,14 +30,19 @@ fn pair(room: u64, span: (u64, u64), reference: u64) -> Delta {
 fn prepared_world(tag: &str) -> (TempDir, Db<SchemaDescriptor>, NaiveDb) {
     let descriptor = schema();
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
     let seed = pair(0, (1, 4), 3);
     assert_eq!(engine_write(&db, &seed), Verdict::Committed);
     naive.apply(&seed).expect("the seed pair commits");
-    assert_eq!(db.generation().expect("generation").value(), 1);
+    assert_eq!(
+        db.generation(crate::harness::bench_work())
+            .expect("generation")
+            .value(),
+        1
+    );
     assert_eq!(naive.generation(), 1);
     (dir, db, naive)
 }
@@ -48,12 +53,13 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
     let first = pair(1, (6, 9), 4);
     let second = pair(2, (10, 12), 5);
 
-    db.read(|instance| {
+    db.read(crate::harness::bench_work(), |instance| {
         let witness = instance.witness()?;
         let witnessed = naive.generation();
 
-        let engine_first =
-            db.read(|inner| Ok(engine_write_from(&db, &inner.witness()?, &first)))?;
+        let engine_first = db.read(crate::harness::bench_work(), |inner| {
+            Ok(engine_write_from(&db, &inner.witness()?, &first))
+        })?;
         let naive_first = naive_write_from(&mut naive, witnessed, &first);
         assert_eq!(engine_first, ConditionalVerdict::Committed);
         assert_eq!(naive_first, ConditionalVerdict::Committed);
@@ -70,7 +76,7 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
         );
 
         let raw = db
-            .write_from(&witness, |_| Ok(()))
+            .write_from(crate::harness::bench_work(), &witness, |_| Ok(()))
             .expect("conditional write");
         assert!(
             matches!(
@@ -85,7 +91,12 @@ fn the_interleaved_second_sequence_aborts_with_the_payload() {
     .expect("read");
 
     assert_eq!(naive.relation(MARKER).len(), 2);
-    assert_eq!(db.generation().expect("generation").value(), 2);
+    assert_eq!(
+        db.generation(crate::harness::bench_work())
+            .expect("generation")
+            .value(),
+        2
+    );
 }
 
 #[test]
@@ -93,7 +104,7 @@ fn a_noop_commit_between_read_and_write_does_not_abort() {
     let (_dir, db, mut naive) = prepared_world("witness-noop");
     let follow = pair(1, (6, 9), 4);
 
-    db.read(|instance| {
+    db.read(crate::harness::bench_work(), |instance| {
         let witness = instance.witness()?;
         let witnessed = naive.generation();
 
@@ -103,7 +114,13 @@ fn a_noop_commit_between_read_and_write_does_not_abort() {
         };
         assert_eq!(engine_write(&db, &noop), Verdict::Committed);
         naive.apply(&noop).expect("a no-op delete commits");
-        assert_eq!(db.generation().expect("generation").value(), 1, "no bump");
+        assert_eq!(
+            db.generation(crate::harness::bench_work())
+                .expect("generation")
+                .value(),
+            1,
+            "no bump"
+        );
         assert_eq!(naive.generation(), 1, "no bump");
 
         let engine = engine_write_from(&db, &witness, &follow);
@@ -123,16 +140,20 @@ fn a_foreign_snapshot_is_rejected_typed() {
     let descriptor = schema();
     let dir = TempDir::new("witness-foreign-a");
     let foreign_dir = TempDir::new("witness-foreign-b");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
-    let foreign = Db::create(foreign_dir.path(), descriptor)
+    let foreign = Db::create(foreign_dir.path(), descriptor, crate::harness::bench_work())
         .expect("create foreign store")
         .expect("accepted");
 
     foreign
-        .read(|instance| {
-            let raw = db.write_from(&instance.witness()?, |_| Ok(())).unwrap_err();
+        .read(crate::harness::bench_work(), |instance| {
+            let raw = db
+                .write_from(crate::harness::bench_work(), &instance.witness()?, |_| {
+                    Ok(())
+                })
+                .unwrap_err();
             assert!(
                 matches!(raw, Error::ForeignWitness),
                 "expected ForeignWitness: {raw:?}"
@@ -141,7 +162,9 @@ fn a_foreign_snapshot_is_rejected_typed() {
         })
         .expect("read");
     assert_eq!(
-        db.generation().expect("generation").value(),
+        db.generation(crate::harness::bench_work())
+            .expect("generation")
+            .value(),
         0,
         "nothing happened"
     );
@@ -152,10 +175,14 @@ fn write_from_with_no_intervening_commit_is_write() {
     let descriptor = schema();
     let dir_w = TempDir::new("witness-plain");
     let dir_f = TempDir::new("witness-witnessed");
-    let db_w = Db::create(dir_w.path(), descriptor.clone())
-        .expect("create plain store")
-        .expect("accepted");
-    let db_f = Db::create(dir_f.path(), descriptor)
+    let db_w = Db::create(
+        dir_w.path(),
+        descriptor.clone(),
+        crate::harness::bench_work(),
+    )
+    .expect("create plain store")
+    .expect("accepted");
+    let db_f = Db::create(dir_f.path(), descriptor, crate::harness::bench_work())
         .expect("create witnessed store")
         .expect("accepted");
 
@@ -179,7 +206,9 @@ fn write_from_with_no_intervening_commit_is_write() {
     for delta in &ops {
         let plain = engine_write(&db_w, delta);
         let witnessed = db_f
-            .read(|instance| Ok(engine_write_from(&db_f, &instance.witness()?, delta)))
+            .read(crate::harness::bench_work(), |instance| {
+                Ok(engine_write_from(&db_f, &instance.witness()?, delta))
+            })
             .expect("read");
 
         match (plain, witnessed) {
@@ -190,15 +219,19 @@ fn write_from_with_no_intervening_commit_is_write() {
     }
 
     for rel in [BOOKING, MARKER] {
-        let scan = |db: &Db<SchemaDescriptor>| -> Vec<Vec<Value>> {
-            db.read(|snap| snap.scan(rel)?.collect::<bumbledb::Result<Vec<_>>>())
-                .expect("scan")
+        let scan = |db: &Db<SchemaDescriptor>| -> Vec<bumbledb::canonical::DecodedRow> {
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.scan(rel)?.collect::<bumbledb::Result<Vec<_>>>()
+            })
+            .expect("scan")
         };
         assert_eq!(scan(&db_w), scan(&db_f));
     }
     assert_eq!(
-        db_w.generation().expect("generation"),
-        db_f.generation().expect("generation")
+        db_w.generation(crate::harness::bench_work())
+            .expect("generation"),
+        db_f.generation(crate::harness::bench_work())
+            .expect("generation")
     );
 }
 
@@ -264,9 +297,13 @@ fn source(id: u64, selected: bool) -> Vec<Value> {
 
 fn maintenance_world(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), maintenance_schema())
-        .expect("create maintenance store")
-        .expect("accepted");
+    let db = Db::create(
+        dir.path(),
+        maintenance_schema(),
+        crate::harness::bench_work(),
+    )
+    .expect("create maintenance store")
+    .expect("accepted");
     (dir, db)
 }
 
@@ -282,7 +319,7 @@ fn assert_generation_moved(outcome: &ConditionalWrite<()>) {
 #[test]
 fn update_where_refuses_generation_movement() {
     let (_dir, db) = maintenance_world("witness-update-where");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, false)])?;
         tx.insert_dyn(MAINTENANCE_SOURCE, [&source(2, false)])?;
         Ok(())
@@ -290,18 +327,18 @@ fn update_where_refuses_generation_movement() {
     .expect("seed sources")
     .unwrap();
 
-    db.read(|instance| {
+    db.read(crate::harness::bench_work(), |instance| {
         let matches: Vec<_> = instance
             .scan(MAINTENANCE_SOURCE)?
             .collect::<bumbledb::Result<_>>()?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(MAINTENANCE_SOURCE, [&source(3, false)])?;
             Ok(())
         })?
         .unwrap();
         let ran = std::cell::Cell::new(false);
         let error = db
-            .write_from(&instance.witness()?, |tx| {
+            .write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
                 ran.set(true);
                 for fact in &matches {
                     let Value::U64(id) = fact[0] else {
@@ -325,14 +362,14 @@ fn update_where_refuses_generation_movement() {
 #[test]
 fn insert_select_refuses_generation_movement() {
     let (_dir, db) = maintenance_world("witness-insert-select");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
         Ok(())
     })
     .expect("seed source")
     .unwrap();
 
-    db.read(|instance| {
+    db.read(crate::harness::bench_work(), |instance| {
         let selected: Vec<u64> = instance
             .scan(MAINTENANCE_SOURCE)?
             .map(|fact| {
@@ -343,14 +380,14 @@ fn insert_select_refuses_generation_movement() {
                 Ok(*id)
             })
             .collect::<bumbledb::Result<_>>()?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(MAINTENANCE_SOURCE, [&source(2, true)])?;
             Ok(())
         })?
         .unwrap();
         let ran = std::cell::Cell::new(false);
         let error = db
-            .write_from(&instance.witness()?, |tx| {
+            .write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
                 ran.set(true);
                 for id in &selected {
                     tx.insert_dyn(MAINTENANCE_DERIVED, [&[Value::U64(*id)]])?;
@@ -368,19 +405,19 @@ fn insert_select_refuses_generation_movement() {
 #[test]
 fn snapshot_read_modify_write_refuses_generation_movement() {
     let (_dir, db) = maintenance_world("witness-read-modify-write");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, false)])?;
         Ok(())
     })
     .expect("seed source")
     .unwrap();
 
-    db.read(|instance| {
+    db.read(crate::harness::bench_work(), |instance| {
         let old = instance
             .scan(MAINTENANCE_SOURCE)?
             .next()
             .expect("one source")?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.delete_dyn(MAINTENANCE_SOURCE, [&old])?;
             tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
             Ok(())
@@ -388,7 +425,7 @@ fn snapshot_read_modify_write_refuses_generation_movement() {
         .unwrap();
         let ran = std::cell::Cell::new(false);
         let error = db
-            .write_from(&instance.witness()?, |tx| {
+            .write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
                 ran.set(true);
                 tx.delete_dyn(MAINTENANCE_SOURCE, [&old])?;
                 tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
@@ -408,7 +445,7 @@ fn snapshot_read_modify_write_refuses_generation_movement() {
 #[test]
 fn stale_derived_fact_is_rejected_after_source_movement() {
     let (_dir, db) = maintenance_world("witness-stale-derived");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
         tx.insert_dyn(MAINTENANCE_DERIVED, [&[Value::U64(1)]])?;
         Ok(())
@@ -416,7 +453,7 @@ fn stale_derived_fact_is_rejected_after_source_movement() {
     .expect("seed sound derived fact")
     .unwrap();
 
-    let _ = match db.write(|tx| {
+    let _ = match db.write(crate::harness::bench_work(), |tx| {
         tx.delete_dyn(MAINTENANCE_SOURCE, [&source(1, true)])?;
         Ok(())
     }) {
@@ -424,10 +461,14 @@ fn stale_derived_fact_is_rejected_after_source_movement() {
         other => panic!("expected admission rejection, got {other:?}"),
     };
     let sources = db
-        .read(|snap| Ok(snap.scan(MAINTENANCE_SOURCE)?.count()))
+        .read(crate::harness::bench_work(), |snap| {
+            Ok(snap.scan(MAINTENANCE_SOURCE)?.count())
+        })
         .expect("scan sources");
     let derived = db
-        .read(|snap| Ok(snap.scan(MAINTENANCE_DERIVED)?.count()))
+        .read(crate::harness::bench_work(), |snap| {
+            Ok(snap.scan(MAINTENANCE_DERIVED)?.count())
+        })
         .expect("scan derived");
     assert_eq!((sources, derived), (1, 1), "the refused delete was atomic");
 }
@@ -435,7 +476,7 @@ fn stale_derived_fact_is_rejected_after_source_movement() {
 fn increment(db: &Db<SchemaDescriptor>) -> u64 {
     let mut retries = 0;
     loop {
-        let attempt = db.read(|instance| {
+        let attempt = db.read(crate::harness::bench_work(), |instance| {
             let mut value = None;
             for fact in instance.scan(REGISTER)? {
                 let fact = fact?;
@@ -447,7 +488,7 @@ fn increment(db: &Db<SchemaDescriptor>) -> u64 {
                 }
             }
             let current = value.expect("slot 0 is seeded");
-            db.write_from(&instance.witness()?, |tx| {
+            db.write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
                 tx.delete_dyn(REGISTER, [&[Value::U64(0), Value::U64(current)]])?;
                 tx.insert_dyn(REGISTER, [&[Value::U64(0), Value::U64(current + 1)]])?;
                 Ok(())
@@ -468,10 +509,10 @@ fn increment(db: &Db<SchemaDescriptor>) -> u64 {
 fn two_threads_of_witnessed_increments_equal_the_serial_schedule() {
     const PER_THREAD: u64 = 64;
     let dir = TempDir::new("witness-threads");
-    let db = Db::create(dir.path(), register_schema())
+    let db = Db::create(dir.path(), register_schema(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(REGISTER, [&[Value::U64(0), Value::U64(0)]])?;
         Ok(())
     })
@@ -491,10 +532,12 @@ fn two_threads_of_witnessed_increments_equal_the_serial_schedule() {
     });
 
     let facts = db
-        .read(|snap| snap.scan(REGISTER)?.collect::<bumbledb::Result<Vec<_>>>())
+        .read(crate::harness::bench_work(), |snap| {
+            snap.scan(REGISTER)?.collect::<bumbledb::Result<Vec<_>>>()
+        })
         .expect("scan");
     assert_eq!(
-        facts,
+        facts.iter().map(|row| &**row).collect::<Vec<_>>(),
         vec![vec![Value::U64(0), Value::U64(2 * PER_THREAD)]],
         "the retried schedule serialized"
     );

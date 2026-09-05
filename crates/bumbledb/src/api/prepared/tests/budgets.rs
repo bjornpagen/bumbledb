@@ -128,7 +128,7 @@ fn a_tiny_working_budget_restarts_once_from_join_growth() {
 
     let mut restarted = fix.prepare(&query).expect("prepare");
     fix.db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             let work = bounded_policy(24 << 10, u64::MAX)
                 .start()
                 .expect("bounded ledger");
@@ -141,10 +141,11 @@ fn a_tiny_working_budget_restarts_once_from_join_growth() {
                 expected,
                 "the restarted path is the query"
             );
+            drop(restarted);
             assert_eq!(
                 work.used(crate::work::Resource::WorkingBytes),
                 0,
-                "every growth reservation was refunded"
+                "dropping the prepared owner refunds all reusable growth reservations"
             );
             Ok(())
         })
@@ -341,7 +342,7 @@ fn a_result_budget_refuses_before_whole_set_materialization() {
     // set) and the carrier holds nothing.
     let mut refused = fix.prepare(&query).expect("prepare");
     fix.db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             let work = bounded_policy(u64::MAX, 2 << 10)
                 .start()
                 .expect("bounded ledger");
@@ -352,8 +353,12 @@ fn a_result_budget_refuses_before_whole_set_materialization() {
                 crate::api::prepared::result::RESULT_RAM_BYTES,
             );
             let mut out = Answers::new();
-            let result =
-                refused.execute_source_charged(&source, &[] as &[BindValue], &mut out, Some(&mut charge));
+            let result = refused.execute_source_charged(
+                &source,
+                &[] as &[BindValue],
+                &mut out,
+                Some(&mut charge),
+            );
             assert!(
                 matches!(
                     &result,
@@ -382,12 +387,10 @@ fn a_result_budget_refuses_before_whole_set_materialization() {
     // the scratch backing DURING construction (spilled before any seal),
     // and the sealed beyond-allowance result is the exact answer set.
     let mut streamed = fix.prepare(&query).expect("prepare");
-    let work = bounded_policy(u64::MAX, u64::MAX)
-        .start()
-        .expect("ledger");
+    let work = bounded_policy(u64::MAX, u64::MAX).start().expect("ledger");
     let sealed = fix
         .db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             let source =
                 crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
             let mut charge = crate::api::prepared::result::ResultCharge::new(&work, 1 << 10);
@@ -421,7 +424,13 @@ fn a_result_budget_refuses_before_whole_set_materialization() {
         "the sealed rows hold their result-byte charge"
     );
     let mut sealed = sealed;
-    let collected = sealed.collect(u64::MAX).expect("collect");
+    let collected = sealed
+        .collect_with_work(
+            u64::MAX,
+            &crate::api::db::test_operation().unwrap(),
+            16 << 20,
+        )
+        .expect("collect");
     assert_eq!(
         bucket_amounts(&collected),
         expected,

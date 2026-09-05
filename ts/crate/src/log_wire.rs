@@ -17,7 +17,9 @@ use std::sync::{Arc, Mutex};
 
 use bumbledb::canonical::result::{ResultError, decode_result, encode_result};
 use bumbledb::work::{Resource, WorkContext};
-use bumbledb::{F64, Id128, SchemaDescriptor, SchemaFingerprint, Value};
+use bumbledb::{F64, SchemaDescriptor, SchemaFingerprint, Uuid, Value};
+use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
+use bumbledb_log::codec::StreamLimits;
 use bumbledb_log::history::authority::{Access, HeadAuthority, Lifecycle};
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
 use bumbledb_log::history::{
@@ -31,8 +33,6 @@ use bumbledb_log::tenants::{
     Acquire, CloseBlocked, CompletedOpen, Release, TenantBinding, TenantBorrow, TenantOptions,
     TenantRefusal, TenantRegistry,
 };
-use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
-use bumbledb_log::codec::StreamLimits;
 use bumbledb_log::writer::{
     HostedHistory, LocalHealth, LocalHistory, LogError, ResolveOutcome, SubmitOptions,
 };
@@ -50,6 +50,10 @@ use crate::runtime_wire::{
 
 mod admin;
 mod lock;
+pub use lock::{
+    RepositoryLockHandle, log_repository_lock_acquire, log_repository_lock_release,
+    log_repository_lock_take,
+};
 
 pub(crate) use admin::{AdminOwned, admin_verb};
 
@@ -354,14 +358,20 @@ pub(crate) fn fail_of_log(error: LogError) -> LogFail {
 /// Lifecycle stream/manifest bounds derived from this operation's work
 /// context — receiving caps intersect the deployment defaults (C6/C7).
 pub(crate) fn stream_limits(context: &WorkContext) -> StreamLimits {
-    let record = context
-        .limit(Resource::InputBytes)
-        .min(StreamLimits::DEFAULT.record_bytes as u64)
-        .max(1) as usize;
-    let manifest = context
-        .limit(Resource::WorkingBytes)
-        .min(StreamLimits::DEFAULT.manifest_bytes as u64)
-        .max(1) as usize;
+    let record = usize::try_from(
+        context
+            .limit(Resource::InputBytes)
+            .min(StreamLimits::DEFAULT.record_bytes as u64)
+            .max(1),
+    )
+    .unwrap_or(StreamLimits::DEFAULT.record_bytes);
+    let manifest = usize::try_from(
+        context
+            .limit(Resource::WorkingBytes)
+            .min(StreamLimits::DEFAULT.manifest_bytes as u64)
+            .max(1),
+    )
+    .unwrap_or(StreamLimits::DEFAULT.manifest_bytes);
     StreamLimits {
         record_bytes: record,
         manifest_bytes: manifest,
@@ -370,9 +380,9 @@ pub(crate) fn stream_limits(context: &WorkContext) -> StreamLimits {
 
 /// Map an ancillary decode failure to the machine's operational error while
 /// preserving a terminal receipt (C5: diagnostics never undo publication).
-fn decode_fail_to_log_error(fail: LogFail) -> LogError {
+fn decode_fail_to_log_error(fail: &LogFail) -> LogError {
     match fail {
-        LogFail::Core(RuntimeError::Work(work)) => LogError::Work(work),
+        LogFail::Core(RuntimeError::Work(work)) => LogError::Work(*work),
         LogFail::Protocol {
             code: "IncompleteRejectionEvidence",
             ..
@@ -386,8 +396,7 @@ fn decode_fail_to_log_error(fail: LogFail) -> LogError {
     }
 }
 
-fn local_health_after_decode_failure(health: LocalHealth, fail: LogFail) -> LocalHealth {
-    let _ = health;
+fn local_health_after_decode_failure(fail: &LogFail) -> LocalHealth {
     LocalHealth::Unavailable {
         error: decode_fail_to_log_error(fail),
     }
@@ -484,8 +493,8 @@ pub(crate) type MachineResult<T> = Result<T, LogFail>;
 // Hex / identity marshalling.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn hex16(id: Id128) -> String {
-    marshal::id128_hex(id)
+pub(crate) fn uuid_text(id: Uuid) -> String {
+    marshal::uuid_text(id)
 }
 
 pub(crate) fn hex32(bytes: &[u8; 32]) -> String {
@@ -512,11 +521,11 @@ pub(crate) fn fingerprint_of_hex(text: &str) -> napi::Result<SchemaFingerprint> 
 
 pub(crate) fn identity_in(obj: &Object, ctx: &str) -> napi::Result<DatabaseIdentity> {
     Ok(DatabaseIdentity {
-        database_id: DatabaseId::from_core(marshal::id128_in(
+        database_id: DatabaseId::from_core(marshal::uuid_in(
             &marshal::req::<String>(obj, "databaseId", ctx)?,
             ctx,
         )?),
-        incarnation_id: IncarnationId::from_core(marshal::id128_in(
+        incarnation_id: IncarnationId::from_core(marshal::uuid_in(
             &marshal::req::<String>(obj, "incarnationId", ctx)?,
             ctx,
         )?),
@@ -526,8 +535,11 @@ pub(crate) fn identity_in(obj: &Object, ctx: &str) -> napi::Result<DatabaseIdent
 
 pub(crate) fn identity_wire(env: &Env, identity: DatabaseIdentity) -> napi::Result<Object<'_>> {
     let mut obj = Object::new(env)?;
-    obj.set("databaseId", hex16(identity.database_id.as_core()))?;
-    obj.set("incarnationId", hex16(identity.incarnation_id.as_core()))?;
+    obj.set("databaseId", uuid_text(identity.database_id.as_core()))?;
+    obj.set(
+        "incarnationId",
+        uuid_text(identity.incarnation_id.as_core()),
+    )?;
     obj.set("schemaId", hex32(&identity.schema_id.0))?;
     Ok(obj)
 }
@@ -541,7 +553,7 @@ pub(crate) fn stamp_wire(env: &Env, stamp: DecisionStamp) -> napi::Result<Object
 
 pub(crate) fn state_wire(env: &Env, state: StateStamp) -> napi::Result<Object<'_>> {
     let mut obj = Object::new(env)?;
-    obj.set("incarnation", hex16(state.incarnation.as_core()))?;
+    obj.set("incarnation", uuid_text(state.incarnation.as_core()))?;
     obj.set("dataRevision", BigInt::from(state.data_revision))?;
     Ok(obj)
 }
@@ -556,7 +568,7 @@ pub(crate) fn command_ref_wire<'e>(
         "receiptEpoch",
         BigInt::from(reference.id.receipt_epoch.get()),
     )?;
-    obj.set("requestId", hex16(reference.id.request_id.as_core()))?;
+    obj.set("requestId", uuid_text(reference.id.request_id.as_core()))?;
     obj.set("digest", hex32(reference.digest.as_bytes()))?;
     Ok(obj)
 }
@@ -566,7 +578,7 @@ pub(crate) fn command_ref_in(obj: &Object, ctx: &str) -> napi::Result<CommandRef
     let epoch = marshal::u64_in(&marshal::req::<BigInt>(obj, "receiptEpoch", ctx)?, ctx)?;
     let epoch = ReceiptEpoch::new(epoch)
         .ok_or_else(|| marshal::err(format!("bumbledb-log marshal: {ctx}: receipt epoch 0")))?;
-    let request = marshal::id128_in(&marshal::req::<String>(obj, "requestId", ctx)?, ctx)?;
+    let request = marshal::uuid_in(&marshal::req::<String>(obj, "requestId", ctx)?, ctx)?;
     let digest = fingerprint_of_hex(&marshal::req::<String>(obj, "digest", ctx)?)?;
     Ok(CommandRef {
         identity,
@@ -585,9 +597,9 @@ pub(crate) fn command_ref_in(obj: &Object, ctx: &str) -> napi::Result<CommandRef
 // command digest covers these bytes verbatim, so no local byte twin may
 // exist (the wave-D C12 defect this re-point closes); this module only
 // converts JS values to/from core `Value` scalars. TS never emits tag 8
-// (a 32-hex string is deliberately tag 4 — no magic string sniffing); an
-// Id128 cell decoded from a Rust-sealed command crosses to JS as its
-// canonical 32-lowercase-hex text.
+// (a UUID-shaped string is deliberately tag 4 — no magic string sniffing); an
+// Uuid cell decoded from a Rust-sealed command crosses to JS as its
+// canonical hyphenated UUID text.
 // ---------------------------------------------------------------------------
 
 fn fail_of_result(error: ResultError) -> LogFail {
@@ -618,7 +630,7 @@ pub(crate) fn encode_result_record(
     encode_result(&borrowed, LIMITS.result_bytes, work).map_err(fail_of_result)
 }
 
-/// Strict decode through the core codec (tag 8 Id128 included).
+/// Strict decode through the core codec (tag 8 Uuid included).
 pub(crate) fn decode_result_record(
     bytes: &[u8],
     work: &WorkContext,
@@ -698,11 +710,11 @@ fn result_take_work() -> Option<WorkContext> {
 
 fn result_record_wire<'e>(env: &'e Env, bytes: &[u8]) -> napi::Result<Object<'e>> {
     let mut obj = Object::new(env)?;
-    // A malformed stored record is surfaced empty rather than forging
-    // cells; the receipt itself remains intact evidence.
-    let entries = result_take_work()
-        .and_then(|work| decode_result_record(bytes, &work).ok())
-        .unwrap_or_default();
+    let work = result_take_work()
+        .ok_or_else(|| throw_frame(*env, &LogFail::Core(RuntimeError::Internal)))?;
+    // Decode failure is not an empty application result. Submit retains
+    // the command ref and reports uncertainty; resolve remains fallible.
+    let entries = decode_result_record(bytes, &work).map_err(|fail| throw_frame(*env, &fail))?;
     for (key, cell) in entries {
         match cell {
             Value::Bool(value) => obj.set(&*key, value)?,
@@ -711,16 +723,18 @@ fn result_record_wire<'e>(env: &'e Env, bytes: &[u8]) -> napi::Result<Object<'e>
             Value::F64(value) => obj.set(&*key, value.to_f64())?,
             Value::String(value) => obj.set(&*key, value.as_ref())?,
             Value::FixedBytes(value) => obj.set(&*key, Buffer::from(value.into_vec()))?,
-            // Tag 8 (Id128) exists only in Rust-sealed commands: it crosses
-            // to JS as its canonical 32-lowercase-hex text — the only
+            // Tag 8 (Uuid) exists only in Rust-sealed commands: it crosses
+            // to JS as its canonical hyphenated UUID text — the only
             // spelling `CommandScalar` carries. Re-sealing such a decoded
             // record from TS respells the cell as tag 4: a NEW command with
             // its own digest, never a mutation of the recorded one.
-            Value::Id128(value) => obj.set(&*key, hex16(value))?,
-            // The strict core decode never yields intervals (non-scalar
-            // tags refuse), so these arms are unreachable data-wise; they
-            // render nothing rather than forging a cell.
-            Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {}
+            Value::Uuid(value) => obj.set(&*key, uuid_text(value))?,
+            Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
+                return Err(throw_frame(
+                    *env,
+                    &protocol("Corruption", "non-scalar result record"),
+                ));
+            }
         }
     }
     Ok(obj)
@@ -1061,32 +1075,6 @@ pub(crate) fn optional_number(obj: &Object, key: &str, ctx: &str) -> napi::Resul
         )?)),
         _ => Err(marshal::err(format!(
             "bumbledb-log marshal: `{key}` must be a number or null"
-        ))),
-    }
-}
-
-/// An optional non-negative bigint wire field (absent/null ⇒ `None`); only
-/// TYPE bounds are applied here (lossless u64) — semantic interpretation
-/// belongs to the consuming machine.
-#[expect(
-    unsafe_code,
-    reason = "napi declares `Unknown::cast` unsafe; the cast is fenced by the \
-              exact get_type check in its own arm"
-)]
-pub(crate) fn optional_u64(obj: &Object, key: &str, ctx: &str) -> napi::Result<Option<u64>> {
-    use napi::ValueType as JsType;
-    let Some(value) = obj.get::<Unknown>(key)? else {
-        return Ok(None);
-    };
-    match value.get_type()? {
-        JsType::Null | JsType::Undefined => Ok(None),
-        // SAFETY: the bigint arm is the only cast and was just type-checked.
-        JsType::BigInt => Ok(Some(marshal::u64_in(
-            &unsafe { value.cast::<BigInt>()? },
-            ctx,
-        )?)),
-        _ => Err(marshal::err(format!(
-            "bumbledb-log marshal: `{key}` must be a bigint or null"
         ))),
     }
 }
@@ -1515,11 +1503,11 @@ fn finish_local_existing(
     db: Arc<crate::Engine>,
     spec: &OpenSpec,
     directory: &Path,
-    _context: &WorkContext,
+    context: &WorkContext,
 ) -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
     // Reopen-time owner-scoped root scratch collection (chapter 21 local
     // specialization).
-    bumbledb_log::local_roots::clean_roots(&db, directory)
+    bumbledb_log::local_roots::clean_roots(&db, directory, context)
         .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
     let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
     let inner = crate::DbInner {
@@ -1995,7 +1983,7 @@ fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
     let creation = match optional_object(request, "creation")? {
         None => None,
         Some(creation) => {
-            let operation = OperationId::from_core(marshal::id128_in(
+            let operation = OperationId::from_core(marshal::uuid_in(
                 &marshal::req::<String>(&creation, "operationId", ctx)?,
                 ctx,
             )?);
@@ -2359,7 +2347,7 @@ fn run_history_verb(
                         },
                         Err(fail) => SubmitOwned::Decided {
                             receipt,
-                            health: local_health_after_decode_failure(local_health, fail),
+                            health: local_health_after_decode_failure(&fail),
                             violations: None,
                             phase,
                         },
@@ -2370,13 +2358,11 @@ fn run_history_verb(
                     fail: fail_of_log(error),
                     phase,
                 },
-                SubmitCertainty::OutcomeUnknown { command, error } => {
-                    SubmitOwned::OutcomeUnknown {
-                        reference: command,
-                        fail: fail_of_log(error),
-                        phase,
-                    }
-                }
+                SubmitCertainty::OutcomeUnknown { command, error } => SubmitOwned::OutcomeUnknown {
+                    reference: command,
+                    fail: fail_of_log(error),
+                    phase,
+                },
             };
             let _ = reference;
             drop(lease);
@@ -2384,23 +2370,20 @@ fn run_history_verb(
         }
         HistoryVerb::Resolve(reference) => match kind.resolve(reference, context) {
             Ok(outcome) => {
-                // Every resolve ANSWER is the documented resolution ladder's
-                // proof for this command id; the unknown row clears.
-                resource.resolve_unknown(&reference);
                 // Resolve-after-reopen preserves the complete violation set:
                 // a found rejected receipt decodes through the SAME lane.
                 let violations = match &outcome {
                     ResolveOutcome::Found(receipt) => {
                         match decode_receipt_violations(&lease, receipt, context) {
                             Ok(violations) => violations,
-                            // Preserve the found receipt; optional
-                            // diagnostics never downgrade known evidence
-                            // (C5 / LOG-029).
-                            Err(_fail) => None,
+                            Err(LogFail::Core(core)) => return Err(core),
+                            Err(fail) => return Ok(fail_output(fail)),
                         }
                     }
                     _ => None,
                 };
+                // Clear unknown only after the complete answer is available.
+                resource.resolve_unknown(&reference);
                 Ok(Output::Machine(MachineOutput::Resolve(ResolveOwned {
                     outcome,
                     violations,
@@ -2524,7 +2507,7 @@ fn inspect_history(
         tail_bytes: status.tail_bytes,
         unknown_count,
         unknown_oldest_millis,
-        root_count: saturating_u32(status.roots_held as usize),
+        root_count: u32::try_from(status.roots_held).unwrap_or(u32::MAX),
         root_capacity: saturating_u32(bumbledb_log::manifest::RootPolicy::DEFAULT.max_roots),
         gc: inspect_gc_tag(status.gc),
         disk_bytes: report.populated_file_bytes,
@@ -2564,10 +2547,11 @@ struct PinnedFrame {
 fn pin_authority_frame(
     resource: &Arc<HistoryResource>,
     lease: DbLease,
+    context: &WorkContext,
 ) -> MachineResult<PinnedFrame> {
     let opened = match resource
         .runtime
-        .spawn_read_session_for(&resource.managed, lease)
+        .spawn_read_session_for(&resource.managed, lease, context)
     {
         Ok(Output::Session(opened)) => opened,
         Ok(_) => return Err(LogFail::Core(RuntimeError::Internal)),
@@ -2668,7 +2652,7 @@ fn open_published_snapshot(
     consistency: ConsistencySpec,
     context: &WorkContext,
 ) -> MachineResult<SnapshotOwned> {
-    let mut frame = pin_authority_frame(resource, lease)?;
+    let mut frame = pin_authority_frame(resource, lease, context)?;
     let freshness = match consistency {
         ConsistencySpec::Cached => match kind {
             HistoryKind::Local(_) => FreshnessOwned::Latest,
@@ -2704,7 +2688,7 @@ fn open_published_snapshot(
                     begin_snapshot_teardown(&frame.opened.session);
                     let reached = history.catch_up(context).map_err(fail_of_log)?;
                     let lease = resource.managed.access().map_err(LogFail::Core)?;
-                    frame = pin_authority_frame(resource, lease)?;
+                    frame = pin_authority_frame(resource, lease, context)?;
                     if let Err(fail) = latest_reached(reached, frame.decision) {
                         begin_snapshot_teardown(&frame.opened.session);
                         return Err(fail);
@@ -2725,7 +2709,7 @@ fn open_published_snapshot(
                 begin_snapshot_teardown(&frame.opened.session);
                 let _reached = history.catch_up(context).map_err(fail_of_log)?;
                 let lease = resource.managed.access().map_err(LogFail::Core)?;
-                frame = pin_authority_frame(resource, lease)?;
+                frame = pin_authority_frame(resource, lease, context)?;
             }
             // The pure replica judge (`SnapshotProvenance::resolve`) is the
             // one AtLeast contract: exact same-lineage ancestry over
@@ -3078,7 +3062,7 @@ fn precondition_in(obj: &Object, ctx: &str) -> napi::Result<Condition> {
     match kind.as_str() {
         "blind" => Ok(Condition::Unconditional),
         "exact-state" => Ok(Condition::ExactState(StateStamp {
-            incarnation: IncarnationId::from_core(marshal::id128_in(
+            incarnation: IncarnationId::from_core(marshal::uuid_in(
                 &marshal::req::<String>(obj, "incarnation", ctx)?,
                 ctx,
             )?),
@@ -3106,26 +3090,31 @@ pub fn log_command_seal(
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let ctx = "command seal";
-    let (change_set, schema, fingerprint, runtime) =
-        crate::db_wire::changes_entry(change).map_err(|error| thrown(env, error))?;
+    let (runtime, cap) =
+        crate::db_wire::changes_route(change).map_err(|error| thrown(env, error))?;
     let scope = identity_in(&marshal::req::<Object>(&request, "scope", ctx)?, ctx)?;
     let epoch = marshal::u64_in(&marshal::req::<BigInt>(&request, "receiptEpoch", ctx)?, ctx)?;
     let Some(epoch) = ReceiptEpoch::new(epoch) else {
         return Err(marshal::err("bumbledb-log marshal: receipt epoch 0".into()));
     };
-    let request_id = RequestId::from_core(marshal::id128_in(
+    let request_id = RequestId::from_core(marshal::uuid_in(
         &marshal::req::<String>(&request, "requestId", ctx)?,
         ctx,
     )?);
     let condition = precondition_in(&marshal::req::<Object>(&request, "precondition", ctx)?, ctx)?;
     let result = result_record_in(&marshal::req::<Object>(&request, "result", ctx)?, ctx)?;
     let operation = runtime
-        .submit(
+        .submit_payload(
+            cap,
             policy.parse().map_err(|error| thrown(env, error))?,
             notification(callback)?,
             move |context| {
-                context.input(change_set.as_bytes().len() as u64)?;
-                Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                Ok(Box::new(move |context, payload, _publication| {
+                    let opened = crate::db_wire::changes_from_payload(payload)?;
+                    let change_set = opened.changes;
+                    let fingerprint = opened.fingerprint;
+                    context.input(change_set.as_bytes().len() as u64)?;
                     context.checkpoint()?;
                     // The scope's schema must be the change's schema —
                     // re-judged natively regardless of the host's claim.
@@ -3148,7 +3137,6 @@ pub fn log_command_seal(
                         },
                         condition,
                     };
-                    let _ = &schema;
                     match Command::seal(
                         metadata,
                         change_set.clone(),
@@ -3517,7 +3505,7 @@ fn applied_prefix_of(
         let mut host_error = None;
         lease
             .db()
-            .read(|read| {
+            .read(context.clone(), |read| {
                 match read.integration_host_record(&key) {
                     Ok(record) => found = record.map(<[u8]>::to_vec),
                     Err(error) => host_error = Some(error),
@@ -4170,7 +4158,7 @@ pub(crate) fn planned_target_incarnation(operation: OperationId) -> IncarnationI
     let word = digest.finalize();
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&word[..16]);
-    IncarnationId::from_core(Id128::from_bytes(bytes))
+    IncarnationId::from_core(Uuid::from_bytes(bytes))
 }
 
 #[cfg(test)]

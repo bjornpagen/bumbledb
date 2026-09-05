@@ -92,17 +92,9 @@ fn occurrence_covers_compiled_key(
         .fields_of(stored)
         .or_else(|| Some(schema.relation(stored).fields()))
         .is_some_and(|fields| {
-            fields
-                .iter()
-                .enumerate()
-                .all(|(ordinal, _)| {
-                    u16::try_from(ordinal)
-                        .is_ok_and(|ordinal| bound_fields.contains(&FieldId(ordinal)))
-                })
-                && matches!(
-                    theory.full_row_witness(),
-                    DistinctnessWitness::FullRowEquality
-                )
+            fields.iter().enumerate().all(|(ordinal, _)| {
+                u16::try_from(ordinal).is_ok_and(|ordinal| bound_fields.contains(&FieldId(ordinal)))
+            })
         });
     covers_scalar_key || covers_whole_row
 }

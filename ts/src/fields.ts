@@ -1,10 +1,9 @@
 import { regex } from "arkregex"
 import { Result } from "effect"
 import { AuthoringError } from "#errors.ts"
-import type { Id128 } from "#id128.ts"
-import { Id128 as Id128Value } from "#id128.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { LiteralSpec } from "#spec.ts"
+import { Uuid } from "#uuid.ts"
 
 const INTEGER_INDEX_NAME = regex("^(?:0|[1-9][0-9]*)$")
 
@@ -111,12 +110,12 @@ interface F64Field {
 
 /**
  * The application-owned 128-bit identity scalar (chapter 30/34): sixteen
- * exact bytes, spelled as the canonical 32-lowercase-hex {@link Id128}
+ * exact bytes, spelled as the canonical hyphenated UUID {@link Uuid}
  * host value. There is no `fresh` mark anywhere: the database issues no
  * identity, and key laws are declared statements.
  */
-interface Id128Field {
-	readonly kind: "id128"
+interface UuidField {
+	readonly kind: "uuid"
 }
 
 interface BytesField<Width extends number = number> {
@@ -149,7 +148,7 @@ type AnyField =
 	| U64Field
 	| I64Field
 	| F64Field
-	| Id128Field
+	| UuidField
 	| BytesField
 	| IntervalField
 	| AnyClosedIdField
@@ -185,8 +184,8 @@ type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 					? bigint
 					: F extends { readonly kind: "f64" }
 						? number
-						: F extends { readonly kind: "id128" }
-							? Id128
+						: F extends { readonly kind: "uuid" }
+							? Uuid
 							: F extends { readonly kind: "bytes" }
 								? Uint8Array
 								: F extends { readonly kind: "interval"; readonly element: "f64" }
@@ -335,7 +334,7 @@ const i64: I64Field = Object.freeze({ kind: "i64" })
 const f64: F64Field = Object.freeze({ kind: "f64" })
 
 /** The application-owned 128-bit identity scalar; no fresh mark exists. */
-const id128: Id128Field = Object.freeze({ kind: "id128" })
+const uuid: UuidField = Object.freeze({ kind: "uuid" })
 
 const bool: BoolField = Object.freeze({ kind: "bool" })
 
@@ -421,11 +420,11 @@ function literalOf(field: AnyField, value: unknown): LiteralSpec {
 			}
 			return { kind: "value", value: { kind: "f64", value } }
 		}
-		case "id128": {
-			if (!Id128Value.isId128(value)) {
-				throw literalShapeError("selection literal", "an Id128 (32 lowercase hex characters)", value)
+		case "uuid": {
+			if (!Uuid.isUuid(value)) {
+				throw literalShapeError("selection literal", "a UUID (canonical UUID text)", value)
 			}
-			return { kind: "value", value: { kind: "id128", value } }
+			return { kind: "value", value: { kind: "uuid", value } }
 		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
@@ -450,14 +449,14 @@ export type {
 	F64Field,
 	FloatIntervalValue,
 	I64Field,
-	Id128Field,
 	Infer,
 	IntervalElementKind,
 	IntervalField,
 	IntervalValue,
 	SignatureOf,
 	StrField,
-	U64Field
+	U64Field,
+	UuidField
 }
 export {
 	assertDeclarationOrderKey,
@@ -466,7 +465,6 @@ export {
 	bytes,
 	f64,
 	i64,
-	id128,
 	interval,
 	isFloatIntervalValue,
 	isIntervalValue,
@@ -477,5 +475,6 @@ export {
 	signaturesAgree,
 	span,
 	str,
-	u64
+	u64,
+	uuid
 }

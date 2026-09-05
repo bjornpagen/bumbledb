@@ -1,7 +1,6 @@
 use std::fmt::Write as _;
 
 use bumbledb::schema::render;
-use bumbledb::store::verify::VerifyCorruption;
 use bumbledb::{Db, Schema, StatementId, StoreFinding, StoreReport};
 
 use crate::cli::CorpusArgs;
@@ -22,7 +21,8 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
             corpus.dir.display(),
         ));
     }
-    let db = Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?;
+    let db = Db::open(&paths.db, Ledger, crate::harness::bench_work())
+        .map_err(|e| format!("open db: {e:?}"))?;
     let report = db
         .verify_store()
         .map_err(|e| format!("verify store: {e:?}"))?;
@@ -34,13 +34,8 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
     match finding {
         // The complete re-judgment's violation names its statement directly.
         StoreFinding::Judgment(violation) => Some(violation.statement),
-        // The fresh-row determinant arm is gone with the mint (E-NO-RESERVE):
-        // the successor has no fresh rows for the sweeper to convict. The
-        // statement-citing structural findings are the determinant desyncs.
-        StoreFinding::Corruption(
-            VerifyCorruption::DanglingDeterminant { statement, .. }
-            | VerifyCorruption::UnknownDeterminantStatement { statement },
-        ) => Some(*statement),
+        // Physical projections may serve several statements; do not invent
+        // a statement citation for a projection-level corruption.
         StoreFinding::Corruption(_) => None,
     }
 }
@@ -84,10 +79,14 @@ mod tests {
             .expect("the ledger schema declares containments");
         let report = StoreReport {
             verdict: StoreVerdict::Desynced {
-                findings: vec![StoreFinding::Corruption(
-                    VerifyCorruption::DanglingDeterminant {
+                findings: vec![StoreFinding::Judgment(
+                    bumbledb::schema::judge::JudgedViolation {
                         statement: containment,
-                        row: bumbledb::store::RowId(0),
+                        kind: bumbledb::schema::StatementKind::Containment,
+                        direction: None,
+                        measure: None,
+                        examples: Box::new([]),
+                        examples_truncated: false,
                     },
                 )]
                 .into(),

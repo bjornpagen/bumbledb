@@ -58,7 +58,10 @@ fn theory() -> Schema {
             RelationDescriptor {
                 extension: None,
                 name: "User".into(),
-                fields: vec![field("id", ValueType::U64), field("email", ValueType::String)],
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("email", ValueType::String),
+                ],
             },
             RelationDescriptor {
                 extension: None,
@@ -160,12 +163,12 @@ impl DeltaState {
         }
         let mut shapes: Vec<(RelationId, DeltaShape)> = Vec::new();
         let mut touch = |relation: RelationId, add: bool| {
-            let shape = match shapes.iter_mut().find(|(id, _)| *id == relation) {
-                Some((_, shape)) => shape,
-                None => {
-                    shapes.push((relation, DeltaShape::default()));
-                    &mut shapes.last_mut().unwrap().1
-                }
+            let shape = if let Some((_, shape)) = shapes.iter_mut().find(|(id, _)| *id == relation)
+            {
+                shape
+            } else {
+                shapes.push((relation, DeltaShape::default()));
+                &mut shapes.last_mut().unwrap().1
             };
             if add {
                 shape.adds = true;
@@ -280,7 +283,8 @@ impl DeltaFacts for DeltaState {
         else {
             return Ok(None);
         };
-        self.group_visits.set(self.group_visits.get().saturating_add(1));
+        self.group_visits
+            .set(self.group_visits.get().saturating_add(1));
         for (id, values) in &self.rows {
             if id != relation {
                 continue;
@@ -353,13 +357,13 @@ fn lawful_parent() -> Vec<(RelationId, Vec<Value>)> {
 fn delta_local_judgment_equals_the_complete_judge_on_lawful_parents() {
     let schema = theory();
     let parent = lawful_parent();
-    let fixtures: Vec<(
-        &str,
-        Vec<(RelationId, Vec<Value>)>,
-        Vec<(RelationId, Vec<Value>)>,
-        bool,
-    )> = vec![
-        ("benign insert", vec![(USER, user(3, "c@example"))], vec![], true),
+    let fixtures = vec![
+        (
+            "benign insert",
+            vec![(USER, user(3, "c@example"))],
+            vec![],
+            true,
+        ),
         (
             "duplicate email",
             vec![(USER, user(3, "a@example"))],
@@ -402,7 +406,12 @@ fn delta_local_judgment_equals_the_complete_judge_on_lawful_parents() {
             vec![],
             false,
         ),
-        ("booking delete", vec![], vec![(BOOKING, booking(11, 3, 7))], true),
+        (
+            "booking delete",
+            vec![],
+            vec![(BOOKING, booking(11, 3, 7))],
+            true,
+        ),
         (
             "room delete without bookings after booking delete",
             vec![],
@@ -441,7 +450,12 @@ fn a_multi_statement_rejection_reports_every_family_both_ways() {
     let cited: Vec<StatementId> = violations.iter().map(|v| v.statement).collect();
     assert_eq!(
         cited,
-        vec![USER_EMAIL_KEY, BOOKING_KEY, BOOKING_ROOM_EXISTS, ROOM_CAPACITY],
+        vec![
+            USER_EMAIL_KEY,
+            BOOKING_KEY,
+            BOOKING_ROOM_EXISTS,
+            ROOM_CAPACITY
+        ],
         "every violated statement is named, in canonical order"
     );
 }

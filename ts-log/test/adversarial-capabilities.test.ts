@@ -18,7 +18,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
 import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
-import { ChangeSet, key, lower, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, Uuid, u64 } from "@bjornpagen/bumbledb"
+import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Exit, ManagedRuntime, Result } from "effect"
 import { Command } from "#command.ts"
 import { LocalHistory } from "#history.ts"
@@ -67,8 +68,8 @@ function tempDir(tag: string): string {
 
 function identityOf(schemaId: DatabaseIdentity["schemaId"], seed: string): DatabaseIdentity {
 	return {
-		databaseId: ok(DatabaseId.fromHex(seed.repeat(16))),
-		incarnationId: ok(IncarnationId.fromHex(seed.repeat(16))),
+		databaseId: ok(DatabaseId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(seed, 16)))))),
+		incarnationId: ok(IncarnationId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(seed, 16)))))),
 		schemaId
 	}
 }
@@ -83,7 +84,7 @@ const creation = (seed: string) =>
 	Effect.gen(function* () {
 		const identity = yield* productionCodec.schemaIdentity(lower(Journal), work)
 		return {
-			operationId: ok(OperationId.fromHex(seed.repeat(16))),
+			operationId: ok(OperationId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(seed, 16)))))),
 			artifact: new TextEncoder().encode(identity.snapshot)
 		}
 	})
@@ -99,7 +100,7 @@ const sealInsert = (scope: DatabaseIdentity, changes: ChangeSet<typeof Journal>,
 			scope,
 			id: {
 				receiptEpoch: ok(ReceiptEpoch.from(1n)),
-				requestId: ok(RequestId.fromHex(requestSeed.repeat(16)))
+				requestId: ok(RequestId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(requestSeed, 16))))))
 			},
 			changes,
 			precondition: { kind: "blind" },
@@ -290,8 +291,8 @@ test("a hosted binding under the local constructor refuses typed with no genesis
 		origin: { bucket: "b", prefix: "p", region: "r" },
 		directory: dir,
 		identity: {
-			databaseId: ok(DatabaseId.fromHex("aa".repeat(16))),
-			incarnationId: ok(IncarnationId.fromHex("bb".repeat(16))),
+			databaseId: ok(DatabaseId.parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")),
+			incarnationId: ok(IncarnationId.parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")),
 			schemaId: "2d".repeat(32) as DatabaseIdentity["schemaId"]
 		}
 	}

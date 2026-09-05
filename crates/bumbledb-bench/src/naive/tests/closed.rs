@@ -213,7 +213,7 @@ fn domain_quantification_judges_target_side() {
         }),
         Err(vec![Violation::Containment {
             statement: SEVERITY_HANDLED,
-            direction: Direction::TargetRequired,
+            direction: Direction::SourceUnsatisfied,
         }]),
     );
     assert_eq!(db, before, "the abort must not apply");

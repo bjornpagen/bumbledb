@@ -11,7 +11,7 @@ use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
     ValueType,
 };
-use bumbledb::{Db, ExecutionPolicy, Id128, WorkContext};
+use bumbledb::{Db, ExecutionPolicy, Uuid, WorkContext};
 
 use bumbledb_log::history::command::Limits;
 use bumbledb_log::history::{DatabaseId, IncarnationId, OperationId};
@@ -78,15 +78,15 @@ pub fn tiny_work() -> WorkContext {
 }
 
 pub fn op(byte: u8) -> OperationId {
-    OperationId::from_core(Id128::from_bytes([byte; 16]))
+    OperationId::from_core(Uuid::from_bytes([byte; 16]))
 }
 
 pub fn db_id(byte: u8) -> DatabaseId {
-    DatabaseId::from_core(Id128::from_bytes([byte; 16]))
+    DatabaseId::from_core(Uuid::from_bytes([byte; 16]))
 }
 
 pub fn incarnation(byte: u8) -> IncarnationId {
-    IncarnationId::from_core(Id128::from_bytes([byte; 16]))
+    IncarnationId::from_core(Uuid::from_bytes([byte; 16]))
 }
 
 /// Base schema: `Note(id: u64, body: string)` with a key on `id`.

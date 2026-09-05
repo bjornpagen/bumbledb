@@ -280,11 +280,8 @@ type SlotSignature<S extends ClassedField> = readonly [SignatureOf<S["field"]>, 
  */
 type WidenedSlot<S extends ClassedField> = [AnyField] extends [S["field"]] ? true : false
 
-type JoinOk<A extends ClassedField, B extends ClassedField> = WidenedSlot<A> extends true
-	? true
-	: WidenedSlot<B> extends true
-		? true
-		: Same<SlotSignature<A>, SlotSignature<B>>
+type JoinOk<A extends ClassedField, B extends ClassedField> =
+	WidenedSlot<A> extends true ? true : WidenedSlot<B> extends true ? true : Same<SlotSignature<A>, SlotSignature<B>>
 
 type U64Wire<F extends AnyField> = F extends { readonly kind: "u64" }
 	? F extends { readonly closed: unknown }

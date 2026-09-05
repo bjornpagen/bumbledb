@@ -20,21 +20,17 @@ use crate::schema::judge::{JudgedDirection, JudgedViolation};
 use crate::schema::{Schema, StatementView};
 use crate::work::WorkContext;
 
-/// One mapping from the reference judge's refusal (over an infallible
-/// in-memory state) to the public error surface — never a fabricated
-/// domain rejection.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "an error adapter consumes the refusal it maps (`map_err` shape)"
-)]
-pub(super) fn judge_refusal(
-    error: crate::schema::judge::JudgeError<std::convert::Infallible>,
-) -> Error {
+/// Preserve the candidate's failure channel and the judge's typed refusal;
+/// neither is a domain rejection.
+pub(super) fn judge_refusal<E: Into<Error>>(error: crate::schema::judge::JudgeError<E>) -> Error {
     match error {
         crate::schema::judge::JudgeError::Work(work) => {
             Error::from_store(crate::storage::store::StoreError::Work(work))
         }
-        crate::schema::judge::JudgeError::State(impossible) => match impossible {},
+        crate::schema::judge::JudgeError::State(error) => error.into(),
+        crate::schema::judge::JudgeError::Compile(error) => {
+            Error::from_store(crate::storage::store::StoreError::Compile(error))
+        }
         crate::schema::judge::JudgeError::UndefinedDuration { statement } => {
             Error::from_store(crate::storage::store::StoreError::JudgeRefused {
                 statement,

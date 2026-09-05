@@ -859,27 +859,21 @@ fn spilled_partition_merge_refuses_cardinality_overflow() {
 
 /// Legal multi-word Pack group heads must spill under pressure — spill is
 /// not disabled for large groups (CORE-023). Ten words remain the narrow
-/// (inline-key) regime; token tables start only past MAX_INLINE_KEY.
+/// (inline-key) regime; token tables start only past `MAX_INLINE_KEY`.
 #[test]
 fn wide_pack_group_heads_spill_under_a_zero_ram_allowance() {
     use crate::exec::run::{Bindings, Sink as _};
 
     // Ten u64 group-key words plus interval endpoints still fit inline.
     let finds = vec![
-        FindSpec::Var {
-            slot: 0,
-            width: 10,
-        },
+        FindSpec::Var { slot: 0, width: 10 },
         FindSpec::Pack { slot: 10 },
     ];
     let work = crate::api::prepared::source::UNBOUNDED_POLICY
         .start()
         .expect("unbounded ledger");
     let mut sink = AggregateSink::new(finds, 12);
-    sink.begin(Some(crate::exec::sink::SinkBudget {
-        work,
-        ram_bytes: 0,
-    }));
+    sink.begin(Some(crate::exec::sink::SinkBudget { work, ram_bytes: 0 }));
     let mut bindings = Bindings::new(12);
     for word in 0..10 {
         bindings.set(word, word as u64 + 1);

@@ -1,6 +1,6 @@
 //! The successor envelope boundary, not executable command/durability proof.
 
-use bumbledb::Id128;
+use bumbledb::Uuid;
 use bumbledb_log::history::command::{
     CommandMetadata, FAMILY, FrameError, LAYOUT, Limits, ReceiptMetadata, UnverifiedOutcome,
     UnverifiedReceiptEnvelope, decode_command, decode_receipt, encode_command,
@@ -27,13 +27,13 @@ const HEADER: usize = FAMILY.len() + 3;
 fn metadata() -> CommandMetadata {
     CommandMetadata {
         identity: DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([0x11; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([0x22; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([0x11; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0x22; 16])),
             schema_id: SchemaId([0x33; 32]),
         },
         id: CommandId {
             receipt_epoch: ReceiptEpoch::new(7).unwrap(),
-            request_id: RequestId::from_core(Id128::from_bytes([0x44; 16])),
+            request_id: RequestId::from_core(Uuid::from_bytes([0x44; 16])),
         },
         condition: Condition::Unconditional,
     }
@@ -261,7 +261,7 @@ fn byte_caps_are_checked_before_allocation_and_result_is_not_an_opaque_escape() 
     assert_eq!(decode_command(&framed, LIMITS).unwrap().result, &[7; 8]);
     let mut wrong_incarnation = metadata();
     wrong_incarnation.condition = Condition::ExactState(StateStamp {
-        incarnation: IncarnationId::from_core(Id128::from_bytes([9; 16])),
+        incarnation: IncarnationId::from_core(Uuid::from_bytes([9; 16])),
         data_revision: 0,
     });
     assert_eq!(
@@ -354,7 +354,7 @@ fn receipt_tags_counts_state_and_evidence_limits_are_strict() {
         Err(FrameError::InvalidTerminalStamp)
     );
     invalid = receipt;
-    invalid.metadata.state_at.incarnation = IncarnationId::from_core(Id128::from_bytes([6; 16]));
+    invalid.metadata.state_at.incarnation = IncarnationId::from_core(Uuid::from_bytes([6; 16]));
     assert_eq!(
         encode_receipt(invalid, LIMITS),
         Err(FrameError::StateIdentityMismatch)
@@ -423,17 +423,8 @@ fn decision_parent_locator_uses_one_option_tag_and_exact_cap() {
         },
     };
     // First-principles width, not the encoder's part list.
-    let independent = DECISION_FAMILY.len()
-        + 3
-        + 64
-        + 8
-        + 40
-        + 50
-        + 24
-        + 24
-        + 8
-        + command.len()
-        + 25;
+    let independent =
+        DECISION_FAMILY.len() + 3 + 64 + 8 + 40 + 50 + 24 + 24 + 8 + command.len() + 25;
     let extra_tag = independent - 50 + 1 + 1 + 49;
     assert_eq!(OBJECT_REF_WIRE_BYTES, 49);
     assert_eq!(OBJECT_REF_OPTION_PRESENT_BYTES, 50);

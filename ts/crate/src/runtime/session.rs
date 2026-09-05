@@ -1,12 +1,12 @@
 //! Worker-table snapshots (C7): one owned pinned read plus prepared state
 //! per entry. Jobs borrow the entry for one operation and return to the
-//! scheduler. No session-long reactor, no ready_rx, no JS-driven writer.
+//! scheduler. No session-long reactor, no `ready_rx`, no JS-driven writer.
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use bumbledb::work::{ExecutionPolicy, WorkContext, WorkError};
+use bumbledb::work::{ExecutionPolicy, WorkContext};
 use bumbledb::{OwnedRead, PreparedQuery, SchemaDescriptor, Witness};
 
 use super::lanes::{LaneId, WorkerCommand};
@@ -17,10 +17,10 @@ use super::{Notify, Operation, Output, Runtime, RuntimeError, WaitTarget, lock};
 
 /// One typed engine refusal crossing the executor as owned data.
 pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
-    if let bumbledb::Error::Store(store) = error {
-        if let bumbledb::store::StoreError::Work(work) = store.as_ref() {
-            return RuntimeError::Work(*work);
-        }
+    if let bumbledb::Error::Store(store) = error
+        && let bumbledb::store::StoreError::Work(work) = store.as_ref()
+    {
+        return RuntimeError::Work(*work);
     }
     RuntimeError::Engine {
         kind: crate::tags::error_family::tag(&error.family()),
@@ -80,9 +80,8 @@ impl SnapshotAccess<'_> {
     }
 }
 
-pub type SnapshotWork = Box<
-    dyn FnOnce(&WorkContext, &mut SnapshotAccess<'_>) -> Result<Output, RuntimeError> + Send,
->;
+pub type SnapshotWork =
+    Box<dyn FnOnce(&WorkContext, &mut SnapshotAccess<'_>) -> Result<Output, RuntimeError> + Send>;
 
 /// Live-ticket publication boundary. L13 calls [`PublicationSink::accept`]
 /// with the original `DeliveryTicket` still alive: register `QueuedOutput`
@@ -106,30 +105,24 @@ impl<'a> PublicationSink<'a> {
         self.accepted
     }
 
-    pub(super) fn armed(&self) -> bool {
-        self.armed
-    }
-
     /// Register `output` and run `commit` under the output lock so no
     /// observer can take between them. `commit` must not allocate, read,
     /// checkpoint, or preview. Armed cancel and accept failure publish
     /// nothing — the caller aborts the live ticket.
-    pub fn accept(
-        &mut self,
-        output: Output,
-        commit: impl FnOnce() -> Result<(), RuntimeError>,
-    ) -> Result<(), RuntimeError> {
+    pub fn accept(&mut self, output: Output, commit: impl FnOnce()) -> Result<(), RuntimeError> {
         if !output.queued_publication() {
             return Err(RuntimeError::Internal);
         }
-        let mut slot = lock(&self.operation.output);
-        if matches!(&*slot, Some(Ok(value)) if value.queued_publication()) {
-            return Ok(());
-        }
         if self.armed {
-            return Err(RuntimeError::Work(WorkError::Cancelled));
+            self.operation.cancel();
+            self.armed = false;
         }
-        commit()?;
+        let mut slot = lock(&self.operation.output);
+        if slot.is_some() {
+            return Err(RuntimeError::Internal);
+        }
+        self.operation.context.checkpoint()?;
+        commit();
         *slot = Some(Ok(output));
         self.accepted = true;
         Ok(())
@@ -154,27 +147,11 @@ pub enum Message {
         operation: Arc<Operation>,
         work: PayloadWork,
     },
-    Close,
 }
 
 pub(super) struct SessionSlot {
     pub cap: Capability,
     pub closing: bool,
-}
-
-impl SessionSlot {
-    pub(super) fn begin_close(&mut self, runtime: &Runtime) {
-        if self.closing {
-            return;
-        }
-        self.closing = true;
-        let _ = runtime.request_resource_close(self.cap);
-    }
-}
-
-pub enum PrepareReply {
-    Ok(u64),
-    IrError(String),
 }
 
 pub struct SessionOpened {
@@ -211,7 +188,7 @@ impl SessionCore {
             .values()
             .filter(|operation| operation.session == Some(self.id))
         {
-            operation.context.cancel();
+            operation.cancel();
         }
         self.runtime.changed.notify_all();
     }
@@ -303,28 +280,19 @@ impl Runtime {
     }
 
     /// Pin on the current worker. Called from an already-running pool job
-    /// (open or L14 authority pin). No ready_rx, no second hop onto this pool.
+    /// (open or L14 authority pin). No `ready_rx`, no second hop onto this pool.
     pub(crate) fn spawn_read_session_for(
         self: &Arc<Self>,
         db: &ManagedDb,
         lease: DbLease,
+        context: &WorkContext,
     ) -> Result<Output, RuntimeError> {
         if !Arc::ptr_eq(self, db.runtime()) {
             return Err(RuntimeError::ForeignRuntime);
         }
         let (owner, database) = db.ids();
-        let context = ExecutionPolicy {
-            input_bytes: 0,
-            working_bytes: 0,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 0,
-            work_units: 0,
-            timeout: self.options.cleanup_timeout,
-        }
-        .start()?;
         context.checkpoint()?;
-        self.pin_snapshot(owner, database, lease, &context)
+        self.pin_snapshot(owner, database, lease, context)
     }
 
     fn pin_snapshot(
@@ -337,29 +305,30 @@ impl Runtime {
         context.checkpoint()?;
         let worker = WorkerContext::worker_id()?;
         let sealed = lease.sealed();
-        let store = lease.db().integration_store().identity().store.to_string();
+        let store_identity = lease.db().integration_store().identity().store.to_string();
         // L07 seam: Db::snapshot → OwnedRead. Each job takes frame(&work).
-        let owned = lease.db().snapshot(context).map_err(engine_error)?;
-        let generation = owned.snapshot().generation().value();
-        let attachment = owned
+        let pinned_read = lease
+            .db()
+            .snapshot(context)
+            .map_err(|error| engine_error(&error))?;
+        let generation = pinned_read.snapshot().generation().value();
+        let attachment = pinned_read
             .snapshot()
             .attachment()
-            .map_err(|error| engine_error(&bumbledb::Error::from_store(error)))?
+            .map_err(|error| engine_error(&bumbledb::Error::Store(Box::new(error))))?
             .map(<[u8]>::to_vec);
-        let witness = owned.witness().map_err(engine_error)?;
+        let witness = pinned_read.witness();
         let cap = self.reserve_snapshot_route(owner, database, worker)?;
         let resource = SnapshotResource {
-            owned,
+            owned: pinned_read,
             prepared: BTreeMap::new(),
             sealed: Arc::clone(&sealed),
-            lease,
+            _lease: lease,
             owner,
             database,
         };
-        let installed = WorkerContext::with(|ctx| {
-            ctx.table
-                .insert(cap, TablePayload::Snapshot(resource), 0)
-        })?;
+        let installed =
+            WorkerContext::with(|ctx| ctx.table.insert(cap, TablePayload::Snapshot(resource), 0))?;
         if let Err(error) = installed {
             self.rollback_snapshot_route(owner, database, cap);
             return Err(error);
@@ -377,7 +346,7 @@ impl Runtime {
             sealed,
             witness,
             generation,
-            store,
+            store: store_identity,
             attachment,
         }))
     }
@@ -486,6 +455,10 @@ impl Runtime {
         self.changed.notify_all();
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Explicit capability scope and one-shot job admission stay together"
+    )]
     pub(super) fn submit_snapshot(
         &self,
         cap: Capability,
@@ -651,47 +624,26 @@ impl Runtime {
     }
 
     pub(crate) fn rollback_native_route(&self, cap: Capability) {
+        let mut state = lock(&self.state);
         if let Some(bytes) = self.registry.rollback_route(cap) {
-            let mut state = lock(&self.state);
             state.reserved[3] = state.reserved[3].saturating_sub(bytes);
             state.natives = state.natives.saturating_sub(1);
             self.changed.notify_all();
         }
-    }
-
-    pub(crate) fn grow_native_route(&self, cap: Capability, extra: u64) -> Result<(), RuntimeError> {
-        {
-            let mut state = lock(&self.state);
-            let used = state.reserved[3];
-            let limit = self.options.aggregate_bytes[3];
-            if used.checked_add(extra).is_none_or(|next| next > limit) {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: "resultBytes",
-                    used,
-                    requested: extra,
-                    limit,
-                });
-            }
-            state.reserved[3] += extra;
-        }
-        if let Err(error) = self.registry.add_bytes(cap, extra) {
-            let mut state = lock(&self.state);
-            state.reserved[3] = state.reserved[3].saturating_sub(extra);
-            return Err(error);
-        }
-        Ok(())
     }
 
     pub(crate) fn release_native_route(&self, cap: Capability) {
+        // A close waiter must observe route removal and refunded ownership
+        // together, never a drained route with a still-live resource count.
+        let mut state = lock(&self.state);
         if let Some(bytes) = self.registry.release(cap) {
-            let mut state = lock(&self.state);
             state.reserved[3] = state.reserved[3].saturating_sub(bytes);
             state.natives = state.natives.saturating_sub(1);
             self.changed.notify_all();
         }
     }
 
-    /// Capability-first lock mint. `cap.kind` is always RepositoryLock.
+    /// Capability-first lock mint. `cap.kind` is always `RepositoryLock`.
     /// Same-worker insert is local; JS/cross-worker is fire-and-forget.
     pub(crate) fn mint_repository_lock(
         self: &Arc<Self>,
@@ -701,7 +653,7 @@ impl Runtime {
             Arc::clone(self),
             NativeKind::RepositoryLock,
             0,
-            super::registry::Payload::RepositoryLock { lock },
+            super::registry::Payload::RepositoryLock { _lock: lock },
         )
     }
 
@@ -710,10 +662,10 @@ impl Runtime {
         cap: Capability,
         payload: super::registry::Payload,
     ) -> Result<(), RuntimeError> {
+        let payload = Box::new(payload);
         if WorkerContext::worker_id() == Ok(cap.worker) {
             return WorkerContext::with(|ctx| {
-                ctx.table
-                    .insert(cap, TablePayload::Native(payload), 0)
+                ctx.table.insert(cap, TablePayload::Native(payload), 0)
             })?;
         }
         // JS / other-thread take: enqueue and return. The reserved
@@ -849,7 +801,7 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
-    //! D18/D24/D29 discriminators. Authored now; verification NotRun.
+    //! D18/D24/D29 discriminators. Authored now; verification `NotRun`.
     use std::sync::mpsc::channel;
     use std::time::{Duration, Instant};
 
@@ -874,7 +826,7 @@ mod tests {
             native_handle_capacity: 8,
             aggregate_bytes: [1 << 20; 4],
             chunk_bytes: 1 << 16,
-            cleanup_timeout: Duration::from_millis(200),
+            cleanup_timeout: Duration::from_secs(5),
         }
     }
 
@@ -923,7 +875,7 @@ mod tests {
         let path = owner.child_path("db").expect("child path");
         #[rustfmt::skip]
         let Ok(bumbledb::Admission::Accepted(db)) =
-            crate::Engine::create(&path, descriptor.clone())
+            crate::Engine::create(&path, descriptor.clone(), policy().start().unwrap())
         else {
             panic!("engine create must accept a fresh store")
         };
@@ -1033,7 +985,9 @@ mod tests {
             Ok(Box::new(|context, access| {
                 context.checkpoint()?;
                 let _ = access.frame(context);
-                Ok(Output::Generation(access.owned.snapshot().generation().value()))
+                Ok(Output::Generation(
+                    access.owned.snapshot().generation().value(),
+                ))
             }))
         })
         .expect("parent still readable after extra idle snapshots")
@@ -1065,28 +1019,24 @@ mod tests {
         let natives_live = runtime.inspect().natives;
         assert!(natives_live >= 1, "snapshot occupies a handle slot");
 
-        let (release, blocked) = channel();
+        let (release, wait_release) = channel();
         let (entered, running) = channel();
         let _blocker = runtime
-            .submit(
-                policy(),
-                Box::new(|| {}),
-                move |_| {
-                    Ok(Box::new(move |_| {
-                        entered.send(()).unwrap();
-                        blocked.recv().unwrap();
-                        Ok(Output::Ready)
-                    }))
-                },
-            )
+            .submit(policy(), Box::new(|| {}), move |_| {
+                Ok(Box::new(move |_| {
+                    entered.send(()).unwrap();
+                    wait_release.recv().unwrap();
+                    Ok(Output::Ready)
+                }))
+            })
             .expect("blocker submits");
-        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        running
+            .recv_timeout(Duration::from_secs(5))
+            .expect("entered");
         while runtime
-            .submit(
-                policy(),
-                Box::new(|| {}),
-                |_| Ok(Box::new(|_| Ok(Output::Ready))),
-            )
+            .submit(policy(), Box::new(|| {}), |_| {
+                Ok(Box::new(|_| Ok(Output::Ready)))
+            })
             .is_ok()
         {}
         assert!(
@@ -1114,7 +1064,8 @@ mod tests {
         drop(owner);
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
         assert_eq!(
-            runtime.inspect().natives, 0,
+            runtime.inspect().natives,
+            0,
             "counters match actual release; not zeroed as cleanup"
         );
         let _ = std::fs::remove_dir_all(&base);
@@ -1128,19 +1079,17 @@ mod tests {
         let (release, blocked) = channel();
         let (entered, running) = channel();
         let _blocker = runtime
-            .submit(
-                policy(),
-                Box::new(|| {}),
-                move |_| {
-                    Ok(Box::new(move |_| {
-                        entered.send(()).unwrap();
-                        blocked.recv().unwrap();
-                        Ok(Output::Ready)
-                    }))
-                },
-            )
+            .submit(policy(), Box::new(|| {}), move |_| {
+                Ok(Box::new(move |_| {
+                    entered.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    Ok(Output::Ready)
+                }))
+            })
             .expect("blocker submits");
-        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        running
+            .recv_timeout(Duration::from_secs(5))
+            .expect("entered");
         assert_eq!(runtime.inspect().active, 1, "the one worker is occupied");
 
         let admission = super::super::registry::RegistryAdmission::admit(
@@ -1154,7 +1103,8 @@ mod tests {
         )
         .expect("js-thread admit returns without the worker");
         assert_eq!(
-            runtime.inspect().active, 1,
+            runtime.inspect().active,
+            1,
             "admit must not join the busy worker"
         );
         assert_eq!(runtime.registry.route_count(), 1, "capability is reserved");
@@ -1187,22 +1137,20 @@ mod tests {
         // row or charge.
         let runtime = Runtime::start(options()).unwrap();
         let baseline = runtime.inspect();
-        let (release, blocked) = channel();
+        let (release, wait_release) = channel();
         let (entered, running) = channel();
-        let _blocker = runtime
-            .submit(
-                policy(),
-                Box::new(|| {}),
-                move |_| {
-                    Ok(Box::new(move |_| {
-                        entered.send(()).unwrap();
-                        blocked.recv().unwrap();
-                        Ok(Output::Ready)
-                    }))
-                },
-            )
+        let blocker = runtime
+            .submit(policy(), Box::new(|| {}), move |_| {
+                Ok(Box::new(move |_| {
+                    entered.send(()).unwrap();
+                    wait_release.recv().unwrap();
+                    Ok(Output::Ready)
+                }))
+            })
             .expect("blocker submits");
-        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        running
+            .recv_timeout(Duration::from_secs(5))
+            .expect("entered");
 
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
@@ -1216,7 +1164,10 @@ mod tests {
         .expect("capability first, table insert later");
         assert_eq!(runtime.registry.route_count(), 1);
         assert_eq!(runtime.inspect().natives, baseline.natives + 1);
-        assert_eq!(runtime.inspect().reserved[3], baseline.reserved[3] + 32);
+        assert_eq!(
+            runtime.inspect().reserved[3],
+            baseline.reserved[3] + policy().result_bytes + 32
+        );
         assert!(
             !runtime.registry.join(admission.cap()),
             "close has not drained yet"
@@ -1237,6 +1188,7 @@ mod tests {
             .expect("joined close");
         rx.recv_timeout(Duration::from_secs(5))
             .expect("close report");
+        assert!(matches!(runtime.take(&blocker), Ok(Output::Ready)));
         assert_eq!(
             runtime.inspect().natives,
             baseline.natives,
@@ -1310,20 +1262,18 @@ mod tests {
         let (release, blocked) = channel();
         let (entered, running) = channel();
         let _busy = session
-            .submit(
-                policy(),
-                Box::new(|| {}),
-                move |_| {
-                    Ok(Box::new(move |context, access| {
-                        let _ = access.frame(context);
-                        entered.send(()).unwrap();
-                        blocked.recv().unwrap();
-                        Ok(Output::Ready)
-                    }))
-                },
-            )
+            .submit(policy(), Box::new(|| {}), move |_| {
+                Ok(Box::new(move |context, access| {
+                    let _ = access.frame(context);
+                    entered.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    Ok(Output::Ready)
+                }))
+            })
             .expect("busy snapshot submits");
-        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        running
+            .recv_timeout(Duration::from_secs(5))
+            .expect("entered");
         let (tx, rx) = channel();
         session.drain(Box::new(move |report| {
             tx.send(report).unwrap();
@@ -1473,9 +1423,7 @@ mod tests {
             matches!(runtime.take(&delivered), Ok(Output::Page(Some(_)))),
             "a live registered page remains takeable until cancel"
         );
-        admission
-            .request_close()
-            .expect("close after publication");
+        admission.request_close().expect("close after publication");
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
     }
 
@@ -1587,17 +1535,12 @@ mod tests {
         let (release_tx, release_rx) = channel();
         runtime.arm_publication_hold(entered_tx, release_rx);
         let published = runtime
-            .submit_payload(
-                admission.cap(),
-                policy(),
-                Box::new(|| {}),
-                |_| {
-                    Ok(Box::new(move |context, _, _| {
-                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
-                        Ok(Output::Page(Some(queued)))
-                    }))
-                },
-            )
+            .submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| {
+                Ok(Box::new(move |context, _, _| {
+                    let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                    Ok(Output::Page(Some(queued)))
+                }))
+            })
             .expect("page submits");
         entered_rx
             .recv_timeout(Duration::from_secs(5))
@@ -1624,8 +1567,8 @@ mod tests {
         assert!(
             matches!(
                 runtime.take(&retained),
-                Err(RuntimeError::SpentHandle)
-                    | Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+                Err(RuntimeError::SpentHandle
+                    | RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
             ),
             "reclaimed publication is not a later JS take"
         );
@@ -1635,7 +1578,7 @@ mod tests {
     fn d12_cancelled_queued_page_reclaims_open_without_waiter() {
         // Cancel/close with queued Page/Rows, no waiter, Phase::Open.
         // Supervise must drop the delivery copy; JS take count stays 0;
-        // committed facts stay (no second accept_publication, no rewind).
+        // committed facts stay (no second no rewind).
         let runtime = Runtime::start(options()).unwrap();
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
@@ -1706,20 +1649,17 @@ mod tests {
         let (release, blocked) = channel();
         let (entered, running) = channel();
         runtime
-            .submit_payload(
-                admission.cap(),
-                policy(),
-                Box::new(|| {}),
-                |_| {
-                    Ok(Box::new(move |_, _, _| {
-                        entered.send(()).unwrap();
-                        blocked.recv().unwrap();
-                        Ok(Output::Ready)
-                    }))
-                },
-            )
+            .submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| {
+                Ok(Box::new(move |_, _, _| {
+                    entered.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    Ok(Output::Ready)
+                }))
+            })
             .expect("busy payload submits");
-        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        running
+            .recv_timeout(Duration::from_secs(5))
+            .expect("entered");
         admission
             .request_close()
             .expect("close while busy cannot QueueFull");

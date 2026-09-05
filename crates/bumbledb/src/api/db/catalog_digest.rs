@@ -19,6 +19,10 @@ impl<S> Db<S> {
     /// # Errors
     /// Storage failure or stopped work.
     #[doc(hidden)]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Database operations accept owned call-scoped work and key values consistently"
+    )]
     pub fn catalog_digest(&self, work: WorkContext) -> Result<[u8; 32]> {
         let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
         let mut digest = crate::digest::Digest::new();

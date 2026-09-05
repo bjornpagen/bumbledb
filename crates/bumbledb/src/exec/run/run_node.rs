@@ -299,7 +299,10 @@ impl Executor {
                 let occ = usize::from(subatom.occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
                 counters.phase_start(node_idx, JoinPhase::Force);
-                if self.colt_ok(colts[occ].ensure_forced(s_cursor, s_level)).is_none() {
+                if self
+                    .colt_ok(colts[occ].ensure_forced(s_cursor, s_level))
+                    .is_none()
+                {
                     break 'outer;
                 }
                 counters.phase_end(node_idx, JoinPhase::Force);

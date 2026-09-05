@@ -77,7 +77,7 @@ describe("LocalHistory.open", function suite() {
 					machine.LocalHistory.create(localBinding, schema, {
 						...work,
 						creation: {
-							operationId: "4b".repeat(16) as OperationId,
+							operationId: "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId,
 							artifact: new Uint8Array([1, 2, 3])
 						}
 					})
@@ -86,7 +86,7 @@ describe("LocalHistory.open", function suite() {
 		)
 		const request = double.calls[0]?.request as { mode: string; creation: { operationId: string } }
 		assert.equal(request.mode, "create")
-		assert.equal(request.creation.operationId, "4b".repeat(16))
+		assert.equal(request.creation.operationId, "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b")
 	})
 
 	test("create refuses existing authority with the native refusal, unchanged", async function exists() {
@@ -100,7 +100,10 @@ describe("LocalHistory.open", function suite() {
 				Effect.scoped(
 					machine.LocalHistory.create(localBinding, schema, {
 						...work,
-						creation: { operationId: "4b".repeat(16) as OperationId, artifact: new Uint8Array([1]) }
+						creation: {
+							operationId: "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId,
+							artifact: new Uint8Array([1])
+						}
 					})
 				)
 			)

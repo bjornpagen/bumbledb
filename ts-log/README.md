@@ -100,8 +100,8 @@ const program = Effect.gen(function* () {
 	// fingerprint IS the identity's schemaId — creation re-judges both.
 	const artifact: Uint8Array = fs.readFileSync("bumbledb/migrations/meta/0000.schema.json")
 	const identity: DatabaseIdentity = {
-		databaseId: unwrap(DatabaseId.fromHex("ab".repeat(16))),
-		incarnationId: unwrap(IncarnationId.fromHex("cd".repeat(16))),
+		databaseId: unwrap(DatabaseId.parse("abababab-abab-abab-abab-abababababab")),
+		incarnationId: unwrap(IncarnationId.parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")),
 		schemaId: compiled.schemaId
 	}
 	const binding: LocalBinding = { kind: "local", directory: "/tmp/ledger", identity }
@@ -112,7 +112,7 @@ const program = Effect.gen(function* () {
 			const history = yield* LocalHistory.create(binding, Ledger, {
 				...work,
 				creation: {
-					operationId: unwrap(OperationId.fromHex("e1".repeat(16))),
+					operationId: unwrap(OperationId.parse("e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1")),
 					artifact
 				}
 			})
@@ -126,7 +126,7 @@ const program = Effect.gen(function* () {
 					// a retry resubmits the identical sealed command.
 					id: {
 						receiptEpoch: unwrap(ReceiptEpoch.from(1n)),
-						requestId: unwrap(RequestId.fromHex("0b".repeat(16)))
+						requestId: unwrap(RequestId.parse("0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b"))
 					},
 					changes,
 					precondition: { kind: "blind" },
@@ -169,14 +169,20 @@ await Effect.runPromise(runtime.disposeEffect)
 three-armed certainty sum, never an exception channel:
 
 - `decided` — the authority recorded a decision; the arm carries the
-  `TerminalReceipt` (`committed`, `no-change`, or `rejected` with canonical
-  violation evidence).
+  `TerminalReceipt` (`committed`, `no-change`, `precondition-failed`, or
+  `invariant-rejected` with canonical violation evidence).
 - `not-submitted` — proven never registered (a typed cause rides along);
   safe to fix and submit a NEW command.
 - `outcome-unknown` — dispatch crossed the authority boundary but the
   decision could not be read back. Never retried blindly: `resolve(ref)`
-  later returns the recorded receipt (`found`), a proven `not-submitted`,
-  or `unknown` again.
+  later returns `found`, `not-recorded-at`, `command-epoch-closed`, or
+  `receipt-expired-unknown`. Absence at one decision is not proof that an
+  in-flight command will never publish.
+
+Fiber interruption remains interruption in Effect's `Cause`; it joins native
+cleanup, not an invented successful outcome. Retain the command ref or admin
+operation identity before dispatch and resolve it after cancellation. A failed
+cleanup adds a `CloseFailure` defect without erasing the interruption.
 
 Receipts and refs are plain owned data: they outlive their scope, survive
 process restarts (render/parse with `renderCommandRef`/`parseCommandRef`),
@@ -220,7 +226,7 @@ declare const binding: LocalBinding
 const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 
 const cycle = Effect.gen(function* () {
-	const operationId = unwrap(OperationId.fromHex("a1".repeat(16)))
+	const operationId = unwrap(OperationId.parse("a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1"))
 	const destination = { kind: "filesystem" as const, directory: "/tmp/ledger-backup" }
 	const backed = yield* backup(binding, { ...work, operationId, destination })
 	if (backed.kind !== "completed") {
@@ -258,6 +264,11 @@ runtime:
   `abortMigration` — execute generated plans through the one native
   executor, with `AdminOutcome` certainty (`completed` / `not-started` /
   `outcome-unknown`).
+
+  **Current limitation:** these generated migration runner verbs target local
+  authorities only. The TypeScript/native bridge refuses hosted migration
+  execution; a hosted tenant's cache is not an authoritative local migration
+  target. Hosted migration orchestration remains a release blocker.
 - Field arithmetic such as `Scalar.add(Scalar.field("units"), Scalar.u64(1n))`
   is valid intent metadata. Native chain compilation binds it before any
   new manifest write or source freeze, including zero input rows.

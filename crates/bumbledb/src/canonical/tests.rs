@@ -1,4 +1,5 @@
 use super::*;
+use crate::Interval;
 use crate::schema::{FixedIntervalElement, IntervalElement};
 use crate::work::{ExecutionPolicy, Resource};
 use std::time::Duration;
@@ -89,20 +90,20 @@ fn independent_all_scalar_golden_and_every_truncation() {
     ));
 }
 
-/// Id128 (tag 8) and the dense float interval (tag 9) have exact golden
+/// Uuid (tag 8) and the dense float interval (tag 9) have exact golden
 /// wire bytes: endpoints are canonical binary64 payload bits, big endian,
 /// never index order keys (E-CODEC, F-WIRE, F-INTERVAL).
 #[test]
-fn id128_and_dense_interval_golden_roundtrip() {
+fn uuid_and_dense_interval_golden_roundtrip() {
     let fields = fields(&[
-        ValueType::Id128,
+        ValueType::Uuid,
         ValueType::Interval {
             element: IntervalElement::F64,
         },
     ]);
-    let id = crate::Id128::from_bytes([0xaa; 16]);
+    let id = crate::Uuid::from_bytes([0xaa; 16]);
     let span = Interval::<F64>::new(F64::NEG_INFINITY, F64::from(1.0)).unwrap();
-    let values = [Value::Id128(id), Value::IntervalF64(span)];
+    let values = [Value::Uuid(id), Value::IntervalF64(span)];
     let mut expected: Vec<u8> = vec![0, 2, 8];
     expected.extend_from_slice(&[0xaa; 16]);
     expected.push(9);
@@ -305,16 +306,21 @@ fn image_walker_and_strict_decode_agree_on_interval_laws() {
     assert_eq!(words, [3, 5]);
 
     // Wrong fixed width: strict decode and image walk both refuse.
-    let bad = CanonicalRow::encode(
-        &fields,
-        &[Value::IntervalU64(Interval::new(3, 4).expect("width 1"))],
-        &ctx,
-    )
-    .expect("wire encodes; law is checked on read");
     assert!(matches!(
-        decode(&fields, bad.as_bytes(), &ctx),
+        CanonicalRow::encode(
+            &fields,
+            &[Value::IntervalU64(Interval::new(3, 4).expect("width 1"))],
+            &ctx,
+        ),
+        Err(RowError::Type { field: 0 })
+    ));
+    // Corrupt raw bytes, not a checked CanonicalRow constructor.
+    let mut bad = healthy.as_bytes().to_vec();
+    bad[11..19].copy_from_slice(&4u64.to_be_bytes());
+    assert!(matches!(
+        decode(&fields, &bad, &ctx),
         Err(RowError::Type { field: 0 })
     ));
     let mut words = Vec::new();
-    assert!(row_words(&fields, bad.as_bytes(), &mut text, &mut words).is_err());
+    assert!(row_words(&fields, &bad, &mut text, &mut words).is_err());
 }

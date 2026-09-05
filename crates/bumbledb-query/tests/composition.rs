@@ -8,14 +8,14 @@
 //! - interior heads may AGGREGATE (P03's generalized
 //!   `Interior { rules: Vec<Rule> }`; the projection-only wall is deleted —
 //!   only the recursive cycle stays projection-only);
-//! - `id128:"…"` literals and dense `f64..f64` interval literals lower to
-//!   the canonical `Value::Id128` / `Value::IntervalF64` (chapter 11/34
-//!   typed floats, intervals and Id128 with Rust syntax parity).
+//! - `uuid:"…"` literals and dense `f64..f64` interval literals lower to
+//!   the canonical `Value::Uuid` / `Value::IntervalF64` (chapter 11/34
+//!   typed floats, intervals and Uuid with Rust syntax parity).
 //!
 //! Verification: `NotRun` until F3 (campaign phase rule).
 
 use bumbledb::ir::Value;
-use bumbledb::{Atom, AtomSource, Db, FindTerm, FoldOp, Id128, Interval, Query, Term, VarId};
+use bumbledb::{Atom, AtomSource, Db, FindTerm, FoldOp, Interval, Query, Term, Uuid, VarId};
 use bumbledb_query::query;
 
 mod common;
@@ -25,10 +25,10 @@ mod learning {
     bumbledb::schema! {
         pub Learning;
 
-        relation Student { id: id128 as StudentId, name: str, budget: u64 }
+        relation Student { id: uuid as StudentId, name: str, budget: u64 }
         relation Attempt {
-            id: id128 as AttemptId,
-            student: id128 as StudentId,
+            id: uuid as AttemptId,
+            student: uuid as StudentId,
             score: f64,
             units: u64,
             active: interval<i64>,
@@ -45,10 +45,11 @@ use learning::Learning;
 
 fn validated(tag: &str, query: &Query) {
     let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), Learning)
+    let db = Db::create(dir.path(), Learning, common::work())
         .expect("create the Learning store")
         .expect("accepted");
-    db.prepare(query).expect("the composed query validates");
+    db.prepare(query, common::work())
+        .expect("the composed query validates");
 }
 
 /// Chapter 34's exact composition: `attempt_stats` is a grouped aggregate
@@ -190,24 +191,24 @@ fn interior_heads_aggregate() {
     validated("interior-aggregate", &per_student);
 }
 
-/// `id128:"…"` lowers to the canonical `Value::Id128` in selections and
-/// comparison terms; the canonical 32-lowercase-hex spelling is the only
+/// `uuid:"…"` lowers to the canonical `Value::Uuid` in selections and
+/// comparison terms; the canonical hyphenated UUID spelling is the only
 /// accepted image (compile-fail fixtures pin the refusals).
 #[test]
-fn id128_literals_lower_canonically() {
-    let expected = Id128::from_hex("00112233445566778899aabbccddeeff").expect("canonical hex");
+fn uuid_literals_lower_canonically() {
+    let expected = Uuid::parse_str("00112233445566778899aabbccddeeff").expect("canonical hex");
     let by_lit = query!(Learning {
-        (name) | Student(id == id128:"00112233445566778899aabbccddeeff", name);
+        (name) | Student(id == uuid:"00112233445566778899aabbccddeeff", name);
     });
     let rule = &by_lit.rules()[0];
     let atom: &Atom = &rule.atoms[0];
     assert!(
         atom.bindings
             .iter()
-            .any(|(_, term)| *term == Term::Literal(Value::Id128(expected))),
-        "the selection carries the canonical Id128 value"
+            .any(|(_, term)| *term == Term::Literal(Value::Uuid(expected))),
+        "the selection carries the canonical Uuid value"
     );
-    validated("id128-literal", &by_lit);
+    validated("uuid-literal", &by_lit);
 }
 
 /// `0.25..1.5` lowers to the canonical dense `Value::IntervalF64`

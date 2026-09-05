@@ -5,10 +5,9 @@ import { dbNative } from "#db-native.ts"
 import type { FindColumn } from "#query/atom.ts"
 import { decodeAnswers } from "#query/run.ts"
 import type { CellValue } from "#rows.ts"
-import type { CloseReport } from "#runtime-errors.ts"
-import type { DbError } from "#runtime-errors.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
 import { deliveryResultBytes, nativeOperationWith, policyWire } from "#runtime.ts"
+import type { CloseReport, DbError } from "#runtime-errors.ts"
 
 /**
  * `CompleteResult<A>` — the sealed owner of one COMPLETED query answer
@@ -57,10 +56,7 @@ function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly Ce
  * operation under the caller's delivery policy — never the completed query's
  * expired execution deadline.
  */
-function makeCompleteResult<A>(
-	handle: ResultHandle,
-	finds: readonly FindColumn[]
-): CompleteResult<A> {
+function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[]): CompleteResult<A> {
 	function deliveryWire(operation: string, delivery: ExecutionPolicy, requested: bigint) {
 		return policyWire({ ...delivery, resultBytes: deliveryResultBytes(requested, delivery) }, operation)
 	}

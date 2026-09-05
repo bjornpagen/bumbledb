@@ -20,11 +20,10 @@ Four arms, dispatched by file name (`lean/conformance/README.md`):
  document's Query is the tagged `cq` arm.
 * **judgment cases** (`judgment-*.json`): decode `(theory, instance,
  delta)`, apply the delta by row-set arithmetic, and run the PROVED
- two-phase judge — `Txn.judgeB` (`Bumbledb/Decide.lean`), which
- agrees with the model's `Txn.judge` verdict and violation sets phase
- for phase (`Txn.judgeB_agrees`, under no premise beyond the
+ complete judge — `Txn.judgeB` (`Bumbledb/Decide.lean`), which
+ agrees with the model's `Txn.judge` verdict and complete violation sets (`Txn.judgeB_agrees`, under no premise beyond the
  closed-roster merge). The recorded verdict is compared WHOLE:
- accept, or the rejecting phase plus the per-phase violation set as
+ accept, or the complete violation set and its descriptive all-key flag as
  statement indices, in the contracted citation order — ascending
  statement indices, a both-directions containment cited once
  (`RVerdict`'s doc carries the contract and its engine anchors). The
@@ -217,7 +216,7 @@ contract by construction. -/
 inductive RVerdict where
   /-- The commit was accepted. -/
   | accept
-  /-- The commit was rejected in one phase with the complete cited
+  /-- The commit was rejected with the complete cited
  statement-index set of that phase. -/
   | reject (keyPhase : Bool) (violations : List Nat)
 deriving BEq
@@ -318,7 +317,7 @@ def finalWorld (c : JCase) : RowInstance :=
 
 /-- The executable judge's verdict with citation indices: ONE pattern
 match on the PROVED artifact — `judgeB` (`judgeB_agrees`) carries the
-phase and the position-tagged citations from birth, and the compared
+descriptive all-key flag and position-tagged citations from birth, and the compared
 index list is its payload's position projection, re-derived nowhere.
 The filter over the index-paired statement list ascends and cites
 each statement at most once, so this side meets the citation-order

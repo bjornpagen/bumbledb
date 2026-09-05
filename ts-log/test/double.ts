@@ -6,9 +6,10 @@
  * lanes against the packaged addon (P05/P12); these tests pin the layer's
  * certainty preservation, capability bookkeeping and scope policy.
  */
-import { Effect } from "effect"
-import type { CloseWire, OperationHandle, RuntimeHandle } from "@bjornpagen/bumbledb"
+
 import { NativeRuntime } from "@bjornpagen/bumbledb"
+import type { CloseWire, OperationHandle, RuntimeHandle } from "@bjornpagen/bumbledb/internal/log"
+import { Effect } from "effect"
 import type { CoreChangesView, CoreIntegration } from "#machine.ts"
 import type { LogNative } from "#native.ts"
 
@@ -114,8 +115,8 @@ export function makeWireDouble(): WireDouble {
 		logHistoryResult: take,
 		logHistoryClose: (capability: unknown, callback: (report: CloseWire) => void) =>
 			close("logHistoryClose", capability, callback),
-		logSnapshotClose: (snapshot: unknown, callback: (report: CloseWire) => void) =>
-			close("logSnapshotClose", snapshot, callback),
+		runtimeSnapshotClose: (snapshot: unknown, callback: (report: CloseWire) => void) =>
+			close("runtimeSnapshotClose", snapshot, callback),
 		logCommandSeal: (change: unknown, _policy: unknown, request: unknown, callback: () => void) =>
 			start("logCommandSeal", { change, request }, callback),
 		logCommandDecode: (_runtime: unknown, _policy: unknown, bytes: unknown, schema: unknown, callback: () => void) =>
@@ -250,14 +251,14 @@ export const submitOptions = {
 }
 
 export const identityWire = {
-	databaseId: "0f".repeat(16),
-	incarnationId: "1e".repeat(16),
+	databaseId: "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f",
+	incarnationId: "1e1e1e1e-1e1e-1e1e-1e1e-1e1e1e1e1e1e",
 	schemaId: "2d".repeat(32)
 }
 
 export const otherIdentityWire = {
-	databaseId: "aa".repeat(16),
-	incarnationId: "bb".repeat(16),
+	databaseId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+	incarnationId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 	schemaId: "2d".repeat(32)
 }
 
@@ -274,7 +275,7 @@ export const stateWire = { incarnation: identityWire.incarnationId, dataRevision
 export const refWire = {
 	identity: identityWire,
 	receiptEpoch: 1n,
-	requestId: "4b".repeat(16),
+	requestId: "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b",
 	digest: "5a".repeat(32)
 }
 
@@ -282,7 +283,7 @@ export const receiptWire = {
 	command: refWire,
 	decisionAt: stampWire,
 	stateAt: stateWire,
-	outcome: { kind: "no-change", result: { attempt: "6f".repeat(16) } }
+	outcome: { kind: "no-change", result: { attempt: "6f6f6f6f-6f6f-6f6f-6f6f-6f6f6f6f6f6f" } }
 }
 
 export const localBinding = {

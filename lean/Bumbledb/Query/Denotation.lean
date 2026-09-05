@@ -88,6 +88,7 @@ and f64 do not thereby introduce interval domains. -/
 inductive OrderTag where
   | bool
   | f64
+  | uuid
   | elem (e : Elem)
 deriving DecidableEq
 
@@ -106,6 +107,7 @@ def Value.orderWord : Value → Option (OrderTag × Word)
   | { type := .u64, val := x } => some (.elem .u64, encodeU64 x)
   | { type := .i64, val := x } => some (.elem .i64, encodeI64 x)
   | { type := .f64, val := x } => some (.f64, F64.numericWord x)
+  | { type := .uuid, val := x } => some (.uuid, x.val)
   | _ => none
 
 /-- Strict value order: same order domain, strictly smaller rank.
@@ -454,7 +456,7 @@ unreachable on accepted rules (module doc). Note interval `eq` here
 is plain value identity, whereas the engine canonicalizes it to
 `Allen(EQUALS)` — `classify` refinement makes the two
 readings provably equal. -/
-def cmpDen (C : Classify) (ρ : ParamEnv) : CmpOp → Value → Value → Prop
+def cmpDen (C : Classify) (_ρ : ParamEnv) : CmpOp → Value → Value → Prop
   | .eq, a, b => a = b
   | .ne, a, b => a ≠ b
   | .lt, a, b => a.vlt b
@@ -1099,6 +1101,7 @@ def ValueType.carrierDecEq : (t : ValueType) → DecidableEq t.carrier
   | .u64 => inferInstanceAs (DecidableEq U64)
   | .i64 => inferInstanceAs (DecidableEq I64)
   | .f64 => inferInstanceAs (DecidableEq F64)
+  | .uuid => inferInstanceAs (DecidableEq Uuid)
   | .str => inferInstanceAs (DecidableEq StrId)
   | .fixedBytes n => inferInstanceAs (DecidableEq (FixedBytes n))
   | .interval .u64 => inferInstanceAs (DecidableEq (Interval U64))
@@ -1168,6 +1171,7 @@ instance : (a : Value) → (p : Point) → Decidable (p ∈ a.points)
   | ⟨.u64, _⟩, _ => isFalse fun h => h
   | ⟨.i64, _⟩, _ => isFalse fun h => h
   | ⟨.f64, _⟩, _ => isFalse fun h => h
+  | ⟨.uuid, _⟩, _ => isFalse fun h => h
   | ⟨.str, _⟩, _ => isFalse fun h => h
   | ⟨.fixedBytes _, _⟩, _ => isFalse fun h => h
 

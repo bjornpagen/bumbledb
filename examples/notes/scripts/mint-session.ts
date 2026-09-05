@@ -4,7 +4,7 @@
  *   # a signed session token (1 hour) for local/deployed request tests:
  *   SESSION_SECRET=... node --experimental-strip-types scripts/mint-session.ts token <tenantId>
  *
- *   # one fresh Id128 (note ids, request keys, operation/database ids):
+ *   # one fresh Uuid (note ids, request keys, operation/database ids):
  *   node --experimental-strip-types scripts/mint-session.ts id
  *
  * Ids are minted ONCE for an original intent and persisted by the caller;

@@ -33,19 +33,23 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
 
     let scratch = paths.root.join("trace-scratch");
     let _ = std::fs::remove_dir_all(&scratch);
-    let db = Db::create(&scratch.join("db"), Ledger)
+    let db = Db::create(&scratch.join("db"), Ledger, crate::harness::bench_work())
         .map_err(|e| format!("{e:?}"))?
         .expect("accepted");
     corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
 
     let query = (family.query)();
-    let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("execute: {e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)
     };
     for _ in 0..4 {

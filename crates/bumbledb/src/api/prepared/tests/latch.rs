@@ -95,7 +95,9 @@ fn an_unmatched_literal_latches_finally_and_matches_later_rows() {
     );
     let (empty, report) = fix
         .db
-        .read(|instance| prepared.introspect(instance, &[]))
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
+            prepared.introspect(instance, &[])
+        })
         .expect("introspect");
     assert!(empty.is_empty());
     assert!(!report.contains("pending literals:"), "{report}");

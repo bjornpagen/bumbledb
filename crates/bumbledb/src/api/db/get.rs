@@ -17,7 +17,7 @@
 
 use crate::error::{DynIdError, Result};
 use crate::ir::Value;
-use crate::schema::{KeyId, KeyStatement, Relation, Schema, StatementView};
+use crate::schema::{KeyId, KeyStatement, Schema, StatementView};
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, value_matches};
 
 use super::collection::shape_mismatch;
@@ -86,16 +86,6 @@ pub(super) fn projection_matches(
     })
 }
 
-/// Decode one closed relation's sealed row to canonical values. Sealed rows
-/// are encoded once at schema validation and refuse text columns, so the
-/// intern resolver is unreachable.
-pub(super) fn decode_sealed_row(rel: &Relation, fact: &[u8]) -> Vec<Value> {
-    crate::encoding::decode_values(rel.layout().encoded(fact), |_| {
-        unreachable!("closed relations refuse str columns")
-    })
-    .expect("sealed extension rows decode by construction")
-}
-
 /// Indexed keyed lookup over one committed snapshot: project the key's
 /// scalar determinant with the store's one projection convention, enumerate
 /// that determinant bucket, and confirm each candidate row by exact decoded
@@ -120,12 +110,8 @@ pub(super) fn find_snapshot_row<'s>(
         .iter()
         .map(|&position| key_values[position].clone())
         .collect();
-    let projected = crate::storage::store::det_index::determinant_bytes(
-        key,
-        &scalar_values,
-        work,
-    )
-    .map_err(crate::error::Error::from_store)?;
+    let projected = crate::storage::store::det_index::determinant_bytes(key, &scalar_values, work)
+        .map_err(crate::error::Error::from_store)?;
     let fields = schema.relation(relation).fields();
     let mut hit = None;
     snapshot

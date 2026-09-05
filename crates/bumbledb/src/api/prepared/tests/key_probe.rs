@@ -185,15 +185,15 @@ fn booking_query(span_term: Term) -> Query {
 }
 
 #[test]
-fn pointwise_key_point_lookup_uses_key_probe() {
+fn pointwise_key_point_lookup_preserves_exact_interval_equality() {
     let fix = bookings(&[(1, (5, 10), 100), (1, (20, 30), 200), (2, (5, 10), 300)]);
     let query = booking_query(Term::Literal(Value::IntervalU64(
         bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
     )));
     let mut prepared = fix.prepare(&query).expect("prepare");
     assert!(
-        matches!(prepared.pipeline, PreparedPipeline::PointProbe { .. }),
-        "pointwise key lookup takes the fast lane"
+        matches!(prepared.pipeline.main_rules(), [PreparedRule::FreeJoin(_)]),
+        "pointwise functionality does not prove full-row uniqueness"
     );
 
     let out = fix
@@ -354,10 +354,6 @@ fn full_fact_membership_agrees_between_store_and_heap() {
 }
 
 #[test]
-#[expect(
-    clippy::redundant_closure_for_method_calls,
-    reason = "the bare `generation` method path defeats the read closure's HRTB inference"
-)]
 fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
     let descriptor = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -405,7 +401,9 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
 
     let generation_before = docs
         .db
-        .read(|instance| instance.generation())
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
+            Ok(instance.generation())
+        })
         .expect("generation");
     let out = docs
         .execute(&mut prepared, &[BindValue::Str("ghost")])
@@ -413,7 +411,9 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
     assert_eq!(out.len(), 0);
     let generation_after = docs
         .db
-        .read(|instance| instance.generation())
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
+            Ok(instance.generation())
+        })
         .expect("generation");
     assert_eq!(
         generation_before, generation_after,

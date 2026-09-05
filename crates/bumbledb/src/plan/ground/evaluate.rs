@@ -7,8 +7,8 @@
 use std::collections::BTreeSet;
 
 use crate::error::Error;
-use crate::image::view::{Const, FilterPredicate};
 use crate::image::TextEq;
+use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::{VarId, WordCmp};
 use crate::plan::fj::OccBind;
@@ -275,7 +275,7 @@ impl crate::image::view::Operands for SealedRow<'_> {
 /// [`crate::encoding::FactLayout`] encoding the extension was sealed with
 /// at validate. The stored bytes already carry the physical word
 /// conventions (U64 big-endian, I64 sign-flipped, F64 total-order key,
-/// Id128 two big-endian words, intervals two order words — a fixed-width
+/// Uuid two big-endian words, intervals two order words — a fixed-width
 /// slot stores the start word and the layout width recovers the end), so
 /// each word is a direct big-endian load; the span widths mirror
 /// [`crate::image::column_spans`].
@@ -294,10 +294,10 @@ fn sealed_operand(
         ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => FactOperand::Word(
             u64::from_be_bytes(bytes.try_into().expect("word field: layout-derived width")),
         ),
-        ValueType::Id128 => {
+        ValueType::Uuid => {
             let mut words = [0u64; 8];
-            words[0] = u64::from_be_bytes(bytes[..8].try_into().expect("id128 is sixteen bytes"));
-            words[1] = u64::from_be_bytes(bytes[8..].try_into().expect("id128 is sixteen bytes"));
+            words[0] = u64::from_be_bytes(bytes[..8].try_into().expect("uuid is sixteen bytes"));
+            words[1] = u64::from_be_bytes(bytes[8..].try_into().expect("uuid is sixteen bytes"));
             FactOperand::Block { words, count: 2 }
         }
         ValueType::FixedBytes { .. } => {
@@ -384,10 +384,7 @@ fn fold_surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Optio
         crate::image::CacheGeneration::initial(),
         CacheLedger::unbounded(),
     ));
-    match surviving_ids(relation, filters, generation.text_eq(None)) {
-        Ok(ids) => Some(ids),
-        Err(_) => None,
-    }
+    surviving_ids(relation, filters, generation.text_eq(None)).ok()
 }
 
 pub(super) fn membership_binders(

@@ -51,9 +51,8 @@ impl<S: Theory> Db<S> {
     /// Schema validation, recognition/lock refusals, storage failure, stopped work.
     pub fn open(path: &Path, schema: S, work: WorkContext) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
-        work.checkpoint().map_err(|error| {
-            Error::from_store(crate::storage::store::StoreError::Work(error))
-        })?;
+        work.checkpoint()
+            .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
         let store = Store::open(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
         Self::assemble(store, schema, work)
     }
@@ -76,10 +75,13 @@ impl<S: Theory> Db<S> {
 }
 
 impl<S> Db<S> {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Database operations accept owned call-scoped work and key values consistently"
+    )]
     pub(super) fn assemble(store: Store, schema: Schema, work: WorkContext) -> Result<Self> {
-        work.checkpoint().map_err(|error| {
-            Error::from_store(crate::storage::store::StoreError::Work(error))
-        })?;
+        work.checkpoint()
+            .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
         let schema = Arc::new(schema);
         let closed = Arc::new(super::closed::ClosedRows::build(schema.as_ref(), &work)?);
         let cache = Arc::new(ImageCache::with_policy(
@@ -115,17 +117,12 @@ impl<S> Db<S> {
     ) -> Result<Self> {
         let schema = instance.schema().clone();
         let changes = instance.change_set_of_rows(&work)?;
-        let store = Store::install_populated(
-            path,
-            &schema,
-            MapPolicy::default(),
-            &work,
-            |stage, work| {
+        let store =
+            Store::install_populated(path, &schema, MapPolicy::default(), &work, |stage, work| {
                 stage.apply(&changes, work)?;
                 Ok(())
-            },
-        )
-        .map_err(Error::from_store)?;
+            })
+            .map_err(Error::from_store)?;
         Self::assemble(store, schema, work)
     }
 }

@@ -139,7 +139,7 @@ fn sizing_keeps_the_three_probability_models_apart() {
 #[test]
 fn sizing_uuid_entropy_is_not_128_bits() {
     assert_eq!(sizing::UUID_V4_RANDOM_BITS, 122);
-    assert_eq!(sizing::ID128_RANDOM_BITS, 128);
+    assert_eq!(sizing::UUID_RANDOM_BITS, 128);
     // Using the 128-bit column for UUIDv4 understates the probability 64x.
     let ratio = sizing::birthday_lambda(1_000_000, 122) / sizing::birthday_lambda(1_000_000, 128);
     close(ratio, 64.0, 1e-9);

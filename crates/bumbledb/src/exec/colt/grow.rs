@@ -1,4 +1,4 @@
-use super::{Colt, Map, ctrl_tag, hash_words, reserve_exact_for, zero_byte_mask};
+use super::{Colt, Map, ctrl_tag, hash_words, reserve_pool, zero_byte_mask};
 use crate::work::WorkError;
 
 impl Colt {
@@ -9,12 +9,24 @@ impl Colt {
         let ctrl_needed = self.ctrl.len() + new_nbuckets * 8;
         let bucket_needed = self.buckets.len() + new_nbuckets * stride;
         let dense_needed = self.dense.len() + usize::try_from(m.len).expect("64-bit usize");
-        self.admit_needed::<u8>(self.ctrl.capacity(), ctrl_needed)?;
-        self.admit_needed::<u64>(self.buckets.capacity(), bucket_needed)?;
-        self.admit_needed::<u32>(self.dense.capacity(), dense_needed)?;
-        reserve_exact_for(&mut self.ctrl, ctrl_needed);
-        reserve_exact_for(&mut self.buckets, bucket_needed);
-        reserve_exact_for(&mut self.dense, dense_needed);
+        reserve_pool(
+            ctrl_needed,
+            &mut self.ctrl,
+            self.work.as_ref(),
+            &mut self.charges,
+        )?;
+        reserve_pool(
+            bucket_needed,
+            &mut self.buckets,
+            self.work.as_ref(),
+            &mut self.charges,
+        )?;
+        reserve_pool(
+            dense_needed,
+            &mut self.dense,
+            self.work.as_ref(),
+            &mut self.charges,
+        )?;
         let ctrl_start = self.ctrl.len();
         let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
@@ -23,15 +35,7 @@ impl Colt {
         let nbm = new_nbuckets - 1;
 
         let mut key = std::mem::take(&mut self.scratch);
-        let rehashed = self.rehash_into(
-            m,
-            arity,
-            stride,
-            ctrl_start,
-            bucket_start,
-            nbm,
-            &mut key,
-        );
+        let rehashed = self.rehash_into(m, arity, stride, ctrl_start, bucket_start, nbm, &mut key);
         self.scratch = key;
         rehashed?;
         m.nbuckets = new_nbuckets;
@@ -41,6 +45,10 @@ impl Colt {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn rehash_into(
         &mut self,
         m: &Map,
@@ -51,9 +59,11 @@ impl Colt {
         nbm: usize,
         key: &mut Vec<u64>,
     ) -> Result<(), WorkError> {
-        self.admit_needed::<u64>(key.capacity(), arity)?;
-        reserve_exact_for(key, arity);
+        reserve_pool(arity, key, self.work.as_ref(), &mut self.charges)?;
         for i in 0..usize::try_from(m.len).expect("64-bit usize") {
+            if i % super::force::FORCE_BATCH == 0 {
+                self.poll_force_batch((m.len as usize - i).min(super::force::FORCE_BATCH))?;
+            }
             let old_idx = usize::try_from(self.dense[m.dense_start + i]).expect("64-bit usize");
             key.clear();
             for word in 0..arity {

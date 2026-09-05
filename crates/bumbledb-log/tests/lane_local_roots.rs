@@ -93,7 +93,7 @@ fn local01_registered_points_are_complete_and_unregistered_scratch_is_not_a_poin
     let fake = roots_base(&fixture.dir).join("00000000000000000000000000000000");
     std::fs::create_dir_all(&fake).expect("fake dir");
     std::fs::write(fake.join("manifest"), b"not a restore point").expect("fake manifest");
-    clean_roots(&fixture.db, &fixture.dir).expect("owner-scoped cleanup");
+    clean_roots(&fixture.db, &fixture.dir, &work()).expect("owner-scoped cleanup");
     assert!(
         !fake.exists(),
         "unregistered scratch is not a restore point"
@@ -149,7 +149,7 @@ fn local02_release_is_transactional_and_failed_deletion_resumes_without_cross_da
     let leftover = root_directory(&fixture.dir, drop_me.id);
     std::fs::create_dir_all(&leftover).expect("leftover");
     std::fs::write(leftover.join("manifest"), b"stale").expect("stale manifest");
-    clean_roots(&fixture.db, &fixture.dir).expect("cleanup resumes");
+    clean_roots(&fixture.db, &fixture.dir, &work()).expect("cleanup resumes");
     assert!(
         !leftover.exists(),
         "released-but-undeleted directories are resumed"
@@ -217,7 +217,7 @@ fn local03_an_old_point_preserves_its_original_evidence_and_restores_a_new_linea
         theory(),
         &manifest,
         chunks,
-        IncarnationId::from_core(bumbledb::Id128::from_bytes([0xdd; 16])),
+        IncarnationId::from_core(bumbledb::Uuid::from_bytes([0xdd; 16])),
         op(0x0f),
         point.manifest_digest,
         "local",
@@ -287,7 +287,12 @@ fn capacity_and_labels_are_bounded_without_discarding_other_roots() {
         matches!(full, Err(LocalRootError::RootCapacityExceeded)),
         "{full:?}"
     );
-    assert_eq!(registered_roots(&fixture.db).expect("registry").len(), 1);
+    assert_eq!(
+        registered_roots(&fixture.db, &work())
+            .expect("registry")
+            .len(),
+        1
+    );
     let long_label = create_restore_point(
         &fixture.db,
         &fixture.dir,
@@ -336,7 +341,7 @@ fn local_root_races_serialize_and_never_drop_a_registered_point() {
         matches!(stale, Err(LocalRootError::UnknownRoot)),
         "{stale:?}"
     );
-    let roots = registered_roots(&fixture.db).expect("registry");
+    let roots = registered_roots(&fixture.db, &work()).expect("registry");
     assert_eq!(roots.len(), 2);
     assert!(roots.iter().any(|root| root.id == first.id));
     assert!(roots.iter().any(|root| root.id == second.id));

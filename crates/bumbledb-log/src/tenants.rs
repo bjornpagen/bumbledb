@@ -516,13 +516,13 @@ impl<O> TenantRegistry<O> {
 mod tests {
     use super::*;
     use crate::history::{DatabaseId, IncarnationId};
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     fn binding(seed: u8, location: &str) -> TenantBinding {
         TenantBinding {
             identity: DatabaseIdentity {
-                database_id: DatabaseId::from_core(Id128::from_bytes([seed; 16])),
-                incarnation_id: IncarnationId::from_core(Id128::from_bytes([seed ^ 0xff; 16])),
+                database_id: DatabaseId::from_core(Uuid::from_bytes([seed; 16])),
+                incarnation_id: IncarnationId::from_core(Uuid::from_bytes([seed ^ 0xff; 16])),
                 schema_id: bumbledb::SchemaFingerprint([seed.wrapping_add(1); 32]),
             },
             layout: 1,

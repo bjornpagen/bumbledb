@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import type { QueryIr } from "#native.ts"
 import type { SessionHandle } from "#db-native.ts"
 import { dbNative } from "#db-native.ts"
-import { policyWire } from "#runtime.ts"
+import type { QueryIr } from "#native.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
+import { policyWire } from "#runtime.ts"
 
 function plainIr(): QueryIr {
 	return {

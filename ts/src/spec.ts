@@ -5,7 +5,7 @@ type ValueTypeSpec =
 	| { readonly kind: "u64" }
 	| { readonly kind: "i64" }
 	| { readonly kind: "f64" }
-	| { readonly kind: "id128" }
+	| { readonly kind: "uuid" }
 	| { readonly kind: "string" }
 	| { readonly kind: "fixedBytes"; readonly len: number }
 	| {
@@ -19,7 +19,7 @@ type ValueSpec =
 	| { readonly kind: "u64"; readonly value: bigint }
 	| { readonly kind: "i64"; readonly value: bigint }
 	| { readonly kind: "f64"; readonly value: number }
-	| { readonly kind: "id128"; readonly value: string }
+	| { readonly kind: "uuid"; readonly value: string }
 	| { readonly kind: "string"; readonly value: string }
 	| { readonly kind: "fixedBytes"; readonly value: Uint8Array }
 	| { readonly kind: "intervalU64"; readonly start: bigint; readonly end: bigint }
@@ -181,8 +181,8 @@ function renderLiteral(literal: LiteralSpec): string {
 			return value.value.toString()
 		case "f64":
 			return `f64:0x${f64BitsHex(value.value)}`
-		case "id128":
-			return `id128:${value.value}`
+		case "uuid":
+			return `uuid:${value.value}`
 		case "string": {
 			let out = '"'
 			for (const ch of value.value) {

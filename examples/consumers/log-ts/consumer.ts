@@ -7,7 +7,7 @@
  *
  * Verification: NotRun until packed-consumer qualification.
  */
-import { ChangeSet, type ExecutionPolicy, Id128, Scalar } from "@bjornpagen/bumbledb"
+import { ChangeSet, type ExecutionPolicy, Uuid, Scalar } from "@bjornpagen/bumbledb"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import {
@@ -54,15 +54,15 @@ import {
 export { incrementUnits, makeConsumerRuntime }
 
 export interface Intent {
-	readonly studentId: Id128
-	readonly attemptId: Id128
+	readonly studentId: Uuid
+	readonly attemptId: Uuid
 	readonly commandId: { readonly receiptEpoch: ReceiptEpoch; readonly requestId: RequestId }
 }
 
 export const mintIntent = Effect.gen(function* () {
-	const studentId = yield* Id128.random()
-	const attemptId = yield* Id128.random()
-	const requestSource = yield* Id128.random()
+	const studentId = yield* Effect.sync(() => crypto.randomUUID())
+	const attemptId = yield* Effect.sync(() => crypto.randomUUID())
+	const requestSource = yield* Effect.sync(() => crypto.randomUUID())
 	const requestId = yield* Effect.fromResult(RequestId.from(requestSource))
 	const receiptEpoch = yield* Effect.fromResult(ReceiptEpoch.from(1n))
 	return { studentId, attemptId, commandId: { receiptEpoch, requestId } } satisfies Intent
@@ -172,7 +172,7 @@ export const correctAttempt = (
 
 export const readPublished = (
 	binding: HistoryBinding,
-	student: Id128,
+	student: Uuid,
 	options: ExecutionPolicy,
 	expected: RuntimeExpectation
 ) =>

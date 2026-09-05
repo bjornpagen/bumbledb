@@ -5,19 +5,19 @@
  * anything crosses the bridge, and the native codec re-judges them again
  * from canonical frames. A well-shaped object is still not a checked plan.
  */
-import { Schema, Result } from "effect"
+import { Result, Schema } from "effect"
 import {
 	DatabaseId,
 	DecisionDigest,
 	IncarnationId,
 	OperationId,
+	PlanSetDigest,
 	parseDatabaseIdentity,
-	parseSchemaId,
-	PlanSetDigest
+	parseSchemaId
 } from "#identity.ts"
-import type { ActivationRef } from "#migrations/types.ts"
 import { planExpressionOf, planValueOf } from "#migrations/expr.ts"
 import type {
+	ActivationRef,
 	GeneratedMigrations,
 	ManifestEntry,
 	MigrationManifest,
@@ -91,7 +91,9 @@ function decodeOperation(value: unknown): PlanOperation | string {
 			return { kind: "map-relation", source: value.source, target: value.target, fields }
 		}
 		case "empty-relation":
-			return typeof value.target === "string" ? { kind: "empty-relation", target: value.target } : "empty-relation shape"
+			return typeof value.target === "string"
+				? { kind: "empty-relation", target: value.target }
+				: "empty-relation shape"
 		case "drop-relation":
 			return typeof value.source === "string" ? { kind: "drop-relation", source: value.source } : "drop-relation shape"
 		case "seed": {
@@ -261,7 +263,7 @@ export function decodeActivationRef(value: unknown): DecodeResult<ActivationRef>
 	if (typeof value.targetGenesis !== "string") {
 		return bad("activation targetGenesis")
 	}
-	const operation = OperationId.fromHex(value.operation)
+	const operation = OperationId.parse(value.operation)
 	if (Result.isFailure(operation)) {
 		return bad("activation operation")
 	}
@@ -291,14 +293,18 @@ export function decodeActivationRef(value: unknown): DecodeResult<ActivationRef>
 	if (!isRecord(value.target)) {
 		return bad("activation target")
 	}
-	if (typeof value.target.databaseId !== "string" || typeof value.target.incarnationId !== "string" || typeof value.target.schemaId !== "string") {
+	if (
+		typeof value.target.databaseId !== "string" ||
+		typeof value.target.incarnationId !== "string" ||
+		typeof value.target.schemaId !== "string"
+	) {
 		return bad("activation target")
 	}
-	const databaseId = DatabaseId.fromHex(value.target.databaseId)
+	const databaseId = DatabaseId.parse(value.target.databaseId)
 	if (Result.isFailure(databaseId)) {
 		return bad("activation target databaseId")
 	}
-	const incarnationId = IncarnationId.fromHex(value.target.incarnationId)
+	const incarnationId = IncarnationId.parse(value.target.incarnationId)
 	if (Result.isFailure(incarnationId)) {
 		return bad("activation target incarnationId")
 	}

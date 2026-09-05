@@ -84,10 +84,7 @@ fn gc01_unreferenced_old_epoch_object_is_collected_and_new_epoch_twin_survives()
         report.deleted, 1,
         "exactly the unreferenced old-epoch object went"
     );
-    assert!(
-        try_verified(&store, &orphan).is_err(),
-        "the orphan is gone"
-    );
+    assert!(try_verified(&store, &orphan).is_err(), "the orphan is gone");
     // Every protected object (the whole tail of decisions) survived.
     let head = mirror.head();
     let recovery = head.recovery.expect("recovery");
@@ -113,9 +110,15 @@ fn gc02_a_writer_paused_across_the_barrier_cannot_publish_its_old_head() {
     // barrier lands first. Deterministic via the gate.
     let store = MemStore::new();
     let mirror = tenant("gc02", &store, 1);
-    let (head, version) = match store.read_head(&head_key("t")).expect("read") {
-        bumbledb_log::store::HeadRead::Present { version, body } => (body, version),
-        bumbledb_log::store::HeadRead::Absent => panic!("head exists"),
+    let (head, version) = match bumbledb_log::store::receive::ReceivingStore::receive_head(
+        &store,
+        &head_key("t"),
+        bumbledb_log::store::receive::TransportContext::limited(HEAD_CAP as u64),
+    )
+    .expect("read")
+    {
+        bumbledb_log::store::receive::ReceivedHead::Present { version, body } => (body, version),
+        bumbledb_log::store::receive::ReceivedHead::Absent => panic!("head exists"),
     };
     let gate = Arc::new(Gate::new());
     let fired = Arc::new(AtomicBool::new(false));
@@ -135,7 +138,7 @@ fn gc02_a_writer_paused_across_the_barrier_cannot_publish_its_old_head() {
         let writer = scope.spawn(|| {
             // The paused old writer resumes its exact-version CAS after the
             // barrier: it must lose, never acknowledge.
-            store.replace_head(&head_key("t"), &version, &head)
+            store.replace_head(&head_key("t"), &version, head.as_bytes())
         });
         reached_rx.recv().expect("writer reached its CAS");
         close_epoch(&store, "t", op(0x22), &gc_policy(), &work()).expect("barrier publishes");
@@ -167,7 +170,7 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
         &work(),
     )
     .expect("first checkpoint");
-    let pinned = admin::add_named_root_hosted(
+    let pinned = lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x31),
@@ -177,8 +180,7 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("root registers");
+    ));
     let old_checkpoint = pinned.recovery.checkpoint.expect("pinned checkpoint");
     // Newer decisions and a newer checkpoint supersede the pinned one.
     mirror.submit(&insert_user(mirror.db(), identity, 9, 90));
@@ -197,18 +199,23 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
         .expect("collection with pin");
     assert!(report.finished);
     let bytes = try_verified(&store, &old_checkpoint).expect("pinned manifest survives");
-    let manifest =
-        bumbledb_log::codec::decode_manifest(bytes.as_bytes(), ckpt_policy().stream).expect("decodes");
+    let manifest = bumbledb_log::codec::decode_manifest(bytes.as_bytes(), ckpt_policy().stream)
+        .expect("decodes");
     drop(bytes.into_owner());
     for chunk in &manifest.chunks {
         try_verified(&store, chunk).expect("pinned chunk survives");
     }
     // Release the pin: deletion reports the lost recovery capability, then a
     // LATER collection reclaims the old closure.
-    let released =
-        admin::release_named_root_hosted(&store, "t", op(0x31), false, HEAD_CAP, &work())
-            .expect("release")
-            .expect("the root existed");
+    let released = lane_support::completed(admin::release_named_root_hosted(
+        &store,
+        "t",
+        op(0x31),
+        false,
+        HEAD_CAP,
+        &work(),
+    ))
+    .expect("the root existed");
     assert_eq!(released.recovery.checkpoint, Some(old_checkpoint));
     run_collection(&store, "t", op(0x34), LIMITS, &gc_policy(), &work())
         .expect("second collection");
@@ -244,7 +251,7 @@ fn gc05_roots_added_during_a_collection_survive_progress_rebase() {
     // barrier's protected closure is immutable, but the head rebase must
     // preserve the intervening root through every progress CAS.
     close_epoch(&store, "t", op(0x51), &gc_policy(), &work()).expect("barrier");
-    let root = admin::add_named_root_hosted(
+    let root = lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0x52),
@@ -254,8 +261,7 @@ fn gc05_roots_added_during_a_collection_survive_progress_rebase() {
         &RootPolicy::DEFAULT,
         HEAD_CAP,
         &work(),
-    )
-    .expect("root registers during Marking");
+    ));
     mark(&store, "t", LIMITS, &gc_policy(), &work()).expect("mark");
     sweep(&store, "t", &gc_policy(), &work()).expect("sweep");
     let head = mirror.head();
@@ -317,18 +323,15 @@ fn gc07_failed_deletion_retains_progress_and_resume_converges() {
         store.object_keys().contains(&key),
         "the failed object remains"
     );
-    if let GcPhase::Sweeping { cursor, .. } = mirror.head().gc {
-        if let Some(done) = cursor {
-            let done = std::str::from_utf8(&done).expect("canonical key bytes");
-            assert!(
-                done.contains("/objects/"),
-                "durable progress is a last-completed object key, not a provider token: {done}"
-            );
-            assert!(
-                done.as_str() < key.as_str(),
-                "progress stops before the failed key"
-            );
-        }
+    if let GcPhase::Sweeping { cursor, .. } = mirror.head().gc
+        && let Some(done) = cursor
+    {
+        let done = std::str::from_utf8(&done).expect("canonical key bytes");
+        assert!(
+            done.contains("/objects/"),
+            "durable progress is a last-completed object key, not a provider token: {done}"
+        );
+        assert!(done < key.as_str(), "progress stops before the failed key");
     }
     // Resume: the same sweep retries the failed key and finishes.
     let resumed = sweep(&store, "t", &gc_policy(), &work()).expect("resume");
@@ -413,7 +416,7 @@ fn gc11_root_capacity_refuses_without_discarding_and_stale_release_refuses() {
         max_label_bytes: 32,
     };
     for (id, label) in [(0xb1u8, "first"), (0xb2, "second")] {
-        admin::add_named_root_hosted(
+        lane_support::completed(admin::add_named_root_hosted(
             &store,
             "t",
             op(id),
@@ -423,8 +426,7 @@ fn gc11_root_capacity_refuses_without_discarding_and_stale_release_refuses() {
             &tight,
             HEAD_CAP,
             &work(),
-        )
-        .expect("registers");
+        ));
     }
     let full = admin::add_named_root_hosted(
         &store,
@@ -440,9 +442,11 @@ fn gc11_root_capacity_refuses_without_discarding_and_stale_release_refuses() {
     assert!(
         matches!(
             full,
-            Err(admin::AdminError::Head(
-                bumbledb_log::manifest::HeadError::RootCapacityExceeded
-            ))
+            bumbledb_log::certainty::AdminCertainty::NotStarted {
+                error: admin::AdminError::Head(
+                    bumbledb_log::manifest::HeadError::RootCapacityExceeded
+                )
+            }
         ),
         "{full:?}"
     );
@@ -454,15 +458,15 @@ fn gc11_root_capacity_refuses_without_discarding_and_stale_release_refuses() {
     assert!(
         matches!(
             stale,
-            Err(admin::AdminError::Head(
-                bumbledb_log::manifest::HeadError::UnknownRoot
-            ))
+            bumbledb_log::certainty::AdminCertainty::NotStarted {
+                error: admin::AdminError::Head(bumbledb_log::manifest::HeadError::UnknownRoot)
+            }
         ),
         "{stale:?}"
     );
     assert_eq!(mirror.head().roots.len(), 2);
     // Duplicate root IDs are never reused.
-    let duplicate = admin::add_named_root_hosted(
+    let duplicate = lane_support::completed(admin::add_named_root_hosted(
         &store,
         "t",
         op(0xb1),
@@ -472,8 +476,7 @@ fn gc11_root_capacity_refuses_without_discarding_and_stale_release_refuses() {
         &tight,
         HEAD_CAP,
         &work(),
-    )
-    .expect("evidence, not failure");
+    ));
     assert_eq!(duplicate.id, op(0xb1), "an identical retry is evidence");
 }
 
@@ -501,8 +504,13 @@ fn head_and_unparseable_namespaces_are_never_swept() {
     );
     // HEAD survives (it is not under objects/ and is never listed for sweep).
     assert!(matches!(
-        store.read_head(&head_key("t")).expect("read"),
-        bumbledb_log::store::HeadRead::Present { .. }
+        bumbledb_log::store::receive::ReceivingStore::receive_head(
+            &store,
+            &head_key("t"),
+            bumbledb_log::store::receive::TransportContext::limited(HEAD_CAP as u64)
+        )
+        .expect("read"),
+        bumbledb_log::store::receive::ReceivedHead::Present { .. }
     ));
     let _ = mirror;
 }

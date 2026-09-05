@@ -398,12 +398,9 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
         Value::F64(v) => {
             let _ = write!(out, "f64:0x{:016x}", v.to_bits());
         }
-        Value::Id128(id) => {
-            // Quoted, matching `query!`'s lexable spelling (`id128:"…"`):
-            // a bare 32-hex body starting `0x…`/`0b…` is not one Rust
-            // token, so the quoted form is the render-reparse fixed point
-            // (P07's recorded request).
-            let _ = write!(out, "id128:\"{id}\"");
+        Value::Uuid(id) => {
+            // Quoted canonical UUID spelling matches the query macro.
+            let _ = write!(out, "uuid:\"{id}\"");
         }
         Value::IntervalF64(interval) => {
             let _ = write!(

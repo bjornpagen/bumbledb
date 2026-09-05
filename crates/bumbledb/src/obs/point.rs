@@ -245,7 +245,7 @@ trace_points! {
 
     JUDGMENT_SOURCE => "judgment_source", Commit,
 
-    JUDGMENT_TARGET => "judgment_target", Commit,
+    JUDGMENT_KEYS => "judgment_keys", Commit,
 
     JUDGMENT_CAPACITIES => "judgment_capacities", Commit,
 

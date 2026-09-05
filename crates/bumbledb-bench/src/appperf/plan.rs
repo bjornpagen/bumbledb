@@ -1,10 +1,11 @@
 //! Finite measurement input plan for L21. Execution is deferred.
 //!
-//! Verification: **NotRun**. Timing only on a quiet host after writer freeze.
+//! Verification: **`NotRun`**. Timing only on a quiet host after writer freeze.
 //! Deterministic counters (visits, owners, roster, census) may run daily.
 
 use super::workloads::{self, Cell};
 use super::{Gate, Regime};
+use std::fmt::Write as _;
 
 /// Named qualification hosts. A container on x86 does not qualify ARM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +28,9 @@ impl Host {
     #[must_use]
     pub const fn toolchain(self) -> &'static str {
         match self {
-            Self::AppleSilicon => "nightly-2026-08-15, Apple clang/ld64, rustc host aarch64-apple-darwin",
+            Self::AppleSilicon => {
+                "nightly-2026-08-15, Apple clang/ld64, rustc host aarch64-apple-darwin"
+            }
             Self::GravitonArm64 => "nightly-2026-08-15, Amazon Linux 2023 aarch64, glibc",
             Self::X86Node => "nightly-2026-08-15, Node current LTS, linux-x64 native addon",
         }
@@ -66,13 +69,14 @@ pub enum StepKind {
     Semantic,
     /// Wall-clock. Final qualification only, serialized per host.
     Timing,
-    /// Optional research (AEGIS). Absence is NotRun, never a fail.
+    /// Optional research (AEGIS). Absence is `NotRun`, never a fail.
     Optional,
 }
 
 /// Compact default night. Overlapping curves/heap/primerlane/adversarial
 /// timing jobs are not in this table.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "One declarative benchmark roster")]
 pub fn script_steps() -> &'static [ScriptStep] {
     &[
         ScriptStep {
@@ -100,7 +104,9 @@ pub fn script_steps() -> &'static [ScriptStep] {
             hosts: &HOSTS,
             warmth: None,
             durability: Durability::MatchedDurable,
-            prerequisite: Some("final qualification only; judge_final_state, not the planner; NotRun during fanout"),
+            prerequisite: Some(
+                "final qualification only; judge_final_state, not the planner; NotRun during fanout",
+            ),
         },
         ScriptStep {
             id: "three-way-conformance",
@@ -188,7 +194,7 @@ pub fn script_steps() -> &'static [ScriptStep] {
     ]
 }
 
-/// Hardware / credential holes. Missing is NotRun, not a fabricated pass.
+/// Hardware / credential holes. Missing is `NotRun`, not a fabricated pass.
 #[must_use]
 pub fn hardware_prerequisites() -> &'static [(&'static str, &'static str)] {
     &[
@@ -307,7 +313,10 @@ pub fn l21_semantic_checks() -> &'static [(&'static str, &'static str, &'static 
 /// Scorecard cells L21 should expect in evidence (ids only).
 #[must_use]
 pub fn l21_scorecard_ids() -> Vec<String> {
-    workloads::scorecard().into_iter().map(|cell| cell.id).collect()
+    workloads::scorecard()
+        .into_iter()
+        .map(|cell| cell.id)
+        .collect()
 }
 
 #[must_use]
@@ -327,16 +336,18 @@ pub fn cells_for_regime(regime: Regime) -> Vec<Cell> {
 }
 
 /// Render the plan for `app-perf --plan` / bench-night --plan.
+/// # Panics
+/// If formatting a benchmark value fails.
 #[must_use]
 pub fn render() -> String {
     let mut out = String::from("# L20 scorecard input plan\n\nVerification: NotRun\n\n");
     out.push_str("## Hosts\n\n");
     for host in HOSTS {
-        out.push_str(&format!("- `{}` — {}\n", host.label(), host.toolchain()));
+        writeln!(out, "- `{}` — {}", host.label(), host.toolchain()).expect("String formatting");
     }
     out.push_str("\n## Prerequisites (missing = NotRun)\n\n");
     for (id, note) in hardware_prerequisites() {
-        out.push_str(&format!("- `{id}`: {note}\n"));
+        writeln!(out, "- `{id}`: {note}").expect("String formatting");
     }
     out.push_str("\n## Script steps\n\n| id | kind | warmth | command |\n|---|---|---|---|\n");
     for step in script_steps() {
@@ -344,24 +355,28 @@ pub fn render() -> String {
             Warmth::Cold => "cold",
             Warmth::Warm => "warm",
         });
-        out.push_str(&format!(
-            "| {} | {:?} | {warmth} | `{}` |\n",
+        writeln!(
+            out,
+            "| {} | {:?} | {warmth} | `{}` |",
             step.id, step.kind, step.command
-        ));
+        )
+        .expect("String formatting");
     }
     out.push_str("\n## Scorecard cells\n\n");
     for cell in workloads::scorecard() {
-        out.push_str(&format!(
-            "- `{}` [{} / {}] oracle: {}\n",
+        writeln!(
+            out,
+            "- `{}` [{} / {}] oracle: {}",
             cell.id,
             cell.gate.label(),
             cell.regime.label(),
             cell.oracle
-        ));
+        )
+        .expect("String formatting");
     }
     out.push_str("\n## L21 semantic checks\n\n");
     for (gate, id, expect) in l21_semantic_checks() {
-        out.push_str(&format!("- {gate} `{id}`: {expect}\n"));
+        writeln!(out, "- {gate} `{id}`: {expect}").expect("String formatting");
     }
     out
 }
@@ -389,14 +404,14 @@ mod tests {
                 .any(|s| s.command.contains("primerlane") || s.command.contains("adversarial"))
         );
         assert!(
-            script_steps().iter().any(|s| {
-                s.id == "correspondence-oracles" && s.kind == StepKind::Semantic
-            })
+            script_steps()
+                .iter()
+                .any(|s| { s.id == "correspondence-oracles" && s.kind == StepKind::Semantic })
         );
         assert!(
-            script_steps().iter().any(|s| {
-                s.id == "three-way-conformance" && s.kind == StepKind::Semantic
-            })
+            script_steps()
+                .iter()
+                .any(|s| { s.id == "three-way-conformance" && s.kind == StepKind::Semantic })
         );
         assert!(
             !script_steps()
@@ -414,6 +429,8 @@ mod tests {
         assert!(text.contains("C-D04-collision-bytes"));
         assert!(text.contains("C-D19-cancel"));
         assert!(text.contains("C-G03-raw-commute"));
-        assert!(text.contains("judge_final_state") || text.contains("exact-bytes-not-fingerprints"));
+        assert!(
+            text.contains("judge_final_state") || text.contains("exact-bytes-not-fingerprints")
+        );
     }
 }

@@ -509,6 +509,8 @@ inductive ValueType where
   | u64
   | i64
   | f64
+  /-- Standard UUID value; entity-specific names exist only in host languages. -/
+  | uuid
   /-- Interned string identity — equality only, NO order (see the
  module doc). -/
   | str
@@ -540,6 +542,26 @@ to a multiple of 8 (`paddedByteCount n`), matching
 data. -/
 abbrev FixedBytes (n : Nat) : Type := { l : List Byte // l.length = n }
 
+/-- Every 128-bit payload is representable, with unsigned order. -/
+abbrev Uuid : Type := { n : Nat // n < 2^128 }
+
+/-- Standard UUID byte order, represented by its two big-endian words. -/
+def encodeUuid (id : Uuid) : List Word := [id.val / 2^64, id.val % 2^64]
+
+theorem uuid_encoding_injective (a b : Uuid) (h : encodeUuid a = encodeUuid b) : a = b := by
+  have high := (List.cons.inj h).1
+  have low := (List.cons.inj (List.cons.inj h).2).1
+  apply Subtype.ext
+  calc
+    a.val = 2^64 * (a.val / 2^64) + a.val % 2^64 := (Nat.div_add_mod _ _).symm
+    _ = 2^64 * (b.val / 2^64) + b.val % 2^64 := by rw [high, low]
+    _ = b.val := Nat.div_add_mod _ _
+
+theorem uuid_order_lexicographic (a b : Uuid) :
+    a.val < b.val ↔ a.val / 2^64 < b.val / 2^64 ∨
+      (a.val / 2^64 = b.val / 2^64 ∧ a.val % 2^64 < b.val % 2^64) := by
+  omega
+
 /-- On-disk byte length of `bytes<n>`: `⌈n/8⌉ × 8`. -/
 def paddedByteCount (n : Nat) : Nat := (n + 7) / 8 * 8
 
@@ -554,6 +576,7 @@ def ValueType.carrier : ValueType → Type
   | .u64 => U64
   | .i64 => I64
   | .f64 => F64
+  | .uuid => Uuid
   | .str => StrId
   | .fixedBytes n => FixedBytes n
   | .interval .u64 => Interval U64
@@ -576,6 +599,7 @@ def encodeAt : (t : ValueType) → t.carrier → List Word
   | .u64, v => [encodeU64 v]
   | .i64, v => [encodeI64 v]
   | .f64, v => [F64.orderKey v]
+  | .uuid, v => encodeUuid v
   | .str, s => [s.id]
   | .fixedBytes _, bs => padFixedBytes bs
   | .interval .u64, iv => [(encodeIntervalU64 iv).1, (encodeIntervalU64 iv).2]
@@ -613,6 +637,7 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
   | .str, a, b =>
     simp only [encodeAt, List.cons.injEq, and_true] at heq
     cases a; cases b; cases heq; rfl
+  | .uuid, a, b => exact uuid_encoding_injective a b heq
   | .fixedBytes n, a, b =>
     simp only [encodeAt, padFixedBytes] at heq
 

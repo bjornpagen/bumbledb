@@ -21,7 +21,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
         }
         | ValueType::FixedBytes { .. }
         | ValueType::F64
-        | ValueType::Id128 => "BLOB",
+        | ValueType::Uuid => "BLOB",
     }
 }
 
@@ -220,7 +220,7 @@ fn sql_literal(value: &Value) -> String {
             });
             format!("X'{hex}'")
         }
-        Value::Id128(id) => {
+        Value::Uuid(id) => {
             let hex = id.as_bytes().iter().fold(String::new(), |mut acc, byte| {
                 use std::fmt::Write as _;
                 let _ = write!(acc, "{byte:02X}");
@@ -321,7 +321,7 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
         Value::F64(v) => Sql::Blob(crate::float::sql_bytes(*v).to_vec()),
         Value::String(text) => Sql::Text(text.to_string()),
         Value::FixedBytes(raw) => Sql::Blob(raw.to_vec()),
-        Value::Id128(id) => Sql::Blob(id.as_bytes().to_vec()),
+        Value::Uuid(id) => Sql::Blob(id.as_bytes().to_vec()),
         Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..) => {
             panic!("an interval maps to two columns — split through interval_halves")
         }
@@ -387,12 +387,12 @@ pub fn from_sql_value(
         (Sql::Blob(raw), ValueType::F64) => crate::float::from_sql_bytes(raw).map(Value::F64),
         (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into())),
         (Sql::Blob(raw), ValueType::FixedBytes { .. }) => Ok(Value::FixedBytes(raw.clone().into())),
-        (Sql::Blob(raw), ValueType::Id128) => {
+        (Sql::Blob(raw), ValueType::Uuid) => {
             let bytes: [u8; 16] = raw
                 .as_slice()
                 .try_into()
-                .map_err(|_| format!("id128 column holds {} bytes", raw.len()))?;
-            Ok(Value::Id128(bumbledb::Id128::from_bytes(bytes)))
+                .map_err(|_| format!("uuid column holds {} bytes", raw.len()))?;
+            Ok(Value::Uuid(bumbledb::Uuid::from_bytes(bytes)))
         }
         (_, ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {
             Err("an interval spans two columns — decode through interval_from_sql".to_owned())

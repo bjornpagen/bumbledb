@@ -75,7 +75,7 @@ impl TailPolicy {
 /// the recovery walker and the retention walker share this stopping
 /// boundary. Two semantic cases only (C6): checkpoint-only `base == tip`
 /// with no tip locator (nonzero is normal), or suffix `base != tip` with a
-/// checked tip DecisionRef. Comparison is the complete stamp. `checkpoint:
+/// checked tip `DecisionRef`. Comparison is the complete stamp. `checkpoint:
 /// None` is a genesis root. `epoch_floor` is provenance only; traversal
 /// uses authenticated locators, never epoch probing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +110,7 @@ impl RecoveryRoot {
         }
     }
 
-    /// Suffix root: `base != tip` with a checked tip DecisionRef (C6).
+    /// Suffix root: `base != tip` with a checked tip `DecisionRef` (C6).
     /// Comparison is the complete stamp, not sequence alone.
     pub fn suffix(
         checkpoint: Option<ObjectRef>,
@@ -134,7 +134,7 @@ impl RecoveryRoot {
     ///
     /// # Errors
     /// Equal-sequence different-stamp, checkpoint-only with a tip object,
-    /// suffix without a DecisionRef, or a non-checkpoint object refuse.
+    /// suffix without a `DecisionRef`, or a non-checkpoint object refuse.
     pub fn checked(
         checkpoint: Option<ObjectRef>,
         base: DecisionStamp,
@@ -584,7 +584,7 @@ fn put_state(out: &mut Vec<u8>, state: StateStamp) {
 
 fn read_state(input: &mut Reader<'_>) -> Result<StateStamp, FrameError> {
     Ok(StateStamp {
-        incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
         data_revision: input.u64()?,
     })
 }
@@ -594,7 +594,7 @@ fn put_operation(out: &mut Vec<u8>, operation: OperationId) {
 }
 
 fn read_operation(input: &mut Reader<'_>) -> Result<OperationId, FrameError> {
-    Ok(OperationId::from_core(bumbledb::Id128::from_bytes(
+    Ok(OperationId::from_core(bumbledb::Uuid::from_bytes(
         input.array()?,
     )))
 }
@@ -909,7 +909,7 @@ pub fn genesis_head_body(
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use super::*;
     use crate::history::authority::{Activation, ActivationCause};
@@ -917,14 +917,14 @@ mod tests {
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
 
     fn op(byte: u8) -> OperationId {
-        OperationId::from_core(Id128::from_bytes([byte; 16]))
+        OperationId::from_core(Uuid::from_bytes([byte; 16]))
     }
 
     fn genesis_control() -> HeadAuthority {
@@ -1087,31 +1087,42 @@ mod tests {
         let recovery = RecoveryRoot::checkpoint_only(None, stamp, 0, 3);
         assert_eq!(recovery.base, recovery.tip);
         assert!(recovery.tip_object.is_none());
-        assert!(RecoveryRoot::suffix(None, stamp, stamp, ObjectRef {
-            epoch: 1,
-            kind: ObjectKind::Decision,
-            digest: [0x77; 32],
-            length: 8,
-        }, 0, 3)
-        .is_err());
+        assert!(
+            RecoveryRoot::suffix(
+                None,
+                stamp,
+                stamp,
+                ObjectRef {
+                    epoch: 1,
+                    kind: ObjectKind::Decision,
+                    digest: [0x77; 32],
+                    length: 8,
+                },
+                0,
+                3
+            )
+            .is_err()
+        );
         let other = DecisionStamp {
             seq: 7,
             hash: DecisionDigest::from_bytes([0x78; 32]),
         };
-        assert!(RecoveryRoot::checked(
-            None,
-            stamp,
-            other,
-            Some(ObjectRef {
-                epoch: 1,
-                kind: ObjectKind::Decision,
-                digest: [0x78; 32],
-                length: 8,
-            }),
-            0,
-            3,
-        )
-        .is_err());
+        assert!(
+            RecoveryRoot::checked(
+                None,
+                stamp,
+                other,
+                Some(ObjectRef {
+                    epoch: 1,
+                    kind: ObjectKind::Decision,
+                    digest: [0x78; 32],
+                    length: 8,
+                }),
+                0,
+                3,
+            )
+            .is_err()
+        );
         let mut control = genesis_control();
         for seq in 1u8..=7 {
             control = control
@@ -1123,12 +1134,7 @@ mod tests {
         let record = HeadRecord {
             control,
             object_epoch: 3,
-            recovery: Some(RecoveryRoot::checkpoint_only(
-                None,
-                live.decision,
-                0,
-                3,
-            )),
+            recovery: Some(RecoveryRoot::checkpoint_only(None, live.decision, 0, 3)),
             roots: Vec::new(),
             gc: GcPhase::Idle,
         };

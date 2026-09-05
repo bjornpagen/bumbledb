@@ -15,8 +15,8 @@ import {
 	type ExecutionPolicy,
 	f64,
 	i64,
-	Id128,
-	id128,
+	Uuid,
+	uuid,
 	interval,
 	key,
 	NativeRuntime,
@@ -37,10 +37,10 @@ import {
 } from "@bjornpagen/bumbledb"
 import { Effect, ManagedRuntime, Option, Stream } from "effect"
 
-export const Student = relation("Student", { id: id128, name: str, budget: u64 })
+export const Student = relation("Student", { id: uuid, name: str, budget: u64 })
 export const Attempt = relation("Attempt", {
-	id: id128,
-	student: id128,
+	id: uuid,
+	student: uuid,
 	score: f64,
 	units: u64,
 	active: interval(i64)
@@ -86,8 +86,8 @@ export const studentSummary = query(Learning).rule((r) => {
 })
 
 export const newAttempt = Effect.fn("newAttempt")(function* (
-	studentId: Id128,
-	attemptId: Id128,
+	studentId: Uuid,
+	attemptId: Uuid,
 	work: ExecutionPolicy
 ) {
 	const draft = yield* ChangeSet.builder(Learning, work)
@@ -101,7 +101,7 @@ export const newAttempt = Effect.fn("newAttempt")(function* (
 
 /** Same helper on a core snapshot and a published log snapshot — no adapter. */
 export const readAttempts = Effect.fn("readAttempts")(
-	function* (reader: QueryReader<typeof Learning>, student: Id128, work: ExecutionPolicy) {
+	function* (reader: QueryReader<typeof Learning>, student: Uuid, work: ExecutionPolicy) {
 		const result = yield* reader.execute(attemptsFor, { student }, work)
 		return yield* result.collect({ maxBytes: work.resultBytes }, work)
 	},
@@ -146,8 +146,8 @@ export const coreProgram = (localPath: string) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const db = yield* Db.create(localPath, Learning, work)
-			const studentId = yield* Id128.random()
-			const attemptId = yield* Id128.random()
+			const studentId = yield* Effect.sync(() => crypto.randomUUID())
+			const attemptId = yield* Effect.sync(() => crypto.randomUUID())
 			const changes = yield* newAttempt(studentId, attemptId, work)
 			const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
 			if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
@@ -161,7 +161,7 @@ export const coreProgram = (localPath: string) =>
 		})
 	)
 
-export const correctScore = (localPath: string, attemptId: Id128) =>
+export const correctScore = (localPath: string, attemptId: Uuid) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const db = yield* Db.open(localPath, Learning, work)
@@ -185,7 +185,7 @@ export const correctScore = (localPath: string, attemptId: Id128) =>
 		})
 	)
 
-export const drainPages = (reader: QueryReader<typeof Learning>, student: Id128, delivery: ExecutionPolicy) =>
+export const drainPages = (reader: QueryReader<typeof Learning>, student: Uuid, delivery: ExecutionPolicy) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const result = yield* reader.execute(attemptsFor, { student }, work)
@@ -198,7 +198,7 @@ export const drainPages = (reader: QueryReader<typeof Learning>, student: Id128,
 /** D07: collect under a result-bytes cap that a real row cannot fit. */
 export const collectUnderTinyBudget = (
 	reader: QueryReader<typeof Learning>,
-	student: Id128
+	student: Uuid
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {

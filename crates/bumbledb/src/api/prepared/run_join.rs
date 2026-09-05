@@ -205,15 +205,11 @@ fn checkpoint_join_work(
     Ok(())
 }
 
-fn flush_join_work(
-    work: &crate::work::WorkContext,
-    pending: &mut u32,
-) -> crate::error::Result<()> {
+fn flush_join_work(work: &crate::work::WorkContext, pending: &mut u32) -> crate::error::Result<()> {
     if *pending == 0 {
         return Ok(());
     }
-    work
-        .step(u64::from(*pending))
+    work.step(u64::from(*pending))
         .map_err(crate::api::prepared::source::work_error)?;
     *pending = 0;
     Ok(())

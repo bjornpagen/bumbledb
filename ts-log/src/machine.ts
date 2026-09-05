@@ -14,13 +14,20 @@ import type {
 	ExecutionPolicy,
 	ExecutionSession,
 	NativeRuntime,
-	RuntimeHandle,
 	SchemaId
 } from "@bjornpagen/bumbledb"
-import type { Capability, ChangeSet, CompleteResult, QueryReader } from "@bjornpagen/bumbledb/internal/log"
+import { Uuid } from "@bjornpagen/bumbledb"
+import type {
+	Capability,
+	ChangeSet,
+	CompleteResult,
+	QueryReader,
+	RuntimeHandle,
+	SnapshotHandle
+} from "@bjornpagen/bumbledb/internal/log"
 import { policyWire } from "@bjornpagen/bumbledb/internal/log"
-import { Effect, Result } from "effect"
 import type { Scope } from "effect"
+import { Effect, Result } from "effect"
 import type { CancelVerb } from "#bridge.ts"
 import { certaintyOperation, closeReportOf, drainClose, logOperation, scopedResource } from "#bridge.ts"
 import type { LogError } from "#errors.ts"
@@ -54,7 +61,6 @@ import type {
 	CommandRefWire,
 	CommandWire,
 	ConsistencyWire,
-	CoreSnapshotHandle,
 	DestinationWire,
 	ErrorWire,
 	FreshnessWire,
@@ -65,7 +71,6 @@ import type {
 	HistoryRequestWire,
 	HistoryResultWire,
 	LogNative,
-	LogSnapshotHandle,
 	MigrateValueWire,
 	MigrationRefWire,
 	MigrationStatusWire,
@@ -155,7 +160,7 @@ export interface CoreIntegration {
 	 * Wrap a published core snapshot Capability in the exact core QueryReader
 	 * (`internalPublishedReader` in production).
 	 */
-	reader<S extends AnySchema>(core: CoreSnapshotHandle | Capability, schema: S): PublishedReadCapability<S>
+	reader<S extends AnySchema>(core: SnapshotHandle | Capability, schema: S): PublishedReadCapability<S>
 	/**
 	 * The core's private ChangeSet registry accessor (`internalChanges`):
 	 * `undefined` for a foreign dynamic object, `closed` mirrors the native
@@ -315,10 +320,17 @@ function checkedString(operation: string, value: string, maxLength: number): str
 	return value
 }
 
+function checkedUuid(operation: string, value: string): string {
+	if (!Uuid.isUuid(value)) {
+		throw invalidInput(operation)
+	}
+	return value
+}
+
 function identityWire(operation: string, identity: DatabaseIdentity) {
 	return {
-		databaseId: checkedString(operation, identity.databaseId, 32),
-		incarnationId: checkedString(operation, identity.incarnationId, 32),
+		databaseId: checkedUuid(operation, identity.databaseId),
+		incarnationId: checkedUuid(operation, identity.incarnationId),
 		schemaId: checkedString(operation, String(identity.schemaId), 64)
 	}
 }
@@ -331,7 +343,8 @@ function credentialsWire(operation: string, credentials: HostedCredentials | und
 		kind: "static",
 		accessKeyId: checkedString(operation, credentials.accessKeyId, 256),
 		secretAccessKey: checkedString(operation, credentials.secretAccessKey, 256),
-		sessionToken: credentials.sessionToken === undefined ? null : checkedString(operation, credentials.sessionToken, 4096)
+		sessionToken:
+			credentials.sessionToken === undefined ? null : checkedString(operation, credentials.sessionToken, 4096)
 	} as const
 }
 
@@ -396,7 +409,7 @@ function refWire(operation: string, ref: CommandRef): CommandRefWire {
 	return {
 		identity: identityWire(operation, ref.identity),
 		receiptEpoch: ref.id.receiptEpoch,
-		requestId: checkedString(operation, ref.id.requestId, 32),
+		requestId: checkedUuid(operation, ref.id.requestId),
 		digest: checkedString(operation, ref.digest, 64)
 	}
 }
@@ -431,10 +444,7 @@ function resultWire(operation: string, result: CommandResult): ResultWire {
 	return out
 }
 
-function preconditionWire(
-	operation: string,
-	precondition: import("#surface.ts").Precondition
-): PreconditionWire {
+function preconditionWire(operation: string, precondition: import("#surface.ts").Precondition): PreconditionWire {
 	if (precondition.kind === "blind") {
 		return { kind: "blind" }
 	}
@@ -443,7 +453,7 @@ function preconditionWire(
 	}
 	return {
 		kind: "exact-state",
-		incarnation: checkedString(operation, precondition.at.incarnation, 32),
+		incarnation: checkedUuid(operation, precondition.at.incarnation),
 		dataRevision: precondition.at.dataRevision
 	}
 }
@@ -467,7 +477,7 @@ function creationWire(operation: string, creation: CreationOptions) {
 		throw invalidInput(operation)
 	}
 	return {
-		operationId: checkedString(operation, creation.operationId, 32),
+		operationId: checkedUuid(operation, creation.operationId),
 		artifact: creation.artifact
 	}
 }
@@ -522,7 +532,10 @@ export interface LogMachine {
 		create<S extends AnySchema>(binding: HostedBinding, schema: S, options: HostedCreateOptions): OpenEffect<S>
 	}
 	readonly Command: {
-		seal<S extends AnySchema>(input: CommandInput<S>, work: ExecutionPolicy): Effect.Effect<Command<S>, LogError, Scope.Scope>
+		seal<S extends AnySchema>(
+			input: CommandInput<S>,
+			work: ExecutionPolicy
+		): Effect.Effect<Command<S>, LogError, Scope.Scope>
 		encode<S extends AnySchema>(command: Command<S>, work: ExecutionPolicy): Effect.Effect<Uint8Array, LogError>
 		decode<S extends AnySchema>(
 			bytes: Uint8Array,
@@ -675,11 +688,10 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 
 	function makeSnapshot<S extends AnySchema>(
 		schema: S,
-		snapshot: LogSnapshotHandle,
-		coreHandle: CoreSnapshotHandle,
+		snapshot: SnapshotHandle,
 		provenance: ProvenanceWire
 	): PublishedSnapshot<S> {
-		const capability = core.reader(coreHandle, schema)
+		const capability = core.reader(snapshot, schema)
 		return {
 			identity: identityOf(provenance.identity),
 			decisionStamp: stampOf(provenance.decision),
@@ -688,7 +700,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			get: capability.get,
 			execute: capability.execute,
 			session: capability.session,
-			close: () => drainClose("PublishedSnapshot.close", (callback) => wire.logSnapshotClose(snapshot, callback))
+			close: () => drainClose("PublishedSnapshot.close", (callback) => wire.runtimeSnapshotClose(snapshot, callback))
 		}
 	}
 
@@ -792,7 +804,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 						if (result.verb !== "snapshot") {
 							throw invalidInput(operation)
 						}
-						return makeSnapshot(schema, result.snapshot, result.core, result.provenance)
+						return makeSnapshot(schema, result.snapshot, result.provenance)
 					})
 				})
 				return scopedResource(operation, acquire, (snapshot) => snapshot.close())
@@ -978,7 +990,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					request = {
 						scope: identityWire(operation, input.scope),
 						receiptEpoch: input.id.receiptEpoch,
-						requestId: checkedString(operation, input.id.requestId, 32),
+						requestId: checkedUuid(operation, input.id.requestId),
 						precondition: preconditionWire(operation, input.precondition),
 						result: resultWire(operation, input.result)
 					}
@@ -1250,9 +1262,9 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		return schema === undefined ? {} : { schema: core.schemaSpec(schema) }
 	}
 
-	/** The backup operation id, when supplied (32-hex, checked outbound). */
+	/** The backup operation id, when supplied (canonical UUID, checked outbound). */
 	function backupField(operation: string, backup: OperationId | undefined): { readonly backup?: string } {
-		return backup === undefined ? {} : { backup: checkedString(operation, backup, 32) }
+		return backup === undefined ? {} : { backup: checkedUuid(operation, backup) }
 	}
 
 	/** Optional source binding + target schema for activate/abort. */
@@ -1322,7 +1334,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 
 	function activationRefWire(operation: string, ref: ActivationRef): ActivationRefWire {
 		return {
-			operationId: checkedString(operation, ref.operation, 32),
+			operationId: checkedUuid(operation, ref.operation),
 			planSetDigest: checkedString(operation, ref.planSetDigest, 64),
 			target: identityWire(operation, ref.target),
 			targetGenesis: checkedString(operation, ref.targetGenesis, 64)
@@ -1332,7 +1344,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 	function migrationRefWire(operation: string, ref: MigrationRef): MigrationRefWire {
 		return {
 			identity: identityWire(operation, ref.operation.identity),
-			operationId: checkedString(operation, ref.operation.operation, 32),
+			operationId: checkedUuid(operation, ref.operation.operation),
 			planSetDigest: checkedString(operation, ref.planSetDigest, 64),
 			target: identityWire(operation, ref.target)
 		}
@@ -1410,7 +1422,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "checkpoint",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32)
+					operationId: checkedUuid(operation, options.operationId)
 				}),
 				(value) => {
 					const report = expectVerb(operation, "checkpoint")(value)
@@ -1432,7 +1444,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "pin-root",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32),
+					operationId: checkedUuid(operation, options.operationId),
 					label: checkedString(operation, options.label, 256)
 				}),
 				(value) => {
@@ -1455,7 +1467,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "release-root",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32),
+					operationId: checkedUuid(operation, options.operationId),
 					root: checkedString(operation, options.root, 128)
 				}),
 				(value) => {
@@ -1477,7 +1489,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "rotate-receipt-epoch",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32)
+					operationId: checkedUuid(operation, options.operationId)
 				}),
 				(value) => {
 					const report = expectVerb(operation, "rotate-receipt-epoch")(value)
@@ -1499,7 +1511,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 						verb: "retire-receipts",
 						binding: bindingWire(operation, binding),
 						...schemaField(options.schema),
-						operationId: checkedString(operation, options.operationId, 32),
+						operationId: checkedUuid(operation, options.operationId),
 						through: options.through
 					}
 				},
@@ -1519,7 +1531,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "collect-garbage",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32)
+					operationId: checkedUuid(operation, options.operationId)
 				}),
 				(value) => {
 					const report = expectVerb(operation, "collect-garbage")(value)
@@ -1541,7 +1553,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "backup",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32),
+					operationId: checkedUuid(operation, options.operationId),
 					destination: destinationWire(operation, options.destination)
 				}),
 				(value) => {
@@ -1590,7 +1602,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					target: bindingWire(operation, target),
 					...schemaField(options.schema),
 					...backupField(operation, options.backup),
-					operationId: checkedString(operation, options.operationId, 32)
+					operationId: checkedUuid(operation, options.operationId)
 				}),
 				(value) => {
 					const report = expectVerb(operation, "restore")(value)
@@ -1612,7 +1624,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "erase",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32),
+					operationId: checkedUuid(operation, options.operationId),
 					retainRoots: options.retainRoots.map((root) => checkedString(operation, root, 128))
 				}),
 				(value) => {
@@ -1655,7 +1667,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "migration-initialize",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32),
+					operationId: checkedUuid(operation, options.operationId),
 					plans: plansWire(operation, plans)
 				}),
 				(value) => {
@@ -1674,7 +1686,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					verb: "migration-migrate",
 					binding: bindingWire(operation, binding),
 					...schemaField(options.schema),
-					operationId: checkedString(operation, options.operationId, 32),
+					operationId: checkedUuid(operation, options.operationId),
 					plans: plansWire(operation, plans),
 					to: options.to === undefined ? null : checkedString(operation, options.to, 256)
 				}),

@@ -114,8 +114,7 @@ pub fn materialize<S>(
         .map_err(|e| ApplyError::Local(e.into()))?;
     // Validate the actual predecessor while holding the writer fence (LOG-003):
     // a stale caller snapshot cannot seal control against later local facts.
-    let actual = read_committed_authority(db, limits.envelope_bytes)
-        .map_err(ApplyError::Local)?;
+    let actual = read_committed_authority(db, limits.envelope_bytes).map_err(ApplyError::Local)?;
     if already_at(&actual, envelope.stamp()) {
         return Ok(actual);
     }
@@ -143,17 +142,15 @@ pub fn materialize<S>(
             match decide::prepare_real(&mut session, schema, &command, limits, work)
                 .map_err(ApplyError::Local)?
             {
-                RealPrepared::Admitted { prepared, judged } => {
-                    decide::seal_candidate(
-                        prepared,
-                        &actual,
-                        &command,
-                        judged,
-                        parent_object,
-                        limits,
-                    )
-                    .map_err(ApplyError::Local)?
-                }
+                RealPrepared::Admitted { prepared, judged } => decide::seal_candidate(
+                    prepared,
+                    &actual,
+                    &command,
+                    judged,
+                    parent_object,
+                    limits,
+                )
+                .map_err(ApplyError::Local)?,
                 RealPrepared::Rejected { evidence } => {
                     let prepared = decide::prepare_empty(&mut session, schema, work)
                         .map_err(ApplyError::Local)?;
@@ -194,10 +191,7 @@ pub fn materialize<S>(
 /// # Errors
 /// [`ApplyError::UnpublishedDestination`] when no control attachment
 /// exists; [`ApplyError::Local`] on work/storage failure.
-pub fn require_published_destination<S>(
-    db: &Db<S>,
-    work: &WorkContext,
-) -> Result<(), ApplyError> {
+pub fn require_published_destination<S>(db: &Db<S>, work: &WorkContext) -> Result<(), ApplyError> {
     work.checkpoint().map_err(|e| ApplyError::Local(e.into()))?;
     let mut owned: Option<Vec<u8>> = None;
     db.read(work.clone(), |read| {
@@ -211,10 +205,7 @@ pub fn require_published_destination<S>(
     }
 }
 
-fn read_committed_authority<S>(
-    db: &Db<S>,
-    cap: usize,
-) -> Result<HeadAuthority, LogError> {
+fn read_committed_authority<S>(db: &Db<S>, cap: usize) -> Result<HeadAuthority, LogError> {
     let mut owned: Option<Vec<u8>> = None;
     let work = ExecutionPolicy {
         input_bytes: 64 * 1024 * 1024,
@@ -226,7 +217,7 @@ fn read_committed_authority<S>(
         timeout: Duration::from_secs(3600),
     }
     .start()
-    .map_err(|error| LogError::Work(error))?;
+    .map_err(LogError::Work)?;
     db.read(work, |read| {
         owned = read.integration_host_attachment()?.map(<[u8]>::to_vec);
         Ok(())

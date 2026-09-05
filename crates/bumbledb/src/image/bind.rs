@@ -2,12 +2,12 @@
 use std::sync::Arc;
 
 use super::RelationImage;
-use super::epoch::{TextGeneration, ViewEpoch};
+use super::epoch::ViewEpoch;
 use crate::api::prepared::source::QuerySource;
 use crate::error::Result;
+use crate::image::ResidentAdmit;
 use crate::image::cache::{ImageCache, RelationSlot};
 use crate::image::intern::InternerHandle;
-use crate::image::ResidentAdmit;
 use crate::schema::Schema;
 use crate::work::GenerationHandle;
 use bumbledb_theory::schema::RelationId;
@@ -47,40 +47,15 @@ impl<'a> SourceImages<'a> {
         self.source
     }
 
-    pub(crate) fn cache(&self) -> &'a ImageCache {
-        self.cache
-    }
-
     /// The execution's generation owner. Tokens interned here cannot
     /// outlive this handle (or an image that clones it).
     pub(crate) fn generation(&self) -> &GenerationHandle {
         &self.generation
     }
 
-    pub(crate) fn text_generation(&self) -> TextGeneration {
-        TextGeneration::of(self.generation.identity())
-    }
-
     /// Resolver bound to this execution's generation.
     pub(crate) fn interner(&self) -> InternerHandle<'_> {
         InternerHandle::new(&self.generation, self.source.work())
-    }
-
-    /// Production intern seam. Cache/allocation refusal is
-    /// [`ResidentAdmit::BeyondMemory`] — call
-    /// [`crate::image::ResidentTextExhausted::open_nonresident`].
-    /// Compare tokens with [`crate::image::TextEq`], not raw `u64 ==`.
-    pub(crate) fn intern_or_spill(&self, text: &str) -> Result<ResidentAdmit<u64>> {
-        self.interner().intern_or_spill(text)
-    }
-
-    /// The one production text equality for this execution's generation.
-    #[must_use]
-    pub(crate) fn text_eq<'b>(
-        &'b self,
-        scratch: Option<&'b crate::image::NonresidentTextStore>,
-    ) -> crate::image::TextEq<'b> {
-        crate::image::TextEq::bind(&self.generation, scratch)
     }
 }
 

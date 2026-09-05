@@ -280,7 +280,10 @@ test("callback interrupt cleanup joins without replacing the interrupt Cause", a
 		resultBytes: 0n
 	}
 	const report = { kind: "incomplete" as const, outstanding }
-	const effect = Effect.callback<never>((_resume) => Effect.sync(() => undefined)).pipe(
+	const started = Promise.withResolvers<void>()
+	const effect = Effect.callback<never>(() => {
+		started.resolve()
+	}).pipe(
 		Effect.onExit((exit) => {
 			if (!Exit.hasInterrupts(exit)) {
 				return Effect.void
@@ -289,8 +292,11 @@ test("callback interrupt cleanup joins without replacing the interrupt Cause", a
 		})
 	)
 	const fiber = Effect.runFork(effect)
-	const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+	await started.promise
+	await Effect.runPromise(Fiber.interrupt(fiber))
+	const exit = await Effect.runPromise(Fiber.await(fiber))
 	assert.equal(Exit.hasInterrupts(exit), true, "the original interrupt Cause remains")
+	assert.ok(Exit.isFailure(exit))
 	assert.ok(
 		exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof CloseFailure),
 		"incomplete drain is a CloseFailure defect beside the interrupt"

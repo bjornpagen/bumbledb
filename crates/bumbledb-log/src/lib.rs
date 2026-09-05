@@ -2,6 +2,8 @@
 //! log surface is TypeScript-only (`@bjornpagen/bumbledb-log`); this
 //! crate is `publish = false` and every module is `#[doc(hidden)]`
 //! internal implementation — not a supported public Rust log SDK.
+#![cfg_attr(feature = "store", feature(once_cell_try))]
+
 #[doc(hidden)]
 pub mod admin;
 #[doc(hidden)]

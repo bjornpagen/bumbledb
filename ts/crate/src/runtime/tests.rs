@@ -405,38 +405,41 @@ fn control_lane_teardown_runs_when_ordinary_queue_is_full() {
         }),
     );
     running.recv_timeout(Duration::from_secs(2)).unwrap();
-    let _second = runtime
-        .submit(
-            policy(),
-            Box::new(|| {}),
-            |_| Ok(Box::new(|_| Ok(Output::Ready))),
-        )
-        .unwrap();
+    let queued = (0..options().queue_capacity)
+        .map(|_| {
+            runtime
+                .submit(policy(), Box::new(|| {}), |_| {
+                    Ok(Box::new(|_| Ok(Output::Ready)))
+                })
+                .expect("each queue slot admits")
+        })
+        .collect::<Vec<_>>();
     assert!(matches!(
-        runtime.submit(
-            policy(),
-            Box::new(|| {}),
-            |_| Ok(Box::new(|_| Ok(Output::Ready)))
-        ),
+        runtime.submit(policy(), Box::new(|| {}), |_| Ok(Box::new(|_| Ok(
+            Output::Ready
+        )))),
         Err(RuntimeError::QueueFull)
     ));
-    let (tx, rx) = mpsc::channel();
+    let (teardown_tx, teardown_rx) = mpsc::channel();
+    let (report_tx, report_rx) = mpsc::channel();
     runtime
         .submit_control(
             Box::new(move || {
-                tx.send(()).unwrap();
+                teardown_tx.send(()).unwrap();
             }),
             Some(Box::new(move |report| {
-                rx.send(report).unwrap();
+                report_tx.send(report).unwrap();
             })),
         )
         .expect("control admits while ordinary queue is saturated");
     release.send(()).unwrap();
     done.recv_timeout(Duration::from_secs(2)).unwrap();
+    teardown_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(
-        rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        report_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
         CloseReport::Closed
     );
+    drop(queued);
     assert_eq!(close(&runtime), CloseReport::Closed);
 }
 

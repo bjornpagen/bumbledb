@@ -1,11 +1,11 @@
 //! Closed-row String filters use L04 [`TextEq`], never raw word identity.
-//! Authored now; verification NotRun.
+//! Authored now; verification `NotRun`.
 
 use super::{SealedRow, sealed_row_survives};
 use crate::api::prepared::source::UNBOUNDED_POLICY;
 use crate::encoding::FactLayout;
-use crate::exec::scratch::capability::ScratchPolicy;
 use crate::exec::scratch::ScratchCapability;
+use crate::exec::scratch::capability::ScratchPolicy;
 use crate::image::intern::InternerHandle;
 use crate::image::view::{Const, FilterPredicate, OperandAddr, Operands};
 use crate::image::{CacheGeneration, ResidentAdmit, TextEq};
@@ -33,7 +33,7 @@ fn generation(cache_bytes: u64) -> GenerationHandle {
 }
 
 /// A String-column filter on [`SealedRow`] uses [`TextEq`].
-/// Verification: NotRun.
+/// Verification: `NotRun`.
 #[test]
 fn sealed_row_string_filter_uses_text_eq() {
     let work = crate::api::prepared::source::unbounded_work().expect("work");
@@ -44,14 +44,15 @@ fn sealed_row_string_filter_uses_text_eq() {
     let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
         panic!("tiny cache must spill");
     };
-    let cap = ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("scratch");
+    let cap =
+        ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("scratch");
     let mut store = exhausted.open_nonresident(&cap);
     let scratch = store.intern("shared", cap.work()).expect("scratch");
 
-    let fat = generation(u64::MAX);
-    let intern = fat
+    let resident_generation = generation(u64::MAX);
+    let intern = resident_generation
         .lock_resolver()
-        .intern("shared", &work, fat.ledger())
+        .intern("shared", &work, resident_generation.ledger())
         .expect("intern");
     assert_ne!(scratch, intern, "raw words stay disjoint");
 
@@ -66,19 +67,22 @@ fn sealed_row_string_filter_uses_text_eq() {
     assert!(ops.string_field(OperandAddr::from(FieldId(1))));
     assert!(!ops.string_field(OperandAddr::from(FieldId(2))));
 
-    let eq = TextEq::bind(&fat, Some(&store));
+    let eq = TextEq::bind(&resident_generation, Some(&store));
     let hit = crate::image::view::holds(&eq_word(1, scratch), &ops, &[], eq)
         .expect("holds")
         .expect("verdict");
-    assert!(hit, "String-column Eq on SealedRow unifies intern and scratch");
+    assert!(
+        hit,
+        "String-column Eq on SealedRow unifies intern and scratch"
+    );
     let miss = crate::image::view::holds(&eq_word(1, intern.wrapping_add(1)), &ops, &[], eq)
         .expect("holds")
         .expect("verdict");
     assert!(!miss, "TextEq inequality stays a boolean miss");
 }
 
-/// A resolver refusal on a String-column SealedRow filter is `Err`, not a
-/// dropped id. Verification: NotRun.
+/// A resolver refusal on a String-column `SealedRow` filter is `Err`, not a
+/// dropped id. Verification: `NotRun`.
 #[test]
 fn sealed_row_resolver_refusal_is_err_not_dropped_id() {
     let work = crate::api::prepared::source::unbounded_work().expect("work");
@@ -89,14 +93,15 @@ fn sealed_row_resolver_refusal_is_err_not_dropped_id() {
     let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
         panic!("tiny cache must spill");
     };
-    let cap = ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("scratch");
+    let cap =
+        ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("scratch");
     let mut store = exhausted.open_nonresident(&cap);
     let scratch = store.intern("shared", cap.work()).expect("scratch");
 
-    let fat = generation(u64::MAX);
-    let intern = fat
+    let resident_generation = generation(u64::MAX);
+    let intern = resident_generation
         .lock_resolver()
-        .intern("shared", &work, fat.ledger())
+        .intern("shared", &work, resident_generation.ledger())
         .expect("intern");
     assert_ne!(scratch, intern, "raw words stay disjoint");
 
@@ -107,8 +112,8 @@ fn sealed_row_resolver_refusal_is_err_not_dropped_id() {
     };
     assert!(ops.string_field(OperandAddr::from(FieldId(0))));
 
-    work.cancel();
-    let eq = TextEq::bind(&fat, Some(&store));
+    cap.work().cancel();
+    let eq = TextEq::bind(&resident_generation, Some(&store));
     let filters = [eq_word(0, scratch)];
     let verdict = sealed_row_survives(&ops, &filters, eq);
     assert!(

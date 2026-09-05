@@ -11,6 +11,8 @@
 //! Maps to MIG-01/05/09/14 (hosted halves), the C08 composed-head seam and
 //! OPS-001. Verification: `NotRun` (authored, not executed).
 
+use bumbledb_log::store::receive::{ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext};
+
 #[path = "migration_support/mod.rs"]
 mod support;
 
@@ -28,7 +30,7 @@ use bumbledb_log::migration::hosted::{HostedCutover, HostedOutcome};
 use bumbledb_log::schema_file::schema_id;
 use bumbledb_log::store::mem::{Behavior, MemStore, Op};
 use bumbledb_log::writer::LogError;
-use bumbledb_log::writer::verbs::{ConditionalStore as _, HeadRead, HeadVersion};
+use bumbledb_log::writer::verbs::{ConditionalStore as _, HeadVersion};
 
 use support::{CAP, LIMITS, base_schema, db_id, incarnation, op, tagged_schema};
 
@@ -148,9 +150,15 @@ fn abort_reason() -> DeletedReason {
 }
 
 fn head_record(store: &MemStore, key: &str) -> HeadRecord {
-    match store.read_head(key).unwrap() {
-        HeadRead::Present { body, .. } => manifest::decode_head(&body, CAP).unwrap(),
-        HeadRead::Absent => panic!("head must exist: {key}"),
+    match store
+        .receive_head(
+            key,
+            TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64)),
+        )
+        .unwrap()
+    {
+        ReceivedHead::Present { body, .. } => manifest::decode_head(body.as_bytes(), CAP).unwrap(),
+        ReceivedHead::Absent => panic!("head must exist: {key}"),
     }
 }
 
@@ -159,9 +167,15 @@ fn head_authority(store: &MemStore, key: &str) -> HeadAuthority {
 }
 
 fn head_version(store: &MemStore, key: &str) -> HeadVersion {
-    match store.read_head(key).unwrap() {
-        HeadRead::Present { version, .. } => version,
-        HeadRead::Absent => panic!("head must exist: {key}"),
+    match store
+        .receive_head(
+            key,
+            TransportContext::new(&support::work(), ReceiveLimits::capped(CAP as u64)),
+        )
+        .unwrap()
+    {
+        ReceivedHead::Present { version, .. } => version,
+        ReceivedHead::Absent => panic!("head must exist: {key}"),
     }
 }
 

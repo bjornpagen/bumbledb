@@ -61,7 +61,7 @@ impl BenchRun<'_> {
     ) -> Result<report::ReadFamilyReport, String> {
         eprintln!("bench: read family {}", spec.name);
         let mut prepared = db
-            .prepare(&spec.query)
+            .prepare(&spec.query, crate::harness::bench_work())
             .map_err(|e| format!("{}: prepare: {e:?}", spec.name))?;
         let sets = spec.sets.clone();
         let types: Vec<bumbledb::schema::ValueType> = prepared
@@ -75,8 +75,10 @@ impl BenchRun<'_> {
         let mut buffer = Answers::new();
         let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<S>| {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(prepared, &args, &mut buffer))
-                .map_err(|e| format!("execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
         let modes = Modes {

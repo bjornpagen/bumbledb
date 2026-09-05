@@ -4,7 +4,7 @@ import { createRequire } from "node:module"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { Db, DbError, Id128, internalBlake3 } from "@bjornpagen/bumbledb"
+import { Db, DbError, Uuid, internalBlake3 } from "@bjornpagen/bumbledb"
 import { ProtocolError, protocolErrorCodes } from "@bjornpagen/bumbledb-log"
 import { AuthoringError } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
@@ -81,8 +81,8 @@ try {
 	const d07 = await runtime.runPromise(
 		Effect.scoped(
 			Effect.gen(function* () {
-				const studentId = yield* Id128.random()
-				const attemptId = yield* Id128.random()
+				const studentId = yield* Uuid.random()
+				const attemptId = yield* Uuid.random()
 				const store = path.join(dir, "d07")
 				const db = yield* Db.create(store, Learning, work)
 				const changes = yield* newAttempt(studentId, attemptId, work)

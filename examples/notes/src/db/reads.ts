@@ -3,7 +3,7 @@
  * core snapshot and on a published log snapshot. No adapter, no scan of
  * a whole relation when a key or template exists.
  */
-import type { ExecutionPolicy, Id128, QueryReader } from "@bjornpagen/bumbledb"
+import type { ExecutionPolicy, Uuid, QueryReader } from "@bjornpagen/bumbledb"
 import { Effect, Option, Stream } from "effect"
 import { allNotes, attachmentsFor, noteById, pendingOutbox } from "./queries.ts"
 import { App, Note } from "./schema.ts"
@@ -25,13 +25,13 @@ export const pageNotes = Effect.fn("reads.pageNotes")(
 )
 
 export const getNote = Effect.fn("reads.getNote")(
-	function* (reader: QueryReader<typeof App>, id: Id128, work: ExecutionPolicy) {
+	function* (reader: QueryReader<typeof App>, id: Uuid, work: ExecutionPolicy) {
 		return yield* reader.get(Note, { id }, work)
 	}
 )
 
 export const findNote = Effect.fn("reads.findNote")(
-	function* (reader: QueryReader<typeof App>, id: Id128, work: ExecutionPolicy) {
+	function* (reader: QueryReader<typeof App>, id: Uuid, work: ExecutionPolicy) {
 		const result = yield* reader.execute(noteById, { id }, work)
 		const rows = yield* result.collect({ maxBytes: work.resultBytes }, work)
 		return rows[0] === undefined ? Option.none() : Option.some(rows[0])
@@ -48,7 +48,7 @@ export const listPendingOutbox = Effect.fn("reads.listPendingOutbox")(
 )
 
 export const listAttachments = Effect.fn("reads.listAttachments")(
-	function* (reader: QueryReader<typeof App>, note: Id128, work: ExecutionPolicy) {
+	function* (reader: QueryReader<typeof App>, note: Uuid, work: ExecutionPolicy) {
 		const result = yield* reader.execute(attachmentsFor, { note }, work)
 		return yield* result.collect({ maxBytes: work.resultBytes }, work)
 	},

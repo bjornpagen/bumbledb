@@ -1,6 +1,7 @@
 import { AuthoringError } from "#errors.ts"
 import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
+import type { QueryNode } from "#query/compute.ts"
 import type {
 	AntiJoinOk,
 	AnyVar,
@@ -14,10 +15,10 @@ import type {
 	SetParam,
 	ShapeOf
 } from "#query/scope.ts"
-import type { QueryNode } from "#query/compute.ts"
-import type { ScalarKind } from "#scalar.ts"
 import { isTerm, term } from "#query/scope.ts"
 import type { FieldsShape } from "#relation.ts"
+import type { ScalarKind } from "#scalar.ts"
+import type { Uuid } from "#uuid.ts"
 
 type BindingTermData =
 	| { readonly kind: "var"; readonly ref: AnyVar }
@@ -236,9 +237,18 @@ type EqRight =
 	| IntervalValue
 	| FloatIntervalValue
 
-type NeRight = AnyVar | Param<string> | bigint | number | string | boolean | Uint8Array | IntervalValue | FloatIntervalValue
+type NeRight =
+	| AnyVar
+	| Param<string>
+	| bigint
+	| number
+	| string
+	| boolean
+	| Uint8Array
+	| IntervalValue
+	| FloatIntervalValue
 
-type OrderSide = AnyVar | Param<string> | bigint | number | boolean
+type OrderSide = AnyVar | Param<string> | bigint | number | boolean | Uuid
 
 type PointSide = AnyVar | Param<string> | bigint | number
 
@@ -388,7 +398,7 @@ type NumericVarOk<V extends AnyVar> = V["field"] extends { readonly closed: AnyC
 		? true
 		: false
 
-type OrderVarOk<V extends AnyVar> = V["field"]["kind"] extends "bool" ? true : NumericVarOk<V>
+type OrderVarOk<V extends AnyVar> = V["field"]["kind"] extends "bool" | "uuid" ? true : NumericVarOk<V>
 
 type IntervalVarOk<V extends AnyVar> = V["field"]["kind"] extends "interval" ? true : false
 
@@ -406,7 +416,9 @@ type OrderDomain<T> = T extends AnyVar
 				? "f64"
 				: T extends boolean
 					? "bool"
-					: never
+					: T extends Uuid
+						? "uuid"
+						: never
 
 type OrderDomainsOk<A, B> = [A] extends [never]
 	? false

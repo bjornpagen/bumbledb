@@ -77,13 +77,13 @@ fn create(dir: &TempDir) -> Db<Ledger> {
 fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
     let dir = TempDir::new("verify-coherent");
     let db = create(&dir);
-    db.write(|tx| {
+    db.write(crate::api::db::test_operation().unwrap(), |tx| {
         tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)])?;
         Ok(())
     })
     .expect("write")
     .unwrap();
-    db.write(|tx| {
+    db.write(crate::api::db::test_operation().unwrap(), |tx| {
         tx.delete_dyn(ENTRY, [row("a", 1)])?;
         tx.insert_dyn(ENTRY, [row("c", 3)])?;
         Ok(())
@@ -99,9 +99,11 @@ fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
 fn a_dangling_membership_entry_is_a_typed_finding() {
     let dir = TempDir::new("verify-dangling-membership");
     let db = create(&dir);
-    db.write(|tx| tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ()))
-        .expect("write")
-        .unwrap();
+    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+        tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
     // Forge a membership entry pointing at a row id that does not exist.
     let store = db.integration_store();
     {
@@ -133,9 +135,11 @@ fn a_dangling_membership_entry_is_a_typed_finding() {
 fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
     let dir = TempDir::new("verify-membership-shape");
     let db = create(&dir);
-    db.write(|tx| tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ()))
-        .expect("write")
-        .unwrap();
+    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+        tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
     let store = db.integration_store();
     // Move the real membership entry into a foreign bucket: the row loses
     // its exact-fingerprint backing (MissingMembership) and the moved entry
@@ -202,9 +206,11 @@ fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
 fn a_stale_row_count_and_a_behind_ratchet_are_convicted() {
     let dir = TempDir::new("verify-counters");
     let db = create(&dir);
-    db.write(|tx| tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)]).map(|_| ()))
-        .expect("write")
-        .unwrap();
+    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+        tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)]).map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
     let store = db.integration_store();
     {
         let inner = &store.inner;

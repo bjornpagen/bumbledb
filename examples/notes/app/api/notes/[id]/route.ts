@@ -5,7 +5,7 @@
  * overwrite). A retry of the SAME revision decision reuses the SAME
  * request key; a NEW decision after a conflict mints a new one.
  */
-import { encodeBoundaryRows, Id128 } from "@bjornpagen/bumbledb"
+import { encodeBoundaryRows, Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Option, Result } from "effect"
 import { requirePrincipal } from "../../../../src/auth.ts"
 import { bindingFor } from "../../../../src/db/bindings.ts"
@@ -23,7 +23,7 @@ const readNote = Effect.fn("routes.readNote")(
 	function* (request: Request, rawId: string) {
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
-		const id = yield* Effect.fromResult(Id128.fromHex(rawId))
+		const id = yield* Effect.fromResult(Uuid.parse(rawId))
 		const work = requestPolicy(request)
 		const databases = yield* Databases
 		const db = yield* databases.acquire(binding, work)
@@ -42,8 +42,8 @@ const patchNote = Effect.fn("routes.patchNote")(
 	function* (request: Request, rawId: string, body: { readonly requestKey: string; readonly pinned: boolean }) {
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
-		const id = yield* Effect.fromResult(Id128.fromHex(rawId))
-		const requestKey = yield* Effect.fromResult(Id128.fromHex(body.requestKey))
+		const id = yield* Effect.fromResult(Uuid.parse(rawId))
+		const requestKey = yield* Effect.fromResult(Uuid.parse(body.requestKey))
 		const work = requestPolicy(request)
 		const databases = yield* Databases
 		const db = yield* databases.acquire(binding, work)

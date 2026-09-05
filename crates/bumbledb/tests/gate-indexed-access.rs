@@ -323,7 +323,9 @@ fn key_probe_queries_are_bucket_shaped_and_agree_with_the_scan_oracle() {
     for (tag, size) in [("small", 64u64), ("large", 4096u64)] {
         let dir = common::TempDir::new(&format!("gate-idx-probe-{tag}"));
         let db = seeded_db(&dir, size);
-        let mut prepared = db.prepare(&template).expect("prepare");
+        let mut prepared = db
+            .prepare(&template, crate::common::work())
+            .expect("prepare");
         let target = size / 2;
         let (rows, probe_work) = lease_work(&db, |snap| {
             snap.execute_collect(
@@ -474,8 +476,7 @@ mod forced_collisions {
         let schema = schema();
         let store =
             Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0xEE; FP_LEN])
-                .expect("forced-collision store")
-                .0;
+                .expect("forced-collision store");
 
         // Distinct emails admit under total collisions: the fingerprint
         // never merges facts.

@@ -11,11 +11,11 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
-    AcceptedCollection, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp,
-    CollectionBuilder, Comparison, ConditionTree, F64, FieldId, FindTerm, FixedIntervalElement,
-    FoldOp, HeadOp, HeadTerm, Id128, Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId,
-    Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule, ScalarExpr,
-    SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
+    AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree, F64,
+    FieldId, FindTerm, FixedIntervalElement, FoldOp, HeadOp, HeadTerm, Interior, InteriorId,
+    Interval, Manifest, NonEmpty, ParamId, Query, Rec, RecRule, RecStep, RelationId,
+    RenderedViolation, Rule, ScalarExpr, SchemaDescriptor, SchemaSpec, StatementId, StatementKind,
+    Term, Uuid, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -30,14 +30,6 @@ pub(crate) fn err(message: String) -> napi::Error {
 
 pub(crate) fn engine_message(error: &bumbledb::Error) -> String {
     error.to_string()
-}
-
-pub(crate) fn throw_engine(env: Env, error: &bumbledb::Error) -> napi::Error {
-    throw_kind_message(
-        env,
-        crate::tags::error_family::tag(&error.family()),
-        engine_message(error),
-    )
 }
 
 pub(crate) fn throw_kind_message(
@@ -175,18 +167,20 @@ fn interval_f64_in(
     })
 }
 
-pub(crate) fn id128_in(text: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<Id128> {
-    Id128::from_hex(text).map_err(|error| err(format!("bumbledb marshal: {ctx}: {error}")))
+pub(crate) fn uuid_in(text: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<Uuid> {
+    let id =
+        Uuid::parse_str(text).map_err(|error| err(format!("bumbledb marshal: {ctx}: {error}")))?;
+    let mut buffer = Uuid::encode_buffer();
+    if id.hyphenated().encode_lower(&mut buffer) != text {
+        return Err(err(format!(
+            "bumbledb marshal: {ctx}: expected canonical UUID"
+        )));
+    }
+    Ok(id)
 }
 
-pub(crate) fn id128_hex(id: Id128) -> String {
-    use std::fmt::Write as _;
-    id.as_bytes()
-        .iter()
-        .fold(String::with_capacity(32), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+pub(crate) fn uuid_text(id: Uuid) -> String {
+    id.to_string()
 }
 
 fn interval_in(
@@ -281,12 +275,12 @@ pub(crate) fn schema_value_in(
             let text = unsafe { value.cast::<String>()? };
             Ok(Value::String(text.into()))
         }
-        ValueType::Id128 => {
+        ValueType::Uuid => {
             if got != JsType::String {
-                return Err(mismatch("string (32 lowercase hex characters)"));
+                return Err(mismatch("string (canonical UUID text)"));
             }
             let text = unsafe { value.cast::<String>()? };
-            Ok(Value::Id128(id128_in(&text, ctx)?))
+            Ok(Value::Uuid(uuid_in(&text, ctx)?))
         }
         ValueType::FixedBytes { len } => {
             if got != JsType::Object {
@@ -325,7 +319,7 @@ const fn interval_pair_name(element: IntervalElement) -> &'static str {
 /// it alongside the descriptor so the manifest wire speaks the spec's
 /// whole field vocabulary; nothing here is judged. The historical `fresh`
 /// attribute is gone with the whole fresh/reserve issuance authority: the
-/// successor identity vocabulary is application-owned `Id128`.
+/// successor identity vocabulary is application-owned `Uuid`.
 #[derive(Clone)]
 pub struct FieldAttrs {
     pub(crate) newtype: Option<Box<str>>,
@@ -389,196 +383,6 @@ fn roster(rosters: &[SealedRoster], relation: RelationId) -> napi::Result<&Seale
             relation.0
         ))
     })
-}
-
-pub(crate) fn fact_row(
-    rosters: &[SealedRoster],
-    relation: u32,
-    values: &Array,
-) -> napi::Result<(RelationId, Vec<Value>)> {
-    let rel = RelationId(relation);
-    let roster = roster(rosters, rel)?;
-    Ok((rel, one_fact_row(&roster.name, &roster.fields, values)?))
-}
-
-pub(crate) fn accepted_collection(
-    env: Env,
-    rosters: &[SealedRoster],
-    relation: u32,
-    rows: u64,
-    cells: &Array,
-) -> napi::Result<AcceptedCollection> {
-    let rel = RelationId(relation);
-    if rows == 0 && cells.len() == 0 {
-        return CollectionBuilder::new(rel, &[])
-            .seal()
-            .map_err(|error| throw_engine(env, &error));
-    }
-    let roster = roster(rosters, rel)?;
-    let name: &str = &roster.name;
-    let arity = roster.fields.len();
-    let len = cells.len() as usize;
-    // The stated count against the product, in u128 so `rows × arity`
-    // cannot overflow the comparison — the one exact judgment covering
-    // the dangling partial row, the fieldless overflow, and a mis-stated
-    // count alike.
-    let expected = u128::from(rows) * (arity as u128);
-    if expected != len as u128 {
-        return Err(err(format!(
-            "bumbledb marshal: relation `{name}`: expected {expected} values, got {len}"
-        )));
-    }
-    if arity == 0 {
-        // An arity-0 collection IS its row count plus at most one
-        // distinct fact (set semantics — every row is the empty tuple),
-        // so the builder's arity-0 seal takes the stated count directly:
-        // O(1), no per-row loop. `rows` is caller DATA on the raw addon
-        // surface and the cells wall above is vacuous here (`0 == rows ×
-        // 0` for EVERY count — any count is shape-lawful, N empty
-        // tuples), so a stated 2^63 must never buy 2^63 bridge pushes
-        // from a 16-byte payload; the engine's apply collapses the same
-        // way (`apply_accepted`'s arity-0 arm: one judged apply,
-        // `submitted = rows` exact, `changed` the one effect).
-        let collection = CollectionBuilder::new(rel, &roster.fields)
-            .seal_nullary(rows)
-            .map_err(|error| throw_engine(env, &error))?;
-        return Ok(collection);
-    }
-    let mut builder = CollectionBuilder::new(rel, &roster.fields);
-    for index in 0..cells.len() {
-        let field = &roster.fields[(index as usize) % arity];
-        let value = req_at::<Unknown>(cells, index, format_args!("relation `{name}` collection"))?;
-        push_cell(env, &mut builder, name, field, &value)?;
-    }
-    let collection = builder.seal().map_err(|error| throw_engine(env, &error))?;
-    Ok(collection)
-}
-
-#[expect(
-    unsafe_code,
-    reason = "napi declares `Unknown::cast` unsafe (it trusts the caller on the \
-              JS type); every cast below is fenced by the `get_type` check in \
-              its own arm"
-)]
-fn push_cell(
-    env: Env,
-    builder: &mut CollectionBuilder<'_>,
-    relation: &str,
-    field: &FieldDescriptor,
-    value: &Unknown,
-) -> napi::Result<()> {
-    let ctx = CellCtx {
-        relation,
-        field: &field.name,
-    };
-    let got = value.get_type()?;
-    // SAFETY (each `cast` below): the arm's guard just proved `got` is the
-    // exact JS type the cast assumes; a mismatch returned before the cast.
-    let landed = match &field.value_type {
-        ValueType::Bool => {
-            if got != JsType::Boolean {
-                return Err(cell_mismatch(ctx, "boolean", got));
-            }
-            builder.push_bool(unsafe { value.cast::<bool>()? })
-        }
-        ValueType::U64 => {
-            if got != JsType::BigInt {
-                return Err(cell_mismatch(ctx, "bigint (u64)", got));
-            }
-            builder.push_u64(u64_in(&unsafe { value.cast::<BigInt>()? }, ctx)?)
-        }
-        ValueType::I64 => {
-            if got != JsType::BigInt {
-                return Err(cell_mismatch(ctx, "bigint (i64)", got));
-            }
-            builder.push_i64(i64_in(&unsafe { value.cast::<BigInt>()? }, ctx)?)
-        }
-        ValueType::F64 => {
-            if got != JsType::Number {
-                return Err(cell_mismatch(ctx, "number (f64)", got));
-            }
-            builder.push_f64(F64::from(unsafe { value.cast::<f64>()? }))
-        }
-        ValueType::String => {
-            if got != JsType::String {
-                return Err(cell_mismatch(ctx, "string", got));
-            }
-            let text = unsafe { value.cast::<String>()? };
-            builder.push_str(&text)
-        }
-        ValueType::Id128 => {
-            if got != JsType::String {
-                return Err(cell_mismatch(
-                    ctx,
-                    "string (32 lowercase hex characters)",
-                    got,
-                ));
-            }
-            let text = unsafe { value.cast::<String>()? };
-            builder.push_id128(id128_in(&text, ctx)?)
-        }
-        ValueType::FixedBytes { len } => {
-            if got != JsType::Object {
-                return Err(cell_mismatch(ctx, "Uint8Array", got));
-            }
-            let bytes = unsafe { value.cast::<Uint8Array>()? };
-            if bytes.len() != usize::from(*len) {
-                return Err(bytes_width_mismatch(ctx, *len, bytes.len()));
-            }
-            builder.push_bytes(&bytes)
-        }
-        ValueType::Interval { element } => {
-            if got != JsType::Object {
-                return Err(cell_mismatch(ctx, interval_pair_name(*element), got));
-            }
-            let obj = unsafe { value.cast::<Object>()? };
-            match element {
-                IntervalElement::U64 => builder.push_interval_u64(interval_u64_in(&obj, ctx)?),
-                IntervalElement::I64 => builder.push_interval_i64(interval_i64_in(&obj, ctx)?),
-                IntervalElement::F64 => builder.push_interval_f64(interval_f64_in(&obj, ctx)?),
-            }
-        }
-        ValueType::FixedInterval { element, .. } => {
-            if got != JsType::Object {
-                return Err(cell_mismatch(
-                    ctx,
-                    interval_pair_name(element.element()),
-                    got,
-                ));
-            }
-            let obj = unsafe { value.cast::<Object>()? };
-            match element {
-                FixedIntervalElement::U64 => builder.push_interval_u64(interval_u64_in(&obj, ctx)?),
-                FixedIntervalElement::I64 => builder.push_interval_i64(interval_i64_in(&obj, ctx)?),
-            }
-        }
-    };
-    landed.map_err(|error| throw_engine(env, &error))
-}
-
-fn one_fact_row(
-    name: &str,
-    fields: &[FieldDescriptor],
-    values: &Array,
-) -> napi::Result<Vec<Value>> {
-    if values.len() as usize != fields.len() {
-        return Err(err(format!(
-            "bumbledb marshal: relation `{name}`: expected {} values, got {}",
-            fields.len(),
-            values.len()
-        )));
-    }
-    let mut row = Vec::with_capacity(fields.len());
-    for (index, field) in (0..values.len()).zip(fields.iter()) {
-        let value = req_at::<Unknown>(values, index, format_args!("relation `{name}` row"))?;
-        row.push(schema_value_in(
-            &field.value_type,
-            &value,
-            name,
-            &field.name,
-        )?);
-    }
-    Ok(row)
 }
 
 pub(crate) fn key_row(
@@ -661,9 +465,9 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
         tags::value::STRING => Ok(Value::String(
             req::<String>(obj, "value", "string value")?.into(),
         )),
-        tags::value::ID128 => Ok(Value::Id128(id128_in(
-            &req::<String>(obj, "value", "id128 value")?,
-            "id128 value",
+        tags::value::UUID => Ok(Value::Uuid(uuid_in(
+            &req::<String>(obj, "value", "uuid value")?,
+            "uuid value",
         )?)),
         tags::value::FIXED_BYTES => Ok(Value::FixedBytes(
             req::<Uint8Array>(obj, "value", "fixedBytes value")?
@@ -712,7 +516,7 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
         tags::value_type::I64 => Ok(ValueType::I64),
         tags::value_type::F64 => Ok(ValueType::F64),
         tags::value_type::STRING => Ok(ValueType::String),
-        tags::value_type::ID128 => Ok(ValueType::Id128),
+        tags::value_type::UUID => Ok(ValueType::Uuid),
         tags::value_type::FIXED_BYTES => {
             let len = ordinal(req::<f64>(obj, "len", "fixedBytes type")?, "bytes width")?;
             let len = u16::try_from(len)
@@ -1414,15 +1218,16 @@ pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
     }
 }
 
+#[derive(Debug)]
 pub enum ValueOut {
     Bool(bool),
     U64(u64),
     I64(i64),
     F64(F64),
     Text(String),
-    /// Canonical 32-lowercase-hex text — the TypeScript spelling of an
-    /// application-owned `Id128` (chapter 32).
-    Id128(String),
+    /// Canonical canonical hyphenated UUID text — the TypeScript spelling of an
+    /// application-owned `Uuid` (chapter 32).
+    Uuid(String),
     Bytes(Vec<u8>),
     IntervalU64 {
         start: u64,
@@ -1452,7 +1257,7 @@ impl ValueOut {
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
             Value::F64(v) => Self::F64(v),
-            Value::Id128(v) => Self::Id128(id128_hex(v)),
+            Value::Uuid(v) => Self::Uuid(uuid_text(v)),
             Value::String(text) => Self::Text(text.into()),
             Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
             Value::IntervalU64(interval) => Self::IntervalU64 {
@@ -1486,7 +1291,7 @@ impl ToNapiValue for ValueOut {
             Self::U64(v) => unsafe { u64::to_napi_value(env, v) },
             Self::I64(v) => unsafe { i64n::to_napi_value(env, i64n(v)) },
             Self::F64(v) => unsafe { f64::to_napi_value(env, v.to_f64()) },
-            Self::Text(v) | Self::Id128(v) => unsafe { String::to_napi_value(env, v) },
+            Self::Text(v) | Self::Uuid(v) => unsafe { String::to_napi_value(env, v) },
             Self::Bytes(v) => unsafe { Uint8Array::to_napi_value(env, Uint8Array::new(v)) },
             Self::IntervalF64 { start, end } => {
                 let env_handle = Env::from_raw(env);
@@ -1513,31 +1318,43 @@ impl ToNapiValue for ValueOut {
     }
 }
 
-pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> Vec<Vec<ValueOut>> {
-    rows.into_iter()
-        .map(|row| row.into_iter().map(ValueOut::from_value).collect())
-        .collect()
+fn allocation_error(_: std::collections::TryReserveError) -> crate::runtime::RuntimeError {
+    crate::runtime::RuntimeError::Io {
+        kind: std::io::ErrorKind::OutOfMemory,
+        code: None,
+    }
 }
 
-pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
-    (0..answers.len())
-        .map(|row| {
-            (0..answers.arity())
-                .map(|column| value_out_from_answer(answers.get(row, column)))
-                .collect()
-        })
-        .collect()
+/// Called only after the destination's complete capacity has been admitted.
+fn output_vec<T>(len: usize) -> Result<Vec<T>, crate::runtime::RuntimeError> {
+    let mut values = Vec::new();
+    values.try_reserve_exact(len).map_err(allocation_error)?;
+    Ok(values)
 }
 
-fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
-    match value {
+fn value_out_from_answer(value: AnswerValue<'_>) -> Result<ValueOut, crate::runtime::RuntimeError> {
+    Ok(match value {
         AnswerValue::Bool(v) => ValueOut::Bool(v),
         AnswerValue::U64(v) => ValueOut::U64(v),
         AnswerValue::I64(v) => ValueOut::I64(v),
         AnswerValue::F64(v) => ValueOut::F64(v),
-        AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
-        AnswerValue::Id128(v) => ValueOut::Id128(id128_hex(v)),
-        AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_vec()),
+        AnswerValue::String(v) => {
+            let mut text = String::new();
+            text.try_reserve_exact(v.len()).map_err(allocation_error)?;
+            text.push_str(v);
+            ValueOut::Text(text)
+        }
+        AnswerValue::Uuid(v) => {
+            let mut text = String::new();
+            text.try_reserve_exact(36).map_err(allocation_error)?;
+            text.push_str(v.hyphenated().encode_lower(&mut Uuid::encode_buffer()));
+            ValueOut::Uuid(text)
+        }
+        AnswerValue::FixedBytes(v) => {
+            let mut bytes = output_vec(v.len())?;
+            bytes.extend_from_slice(v);
+            ValueOut::Bytes(bytes)
+        }
         AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
             start: v.start(),
             end: v.end(),
@@ -1550,20 +1367,54 @@ fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
             start: v.start(),
             end: v.end(),
         },
+    })
+}
+
+fn borrowed_value(value: &Value) -> AnswerValue<'_> {
+    match value {
+        Value::Bool(v) => AnswerValue::Bool(*v),
+        Value::U64(v) => AnswerValue::U64(*v),
+        Value::I64(v) => AnswerValue::I64(*v),
+        Value::F64(v) => AnswerValue::F64(*v),
+        Value::Uuid(v) => AnswerValue::Uuid(*v),
+        Value::String(v) => AnswerValue::String(v),
+        Value::FixedBytes(v) => AnswerValue::FixedBytes(v),
+        Value::IntervalU64(v) => AnswerValue::IntervalU64(*v),
+        Value::IntervalI64(v) => AnswerValue::IntervalI64(*v),
+        Value::IntervalF64(v) => AnswerValue::IntervalF64(*v),
     }
 }
 
-/// Logical outbound size of one answer cell (payload plus a fixed word).
-pub(crate) fn answer_cell_bytes(value: AnswerValue<'_>) -> u64 {
-    8 + match value {
-        AnswerValue::String(text) => text.len() as u64,
-        AnswerValue::Id128(_) => 32,
-        AnswerValue::FixedBytes(bytes) => bytes.len() as u64,
-        AnswerValue::IntervalU64(_) | AnswerValue::IntervalI64(_) | AnswerValue::IntervalF64(_) => {
-            16
+fn cell_allocation_bytes(value: AnswerValue<'_>) -> u64 {
+    size_of::<ValueOut>() as u64
+        + match value {
+            AnswerValue::String(text) => text.len() as u64,
+            AnswerValue::FixedBytes(bytes) => bytes.len() as u64,
+            AnswerValue::Uuid(_) => 36,
+            _ => 0,
         }
-        _ => 8,
+}
+
+pub(crate) fn row_out_charged(
+    work: &bumbledb::work::WorkContext,
+    row: &bumbledb::canonical::DecodedRow,
+) -> Result<crate::runtime::QueuedRow, crate::runtime::RuntimeError> {
+    let mut bytes = 0u64;
+    for value in row {
+        work.step(1)?;
+        bytes = bytes
+            .checked_add(cell_allocation_bytes(borrowed_value(value)))
+            .ok_or_else(|| {
+                crate::runtime::session::engine_error(&bumbledb::Error::ResultBytesOverflow)
+            })?;
     }
+    let charge = work.reserve(bumbledb::work::ByteKind::Result, bytes)?;
+    let mut values = output_vec(row.len())?;
+    for value in row {
+        work.step(1)?;
+        values.push(value_out_from_answer(borrowed_value(value))?);
+    }
+    Ok(crate::runtime::QueuedRow { values, charge })
 }
 
 /// Bound every cell's string/byte work, then report the page charge.
@@ -1571,12 +1422,12 @@ pub(crate) fn answers_out_bytes(
     work: &bumbledb::work::WorkContext,
     answers: &Answers,
 ) -> Result<u64, bumbledb::work::WorkError> {
-    let mut bytes = 0u64;
+    let mut bytes = (answers.len() as u64).saturating_mul(size_of::<Vec<ValueOut>>() as u64);
     for row in 0..answers.len() {
         for column in 0..answers.arity() {
             work.step(1)?;
             let cell = answers.get(row, column);
-            let size = answer_cell_bytes(cell);
+            let size = cell_allocation_bytes(cell);
             match cell {
                 AnswerValue::String(text) => work.input(text.len() as u64)?,
                 AnswerValue::FixedBytes(payload) => work.input(payload.len() as u64)?,
@@ -1592,13 +1443,21 @@ pub(crate) fn answers_out_bytes(
 pub(crate) fn answers_out_charged(
     work: &bumbledb::work::WorkContext,
     answers: &Answers,
-) -> Result<(Vec<Vec<ValueOut>>, bumbledb::work::ByteReservation), crate::runtime::RuntimeError>
-{
+) -> Result<(Vec<Vec<ValueOut>>, bumbledb::work::ByteReservation), crate::runtime::RuntimeError> {
     let bytes = answers_out_bytes(work, answers).map_err(crate::runtime::RuntimeError::from)?;
     let charge = work
         .reserve(bumbledb::work::ByteKind::Result, bytes)
         .map_err(crate::runtime::RuntimeError::from)?;
-    Ok((answers_out(answers), charge))
+    let mut rows = output_vec(answers.len())?;
+    for row in 0..answers.len() {
+        let mut values = output_vec(answers.arity())?;
+        for column in 0..answers.arity() {
+            work.step(1)?;
+            values.push(value_out_from_answer(answers.get(row, column))?);
+        }
+        rows.push(values);
+    }
+    Ok((rows, charge))
 }
 
 fn statement_kind_out(kind: StatementKind) -> &'static str {
@@ -1622,7 +1481,7 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
         | ValueType::U64
         | ValueType::I64
         | ValueType::F64
-        | ValueType::Id128
+        | ValueType::Uuid
         | ValueType::String => {}
         ValueType::FixedBytes { len } => {
             obj.set("len", u32::from(*len))?;
@@ -1810,41 +1669,6 @@ fn statement_object(
         }
     }
     Ok(obj)
-}
-
-pub struct ManifestWire {
-    pub(crate) manifest: Manifest,
-    pub(crate) attrs: Vec<Vec<FieldAttrs>>,
-}
-
-impl ToNapiValue for ManifestWire {
-    #[expect(
-        unsafe_code,
-        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
-                  builds plain objects on the live env and rewraps one raw \
-                  value it just rendered against that same env"
-    )]
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = Env::from_raw(env);
-        let manifest = val.manifest;
-        let mut root = Object::new(&env_handle)?;
-        root.set(
-            "relations",
-            relation_objects(env, &env_handle, manifest.relations, &val.attrs)?,
-        )?;
-        let mut statements = Vec::with_capacity(manifest.statements.len());
-        for statement in manifest.statements {
-            let mut statement_obj = Object::new(&env_handle)?;
-            statement_obj.set("id", u32::from(statement.id.0))?;
-            statement_obj.set("kind", statement_kind_out(statement.kind))?;
-            statement_obj.set("spelling", statement.spelling)?;
-            statements.push(statement_obj);
-        }
-        root.set("statements", statements)?;
-        // SAFETY: `env` is the live environment napi handed this very call,
-        // and `root` was created against it.
-        unsafe { Object::to_napi_value(env, root) }
-    }
 }
 
 pub struct DescriptorWire {

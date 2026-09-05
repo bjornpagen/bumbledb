@@ -10,9 +10,10 @@ fn synthetic_view(rows: &[(u64, u64)]) -> View {
     let image = slot.refill(
         &[ValueType::U64, ValueType::U64],
         words.len(),
+        &crate::image::test_generation(),
         words.iter().map(|row| &row[..]),
     );
-    apply(&image, &[], &[], Vec::new(), image.generation().text_eq(None))
+    all(&image)
 }
 
 #[test]

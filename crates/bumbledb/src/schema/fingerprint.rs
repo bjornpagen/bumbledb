@@ -21,7 +21,7 @@ use bumbledb_theory::Value;
 /// COUNT before its literals (the disjunctive set form), and the two extension
 /// statement forms took tags 2 (the count-only window) and 3 (order mark).
 /// `v6` (the successor family): the per-field generation byte is deleted with
-/// the fresh machinery, `id128` (tag 9) and the dense `interval<f64>` element
+/// the fresh machinery, `uuid` (tag 9) and the dense `interval<f64>` element
 /// (tag 2) join the type vocabulary, and old labels never alias the new
 /// stream — the label is hashed first, so no v5 fingerprint can equal a v6 one.
 pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v6";
@@ -176,7 +176,7 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         ValueType::U64 => out.push(ValueTypeTag::U64.tag()),
         ValueType::I64 => out.push(ValueTypeTag::I64.tag()),
         ValueType::F64 => out.push(ValueTypeTag::F64.tag()),
-        ValueType::Id128 => out.push(ValueTypeTag::Id128.tag()),
+        ValueType::Uuid => out.push(ValueTypeTag::Uuid.tag()),
         ValueType::String => out.push(ValueTypeTag::String.tag()),
         ValueType::FixedBytes { len } => {
             out.push(ValueTypeTag::FixedBytes.tag());
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn id128_and_dense_interval_types_are_fingerprint_inputs() {
+    fn uuid_and_dense_interval_types_are_fingerprint_inputs() {
         let of = |ty: ValueType| {
             fingerprint(&schema_of(SchemaDescriptor {
                 relations: vec![RelationDescriptor {
@@ -359,9 +359,9 @@ mod tests {
                 statements: vec![],
             }))
         };
-        // Id128 is nominal: not bytes<16>, not u64.
-        assert_ne!(of(ValueType::Id128), of(ValueType::FixedBytes { len: 16 }));
-        assert_ne!(of(ValueType::Id128), of(ValueType::U64));
+        // UUID is a primitive scalar: not bytes<16>, not u64.
+        assert_ne!(of(ValueType::Uuid), of(ValueType::FixedBytes { len: 16 }));
+        assert_ne!(of(ValueType::Uuid), of(ValueType::U64));
         // The dense element is distinct from both integer elements.
         let dense = of(ValueType::Interval {
             element: IntervalElement::F64,
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(bytes, expected);
     }
 
-    /// The new scalar/interval tags have exact golden bytes: `id128` is
+    /// The new scalar/interval tags have exact golden bytes: `uuid` is
     /// tag 9 and the dense interval element is tag 2 — neither can alias
     /// the v5 stream, whose label already differs.
     #[test]
@@ -525,7 +525,7 @@ mod tests {
                 extension: None,
                 name: "R".into(),
                 fields: vec![
-                    field("who", ValueType::Id128),
+                    field("who", ValueType::Uuid),
                     field(
                         "span",
                         ValueType::Interval {
@@ -548,7 +548,7 @@ mod tests {
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&3u32.to_le_bytes());
         expected.extend_from_slice(b"who");
-        expected.push(9); // id128
+        expected.push(9); // uuid
         expected.extend_from_slice(&4u32.to_le_bytes());
         expected.extend_from_slice(b"span");
         expected.push(6); // interval

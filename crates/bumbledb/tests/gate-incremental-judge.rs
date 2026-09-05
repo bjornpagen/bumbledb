@@ -1,15 +1,15 @@
 //! Gate: incremental production judgment (chapter 10 §4, F3 G-C).
 //!
 //! For a mutation whose relations carry determinant indexes, the production
-//! `SchemaJudge` judges only the statements and determinant groups the
+//! incremental entry judges only the statements and determinant groups the
 //! delta can affect — sound under the LAWFUL-PARENT PREMISE (the committed
 //! parent satisfies every statement; production maintains it inductively,
 //! and the offline sweeper re-runs the COMPLETE reference judgment so a
 //! parent made unlawful outside the admission path stays detectable). The
 //! bounded reference judge (`judge_final_state`) remains the oracle.
 //!
-//! This gate pins, on the PUBLIC `bumbledb::store` candidate protocol (the
-//! call shape the log bridge drives):
+//! This gate pins complete judgment on the store candidate protocol and
+//! incremental locality on the admitted Db integration path:
 //! - differential equivalence: randomized small theories/mutations judged
 //!   BOTH ways — verdicts, complete violation sets, and canonical evidence
 //!   bytes equal, across adds, deletes, replaces and multi-statement
@@ -32,8 +32,8 @@ use bumbledb::schema::{
     SchemaDescriptor, Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 use bumbledb::store::{
-    CandidateJudge, CandidateState, Judgment, MapPolicy, Prepared, SchemaJudge, Store,
-    StoreResult, UnindexedRows,
+    CandidateJudge, CandidateState, Judgment, MapPolicy, Prepared, SchemaJudge, Store, StoreResult,
+    UnindexedRows,
 };
 use bumbledb::work::{ExecutionPolicy, Resource, WorkContext};
 use bumbledb::{ChangeSet, Interval, Value};
@@ -60,7 +60,7 @@ fn work() -> WorkContext {
 
 /// `User(id)`, `User(email)`, pointwise `Booking(room, span)`, `Room(id)`,
 /// `Booking(room) ⊆ Room(id)`, `Booking(room) <= {0..2} Room(id)`.
-fn theory() -> Schema {
+fn theory_descriptor() -> SchemaDescriptor {
     let side = |relation: RelationId, fields: &[u16]| Side {
         relation,
         projection: fields.iter().map(|&f| FieldId(f)).collect(),
@@ -74,7 +74,10 @@ fn theory() -> Schema {
         relations: vec![
             RelationDescriptor {
                 name: "User".into(),
-                fields: vec![field("id", ValueType::U64), field("email", ValueType::String)],
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("email", ValueType::String),
+                ],
                 extension: None,
             },
             RelationDescriptor {
@@ -126,8 +129,12 @@ fn theory() -> Schema {
             },
         ],
     }
-    .validate()
-    .expect("gate theory validates")
+}
+
+fn theory() -> Schema {
+    theory_descriptor()
+        .validate()
+        .expect("gate theory validates")
 }
 
 fn user(id: u64, email: &str) -> Vec<Value> {
@@ -193,7 +200,7 @@ fn evidence_bytes(schema: &Schema, judged: &[JudgedViolation]) -> Vec<u8> {
         .expect("evidence encodes")
 }
 
-/// The differential judge: the PRODUCTION incremental judgment and the
+/// The differential judge: production complete judgment and the
 /// complete reference over one candidate; verdicts, complete violation
 /// sets and canonical evidence bytes must be equal.
 struct CompareJudge<'s> {
@@ -226,7 +233,7 @@ impl CandidateJudge for CompareJudge<'_> {
                 assert_eq!(
                     mine.as_ref(),
                     complete.as_ref(),
-                    "incremental and complete violation sets must be equal"
+                    "production and reference violation sets must be equal"
                 );
                 assert_eq!(
                     evidence_bytes(self.schema, mine),
@@ -325,10 +332,9 @@ impl Mirror {
 
 /// Random adds/removes/replaces biased toward key/containment/capacity
 /// collisions — small theories, small mutations.
-fn random_mutation(
-    rng: &mut XorShift,
-    mirror: &Mirror,
-) -> (Vec<(RelationId, Vec<Value>)>, Vec<(RelationId, Vec<Value>)>) {
+type Rows = Vec<(RelationId, Vec<Value>)>;
+
+fn random_mutation(rng: &mut XorShift, mirror: &Mirror) -> (Rows, Rows) {
     let mut adds = Vec::new();
     let mut removes = Vec::new();
     for _ in 0..=rng.below(3) {
@@ -341,7 +347,9 @@ fn random_mutation(
             }
             2 => {
                 if let Some(row) = mirror.sample(rng, USER) {
-                    let Value::U64(id) = row[0] else { unreachable!() };
+                    let Value::U64(id) = row[0] else {
+                        unreachable!()
+                    };
                     removes.push((USER, row));
                     adds.push((USER, user(id, &format!("mail{}", rng.below(10)))));
                 }
@@ -390,7 +398,7 @@ fn run_differential(store: &Store, schema: &Schema, seed: u64, iterations: u32) 
 }
 
 #[test]
-fn incremental_and_complete_judge_agree_on_randomized_mutations() {
+fn complete_production_and_independent_reference_agree_on_randomized_mutations() {
     let dir = common::TempDir::new("gate-inc-judge-differential");
     let schema = theory();
     std::fs::create_dir_all(dir.path()).expect("parent dir");
@@ -407,7 +415,7 @@ fn incremental_and_complete_judge_agree_on_randomized_mutations() {
 /// `--features collision-probe`.
 #[cfg(feature = "collision-probe")]
 #[test]
-fn incremental_and_complete_judge_agree_under_forced_collisions() {
+fn complete_production_and_independent_reference_agree_under_forced_collisions() {
     use bumbledb::store::FP_LEN;
     let dir = common::TempDir::new("gate-inc-judge-collision");
     let schema = theory();
@@ -418,56 +426,36 @@ fn incremental_and_complete_judge_agree_under_forced_collisions() {
         MapPolicy::default(),
         [0xEE; FP_LEN],
     )
-    .expect("forced-collision store")
-    .0;
+    .expect("forced-collision store");
     run_differential(&store, &schema, 0xC011_1DED_0000_0002_u64, 40);
 }
 
-/// A judge wrapper measuring the production judgment's own work-unit cost
-/// on the deterministic ledger.
-struct MeasuredJudge<'s> {
-    schema: &'s Schema,
-    cost: std::cell::Cell<u64>,
+fn commit_admitted(db: &bumbledb::Db<SchemaDescriptor>, adds: &[(RelationId, Vec<Value>)]) {
+    let changes = build_changes(db.schema(), adds, &[]);
+    assert!(matches!(
+        db.apply(&changes, bumbledb::ApplyExpected::Any, &work())
+            .expect("population"),
+        bumbledb::ApplyOutcome::Accepted { .. } | bumbledb::ApplyOutcome::NoChange { .. }
+    ));
 }
 
-impl CandidateJudge for MeasuredJudge<'_> {
-    type Rejection = Box<[JudgedViolation]>;
-
-    fn judge(
-        &self,
-        candidate: &CandidateState<'_, '_>,
-        work: &WorkContext,
-    ) -> StoreResult<Judgment<Self::Rejection>> {
-        let before = work.used(Resource::WorkUnits);
-        let judged = SchemaJudge::new(self.schema).judge(candidate, work)?;
-        self.cost.set(work.used(Resource::WorkUnits) - before);
-        Ok(judged)
-    }
-}
-
-fn commit_admitted(store: &Store, schema: &Schema, adds: &[(RelationId, Vec<Value>)]) {
-    assert!(
-        compare_and_commit(store, schema, adds, &[]),
-        "fixture population must admit"
+fn measured_one_row_judgment(db: &bumbledb::Db<SchemaDescriptor>, id: u64) -> u64 {
+    let changes = build_changes(
+        db.schema(),
+        &[(USER, user(id, &format!("solo{id}@example")))],
+        &[],
     );
-}
-
-fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
-    let judge = MeasuredJudge {
-        schema,
-        cost: std::cell::Cell::new(0),
-    };
-    let changes = build_changes(schema, &[(USER, user(id, &format!("solo{id}@example")))], &[]);
     let context = work();
-    let mut owner = store.writer(&context).expect("writer");
-    match owner
-        .prepare(&changes, &UnindexedRows, &judge)
-        .expect("prepare")
-    {
-        Prepared::Admitted(prepared) => prepared.abort(),
-        Prepared::Rejected(violations) => panic!("unexpected rejection: {violations:?}"),
-    }
-    judge.cost.get()
+    let mut session = db.integration_writer(&context).expect("writer");
+    let before = context.used(Resource::WorkUnits);
+    let prepared = session.prepare(&changes).expect("prepare");
+    assert!(matches!(prepared, bumbledb::Admission::Accepted(_)));
+    assert_eq!(
+        context.used(Resource::ScratchBytes),
+        0,
+        "one indexed group needs no spill"
+    );
+    context.used(Resource::WorkUnits) - before
 }
 
 /// STRUCTURAL (never timing): judging a one-row mutation against a large
@@ -478,11 +466,9 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
 #[test]
 fn one_row_judge_work_is_flat_across_relation_growth() {
     let dir = common::TempDir::new("gate-inc-judge-work");
-    let schema = theory();
-    std::fs::create_dir_all(dir.path()).expect("parent dir");
-    let store = Store::create(&dir.path().join("store"), &schema, MapPolicy::default())
+    let db = bumbledb::Db::create(dir.path(), theory_descriptor(), work())
         .expect("create")
-        .0;
+        .unwrap();
 
     // Bookings/rooms a streamed containment/capacity judgment would have
     // to walk; the user mutation never touches them.
@@ -495,19 +481,19 @@ fn one_row_judge_work_is_flat_across_relation_growth() {
             ]
         })
         .collect();
-    commit_admitted(&store, &schema, &occupancy);
+    commit_admitted(&db, &occupancy);
 
     let users: Vec<(RelationId, Vec<Value>)> = (0..512u64)
         .map(|n| (USER, user(n, &format!("user{n}@example"))))
         .collect();
-    commit_admitted(&store, &schema, &users);
-    let small = measured_one_row_judgment(&store, &schema, 2_000_001);
+    commit_admitted(&db, &users);
+    let small = measured_one_row_judgment(&db, 2_000_001);
 
     let more: Vec<(RelationId, Vec<Value>)> = (512..4096u64)
         .map(|n| (USER, user(n, &format!("user{n}@example"))))
         .collect();
-    commit_admitted(&store, &schema, &more);
-    let large = measured_one_row_judgment(&store, &schema, 2_000_002);
+    commit_admitted(&db, &more);
+    let large = measured_one_row_judgment(&db, 2_000_002);
 
     assert!(
         small < 256,
@@ -522,54 +508,4 @@ fn one_row_judge_work_is_flat_across_relation_growth() {
         large <= small + 32,
         "judgment work must not grow with the relation: {small} -> {large}"
     );
-}
-
-/// The small-mutation fast path stays in charged RAM: judging one row
-/// against a large indexed relation consumes NO scratch bytes (nothing is
-/// forced to spill to prove boundedness — the budget threshold governs).
-#[test]
-fn incremental_judge_of_a_small_mutation_spills_nothing() {
-    let dir = common::TempDir::new("gate-inc-judge-nospill");
-    let schema = theory();
-    std::fs::create_dir_all(dir.path()).expect("parent dir");
-    let store = Store::create(&dir.path().join("store"), &schema, MapPolicy::default())
-        .expect("create")
-        .0;
-    let users: Vec<(RelationId, Vec<Value>)> = (0..1024u64)
-        .map(|n| (USER, user(n, &format!("user{n}@example"))))
-        .collect();
-    commit_admitted(&store, &schema, &users);
-
-    struct NoSpillJudge<'s> {
-        schema: &'s Schema,
-    }
-    impl CandidateJudge for NoSpillJudge<'_> {
-        type Rejection = Box<[JudgedViolation]>;
-
-        fn judge(
-            &self,
-            candidate: &CandidateState<'_, '_>,
-            work: &WorkContext,
-        ) -> StoreResult<Judgment<Self::Rejection>> {
-            let scratch_before = work.used(Resource::ScratchBytes);
-            let judged = SchemaJudge::new(self.schema).judge(candidate, work)?;
-            assert_eq!(
-                work.used(Resource::ScratchBytes) - scratch_before,
-                0,
-                "a small indexed mutation must not be forced to spill"
-            );
-            Ok(judged)
-        }
-    }
-    let changes = build_changes(&schema, &[(USER, user(2_000_003, "nospill@example"))], &[]);
-    let judge = NoSpillJudge { schema: &schema };
-    let context = work();
-    let mut owner = store.writer(&context).expect("writer");
-    match owner
-        .prepare(&changes, &UnindexedRows, &judge)
-        .expect("prepare")
-    {
-        Prepared::Admitted(prepared) => prepared.abort(),
-        Prepared::Rejected(violations) => panic!("unexpected rejection: {violations:?}"),
-    }
 }

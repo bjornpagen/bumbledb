@@ -262,7 +262,10 @@ impl Executor {
 
             if carried.is_none() {
                 counters.phase_start(node_idx, JoinPhase::Force);
-                if self.colt_ok(colts[occ].ensure_forced(start_cursor, s_level)).is_none() {
+                if self
+                    .colt_ok(colts[occ].ensure_forced(start_cursor, s_level))
+                    .is_none()
+                {
                     scratch.parents.clear();
                     scratch.element_origins.clear();
                     return;

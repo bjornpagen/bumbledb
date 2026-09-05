@@ -10,8 +10,8 @@ use bumbledb::Theory as _;
 use bumbledb::work::ExecutionPolicy;
 use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
 
-use super::*;
 use super::admin;
+use super::*;
 use crate::runtime::{CloseReport, Options};
 
 bumbledb::schema! {
@@ -51,6 +51,36 @@ fn policy() -> ExecutionPolicy {
     }
 }
 
+/// Snapshot jobs must run on the pool because their pinned LMDB owner is
+/// installed in that worker's resource table, exactly as in production.
+pub(super) fn snapshot_via_worker(
+    resource: &Arc<HistoryResource>,
+    consistency: ConsistencySpec,
+) -> MachineResult<SnapshotOwned> {
+    let runtime = Arc::clone(&resource.runtime);
+    let resource = Arc::clone(resource);
+    let (notify, notified) = std::sync::mpsc::channel();
+    let operation = runtime.submit(
+        policy(),
+        Box::new(move || {
+            notify.send(()).expect("snapshot notification");
+        }),
+        move |_| {
+            Ok(Box::new(move |context| {
+                run_history_verb(&resource, HistoryVerb::Snapshot(consistency), context)
+            }))
+        },
+    )?;
+    notified
+        .recv_timeout(Duration::from_secs(10))
+        .expect("snapshot finishes");
+    match runtime.take(&operation)? {
+        Output::Machine(MachineOutput::Snapshot(snapshot)) => Ok(*snapshot),
+        Output::Machine(MachineOutput::Admin(admin::AdminOwned::Failed { fail, .. })) => Err(fail),
+        _ => panic!("snapshot verb must return a snapshot or typed refusal"),
+    }
+}
+
 fn unique_dir(tag: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -63,8 +93,8 @@ fn unique_dir(tag: &str) -> std::path::PathBuf {
 
 fn identity_of(descriptor: &bumbledb::SchemaDescriptor, seed: u8) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes([seed; 16])),
-        incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes([seed ^ 0xff; 16])),
+        database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes([seed; 16])),
+        incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes([seed ^ 0xff; 16])),
         schema_id: bumbledb_log::schema_file::schema_id(descriptor).expect("valid schema"),
     }
 }
@@ -81,7 +111,7 @@ fn open_spec(directory: &std::path::Path, create: bool, seed: u8) -> OpenSpec {
         discard_mismatched: false,
         creation: create.then(|| {
             (
-                OperationId::from_core(bumbledb::Id128::from_bytes([seed.wrapping_add(1); 16])),
+                OperationId::from_core(bumbledb::Uuid::from_bytes([seed.wrapping_add(1); 16])),
                 artifact,
             )
         }),
@@ -151,7 +181,7 @@ fn the_protocol_roster_pins_ts_log_codes_exactly() {
 }
 
 #[test]
-fn the_result_codec_is_the_core_authority_and_id128_crosses_as_hex() {
+fn the_result_codec_is_the_core_authority_and_uuid_crosses_as_hex() {
     let work = policy().start().unwrap();
     let entries = vec![
         ("beta".to_string(), Value::U64(7)),
@@ -183,12 +213,12 @@ fn the_result_codec_is_the_core_authority_and_id128_crosses_as_hex() {
         "alpha",
         "entries decode in canonical order"
     );
-    // Tag 8 (Id128, Rust-sealed commands) decodes through the re-pointed
+    // Tag 8 (Uuid, Rust-sealed commands) decodes through the re-pointed
     // codec instead of refusing as Corruption; the JS crossing spells it as
-    // canonical 32-lowercase-hex text (the recorded wave-D decision — the
+    // canonical hyphenated UUID text (the recorded wave-D decision — the
     // only spelling the TS CommandScalar can carry).
-    let id = bumbledb::Id128::from_bytes([0xAB; 16]);
-    let cell = Value::Id128(id);
+    let id = bumbledb::Uuid::from_bytes([0xAB; 16]);
+    let cell = Value::Uuid(id);
     let with_id = bumbledb::canonical::result::encode_result(
         &[("entity", &cell)],
         LIMITS.result_bytes,
@@ -196,9 +226,9 @@ fn the_result_codec_is_the_core_authority_and_id128_crosses_as_hex() {
     )
     .expect("encodes");
     let decoded = decode_result_record(&with_id, &work).expect("tag 8 decodes, never Corruption");
-    assert_eq!(decoded[0].1, Value::Id128(id));
-    let text = hex16(id);
-    assert_eq!(text.len(), 32);
+    assert_eq!(decoded[0].1, Value::Uuid(id));
+    let text = uuid_text(id);
+    assert_eq!(text.len(), 36);
     assert_eq!(text, text.to_lowercase(), "canonical lowercase hex");
     // Duplicate keys refuse; truncation refuses; empty is the empty record.
     let duplicate = vec![
@@ -263,19 +293,18 @@ fn local_create_open_and_identity_refusals() {
     assert_eq!(reopened.resource.identity, identity);
     assert_eq!(drain_resource(&reopened.resource), CloseReport::Closed);
 
-    // A different databaseId is ForeignIdentity; a different incarnation is
-    // WrongLineage — both refuse before serving any data.
+    // Either identity change disagrees with the persisted origin binding;
+    // recovery refuses before opening a history or serving any data.
     let mut foreign = open_spec(&dir, false, 3);
-    foreign.identity.database_id = DatabaseId::from_core(bumbledb::Id128::from_bytes([9; 16]));
+    foreign.identity.database_id = DatabaseId::from_core(bumbledb::Uuid::from_bytes([9; 16]));
     match open_history(&runtime, &foreign, &work) {
-        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "ForeignIdentity"),
+        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "CacheIdentityMismatch"),
         _ => panic!("a foreign database id must refuse"),
     }
     let mut lineage = open_spec(&dir, false, 3);
-    lineage.identity.incarnation_id =
-        IncarnationId::from_core(bumbledb::Id128::from_bytes([8; 16]));
+    lineage.identity.incarnation_id = IncarnationId::from_core(bumbledb::Uuid::from_bytes([8; 16]));
     match open_history(&runtime, &lineage, &work) {
-        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "WrongLineage"),
+        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "CacheIdentityMismatch"),
         _ => panic!("a different incarnation must refuse"),
     }
 
@@ -313,7 +342,7 @@ fn create_retry_completes_and_strangers_refuse() {
     match open_history(&runtime, &stranger, &work) {
         Err(LogFail::Protocol { code, .. }) => {
             assert!(
-                code == "AuthorityExists" || code == "ForeignIdentity",
+                code == "CacheIdentityMismatch",
                 "creation over existing authority refuses, got {code}"
             );
         }
@@ -324,7 +353,7 @@ fn create_retry_completes_and_strangers_refuse() {
     let missing = base.join("second");
     let mut artifactless = open_spec(&missing, true, 6);
     artifactless.creation = Some((
-        OperationId::from_core(bumbledb::Id128::from_bytes([6; 16])),
+        OperationId::from_core(bumbledb::Uuid::from_bytes([6; 16])),
         Vec::new(),
     ));
     match open_history(&runtime, &artifactless, &work) {
@@ -363,7 +392,7 @@ fn submit_decides_and_identity_mismatch_is_not_submitted() {
         identity: opened.resource.identity,
         id: CommandId {
             receipt_epoch: bumbledb_log::history::ReceiptEpoch::new(1).expect("one"),
-            request_id: RequestId::from_core(bumbledb::Id128::from_bytes([21; 16])),
+            request_id: RequestId::from_core(bumbledb::Uuid::from_bytes([21; 16])),
         },
         condition: Condition::Unconditional,
     };
@@ -385,13 +414,13 @@ fn submit_decides_and_identity_mismatch_is_not_submitted() {
     // A command sealed for a FOREIGN identity is not-submitted with a
     // typed identity refusal — never a forged receipt.
     let mut foreign_scope = opened.resource.identity;
-    foreign_scope.database_id = DatabaseId::from_core(bumbledb::Id128::from_bytes([99; 16]));
+    foreign_scope.database_id = DatabaseId::from_core(bumbledb::Uuid::from_bytes([99; 16]));
     let foreign = Command::seal(
         CommandMetadata {
             identity: foreign_scope,
             id: CommandId {
                 receipt_epoch: bumbledb_log::history::ReceiptEpoch::new(1).expect("one"),
-                request_id: RequestId::from_core(bumbledb::Id128::from_bytes([22; 16])),
+                request_id: RequestId::from_core(bumbledb::Uuid::from_bytes([22; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -433,15 +462,8 @@ fn published_snapshots_pin_provenance_and_consistency_refusals_are_typed() {
     let work = policy().start().unwrap();
 
     let opened = open_history(&runtime, &open_spec(&dir, true, 11), &work).expect("creates");
-    let (kind, lease) = opened.resource.kind_and_lease().expect("live");
-    let mut snapshot = open_published_snapshot(
-        &opened.resource,
-        &kind,
-        lease,
-        ConsistencySpec::Latest,
-        &work,
-    )
-    .expect("a local snapshot is latest by construction");
+    let mut snapshot = snapshot_via_worker(&opened.resource, ConsistencySpec::Latest)
+        .expect("a local snapshot is latest by construction");
     assert_eq!(snapshot.identity, opened.resource.identity);
     assert!(matches!(snapshot.freshness, FreshnessOwned::Latest));
     // The pinned session drains honestly.
@@ -457,12 +479,11 @@ fn published_snapshots_pin_provenance_and_consistency_refusals_are_typed() {
 
     // An at-least consistency ahead of the local stamp refuses typed —
     // never a stale read dressed as fresh.
-    let (kind, lease) = opened.resource.kind_and_lease().expect("live");
     let ahead = ConsistencySpec::AtLeast(bumbledb_log::history::DecisionStamp {
         seq: 999,
         hash: bumbledb_log::history::DecisionDigest::from_bytes([1; 32]),
     });
-    match open_published_snapshot(&opened.resource, &kind, lease, ahead, &work) {
+    match snapshot_via_worker(&opened.resource, ahead) {
         Err(LogFail::Structured(StructuredReason::NotYetAvailable {
             requested_seq,
             captured_seq,
@@ -534,7 +555,7 @@ fn per_call_submit_options_cross_verbatim_and_local_accepts_and_ignores_them() {
             identity: opened.resource.identity,
             id: CommandId {
                 receipt_epoch: bumbledb_log::history::ReceiptEpoch::new(1).expect("one"),
-                request_id: RequestId::from_core(bumbledb::Id128::from_bytes([31; 16])),
+                request_id: RequestId::from_core(bumbledb::Uuid::from_bytes([31; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -640,8 +661,8 @@ fn closed_history_refuses_and_close_joins_idempotently() {
 
 #[test]
 fn planned_target_incarnations_are_deterministic_and_operation_scoped() {
-    let a = OperationId::from_core(bumbledb::Id128::from_bytes([1; 16]));
-    let b = OperationId::from_core(bumbledb::Id128::from_bytes([2; 16]));
+    let a = OperationId::from_core(bumbledb::Uuid::from_bytes([1; 16]));
+    let b = OperationId::from_core(bumbledb::Uuid::from_bytes([2; 16]));
     assert_eq!(
         planned_target_incarnation(a),
         planned_target_incarnation(a),
@@ -654,10 +675,16 @@ fn planned_target_incarnations_are_deterministic_and_operation_scoped() {
     );
 }
 
-fn inspect_via_verb(resource: &Arc<HistoryResource>, work: &bumbledb::work::WorkContext) -> InspectionOwned {
+fn inspect_via_verb(
+    resource: &Arc<HistoryResource>,
+    work: &bumbledb::work::WorkContext,
+) -> InspectionOwned {
     match run_history_verb(resource, HistoryVerb::Inspect, work) {
         Ok(Output::Machine(MachineOutput::Inspect(owned))) => *owned,
-        other => panic!("inspect verb must produce inspect output, got ok={}", other.is_ok()),
+        other => panic!(
+            "inspect verb must produce inspect output, got ok={}",
+            other.is_ok()
+        ),
     }
 }
 
@@ -675,17 +702,10 @@ fn empty_manifest_for(descriptor: &bumbledb::SchemaDescriptor) -> String {
 
 #[test]
 fn d13_diagnostic_failure_preserves_decided_and_does_not_invent_corruption() {
-    let stamp = DecisionStamp {
-        seq: 1,
-        hash: bumbledb_log::history::DecisionDigest::from_bytes([7; 32]),
-    };
-    let health = local_health_after_decode_failure(
-        LocalHealth::Ready { at: stamp },
-        protocol(
-            "Backend",
-            "English text must not choose publication phase or health",
-        ),
-    );
+    let health = local_health_after_decode_failure(&protocol(
+        "Backend",
+        "English text must not choose publication phase or health",
+    ));
     assert!(
         matches!(
             health,
@@ -729,15 +749,8 @@ fn d18_abandoned_snapshot_output_drains_its_session() {
     let dir = base.join("tenant");
     let work = policy().start().unwrap();
     let opened = open_history(&runtime, &open_spec(&dir, true, 19), &work).expect("creates");
-    let (kind, lease) = opened.resource.kind_and_lease().expect("live");
-    let snapshot = open_published_snapshot(
-        &opened.resource,
-        &kind,
-        lease,
-        ConsistencySpec::Latest,
-        &work,
-    )
-    .expect("snapshot output");
+    let snapshot =
+        snapshot_via_worker(&opened.resource, ConsistencySpec::Latest).expect("snapshot output");
     drop(snapshot);
     let inspection = inspect_via_verb(&opened.resource, &work);
     assert_eq!(inspection.health, "empty");
@@ -747,16 +760,10 @@ fn d18_abandoned_snapshot_output_drains_its_session() {
 }
 
 #[test]
-fn d17_restore_streams_chunks_and_relocated_tail() {
-    let _ = admin::verified_checkpoint_chunks::<bumbledb_log::store::fs::FsStore>;
-}
-
-#[test]
 fn d20_admin_missing_and_foreign_snapshots_refuse_before_side_effects() {
     let work = policy().start().unwrap();
     let missing = admin::PlansSpec::test_chain(
         empty_manifest_for(&Mini.descriptor()),
-        Vec::new(),
         Vec::new(),
         Vec::new(),
     );
@@ -770,29 +777,9 @@ fn d20_admin_missing_and_foreign_snapshots_refuse_before_side_effects() {
         empty_manifest_for(&Mini.descriptor()),
         Vec::new(),
         vec![foreign],
-        Vec::new(),
     );
     match foreign_plans.test_verify(&work) {
         Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "MigrationDrift"),
         other => panic!("a foreign base snapshot refuses, got {other:?}"),
-    }
-
-    let snapshot = bumbledb_log::schema_file::render(&Mini.descriptor());
-    let mappings = br#"{"kind":"field","name":"units","result":"unresolved"}"#.to_vec();
-    let mapped = admin::PlansSpec::test_chain(
-        empty_manifest_for(&Mini.descriptor()),
-        Vec::new(),
-        vec![snapshot],
-        mappings,
-    );
-    match mapped.test_verify(&work) {
-        Err(LogFail::Protocol { code, detail }) => {
-            assert_eq!(code, "MigrationUnsupported");
-            assert!(
-                detail.contains("units"),
-                "invalid hashed mapping names the missing field: {detail}"
-            );
-        }
-        other => panic!("invalid mapping on empty source refuses, got {other:?}"),
     }
 }

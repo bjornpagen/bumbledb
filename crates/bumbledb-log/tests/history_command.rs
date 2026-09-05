@@ -8,7 +8,7 @@ use bumbledb::schema::{
 };
 use bumbledb::work::Resource;
 use bumbledb::{
-    ChangeError, ChangeSet, ExecutionPolicy, Id128, RelationId, Schema, Value, WorkContext,
+    ChangeError, ChangeSet, ExecutionPolicy, RelationId, Schema, Uuid, Value, WorkContext,
     WorkError,
 };
 use bumbledb_log::history::command::{
@@ -61,13 +61,13 @@ fn work() -> WorkContext {
 fn metadata(schema: &Schema) -> CommandMetadata {
     CommandMetadata {
         identity: DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: bumbledb::schema::fingerprint::fingerprint(schema),
         },
         id: CommandId {
             receipt_epoch: ReceiptEpoch::INITIAL,
-            request_id: RequestId::from_core(Id128::from_bytes([3; 16])),
+            request_id: RequestId::from_core(Uuid::from_bytes([3; 16])),
         },
         condition: Condition::Unconditional,
     }

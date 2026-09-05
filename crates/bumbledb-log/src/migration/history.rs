@@ -225,28 +225,28 @@ pub fn decode_record(bytes: &[u8], cap: usize) -> Result<HistoryRecord, HistoryE
 
 fn decode_applied(bytes: &[u8], cap: usize) -> Result<Applied, HistoryError> {
     let mut input = Reader::begin(bytes, KIND_APPLIED, cap)?;
-    let operation = OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+    let operation = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
     let plan_set_digest = input.array()?;
     let source = match input.tag()? {
         (_, 0) => AppliedSource::EmptyBase {
             base_schema: SchemaId(input.array()?),
         },
         (_, 1) => AppliedSource::Database {
-            database: DatabaseId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
-            incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+            database: DatabaseId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
+            incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
             schema: SchemaId(input.array()?),
             decision: DecisionStamp {
                 seq: input.u64()?,
                 hash: crate::history::DecisionDigest::from_bytes(input.array()?),
             },
             state: StateStamp {
-                incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+                incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
                 data_revision: input.u64()?,
             },
         },
         (at, got) => return Err(HistoryError::Frame(FrameError::Tag { at, got })),
     };
-    let target_incarnation = IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+    let target_incarnation = IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
     let target_schema = SchemaId(input.array()?);
     let target_digest = input.array()?;
     let step_count = input.count(112)?;
@@ -284,7 +284,7 @@ fn decode_applied(bytes: &[u8], cap: usize) -> Result<Applied, HistoryError> {
 
 fn decode_baseline(bytes: &[u8], cap: usize) -> Result<Baseline, HistoryError> {
     let mut input = Reader::begin(bytes, KIND_BASELINE, cap)?;
-    let operation = OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+    let operation = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
     let steps_through = input.u64()?;
     let validated_prefix = input.array()?;
     let target_schema = SchemaId(input.array()?);

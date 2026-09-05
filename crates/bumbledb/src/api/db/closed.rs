@@ -9,9 +9,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::canonical::CanonicalRow;
+use crate::canonical::{CanonicalRow, DecodedRow};
 use crate::error::Result;
-use crate::ir::Value;
 use crate::schema::Schema;
 use crate::work::WorkContext;
 use bumbledb_theory::schema::RelationId;
@@ -19,9 +18,9 @@ use bumbledb_theory::schema::RelationId;
 #[derive(Debug)]
 pub(super) struct ClosedRow {
     /// The sealed row's canonical wire bytes (same codec as stored rows).
-    pub(super) canonical: Box<[u8]>,
+    pub(super) canonical: CanonicalRow,
     /// The sealed row's decoded values, sealed field order.
-    pub(super) values: Box<[Value]>,
+    pub(super) values: DecodedRow,
 }
 
 /// Per-handle closed-relation rows. Empty for schemas without closed
@@ -41,17 +40,14 @@ impl ClosedRows {
             let id = RelationId(u32::try_from(index).expect("sealed relation ids fit u32"));
             let mut rows = Vec::with_capacity(extension.len());
             for sealed in extension {
-                let values = super::get::decode_sealed_row(relation, &sealed.fact);
+                let values = crate::canonical::decode_sealed(relation, &sealed.fact, work)?;
                 let canonical =
                     CanonicalRow::encode(relation.fields(), &values, work).map_err(|error| {
                         crate::error::Error::from_store(crate::storage::store::StoreError::Changes(
                             crate::changes::ChangeError::Row(error),
                         ))
                     })?;
-                rows.push(ClosedRow {
-                    canonical: Box::from(canonical.as_bytes()),
-                    values: values.into_boxed_slice(),
-                });
+                rows.push(ClosedRow { canonical, values });
             }
             relations.insert(id, rows);
         }

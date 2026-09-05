@@ -1,4 +1,4 @@
-//! D04 / D05 / D26 discriminators. Authored now; verification NotRun.
+//! D04 / D05 / D26 discriminators. Authored now; verification `NotRun`.
 
 use super::delta_tests::DeltaState;
 use super::{
@@ -37,9 +37,15 @@ fn keyed_users() -> Schema {
         relations: vec![RelationDescriptor {
             extension: None,
             name: "User".into(),
-            fields: vec![field("id", ValueType::U64), field("email", ValueType::String)],
+            fields: vec![
+                field("id", ValueType::U64),
+                field("email", ValueType::String),
+            ],
         }],
-        statements: vec![fd(RelationId(0), &[FieldId(0)]), fd(RelationId(0), &[FieldId(1)])],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(0), &[FieldId(1)]),
+        ],
     }
     .validate()
     .expect("valid")
@@ -62,7 +68,7 @@ fn parent_users(n: u64) -> Vec<(RelationId, Vec<Value>)> {
 fn d04_compiled_indexes_earn_locality() {
     let schema = keyed_users();
     let parent = parent_users(64);
-    let adds = vec![(RelationId(0), user(200, "0@ex"))];
+    let adds = vec![(RelationId(0), user(1000, "0@ex"))];
     let state = DeltaState::new(&parent, &adds, &[]);
     let budget = JudgeBudget {
         examples_per_statement: 4,
@@ -78,7 +84,10 @@ fn d04_compiled_indexes_earn_locality() {
     )
     .expect("incremental");
     let independent = judge_final_state(&schema, &state, &work(), budget).expect("independent");
-    assert_eq!(complete, independent, "complete shares independent denotation");
+    assert_eq!(
+        complete, independent,
+        "complete shares independent denotation"
+    );
     assert_eq!(
         incremental, complete,
         "incremental matches complete on a lawful parent"
@@ -127,6 +136,10 @@ fn d04_compiled_indexes_earn_locality() {
 /// D04 — floor from source removal and selected target replacement match
 /// the independent final-state model.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn d04_capacity_floor_and_target_replacement_match_complete() {
     let schema = SchemaDescriptor {
         relations: vec![
@@ -346,7 +359,11 @@ fn d04_incremental_containment_consumes_compiled_groups() {
     );
 }
 
-fn agree_reject(schema: &Schema, parent: &[(RelationId, Vec<Value>)], removed: &[(RelationId, Vec<Value>)]) {
+fn agree_reject(
+    schema: &Schema,
+    parent: &[(RelationId, Vec<Value>)],
+    removed: &[(RelationId, Vec<Value>)],
+) {
     let state = DeltaState::new(parent, &[], removed);
     let budget = JudgeBudget::default();
     let complete = judge_complete(schema, &state, &work(), budget).expect("complete");
@@ -374,6 +391,10 @@ fn agree_reject(schema: &Schema, parent: &[(RelationId, Vec<Value>)], removed: &
 /// Intern order is `index_key` at `visit_compiled_group` only. Removing
 /// that target must reject under complete and incremental judgment.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn d04_permuted_closed_source_target_deletion_agrees() {
     let schema = SchemaDescriptor {
         relations: vec![
@@ -391,7 +412,7 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
         statements: vec![
             fd(RelationId(1), &[FieldId(0), FieldId(1)]),
             containment(
-                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(1), FieldId(2)]),
                 side(RelationId(1), &[FieldId(1), FieldId(0)]),
             ),
         ],
@@ -418,7 +439,7 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
         statements: vec![
             fd(RelationId(1), &[FieldId(0), FieldId(1)]),
             containment(
-                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(1), FieldId(2)]),
                 side(RelationId(1), &[FieldId(1), FieldId(0)]),
             ),
         ],
@@ -433,8 +454,15 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
         relations: vec![
             closed(
                 "Need",
-                vec![field("a", ValueType::U64), field("b", ValueType::U64)],
-                vec![row("need", vec![Value::U64(1), Value::U64(2)])],
+                vec![
+                    field("a", ValueType::U64),
+                    field("b", ValueType::U64),
+                    field("kind", ValueType::U64),
+                ],
+                vec![row(
+                    "need",
+                    vec![Value::U64(1), Value::U64(2), Value::U64(1)],
+                )],
             ),
             RelationDescriptor {
                 extension: None,
@@ -447,8 +475,8 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
             containment(
                 side_where(
                     RelationId(0),
-                    &[FieldId(0), FieldId(1)],
-                    vec![(FieldId(0), Value::U64(1))],
+                    &[FieldId(1), FieldId(2)],
+                    vec![(FieldId(3), Value::U64(1))],
                 ),
                 side(RelationId(1), &[FieldId(1), FieldId(0)]),
             ),
@@ -478,11 +506,11 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
         statements: vec![
             fd(RelationId(1), &[FieldId(0), FieldId(1)]),
             containment(
-                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(1), FieldId(2)]),
                 side(RelationId(1), &[FieldId(1), FieldId(0)]),
             ),
             capacity(
-                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(1), FieldId(2)]),
                 1,
                 Some(1),
                 side(RelationId(1), &[FieldId(1), FieldId(0)]),
@@ -502,7 +530,35 @@ fn d04_permuted_closed_source_target_deletion_agrees() {
 /// forced-scratch citation keep the same evidence bytes. Selection is by
 /// logical fact bytes before the budget, not by row id.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn d05_rejection_evidence_is_portable() {
+    struct StoreChannel(MapState);
+    impl CandidateFacts for StoreChannel {
+        type Error = StoreError;
+        fn visit_rows(
+            &self,
+            relation: RelationId,
+            visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
+        ) -> Result<(), Self::Error> {
+            let mut error = None;
+            self.0
+                .visit_rows(relation, &mut |row| match visit(row) {
+                    Ok(keep) => Ok(keep),
+                    Err(failure) => {
+                        error = Some(failure);
+                        Ok(false)
+                    }
+                })
+                .unwrap_or_else(|impossible| match impossible {});
+            match error {
+                Some(failure) => Err(failure),
+                None => Ok(()),
+            }
+        }
+    }
     let schema = keyed_users();
     let mut forward = MapState::new();
     let mut reverse = MapState::new();
@@ -570,30 +626,6 @@ fn d05_rejection_evidence_is_portable() {
     let imported = encode_judged(&schema, &reminted, 1 << 16, &ctx).expect("encode remint");
     assert_eq!(live, imported, "receipt bytes survive remint");
 
-    struct StoreChannel(MapState);
-    impl CandidateFacts for StoreChannel {
-        type Error = StoreError;
-        fn visit_rows(
-            &self,
-            relation: RelationId,
-            visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
-        ) -> Result<(), Self::Error> {
-            let mut error = None;
-            self.0
-                .visit_rows(relation, &mut |row| match visit(row) {
-                    Ok(keep) => Ok(keep),
-                    Err(failure) => {
-                        error = Some(failure);
-                        Ok(false)
-                    }
-                })
-                .unwrap_or_else(|impossible| match impossible {});
-            match error {
-                Some(failure) => Err(failure),
-                None => Ok(()),
-            }
-        }
-    }
     let resident = judge_final_state(&schema, &forward, &work(), budget).expect("resident");
     let spilled = judge_final_state_with_scratch(
         &schema,
@@ -603,7 +635,10 @@ fn d05_rejection_evidence_is_portable() {
         JudgeScratch::channel(store_fault),
     )
     .expect("scratch");
-    assert_eq!(resident, spilled, "forced scratch cannot change the receipt");
+    assert_eq!(
+        resident, spilled,
+        "forced scratch cannot change the receipt"
+    );
 }
 
 /// D26 — complete judgment cannot borrow a lawful-parent premise. A
@@ -615,8 +650,8 @@ fn d26_complete_judgment_cannot_borrow_a_lawful_parent() {
     let mut populated = MapState::new();
     populated.insert(RelationId(0), user(1, "dup@ex"));
     populated.insert(RelationId(0), user(2, "dup@ex"));
-    let complete = judge_complete(&schema, &populated, &work(), JudgeBudget::default())
-        .expect("complete");
+    let complete =
+        judge_complete(&schema, &populated, &work(), JudgeBudget::default()).expect("complete");
     assert!(
         matches!(complete, Judgment::Rejected(_)),
         "invalid populated final state must reject"
@@ -672,7 +707,7 @@ fn d26_valid_nonempty_required_state_admits() {
         statements: vec![
             fd(RelationId(1), &[FieldId(0)]),
             containment(
-                side(RelationId(0), &[FieldId(0)]),
+                side(RelationId(0), &[FieldId(1)]),
                 side(RelationId(1), &[FieldId(0)]),
             ),
         ],

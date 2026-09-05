@@ -169,7 +169,7 @@ pub fn fill_window_target_engine(
     sizes: LawSizes,
     cursor: &mut LawCursor,
 ) -> Result<(), String> {
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         for n in sizes.attempts_per_task..WINDOW_CAP {
             mint_attempt(tx, AttemptOp { task: 0, n }, cursor)?;
         }
@@ -219,12 +219,14 @@ pub fn commit_attempt_engine(
         let op = *iter
             .next()
             .ok_or("the stream ended before the protocol did")?;
-        db.write(|tx| mint_attempt(tx, op, cursor).map(|_| ()))
-            .map(|admission| {
-                admission.unwrap();
-                1
-            })
-            .map_err(|e| format!("law_commit_attempt: {e:?}"))
+        db.write(crate::harness::bench_work(), |tx| {
+            mint_attempt(tx, op, cursor).map(|_| ())
+        })
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
+        .map_err(|e| format!("law_commit_attempt: {e:?}"))
     })
 }
 
@@ -270,7 +272,7 @@ pub fn commit_cluster_engine(
         let op = *iter
             .next()
             .ok_or("the stream ended before the protocol did")?;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             let attempt = mint_attempt(tx, op, cursor)?;
             tx.insert([&Verdict {
                 attempt,
@@ -368,7 +370,7 @@ fn refused_commit(
     cites: fn(&bumbledb::Violations) -> bool,
     violate: impl FnOnce(&mut bumbledb::WriteTx<'_, LawfulWorld>) -> bumbledb::Result<()>,
 ) -> Result<u64, String> {
-    match db.write(violate) {
+    match db.write(crate::harness::bench_work(), violate) {
         Ok(bumbledb::Admission::Rejected(violations)) => {
             if cites(&violations) {
                 Ok(1)

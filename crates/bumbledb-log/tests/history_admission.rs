@@ -1,6 +1,6 @@
 //! Actual production guard/counter tests. No claim of atomic LMDB publication.
 
-use bumbledb::Id128;
+use bumbledb::Uuid;
 use bumbledb_log::history::admission::{AdmissionView, Refusal, Resolution, Submission};
 use bumbledb_log::history::{
     AccessMode, CommandDigest, CommandId, CommandRef, CommandResult, Condition, CounterExhausted,
@@ -10,10 +10,10 @@ use bumbledb_log::history::{
 };
 
 fn view() -> AdmissionView {
-    let incarnation = IncarnationId::from_core(Id128::from_bytes([2; 16]));
+    let incarnation = IncarnationId::from_core(Uuid::from_bytes([2; 16]));
     AdmissionView {
         identity: DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
             incarnation_id: incarnation,
             schema_id: SchemaId([3; 32]),
         },
@@ -35,7 +35,7 @@ fn command() -> CommandRef {
         identity: view().identity,
         id: CommandId {
             receipt_epoch: ReceiptEpoch::INITIAL,
-            request_id: RequestId::from_core(Id128::from_bytes([5; 16])),
+            request_id: RequestId::from_core(Uuid::from_bytes([5; 16])),
         },
         digest: CommandDigest::from_bytes([6; 32]),
     }
@@ -93,7 +93,7 @@ fn retained_receipt_precedes_freeze_closed_epoch_and_stale_witness() {
         captured.resolve(command(), Some(&receipt)),
         Err(Refusal::DatabaseDeleted)
     );
-    conflict.identity.database_id = DatabaseId::from_core(Id128::from_bytes([9; 16]));
+    conflict.identity.database_id = DatabaseId::from_core(Uuid::from_bytes([9; 16]));
     assert_eq!(
         captured.resolve(conflict, Some(&receipt)),
         Err(Refusal::IdentityMismatch)
@@ -156,7 +156,7 @@ fn wrong_schema_lineage_and_corrupted_receipt_do_not_alias() {
             ..view().identity
         },
         DatabaseIdentity {
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([0; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0; 16])),
             ..view().identity
         },
     ] {
@@ -172,7 +172,7 @@ fn wrong_schema_lineage_and_corrupted_receipt_do_not_alias() {
         );
     }
     let mut wrong = receipt();
-    wrong.command.id.request_id = RequestId::from_core(Id128::from_bytes([1; 16]));
+    wrong.command.id.request_id = RequestId::from_core(Uuid::from_bytes([1; 16]));
     assert_eq!(
         view().resolve(command(), Some(&wrong)),
         Err(Refusal::InvalidRetainedReceipt)
@@ -196,7 +196,7 @@ fn wrong_schema_lineage_and_corrupted_receipt_do_not_alias() {
         Err(Refusal::InvalidRetainedReceipt)
     );
     let foreign = StateStamp {
-        incarnation: IncarnationId::from_core(Id128::from_bytes([8; 16])),
+        incarnation: IncarnationId::from_core(Uuid::from_bytes([8; 16])),
         ..view().state
     };
     assert_eq!(

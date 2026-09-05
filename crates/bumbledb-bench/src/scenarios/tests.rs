@@ -7,7 +7,7 @@ fn every_scenario_query_prepares_and_translates() {
         let dir = std::env::temp_dir().join(format!("bumbledb-scenario-check-{}", scenario.name));
         let _ = std::fs::remove_dir_all(&dir);
         let schema = (scenario.schema)();
-        let db = Db::create(&dir, (scenario.descriptor)())
+        let db = Db::create(&dir, (scenario.descriptor)(), crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         for sq in (scenario.queries)() {
@@ -65,7 +65,7 @@ fn check_query(
     schema: &Schema,
     db: &Db<SchemaDescriptor>,
 ) {
-    db.prepare(&query())
+    db.prepare(&query(), crate::harness::bench_work())
         .unwrap_or_else(|e| panic!("{scenario}/{}: validation: {e:?}", sq.name));
     match sq.twin {
         Twin::Canonical => {

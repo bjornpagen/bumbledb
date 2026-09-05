@@ -17,9 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::{
-    ChangeSet, Db, ExecutionPolicy, Id128, RelationId, Theory as _, Value, WorkContext,
-};
+use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Theory as _, Uuid, Value, WorkContext};
 
 use bumbledb_log::checkpointer::{
     CheckpointKind, CheckpointOutcome, CheckpointPolicy, publish_checkpoint, read_live_head,
@@ -92,8 +90,8 @@ fn fresh_db(tag: &str) -> Arc<Db<bumbledb::SchemaDescriptor>> {
 
 fn identity(db: &Db<bumbledb::SchemaDescriptor>, seed: u8) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([seed; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([seed ^ 0xff; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([seed; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([seed ^ 0xff; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(db.schema()),
     }
 }
@@ -116,7 +114,7 @@ fn command(
             identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -160,7 +158,7 @@ fn local_witness_judges_retained_evidence_never_sequence_integers() {
         Arc::clone(&db),
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([1; 16])),
+        OperationId::from_core(Uuid::from_bytes([1; 16])),
         LIMITS,
         &work(),
     )
@@ -199,7 +197,7 @@ fn local_witness_judges_retained_evidence_never_sequence_integers() {
         WitnessCheck::Ancestor
     );
     let mut foreign = identity;
-    foreign.incarnation_id = IncarnationId::from_core(Id128::from_bytes([0x99; 16]));
+    foreign.incarnation_id = IncarnationId::from_core(Uuid::from_bytes([0x99; 16]));
     assert_eq!(
         history
             .witness(own_genesis(foreign), &work())
@@ -257,7 +255,7 @@ fn hosted<'a>(
         1,
         scope.database_id,
         scope.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([seed.wrapping_add(1); 16])),
+        OperationId::from_core(Uuid::from_bytes([seed.wrapping_add(1); 16])),
         LIMITS,
         &work(),
     )
@@ -309,7 +307,7 @@ fn hosted_witness_walks_the_verified_chain_from_the_captured_tip() {
         WitnessCheck::Ancestor
     );
     let mut foreign = identity;
-    foreign.database_id = DatabaseId::from_core(Id128::from_bytes([0x77; 16]));
+    foreign.database_id = DatabaseId::from_core(Uuid::from_bytes([0x77; 16]));
     assert_eq!(
         history
             .witness_ancestor(tip, own_genesis(foreign), &work())
@@ -373,7 +371,8 @@ fn hosted_witness_respects_the_checkpoint_base_and_the_walk_budget() {
         );
     }
     let tip = stamps[7];
-    let (head, _) = read_live_head(&store, "t", LIMITS.envelope_bytes).expect("head reads");
+    let (head, _) =
+        read_live_head(&store, "t", LIMITS.envelope_bytes, &work()).expect("head reads");
     let recovery = head.recovery.expect("recovery root");
     assert_eq!(recovery.base, stamps[2], "the checkpoint base is seq 3");
 
@@ -470,7 +469,7 @@ fn local_and_hosted_rejections_decode_to_the_same_violation_set() {
         Arc::clone(&local_db),
         local_identity.database_id,
         local_identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([2; 16])),
+        OperationId::from_core(Uuid::from_bytes([2; 16])),
         LIMITS,
         &work(),
     )
@@ -513,42 +512,6 @@ fn local_and_hosted_rejections_decode_to_the_same_violation_set() {
 
 #[test]
 fn hosted_catch_up_walks_authenticated_parent_locators_only() {
-    use bumbledb_log::history::locator::{
-        ChainVisitor, OBJECT_REF_WIRE_BYTES, walk_decision_chain,
-    };
-    use bumbledb_log::store::{fetch_decision_ref, ObjectRef};
-
-    assert_eq!(OBJECT_REF_WIRE_BYTES, 49);
-
-    let store = MemStore::new();
-    let db = fresh_db("loc-walk");
-    let identity = identity(&db, 0x21);
-    let hosted = HostedHistory::create(
-        Arc::clone(&db),
-        &store,
-        "tenants/loc-walk".to_string(),
-        1,
-        identity.database_id,
-        identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([0x22; 16])),
-        LIMITS,
-        &work(),
-    )
-    .expect("creates");
-    let receipt = decided(hosted.submit(
-        &command(&db, identity, 1, &[(1, 1)]),
-        &work(),
-    ));
-    let _ = receipt;
-    let (head, _) =
-        read_live_head(&store, "tenants/loc-walk", LIMITS.envelope_bytes).expect("head");
-    let recovery = head.recovery.expect("recovery");
-    let tip_object = recovery.tip_object.expect("tip locator");
-    let bytes = fetch_decision_ref(&store, "tenants/loc-walk", &tip_object).expect("one get");
-    let envelope =
-        bumbledb_log::history::decision::decode_decision(&bytes, LIMITS).expect("decodes");
-    assert_eq!(envelope.stamp(), recovery.tip);
-    let mut budget = 8;
     struct Count(usize);
     impl ChainVisitor for Count {
         type Error = bumbledb_log::store::ObjectError;
@@ -562,6 +525,48 @@ fn hosted_catch_up_walks_authenticated_parent_locators_only() {
             Ok(true)
         }
     }
+    use bumbledb_log::history::locator::{
+        ChainVisitor, OBJECT_REF_WIRE_BYTES, walk_decision_chain,
+    };
+    use bumbledb_log::store::{ObjectRef, fetch_decision_ref};
+
+    assert_eq!(OBJECT_REF_WIRE_BYTES, 49);
+
+    let store = MemStore::new();
+    let db = fresh_db("loc-walk");
+    let identity = identity(&db, 0x21);
+    let hosted = HostedHistory::create(
+        Arc::clone(&db),
+        &store,
+        "tenants/loc-walk".to_string(),
+        1,
+        identity.database_id,
+        identity.incarnation_id,
+        OperationId::from_core(Uuid::from_bytes([0x22; 16])),
+        LIMITS,
+        &work(),
+    )
+    .expect("creates");
+    let receipt = decided(hosted.submit(&command(&db, identity, 1, &[(1, 1)]), &work()));
+    let _ = receipt;
+    let (head, _) =
+        read_live_head(&store, "tenants/loc-walk", LIMITS.envelope_bytes, &work()).expect("head");
+    let recovery = head.recovery.expect("recovery");
+    let tip_object = recovery.tip_object.expect("tip locator");
+    let bytes = fetch_decision_ref(
+        &store,
+        "tenants/loc-walk",
+        &tip_object,
+        bumbledb_log::store::receive::TransportContext::new(
+            &work(),
+            bumbledb_log::store::receive::ReceiveLimits::capped(LIMITS.envelope_bytes as u64),
+        ),
+    )
+    .expect("one get");
+    let envelope = bumbledb_log::history::decision::decode_decision(bytes.as_bytes(), LIMITS)
+        .expect("decodes");
+    assert_eq!(envelope.stamp(), recovery.tip);
+    let mut budget = 8;
     let mut count = Count(0);
     walk_decision_chain(
         &store,
@@ -571,6 +576,7 @@ fn hosted_catch_up_walks_authenticated_parent_locators_only() {
         Some(tip_object),
         LIMITS,
         &mut budget,
+        &work(),
         &mut count,
     )
     .expect("locator chain");
@@ -578,11 +584,28 @@ fn hosted_catch_up_walks_authenticated_parent_locators_only() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One regression keeps setup, fault injection, and post-state assertions together"
+)]
 fn checkpoint_only_and_suffix_walk_never_fetch_older_than_base() {
+    struct Count(usize);
+    impl ChainVisitor for Count {
+        type Error = bumbledb_log::store::ObjectError;
+        fn visit(
+            &mut self,
+            _stamp: DecisionStamp,
+            _bytes: &[u8],
+            _reference: ObjectRef,
+        ) -> Result<bool, Self::Error> {
+            self.0 += 1;
+            Ok(true)
+        }
+    }
     use bumbledb_log::history::locator::{ChainVisitor, walk_decision_chain};
     use bumbledb_log::manifest::RecoveryRoot;
     use bumbledb_log::store::mem::Op;
-    use bumbledb_log::store::{fetch_decision_ref, ObjectRef};
+    use bumbledb_log::store::{ObjectRef, fetch_decision_ref};
 
     let store = MemStore::new();
     let (db, identity, history) = hosted("ck-seq7", 0x71, &store);
@@ -611,11 +634,14 @@ fn checkpoint_only_and_suffix_walk_never_fetch_older_than_base() {
         &work(),
     )
     .expect("checkpoint at seq 7");
-    let (head, _) = read_live_head(&store, "t", LIMITS.envelope_bytes).expect("head");
+    let (head, _) = read_live_head(&store, "t", LIMITS.envelope_bytes, &work()).expect("head");
     let recovery = head.recovery.expect("recovery");
     assert_eq!(recovery.base, stamps[6]);
     assert_eq!(recovery.tip, stamps[6]);
-    assert!(recovery.tip_object.is_none(), "checkpoint-only has no tip locator");
+    assert!(
+        recovery.tip_object.is_none(),
+        "checkpoint-only has no tip locator"
+    );
     assert_eq!(
         RecoveryRoot::checkpoint_only(
             recovery.checkpoint,
@@ -653,24 +679,12 @@ fn checkpoint_only_and_suffix_walk_never_fetch_older_than_base() {
             .decision_at,
         );
     }
-    let (head, _) = read_live_head(&store, "t", LIMITS.envelope_bytes).expect("head after suffix");
+    let (head, _) =
+        read_live_head(&store, "t", LIMITS.envelope_bytes, &work()).expect("head after suffix");
     let recovery = head.recovery.expect("suffix recovery");
     assert_ne!(recovery.base, recovery.tip);
     let tip_object = recovery.tip_object.expect("2+ link suffix locator");
     let before = store.operations();
-    struct Count(usize);
-    impl ChainVisitor for Count {
-        type Error = bumbledb_log::store::ObjectError;
-        fn visit(
-            &mut self,
-            _stamp: DecisionStamp,
-            _bytes: &[u8],
-            _reference: ObjectRef,
-        ) -> Result<bool, Self::Error> {
-            self.0 += 1;
-            Ok(true)
-        }
-    }
     let mut count = Count(0);
     let mut budget = 2;
     walk_decision_chain(
@@ -681,6 +695,7 @@ fn checkpoint_only_and_suffix_walk_never_fetch_older_than_base() {
         Some(tip_object),
         LIMITS,
         &mut budget,
+        &work(),
         &mut count,
     )
     .expect("two-link suffix");
@@ -694,7 +709,16 @@ fn checkpoint_only_and_suffix_walk_never_fetch_older_than_base() {
         .collect();
     assert_eq!(fetched.len(), 2);
     if let Some(checkpoint) = recovery.checkpoint {
-        let bytes = fetch_decision_ref(&store, "t", &tip_object).expect("tip present");
+        let bytes = fetch_decision_ref(
+            &store,
+            "t",
+            &tip_object,
+            bumbledb_log::store::receive::TransportContext::new(
+                &work(),
+                bumbledb_log::store::receive::ReceiveLimits::capped(LIMITS.envelope_bytes as u64),
+            ),
+        )
+        .expect("tip present");
         let _ = bytes;
         let _ = checkpoint;
     }

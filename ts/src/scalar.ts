@@ -60,16 +60,7 @@ type ScalarLiteral =
 	| { readonly i64: bigint }
 	| { readonly f64: number }
 
-type ScalarOpKind =
-	| "literal"
-	| "negate"
-	| "isNaN"
-	| "isFinite"
-	| "add"
-	| "subtract"
-	| "multiply"
-	| "divide"
-	| "cast"
+type ScalarOpKind = "literal" | "negate" | "isNaN" | "isFinite" | "add" | "subtract" | "multiply" | "divide" | "cast"
 
 /**
  * Structural query-variable leaf. The query layer supplies a bound variable
@@ -104,20 +95,21 @@ type ScalarNodeBody<S extends ScalarLeafScope> =
  * Summaries are construction metadata; lowering and L17 serialization read
  * the grammar arms and ignore the summaries.
  */
-type ScalarNode<S extends ScalarLeafScope = ScalarLeafScope, K extends ScalarResultKind = ScalarResultKind> =
-	ScalarNodeBody<S> & {
-		readonly scope: S
-		readonly result: K
-		readonly depth: number
-	}
+type ScalarNode<
+	S extends ScalarLeafScope = ScalarLeafScope,
+	K extends ScalarResultKind = ScalarResultKind
+> = ScalarNodeBody<S> & {
+	readonly scope: S
+	readonly result: K
+	readonly depth: number
+}
 
 /**
  * Migration authoring expression (source-field scope). `K` is the cached
- * result kind. Callers that index by a host value (`unknown` / `bigint`)
- * receive the unresolved-capable source-field node — they cannot assert a
- * field kind.
+ * result kind, not a host value type: I64 and U64 remain distinct even
+ * though both use bigint in JavaScript.
  */
-type ScalarExpr<K = unknown> = ScalarNode<"source-field", K extends ScalarResultKind ? K : ScalarResultKind>
+type ScalarExpr<K extends ScalarResultKind = ScalarResultKind> = ScalarNode<"source-field", K>
 
 /** A migration field read: unresolved until native snapshot binding. */
 type ScalarFieldRef = ScalarNode<"source-field", "unresolved"> & SourceFieldLeaf
@@ -134,10 +126,9 @@ function scalarAuthoringWork(): number {
 	return authoringWork
 }
 
-function admit<S extends ScalarLeafScope, K extends ScalarResultKind>(
-	where: string,
-	node: ScalarNodeBody<S> & { readonly scope: S; readonly result: K; readonly depth: number }
-): ScalarNode<S, K> {
+function admit<
+	const Node extends { readonly scope: ScalarLeafScope; readonly result: ScalarResultKind; readonly depth: number }
+>(where: string, node: Node): Readonly<Node> {
 	authoringWork += 1
 	assertDepth(where, node.depth)
 	return Object.freeze(node)
@@ -453,10 +444,10 @@ function negate<K extends "i64" | "f64" | "unresolved">(expr: ScalarExpr<K>): Sc
 	return scalarNegate("Scalar.negate", expr) as ScalarExpr<K>
 }
 
-function add<
-	L extends NumericOrUnresolved,
-	R extends CombineNumeric<L, R> extends never ? never : NumericOrUnresolved
->(left: ScalarExpr<L>, right: ScalarExpr<R>): ScalarExpr<CombineNumeric<L, R>> {
+function add<L extends NumericOrUnresolved, R extends CombineNumeric<L, R> extends never ? never : NumericOrUnresolved>(
+	left: ScalarExpr<L>,
+	right: ScalarExpr<R>
+): ScalarExpr<CombineNumeric<L, R>> {
 	return scalarBinary("Scalar.add", "add", left, right) as ScalarExpr<CombineNumeric<L, R>>
 }
 
@@ -497,11 +488,11 @@ function toU64Exact(expr: ScalarExpr<NumericOrUnresolved>): ScalarExpr<"u64"> {
 	return scalarCast("Scalar.toU64Exact", "toU64Exact", "u64", expr) as ScalarExpr<"u64">
 }
 
-function isNaN(expr: ScalarExpr<"f64" | "unresolved">): ScalarExpr<"bool"> {
+function isNaNExpr(expr: ScalarExpr<"f64" | "unresolved">): ScalarExpr<"bool"> {
 	return scalarFloatPredicate("Scalar.isNaN", "isNaN", expr)
 }
 
-function isFinite(expr: ScalarExpr<"f64" | "unresolved">): ScalarExpr<"bool"> {
+function isFiniteExpr(expr: ScalarExpr<"f64" | "unresolved">): ScalarExpr<"bool"> {
 	return scalarFloatPredicate("Scalar.isFinite", "isFinite", expr)
 }
 
@@ -522,8 +513,8 @@ const Scalar = Object.freeze({
 	toF64Exact,
 	toI64Exact,
 	toU64Exact,
-	isNaN,
-	isFinite
+	isNaN: isNaNExpr,
+	isFinite: isFiniteExpr
 })
 
 export type {
@@ -544,8 +535,6 @@ export type {
 	SourceFieldLeaf
 }
 export {
-	MAX_SCALAR_DEPTH,
-	Scalar,
 	assertDepth,
 	assertNumeric,
 	assertSameKind,
@@ -558,8 +547,10 @@ export {
 	literalKindOf,
 	literalValue,
 	literalWireOf,
+	MAX_SCALAR_DEPTH,
 	queryVarLeaf,
 	queryVarsOf,
+	Scalar,
 	scalarAuthoringWork,
 	scalarBinary,
 	scalarCast,

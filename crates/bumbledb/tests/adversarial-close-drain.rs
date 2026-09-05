@@ -7,7 +7,6 @@
 //!
 //! Verification: `NotRun` (F2 authors, does not execute).
 
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -17,17 +16,7 @@ use bumbledb::schema::{
 use bumbledb::store::CloseReport;
 use bumbledb::{Db, Error, ExecutionPolicy, Value, WorkContext};
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let path = std::env::temp_dir().join(format!(
-        "bdb-p12-close-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&path);
-    path
-}
+mod common;
 
 fn theory() -> SchemaDescriptor {
     SchemaDescriptor {
@@ -90,8 +79,10 @@ fn insert(db: &Db<SchemaDescriptor>, id: u64) {
 /// released directory admits a successor open.
 #[test]
 fn close_under_load_reports_reality_then_drains_and_releases() {
-    let dir = temp_dir("load");
-    let db = Db::create(&dir, theory(), work()).expect("create store").unwrap();
+    let dir = common::TempDir::new("adversarial-close-load");
+    let db = Db::create(dir.path(), theory(), work())
+        .expect("create store")
+        .unwrap();
     insert(&db, 1);
 
     let (entered_tx, entered_rx) = mpsc::channel::<()>();
@@ -129,7 +120,18 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
         entered_rx
             .recv_timeout(Duration::from_secs(30))
             .expect("reader entered");
-        match db.integration_store().close(&work()) {
+        let close_work = ExecutionPolicy {
+            timeout: Duration::from_millis(20),
+            input_bytes: 1 << 20,
+            working_bytes: 1 << 20,
+            scratch_bytes: 1 << 20,
+            result_bytes: 1 << 20,
+            rows: 1 << 20,
+            work_units: 1 << 20,
+        }
+        .start()
+        .expect("close deadline");
+        match db.integration_store().close(&close_work) {
             CloseReport::Incomplete {
                 live_transactions, ..
             } => {
@@ -168,10 +170,10 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
     // Real reclamation: dropping the closed owner releases the kernel lock
     // and a successor opens the same directory with the durable facts.
     drop(db);
-    let successor = Db::open(&dir, theory(), common::work()).expect("the released directory reopens");
+    let successor =
+        Db::open(dir.path(), theory(), common::work()).expect("the released directory reopens");
     assert_eq!(scan_ids(&successor), vec![1]);
     drop(successor);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A result collected before close is OWNED: closing (and dropping) the
@@ -180,8 +182,10 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
 /// also promises (Q-LIFETIME/API-07 shape at the core boundary).
 #[test]
 fn retained_owned_results_survive_close_byte_for_byte() {
-    let dir = temp_dir("retained");
-    let db = Db::create(&dir, theory(), work()).expect("create store").unwrap();
+    let dir = common::TempDir::new("adversarial-close-retained");
+    let db = Db::create(dir.path(), theory(), work())
+        .expect("create store")
+        .unwrap();
     for id in [3u64, 1, 2] {
         insert(&db, id);
     }
@@ -201,7 +205,6 @@ fn retained_owned_results_survive_close_byte_for_byte() {
     drop(db);
     // The owned result is untouched by the native teardown.
     assert_eq!(collected, vec![1, 2, 3], "owned results outlive the store");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Writers hammering the store while it closes: every submission either
@@ -211,8 +214,10 @@ fn retained_owned_results_survive_close_byte_for_byte() {
 /// SDK-002 "close revokes admission" at the core boundary).
 #[test]
 fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
-    let dir = temp_dir("race");
-    let db = Db::create(&dir, theory(), work()).expect("create store").unwrap();
+    let dir = common::TempDir::new("adversarial-close-race");
+    let db = Db::create(dir.path(), theory(), work())
+        .expect("create store")
+        .unwrap();
 
     std::thread::scope(|scope| {
         for lane in 0..2u64 {
@@ -249,7 +254,8 @@ fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
     }
     drop(db);
 
-    let successor = Db::open(&dir, theory(), common::work()).expect("reopen after racing close");
+    let successor =
+        Db::open(dir.path(), theory(), common::work()).expect("reopen after racing close");
     let report = successor.verify_store().expect("offline sweep runs");
     assert_eq!(
         report.verdict,
@@ -257,5 +263,4 @@ fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
         "no admission raced the teardown into physical or semantic corruption"
     );
     drop(successor);
-    let _ = std::fs::remove_dir_all(&dir);
 }

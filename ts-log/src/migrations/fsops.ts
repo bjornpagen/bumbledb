@@ -13,9 +13,8 @@
  * or lock-token guessing lives here.
  */
 import { randomUUID } from "node:crypto"
-import { open } from "node:fs/promises"
 import type { FileHandle } from "node:fs/promises"
-import { mkdir, rename, rm } from "node:fs/promises"
+import { mkdir, open, rename, rm } from "node:fs/promises"
 import * as path from "node:path"
 import { Effect } from "effect"
 import type { LogError } from "#errors.ts"
@@ -59,10 +58,10 @@ function isExists(cause: unknown): boolean {
  * Join every in-flight filesystem promise. Uninterruptible: the repository
  * lock must outlive canceled I/O.
  */
-export const joinPendingIo: Effect.Effect<void> = Effect.tryPromise({
-	try: () => track(Promise.allSettled([...pending])).then(() => undefined),
-	catch: () => undefined
-}).pipe(Effect.asVoid, Effect.uninterruptible)
+export const joinPendingIo: Effect.Effect<void> = Effect.promise(() => Promise.allSettled([...pending])).pipe(
+	Effect.asVoid,
+	Effect.uninterruptible
+)
 
 function tryIo<A>(operation: string, filePath: string, work: () => Promise<A>): Effect.Effect<A, LogError> {
 	return Effect.tryPromise({
@@ -205,7 +204,9 @@ async function writeExclusive(filePath: string, text: string): Promise<"created"
  * file is accepted only when its bytes are identical. Uninterruptible.
  */
 export function writeImmutable(operation: string, filePath: string, text: string): Effect.Effect<void, LogError> {
-	return tryIo(operation, filePath, () => writeExclusive(filePath, text).then(() => undefined)).pipe(Effect.uninterruptible)
+	return tryIo(operation, filePath, () => writeExclusive(filePath, text).then(() => undefined)).pipe(
+		Effect.uninterruptible
+	)
 }
 
 async function replaceFile(filePath: string, text: string): Promise<void> {

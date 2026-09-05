@@ -14,8 +14,8 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
         Value::FixedBytes(raw) => fixed_bytes_const(raw),
         // Sixteen exact bytes as two big-endian column words: byte order
         // is the value's one total order, so the words compare exactly.
-        Value::Id128(id) => {
-            let bytes = id.to_bytes();
+        Value::Uuid(id) => {
+            let bytes = id.into_bytes();
             let hi = u64::from_be_bytes(bytes[..8].try_into().expect("sixteen bytes"));
             let lo = u64::from_be_bytes(bytes[8..].try_into().expect("sixteen bytes"));
             Const::Words(Box::from([hi, lo]))

@@ -19,5 +19,5 @@
 {"relation":2,"facts":[
 [{"u64":5},{"u64":2},{"u64":0}]
 ]}]},
-"verdict":{"reject":{"phase":"key","violations":[0]}}
+"verdict":{"reject":{"phase":"statement","violations":[0,1]}}
 }

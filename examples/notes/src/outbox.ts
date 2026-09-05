@@ -8,7 +8,7 @@
  * replays the delivery with the SAME key, and the receiver deduplicates.
  * The database never promises exactly-once external networking.
  */
-import type { ExecutionPolicy, Id128 } from "@bjornpagen/bumbledb"
+import type { ExecutionPolicy, Uuid } from "@bjornpagen/bumbledb"
 import type { History, HistoryBorrow } from "@bjornpagen/bumbledb-log"
 import { Effect, Schema } from "effect"
 import { retireOutbox } from "./db/commands.ts"
@@ -22,8 +22,8 @@ export class WebhookFailed extends Schema.TaggedError<WebhookFailed>()("WebhookF
 export class WebhookUnconfigured extends Schema.TaggedError<WebhookUnconfigured>()("WebhookUnconfigured", {}) {}
 
 interface OutboxRow {
-	readonly id: Id128
-	readonly note: Id128
+	readonly id: Uuid
+	readonly note: Uuid
 	readonly kind: string
 }
 

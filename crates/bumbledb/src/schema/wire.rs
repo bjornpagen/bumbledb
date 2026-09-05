@@ -27,7 +27,7 @@ wire_tag!(ValueTypeTag {
     Interval = 6,
     FixedInterval = 7,
     F64 = 8,
-    Id128 = 9,
+    Uuid = 9,
 });
 
 wire_tag!(IntervalElementTag {

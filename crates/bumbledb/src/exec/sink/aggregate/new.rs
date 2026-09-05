@@ -289,6 +289,21 @@ impl AggregateSink {
             })
     }
 
+    /// A resident fold emits one row per group; Pack emits no more
+    /// segments than its retained claims. Spilled state has no cheap
+    /// resident bound and streams to the scratch destination instead.
+    pub(crate) fn resident_row_bound(&self) -> Option<usize> {
+        if self.group_state_spilled() {
+            return None;
+        }
+        match &self.group_state {
+            GroupState::Folds { .. } => Some(self.groups.len()),
+            GroupState::Pack { claims, .. } => claims[..self.groups.len()]
+                .iter()
+                .try_fold(0usize, |count, claims| count.checked_add(claims.len())),
+        }
+    }
+
     #[must_use]
     pub fn distinct_seen(&self) -> Option<usize> {
         self.dedup.seen_len()

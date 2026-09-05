@@ -364,7 +364,7 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
     let mut prepared = store.prepare(&by_account_query()).expect("prepare");
     let sealed = store
         .db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             prepared.execute_complete(instance, &[BindValue::U64(3), BindValue::I64(0)])
         })
         .expect("sealed result");
@@ -372,7 +372,10 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
     let mut cursor = sealed.into_cursor(2);
     let mut rows_seen = Vec::new();
     let mut terminal_pages = 0;
-    while let Some(page) = cursor.next_page().expect("page") {
+    while let Some(page) = cursor
+        .next_page_with_work(&crate::api::db::test_operation().unwrap(), 1 << 20)
+        .expect("page")
+    {
         for answer in 0..page.rows.len() {
             let AnswerValue::String(memo) = page.rows.get(answer, 0) else {
                 panic!("column 0 is a string");
@@ -496,7 +499,7 @@ fn working_byte_exhaustion_restarts_once_into_the_fallback() {
     // fallback's cursor scan — ONE recorded restart, identical answers.
     let mut restarted = fix.prepare(&query).expect("prepare");
     fix.db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             let work = bounded(24 << 10);
             let source =
                 crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
@@ -515,7 +518,7 @@ fn working_byte_exhaustion_restarts_once_into_the_fallback() {
     let mut refused = fix.prepare(&query).expect("prepare");
     refused.set_sink_ram(0);
     fix.db
-        .read(|instance| {
+        .read(crate::api::db::test_operation().unwrap(), |instance| {
             let work = crate::work::ExecutionPolicy {
                 input_bytes: u64::MAX,
                 working_bytes: 24 << 10,

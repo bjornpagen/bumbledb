@@ -129,7 +129,7 @@ fn randomized_claim_sets_agree_with_the_naive_model() {
     let descriptor = schema();
     for round in 0..40u64 {
         let dir = TempDir::new(&format!("differential-{round}"));
-        let db = Db::create(dir.path(), descriptor.clone())
+        let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
             .expect("create engine store")
             .expect("accepted");
         let mut naive = NaiveDb::new(&descriptor);
@@ -156,7 +156,7 @@ fn randomized_claim_sets_agree_with_the_naive_model() {
 fn the_calendar_golden_coalesces_by_hand() {
     let descriptor = schema();
     let dir = TempDir::new("calendar-golden");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
@@ -232,7 +232,7 @@ fn the_calendar_golden_coalesces_by_hand() {
 fn multi_rule_pack_folds_the_union_differentially() {
     let descriptor = schema();
     let dir = TempDir::new("union");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);

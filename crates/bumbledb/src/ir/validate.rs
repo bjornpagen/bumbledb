@@ -52,7 +52,7 @@ impl std::fmt::Display for Signature {
                 ValueType::U64 => f.write_str("u64")?,
                 ValueType::I64 => f.write_str("i64")?,
                 ValueType::F64 => f.write_str("f64")?,
-                ValueType::Id128 => f.write_str("id128")?,
+                ValueType::Uuid => f.write_str("uuid")?,
                 ValueType::String => f.write_str("string")?,
                 ValueType::FixedBytes { len } => write!(f, "bytes<{len}>")?,
                 ValueType::Interval { element } => {

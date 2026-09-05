@@ -3,6 +3,8 @@
 /.idea/
 /.vscode/
 /target/
+/examples/consumers/rust/target/
+/examples/consumers/rust/Cargo.lock
 /bench-out/
 /bench-data/
 /.claude/

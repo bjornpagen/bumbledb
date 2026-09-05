@@ -43,10 +43,6 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)]
 fn hoisted_gathers_match_the_per_position_reference() {
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -122,11 +118,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
     };
 
     for &size in &[1usize, 3, 8, 64, 128] {
-        let mut colt = Colt::new(
-            apply(&image, &[], &[], Vec::new(), image.generation().text_eq(None)),
-            &[],
-            vec![vec![0, 2]],
-        );
+        let mut colt = Colt::new(all(&image), &[], vec![vec![0, 2]]);
         let got = drain_at(&mut colt, Colt::root(), 0, size);
         let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
             .map(|pos| {
@@ -138,11 +130,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
             .collect();
         assert_eq!(got, expected, "identity root, batch {size}");
 
-        let mut colt = Colt::new(
-            apply(&image, &[], &[], Vec::new(), image.generation().text_eq(None)),
-            &[],
-            vec![vec![0], vec![1, 2]],
-        );
+        let mut colt = Colt::new(all(&image), &[], vec![vec![0], vec![1, 2]]);
         for key in 0..7u64 {
             let Some(child) = colt.get(Colt::root(), 0, &[key]) else {
                 continue;

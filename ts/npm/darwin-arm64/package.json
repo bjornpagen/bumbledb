@@ -10,6 +10,7 @@
 	],
 	"main": "bumbledb.node",
 	"files": [
+		"pack-provenance.json",
 		"bumbledb.node"
 	],
 	"author": "Bjorn Pagen",

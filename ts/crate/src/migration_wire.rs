@@ -24,190 +24,6 @@ use crate::runtime::RuntimeError;
 /// envelope; a change here is a re-emit, never a reinterpretation.
 pub(crate) const MIGRATION_CAP: usize = 16 << 20;
 
-/// F0: every verified snapshot is mandatory before artifact commit (C1/C8).
-/// L14 binds symbolic fields against this complete chain; empty source is
-/// not a shortcut. Extra L15 `scope`/`result`/`depth` fields are authoring
-/// summaries, not a second grammar. `result: "unresolved"` is not typechecked.
-pub struct CompiledChainInput<'a> {
-    pub base_snapshot: &'a [u8],
-    pub intermediate_snapshots: &'a [&'a [u8]],
-    pub ordered_plans: &'a [&'a [u8]],
-    pub compiled_mappings: &'a [u8],
-}
-
-/// Bind and compile every snapshot/plan/mapping before any append, freeze or
-/// manifest write. Wrong field name or kind refuses even with zero rows.
-pub fn verify_compiled_chain(
-    input: CompiledChainInput<'_>,
-    context: &WorkContext,
-) -> Result<(), RuntimeError> {
-    context.checkpoint()?;
-    let snapshots = std::iter::once(input.base_snapshot)
-        .chain(input.intermediate_snapshots.iter().copied())
-        .collect::<Vec<_>>();
-    if snapshots.is_empty() {
-        return Err(envelope_error(
-            "migration chain verification requires the base snapshot",
-        ));
-    }
-    if snapshots.len() != input.ordered_plans.len() + 1 {
-        return Err(envelope_error(
-            "recorded snapshots and ordered plans disagree: need the base plus one target per plan",
-        ));
-    }
-    let mut descriptors = Vec::with_capacity(snapshots.len());
-    for (index, bytes) in snapshots.iter().enumerate() {
-        context.step(1)?;
-        context.input(bytes.len() as u64)?;
-        let text = std::str::from_utf8(bytes).map_err(|_| {
-            envelope_error("a compiled-chain snapshot is not UTF-8 schema text")
-        })?;
-        let descriptor = schema_file::parse(text).map_err(|error| RuntimeError::Engine {
-            kind: "migrationEnvelope",
-            message: format!("snapshot {index} is not canonical schema text: {error}"),
-        })?;
-        let _id = schema_file::schema_id(&descriptor).map_err(|error| RuntimeError::Engine {
-            kind: "migrationEnvelope",
-            message: format!("snapshot {index} has no canonical schema id: {error:?}"),
-        })?;
-        descriptors.push(descriptor);
-    }
-    for (index, plan_bytes) in input.ordered_plans.iter().enumerate() {
-        context.step(1)?;
-        context.input(plan_bytes.len() as u64)?;
-        let text = std::str::from_utf8(plan_bytes).map_err(|_| {
-            envelope_error("a compiled-chain plan is not UTF-8")
-        })?;
-        let plan = parse_plan(text).map_err(|error| RuntimeError::Engine {
-            kind: "migrationEnvelope",
-            message: format!("plan {index} is not a canonical plan: {error:?}"),
-        })?;
-        compile(&plan, &descriptors[index], &descriptors[index + 1]).map_err(|error| {
-            RuntimeError::Engine {
-                kind: "migrationEnvelope",
-                message: format!("plan {index} failed schema-bound compile: {error:?}"),
-            }
-        })?;
-    }
-    if !input.compiled_mappings.is_empty() {
-        bind_compiled_mappings(input.compiled_mappings, &descriptors[0], context)?;
-    }
-    Ok(())
-}
-
-/// Walk L15 ScalarNode JSON and bind `{ kind: "field", name }` against the
-/// verified source snapshot. Extra `scope`/`result`/`depth` fields are
-/// ignored. `result: "unresolved"` is not a typecheck. Unknown or
-/// wrong-kind names refuse before any side effect.
-pub(crate) fn bind_compiled_mappings(
-    bytes: &[u8],
-    source: &bumbledb::SchemaDescriptor,
-    context: &WorkContext,
-) -> Result<(), RuntimeError> {
-    context.checkpoint()?;
-    context.input(bytes.len() as u64)?;
-    let tree = read_envelope(bytes).map_err(envelope_error)?;
-    bind_scalar_node(&tree, source)
-}
-
-fn bind_scalar_node(
-    node: &Envelope,
-    source: &bumbledb::SchemaDescriptor,
-) -> Result<(), RuntimeError> {
-    match node {
-        Envelope::Array(items) => {
-            for item in items {
-                bind_scalar_node(item, source)?;
-            }
-            Ok(())
-        }
-        Envelope::Object(_) => bind_one_scalar(node, source),
-        Envelope::Null => Ok(()),
-        _ => Err(envelope_error(
-            "compiled mappings must be ScalarNode objects or an array of them",
-        )),
-    }
-}
-
-fn bind_one_scalar(
-    node: &Envelope,
-    source: &bumbledb::SchemaDescriptor,
-) -> Result<(), RuntimeError> {
-    let kind = node
-        .get("kind")
-        .and_then(Envelope::as_str)
-        .ok_or_else(|| envelope_error("compiled mapping node is missing kind"))?;
-    // Authoring summaries — not a second grammar and not a typecheck.
-    let _ = node.get("scope");
-    let _ = node.get("depth");
-    let claimed = node.get("result").and_then(Envelope::as_str);
-    if claimed == Some("unresolved") {
-        // Honest authoring residue: never treated as a checked kind.
-    }
-    match kind {
-        "field" => {
-            let name = node
-                .get("name")
-                .and_then(Envelope::as_str)
-                .ok_or_else(|| envelope_error("a field node needs a source field name"))?;
-            let field = source
-                .relations
-                .iter()
-                .flat_map(|relation| relation.fields.iter())
-                .find(|field| field.name.as_ref() == name)
-                .ok_or_else(|| RuntimeError::Engine {
-                    kind: "migrationEnvelope",
-                    message: format!(
-                        "source field `{name}` is not on the verified source snapshot"
-                    ),
-                })?;
-            if let Some(claimed) = claimed.filter(|value| *value != "unresolved") {
-                let actual = match field.value_type {
-                    bumbledb::schema::ValueType::U64 => "u64",
-                    bumbledb::schema::ValueType::I64 => "i64",
-                    bumbledb::schema::ValueType::F64 => "f64",
-                    bumbledb::schema::ValueType::Bool => "bool",
-                    _ => "other",
-                };
-                if claimed != actual {
-                    return Err(RuntimeError::Engine {
-                        kind: "migrationEnvelope",
-                        message: format!(
-                            "source field `{name}` has kind {actual}, not {claimed}"
-                        ),
-                    });
-                }
-            }
-            Ok(())
-        }
-        "literal" | "var" => Ok(()),
-        "negate" | "isNaN" | "isFinite" | "cast" => node
-            .get("expr")
-            .ok_or_else(|| envelope_error("unary mapping node is missing expr"))
-            .and_then(|expr| bind_scalar_node(expr, source)),
-        "add" | "subtract" | "multiply" | "divide" => {
-            let left = node
-                .get("left")
-                .ok_or_else(|| envelope_error("binary mapping node is missing left"))?;
-            let right = node
-                .get("right")
-                .ok_or_else(|| envelope_error("binary mapping node is missing right"))?;
-            bind_scalar_node(left, source)?;
-            bind_scalar_node(right, source)
-        }
-        other => Err(envelope_error_owned(format!(
-            "unknown compiled-mapping node kind `{other}`"
-        ))),
-    }
-}
-
-fn envelope_error_owned(detail: String) -> RuntimeError {
-    RuntimeError::Engine {
-        kind: "migrationEnvelope",
-        message: detail,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // A minimal strict JSON envelope reader/renderer. Objects, arrays, strings,
 // booleans, null and NON-NEGATIVE INTEGER numbers only (the same numeric
@@ -608,9 +424,7 @@ fn verify_and_compile_chain(
     plans: &[bumbledb_log::migration::plan::Plan],
     snapshots: &[Envelope],
     append_plan: Option<&bumbledb_log::migration::plan::Plan>,
-    compiled_mappings: Option<&Envelope>,
     context: &WorkContext,
-    cap: usize,
 ) -> Result<(), Vec<u8>> {
     if snapshots.is_empty() {
         return Err(refused(
@@ -631,7 +445,10 @@ fn verify_and_compile_chain(
         ));
     }
     let mut descriptors = Vec::with_capacity(items.len());
-    for (index, item) in items.iter().enumerate() {
+    let expected_ids = std::iter::once(manifest.base_schema)
+        .chain(manifest.entries.iter().map(|entry| entry.to_schema))
+        .chain(append_plan.map(|plan| plan.to_schema));
+    for (index, (item, expected_id)) in items.iter().zip(expected_ids).enumerate() {
         context.step(1).map_err(|error| {
             refused(
                 "Misuse",
@@ -663,26 +480,11 @@ fn verify_and_compile_chain(
                 ));
             }
         };
-        match index {
-            0 if snapshot_id != manifest.base_schema => {
-                return Err(refused(
-                    "MigrationDrift",
-                    "the base snapshot does not match the manifest base schema id",
-                ));
-            }
-            0 => {}
-            index => {
-                let entry = &manifest.entries[index - 1];
-                if snapshot_id != entry.to_schema {
-                    return Err(refused(
-                        "MigrationDrift",
-                        &format!(
-                            "snapshot {index} schema id does not match manifest entry {}",
-                            entry.label
-                        ),
-                    ));
-                }
-            }
+        if snapshot_id != expected_id {
+            return Err(refused(
+                "MigrationDrift",
+                &format!("snapshot {index} schema id does not match the recorded migration chain"),
+            ));
         }
         descriptors.push(descriptor);
     }
@@ -715,18 +517,6 @@ fn verify_and_compile_chain(
             return Err(compile_refusal(&error));
         }
     }
-    if let Some(mappings) = compiled_mappings.filter(|node| !node.is_null()) {
-        context.step(1).map_err(|error| {
-            refused(
-                "Misuse",
-                &format!("compiled-mapping bind exceeded its work budget: {error}"),
-            )
-        })?;
-        if let Err(error) = bind_scalar_node(mappings, &descriptors[0]) {
-            return Err(refused("MigrationUnsupported", &format!("{error:?}")));
-        }
-    }
-    let _ = cap;
     Ok(())
 }
 
@@ -792,7 +582,10 @@ pub(crate) fn chain_response(
         Some(value) if !value.is_null() => {
             let text = subtree_text(value);
             context.input(text.len() as u64)?;
-            Some(parse_plan(&text).map_err(|error| plan_refusal(&error))?)
+            match parse_plan(&text) {
+                Ok(plan) => Some(plan),
+                Err(error) => return Ok(plan_refusal(&error)),
+            }
         }
         _ => None,
     };
@@ -807,15 +600,9 @@ pub(crate) fn chain_response(
             ));
         }
     };
-    if let Err(refusal) = verify_and_compile_chain(
-        &manifest,
-        &plans,
-        snapshots,
-        append_plan.as_ref(),
-        tree.get("compiledMappings"),
-        context,
-        cap,
-    ) {
+    if let Err(refusal) =
+        verify_and_compile_chain(&manifest, &plans, snapshots, append_plan.as_ref(), context)
+    {
         return Ok(refusal);
     }
     {
@@ -977,10 +764,8 @@ mod tests {
         // is the native empty-base digest of that schema id.
         let (base, snapshot) = mini_snapshot();
         let expected = base_prefix_digest(&base, MIGRATION_CAP).expect("base prefix");
-        let mut snapshot_json = String::new();
-        push_json_string(&mut snapshot_json, &snapshot);
         let request = format!(
-            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null,"snapshots":[{snapshot_json}]}}"#,
+            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null,"snapshots":[{snapshot}]}}"#,
             hex32(&base.0)
         );
         let response = chain_response(request.as_bytes(), &work()).expect("chain response");
@@ -991,6 +776,99 @@ mod tests {
         );
         assert!(tree.get("planSetDigest").expect("key").is_null());
         assert!(tree.get("appended").expect("key").is_null());
+    }
+
+    #[test]
+    fn append_binds_the_new_target_after_both_empty_and_recorded_prefixes() {
+        use bumbledb_log::migration::plan::{FieldMap, Operation, PlanExpr, StepLabel};
+
+        let mut source = Mini.descriptor();
+        let base = schema_file::schema_id(&source).expect("base schema");
+        let mut manifest = Manifest {
+            base_schema: base,
+            entries: Vec::new(),
+        };
+        let mut plans = Vec::new();
+        let mut snapshots = vec![schema_file::render(&source)];
+
+        for sequence in 0..2 {
+            let mut target = source.clone();
+            target.relations[0].name = format!("Item{sequence}").into();
+            let to_schema = schema_file::schema_id(&target).expect("target schema");
+            let plan = Plan {
+                sequence,
+                label: StepLabel::new(&format!("rename-{sequence}")).unwrap(),
+                from_schema: schema_file::schema_id(&source).unwrap(),
+                to_schema,
+                operations: vec![
+                    Operation::MapRelation {
+                        source: source.relations[0].name.clone(),
+                        target: target.relations[0].name.clone(),
+                        fields: source.relations[0]
+                            .fields
+                            .iter()
+                            .map(|field| FieldMap {
+                                target: field.name.clone(),
+                                expression: PlanExpr::Field(field.name.clone()),
+                            })
+                            .collect(),
+                    },
+                    Operation::ValidateSchema { schema: to_schema },
+                ],
+                destructive: Vec::new(),
+            };
+            let plan_text = render_plan(&plan);
+            let manifest_text = if manifest.entries.is_empty() {
+                "null".to_string()
+            } else {
+                render_manifest(&manifest, MIGRATION_CAP).unwrap()
+            };
+            let request = |last: &str| {
+                format!(
+                    r#"{{"kind":"chain","manifest":{manifest_text},"baseSchemaId":"{}","plans":[{}],"append":{plan_text},"planSet":null,"snapshots":[{},{last}]}}"#,
+                    hex32(&base.0),
+                    plans.join(","),
+                    snapshots.join(","),
+                )
+            };
+            let wrong =
+                chain_response(request(&schema_file::render(&source)).as_bytes(), &work()).unwrap();
+            let wrong = read_envelope(&wrong).unwrap();
+            assert_eq!(
+                wrong
+                    .get("refused")
+                    .and_then(|value| value.get("code"))
+                    .and_then(Envelope::as_str),
+                Some("MigrationDrift")
+            );
+            assert!(
+                wrong.get("appended").is_none(),
+                "wrong target must not append"
+            );
+
+            let target_text = schema_file::render(&target);
+            let response = chain_response(request(&target_text).as_bytes(), &work()).unwrap();
+            let response = read_envelope(&response).unwrap();
+            let appended = response
+                .get("appended")
+                .expect("new target compiles and appends");
+            let expected_entry = append_entry(&mut manifest, &plan, MIGRATION_CAP).unwrap();
+            assert_eq!(
+                response.get("headPrefixDigest").and_then(Envelope::as_str),
+                Some(hex32(&expected_entry.prefix_digest).as_str())
+            );
+            assert_eq!(
+                appended.get("manifestText").and_then(Envelope::as_str),
+                Some(render_manifest(&manifest, MIGRATION_CAP).unwrap().as_str())
+            );
+            assert_eq!(
+                appended.get("planText").and_then(Envelope::as_str),
+                Some(plan_text.as_str())
+            );
+            plans.push(plan_text);
+            snapshots.push(target_text);
+            source = target;
+        }
     }
 
     #[test]
@@ -1008,63 +886,5 @@ mod tests {
             Some("UnsupportedArtifact")
         );
         assert!(tree.get("appended").is_none());
-    }
-
-    #[test]
-    fn d20_invalid_field_mapping_refuses_on_empty_source() {
-        let (base, snapshot) = mini_snapshot();
-        let mut snapshot_json = String::new();
-        push_json_string(&mut snapshot_json, &snapshot);
-        let mappings = r#"{"kind":"field","name":"units","scope":"source-field","result":"unresolved","depth":1}"#;
-        let request = format!(
-            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null,"snapshots":[{snapshot_json}],"compiledMappings":{mappings}}}"#,
-            hex32(&base.0)
-        );
-        let response = chain_response(request.as_bytes(), &work()).expect("typed refusal");
-        let tree = read_envelope(&response).expect("response parses");
-        let refused = tree.get("refused").expect("unknown field refuses");
-        assert_eq!(
-            refused.get("code").and_then(Envelope::as_str),
-            Some("MigrationUnsupported")
-        );
-        assert!(
-            refused
-                .get("detail")
-                .and_then(Envelope::as_str)
-                .is_some_and(|detail| detail.contains("units")),
-            "the refusal names the missing source field"
-        );
-        assert!(tree.get("appended").is_none(), "no append side effect");
-    }
-
-    #[test]
-    fn d20_wrong_kind_claim_refuses_even_when_unresolved_is_honest() {
-        let descriptor = Mini.descriptor();
-        let snapshot = schema_file::render(&descriptor);
-        let mut text = String::new();
-        push_json_string(&mut text, &snapshot);
-        let tree = read_envelope(text.as_bytes()).expect("snapshot text is a JSON string");
-        let parsed = schema_file::parse(&snapshot).expect("canonical");
-        let mappings = read_envelope(
-            br#"{"kind":"field","name":"a","scope":"source-field","result":"i64","depth":1}"#,
-        )
-        .expect("mapping parses");
-        let error = bind_scalar_node(&mappings, &parsed).expect_err("u64 field is not i64");
-        assert!(
-            format!("{error:?}").contains("a"),
-            "wrong-kind bind names the field: {error:?}"
-        );
-        let _ = tree;
-    }
-
-    #[test]
-    fn d20_unresolved_field_that_exists_binds_without_claiming_a_kind() {
-        let parsed = schema_file::parse(&mini_snapshot().1).expect("canonical");
-        let mappings = read_envelope(
-            br#"{"kind":"add","scope":"source-field","result":"unresolved","depth":2,"left":{"kind":"field","name":"a","scope":"source-field","result":"unresolved","depth":1},"right":{"kind":"literal","value":{"u64":1},"scope":"source-field","result":"u64","depth":1}}"#,
-        )
-        .expect("L15 arithmetic parses");
-        bind_scalar_node(&mappings, &parsed)
-            .expect("existing source field binds; unresolved is not typechecked");
     }
 }

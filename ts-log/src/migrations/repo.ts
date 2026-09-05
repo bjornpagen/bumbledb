@@ -144,7 +144,10 @@ export const readRepository = Effect.fn("bumbledb-log.migrations.readRepository"
 				continue
 			}
 			return yield* Effect.fail(
-				drift(operation, `snapshot file meta/${name} exists but manifest.json does not — a recorded chain cannot be partial`)
+				drift(
+					operation,
+					`snapshot file meta/${name} exists but manifest.json does not — a recorded chain cannot be partial`
+				)
 			)
 		}
 		const state: RepositoryState = { manifestText: null, manifest: null, planTexts: [], snapshotTexts: [], staleDrafts }
@@ -224,7 +227,10 @@ export const readRepository = Effect.fn("bumbledb-log.migrations.readRepository"
 		const snapshot = yield* readBounded(operation, snapshotPath(directory, index), MAX_SNAPSHOT_BYTES)
 		if (snapshot === null) {
 			return yield* Effect.fail(
-				drift(operation, `recorded plan ${entry.id} has no meta/${index.toString(10).padStart(4, "0")}.schema.json snapshot`)
+				drift(
+					operation,
+					`recorded plan ${entry.id} has no meta/${index.toString(10).padStart(4, "0")}.schema.json snapshot`
+				)
 			)
 		}
 		snapshotTexts.push(snapshot)

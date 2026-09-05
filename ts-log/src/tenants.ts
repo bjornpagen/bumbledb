@@ -9,8 +9,9 @@
  * the successor deleted them. Different tenant schemas use separately
  * constructed typed caches, not casts through one untyped cache.
  */
-import type { Effect, Scope } from "effect"
+
 import type { AnySchema, NativeRuntime } from "@bjornpagen/bumbledb"
+import type { Effect, Scope } from "effect"
 import type { LogError } from "#errors.ts"
 import type { TenantCacheOptions } from "#options.ts"
 import { log } from "#production.ts"
@@ -26,5 +27,5 @@ export const TenantCache: {
 	): Effect.Effect<TenantCache<S>, LogError, NativeRuntime | Scope.Scope>
 } = log.TenantCache
 
-export type { HistoryBorrow } from "#surface.ts"
 export type { TenantCacheOptions } from "#options.ts"
+export type { HistoryBorrow } from "#surface.ts"

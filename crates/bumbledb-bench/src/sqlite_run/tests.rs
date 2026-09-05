@@ -32,10 +32,12 @@ fn fairness_and_the_prepared_sample_contract() {
     let translated = translate(&(family.query)(), crate::schema::schema(), &[]).expect("translate");
     let types: Vec<ValueType> = {
         let db_dir = dir.join("types-db");
-        let db = bumbledb::Db::create(&db_dir, crate::schema::Ledger)
+        let db = bumbledb::Db::create(&db_dir, crate::schema::Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
-        let prepared = db.prepare(&(family.query)()).expect("prepare");
+        let prepared = db
+            .prepare(&(family.query)(), crate::harness::bench_work())
+            .expect("prepare");
         prepared
             .signature()
             .columns
@@ -72,8 +74,15 @@ fn fairness_and_the_prepared_sample_contract() {
     let point_translated =
         translate(&(point.query)(), crate::schema::schema(), &[]).expect("translate");
     let point_types: Vec<ValueType> = {
-        let db = bumbledb::Db::open(&dir.join("types-db"), crate::schema::Ledger).expect("reopen");
-        let prepared = db.prepare(&(point.query)()).expect("prepare");
+        let db = bumbledb::Db::open(
+            &dir.join("types-db"),
+            crate::schema::Ledger,
+            crate::harness::bench_work(),
+        )
+        .expect("reopen");
+        let prepared = db
+            .prepare(&(point.query)(), crate::harness::bench_work())
+            .expect("prepare");
         prepared
             .signature()
             .columns

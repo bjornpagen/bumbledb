@@ -289,7 +289,7 @@ impl WordCmp {
         }
     }
 
-    pub(crate) fn compare<T: Ord>(self, left: &T, right: &T) -> bool {
+    pub(crate) fn compare<T: Ord + ?Sized>(self, left: &T, right: &T) -> bool {
         match self {
             Self::Eq => left == right,
             Self::Ne => left != right,
@@ -810,7 +810,7 @@ mod tests {
             Value::U64(u64::MAX),
             Value::I64(i64::MIN),
             Value::F64(bumbledb_theory::F64::from(1.5)),
-            Value::Id128(bumbledb_theory::Id128::from_bytes([0xA5; 16])),
+            Value::Uuid(bumbledb_theory::Uuid::from_bytes([0xA5; 16])),
             Value::String(Box::from("text")),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(

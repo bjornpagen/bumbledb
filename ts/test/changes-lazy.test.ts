@@ -25,20 +25,20 @@ import { Cause, Effect, ManagedRuntime, Option } from "effect"
 import { ChangeSet } from "#changes.ts"
 import { Db } from "#db.ts"
 import { bytes, str } from "#fields.ts"
-import { Id128 } from "#id128.ts"
 import type { Fact } from "#relation.ts"
 import { assertHostCellFits, cellOf, hostCellCharge } from "#rows.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
+import type { Uuid } from "#uuid.ts"
 
 function runtime() {
 	return ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
 }
 
-const newId = () => Effect.runPromise(Id128.random())
+const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
 
-function studentRow(id: Id128, name: string): Fact<typeof Student> {
+function studentRow(id: Uuid, name: string): Fact<typeof Student> {
 	return { id, name, budget: 10n }
 }
 
@@ -177,7 +177,7 @@ test("ingestion charges ONE cumulative aggregate budget across calls — chunks 
 	const rt = runtime()
 	try {
 		const tight = { ...work, inputBytes: 256n }
-		const ids: Id128[] = []
+		const ids: Uuid[] = []
 		for (let index = 0; index < 8; index += 1) {
 			ids.push(await newId())
 		}

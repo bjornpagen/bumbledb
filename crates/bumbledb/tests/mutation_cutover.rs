@@ -26,9 +26,11 @@ fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
         .expect("create")
         .expect("accepted");
     let row = [Value::String("keep".into())];
-    db.write(common::work(), |tx| tx.insert_dyn(Label::RELATION, [&row]).map(|_| ()))
-        .expect("seed")
-        .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert_dyn(Label::RELATION, [&row]).map(|_| ())
+    })
+    .expect("seed")
+    .unwrap();
     db.write(common::work(), |tx| {
         assert_eq!(
             tx.insert_dyn(Label::RELATION, [&row])?.changed(),

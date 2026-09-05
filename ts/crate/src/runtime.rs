@@ -26,20 +26,62 @@ pub mod registry;
 pub mod session;
 pub mod table;
 
+use registry::NativeRegistry;
 pub use registry::registry_draft::DraftLedger;
-pub use registry::{
-    Capability, CloseDrain, NativeKind, NativeRegistry, ResourceHeader, ResourceState,
-};
-pub use session::{
-    PayloadWork, PublicationSink, SnapshotAccess, SnapshotSession, SnapshotWork,
-};
+pub use registry::{Capability, NativeKind};
+pub use session::PublicationSink;
 
 /// Queued conversion owner (D01/C8). Charge stays with the page until JS
 /// transfer (`runtime_rows_take`) or native drain. `Output::Page` / `Rows`
 /// carry this — not a bare `Vec<Vec<ValueOut>>`.
+#[derive(Debug)]
 pub struct QueuedOutput {
     pub rows: Vec<Vec<crate::marshal::ValueOut>>,
     pub charge: ByteReservation,
+}
+
+/// One point-read result. The reservation travels through N-API conversion,
+/// including error paths, rather than ending when the take function returns.
+#[derive(Debug)]
+pub struct QueuedRow {
+    pub values: Vec<crate::marshal::ValueOut>,
+    pub charge: ByteReservation,
+}
+
+impl napi::bindgen_prelude::ToNapiValue for QueuedOutput {
+    #[expect(
+        unsafe_code,
+        reason = "N-API conversion delegates to the owned vector on the same live env"
+    )]
+    unsafe fn to_napi_value(
+        env: napi::sys::napi_env,
+        value: Self,
+    ) -> napi::Result<napi::sys::napi_value> {
+        let Self { rows, charge } = value;
+        // SAFETY: the caller supplies the live environment; the vector owns
+        // every value. Keep its reservation until conversion completes.
+        let result = unsafe { Vec::to_napi_value(env, rows) };
+        drop(charge);
+        result
+    }
+}
+
+impl napi::bindgen_prelude::ToNapiValue for QueuedRow {
+    #[expect(
+        unsafe_code,
+        reason = "N-API conversion delegates to the owned vector on the same live env"
+    )]
+    unsafe fn to_napi_value(
+        env: napi::sys::napi_env,
+        value: Self,
+    ) -> napi::Result<napi::sys::napi_value> {
+        let Self { values, charge } = value;
+        // SAFETY: the caller supplies the live environment and the vector
+        // owns every value. The charge survives both success and refusal.
+        let result = unsafe { Vec::to_napi_value(env, values) };
+        drop(charge);
+        result
+    }
 }
 
 impl QueuedOutput {
@@ -144,16 +186,15 @@ pub enum Output {
     /// Owned engine rows crossing back from a session/pool job. Charge
     /// stays with the page until JS transfer or native drain.
     Rows(QueuedOutput),
-    Row(Option<Vec<crate::marshal::ValueOut>>),
-    Contains(bool),
+    Row(Option<QueuedRow>),
+    #[cfg(test)]
     Count(u64),
+    #[cfg(test)]
     Generation(u64),
-    Prepared(session::PrepareReply),
     Mutation {
         submitted: u64,
         changed: u64,
     },
-    Admitted(crate::AdmitOwned),
     /// A grammar-lane payload (log command/decision framing) computed on
     /// the executor: owned bytes plus optional owned metadata.
     Log(crate::log::LogOutput),
@@ -220,6 +261,14 @@ pub struct Operation {
 }
 
 impl Operation {
+    /// Cancellation and delivery acceptance share the output lock. A
+    /// cancellation that wins this lock prevents cursor consumption;
+    /// cancellation after acceptance only abandons the delivery owner.
+    fn cancel(&self) {
+        let _publication = lock(&self.output);
+        self.context.cancel();
+    }
+
     /// Whether this is an externally driven lease (a persistent
     /// owner/session hold), rather than a queued one-shot job. The
     /// `runtime_wire` sibling module cannot read the private field, so this
@@ -291,7 +340,6 @@ struct PublicationHold {
 pub struct Runtime {
     pub options: Options,
     pub(crate) registry: Arc<NativeRegistry>,
-    pub(crate) identity: u64,
     pub(crate) lane_senders: Vec<std::sync::mpsc::Sender<lanes::WorkerCommand>>,
     state: Mutex<State>,
     changed: Condvar,
@@ -378,13 +426,14 @@ impl Runtime {
         {
             return Err(RuntimeError::InvalidArgument);
         }
+        let worker_count =
+            u32::try_from(options.workers).map_err(|_| RuntimeError::InvalidArgument)?;
         let endpoints = lanes::lane_channels(options.workers);
         let lane_receivers = endpoints.receivers;
         let identity = NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed);
         let runtime = Arc::new(Self {
             options,
-            identity,
-            registry: Arc::new(NativeRegistry::new(identity, options.workers as u32)),
+            registry: Arc::new(NativeRegistry::new(identity, worker_count)),
             lane_senders: endpoints.senders,
             state: Mutex::new(State {
                 phase: Phase::Open,
@@ -405,12 +454,12 @@ impl Runtime {
             publication_hold: Mutex::new(None),
         });
         let mut workers = Vec::new();
-        for (index, lane_rx) in lane_receivers.into_iter().enumerate() {
+        for (index, lane_rx) in (0..worker_count).zip(lane_receivers) {
             let owner = Arc::clone(&runtime);
             lock(&runtime.state).workers += 1;
             if let Ok(worker) = thread::Builder::new()
                 .name(format!("bumbledb-{index}"))
-                .spawn(move || owner.worker(index as u32, lane_rx))
+                .spawn(move || owner.worker(index, &lane_rx))
             {
                 workers.push(worker);
             } else {
@@ -560,11 +609,11 @@ impl Runtime {
         let mut state = lock(&self.state);
         let mut discarded = Vec::new();
         let wake_workers = if let Some(operation) = operation {
-            operation.context.cancel();
-            if lock(&operation.output).is_some() {
-                if let Some(value) = state.remove(operation.id) {
-                    discarded.push(value);
-                }
+            operation.cancel();
+            if lock(&operation.output).is_some()
+                && let Some(value) = state.remove(operation.id)
+            {
+                discarded.push(value);
             }
             false
         } else {
@@ -631,7 +680,7 @@ impl Runtime {
             state.phase = Phase::Closing;
         }
         for operation in state.operations.values() {
-            operation.context.cancel();
+            operation.cancel();
         }
         for owner in state.owners.values_mut() {
             owner.begin_close(false);
@@ -640,12 +689,6 @@ impl Runtime {
 
     fn closing_runtime(&self, state: &mut State) {
         Self::closing(state);
-        let _ = self.registry.close_all();
-    }
-
-    /// Marks every route closing. Callers that hold `state` must drop it
-    /// before [`Self::wake_all_workers`] — `lane_send` re-acquires the lock.
-    pub(crate) fn revoke_registry(&self) {
         let _ = self.registry.close_all();
     }
 
@@ -664,7 +707,7 @@ impl Runtime {
     /// debug API.
     #[cfg(test)]
     pub(crate) fn cancel_without_waiter(&self, operation: &Operation) {
-        operation.context.cancel();
+        operation.cancel();
         self.changed.notify_all();
     }
 
@@ -679,6 +722,7 @@ impl Runtime {
         *lock(&self.publication_hold) = Some(PublicationHold { entered, release });
     }
 
+    #[cfg(test)]
     fn wait_publication_hold(&self) {
         #[cfg(test)]
         {
@@ -693,6 +737,7 @@ impl Runtime {
     /// Does not write `Ready` over the publication.
     fn complete_published(&self, operation: &Arc<Operation>) {
         let notify = lock(&operation.completion).take();
+        #[cfg(test)]
         self.wait_publication_hold();
         self.changed.notify_all();
         if let Some(notify) = notify
@@ -757,55 +802,54 @@ impl Runtime {
         Ok(())
     }
 
-    fn worker(&self, index: u32, lane_rx: std::sync::mpsc::Receiver<lanes::WorkerCommand>) {
+    fn worker(&self, index: u32, lane_rx: &std::sync::mpsc::Receiver<lanes::WorkerCommand>) {
         table::WorkerContext::attach(index);
         loop {
             while let Ok(command) = lane_rx.try_recv() {
                 self.run_worker_command(command);
             }
             self.drain_closing_on_worker(index);
-            let action = {
+            let action = 'ready: {
                 let mut state = lock(&self.state);
-                loop {
-                    if let Some(job) = state.control.pop_front() {
-                        state.active += 1;
-                        break Action::Control(job);
-                    }
-                    if let Some(cleanup) = state.cleanup() {
-                        state.active += 1;
-                        break Action::Cleanup(cleanup);
-                    }
-                    if let Some(job) = state.queue.pop_front() {
-                        state.active += 1;
-                        break Action::Job(job);
-                    }
-                    if let Ok(command) = lane_rx.try_recv() {
-                        drop(state);
-                        self.run_worker_command(command);
-                        break Action::Recheck;
-                    }
-                    if state.phase != Phase::Open && state.owners.is_empty() {
-                        let table_empty = table::WorkerContext::with(|ctx| ctx.table.is_empty())
-                            .unwrap_or(true);
-                        if table_empty {
-                            state.workers -= 1;
-                            self.changed.notify_all();
-                            drop(state);
-                            if let Some(ctx) = table::WorkerContext::take() {
-                                drop(ctx);
-                            }
-                            return;
-                        }
-                    }
-                    state = self
-                        .changed
-                        .wait(state)
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    break Action::Recheck;
+                if let Some(job) = state.control.pop_front() {
+                    state.active += 1;
+                    break 'ready Action::Control(job);
                 }
+                if let Some(cleanup) = state.cleanup() {
+                    state.active += 1;
+                    break 'ready Action::Cleanup(cleanup);
+                }
+                if let Some(job) = state.queue.pop_front() {
+                    state.active += 1;
+                    break 'ready Action::Job(job);
+                }
+                if let Ok(command) = lane_rx.try_recv() {
+                    drop(state);
+                    self.run_worker_command(command);
+                    break 'ready Action::Recheck;
+                }
+                if state.phase != Phase::Open && state.owners.is_empty() {
+                    let table_empty =
+                        table::WorkerContext::with(|ctx| ctx.table.is_empty()).unwrap_or(true);
+                    if table_empty {
+                        state.workers -= 1;
+                        self.changed.notify_all();
+                        drop(state);
+                        if let Some(ctx) = table::WorkerContext::take() {
+                            drop(ctx);
+                        }
+                        return;
+                    }
+                }
+                drop(
+                    self.changed
+                        .wait(state)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+                Action::Recheck
             };
             match action {
-                Action::Recheck => continue,
+                Action::Recheck => {}
                 Action::Control(job) => {
                     let done = catch_unwind(AssertUnwindSafe(job.work)).is_ok();
                     if let Some(report) = job.report {
@@ -870,14 +914,11 @@ impl Runtime {
                 self.install_send_on_worker(cap, payload);
             }
             WorkerCommand::Resource { cap, message } => match message {
-                session::Message::Close => {
-                    self.drop_closing_entry(cap);
-                }
                 session::Message::Snapshot { operation, work } => {
-                    self.dispatch_snapshot_message(cap, operation, work);
+                    self.dispatch_snapshot_message(cap, &operation, work);
                 }
                 session::Message::Payload { operation, work } => {
-                    self.dispatch_payload_message(cap, operation, work);
+                    self.dispatch_payload_message(cap, &operation, work);
                 }
             },
         }
@@ -886,12 +927,12 @@ impl Runtime {
     fn dispatch_snapshot_message(
         &self,
         cap: Capability,
-        operation: Arc<Operation>,
+        operation: &Arc<Operation>,
         work: session::SnapshotWork,
     ) {
         if self.registry.begin_job(cap).is_err() {
-            operation.context.cancel();
-            self.complete_operation(&operation, Err(RuntimeError::ClosedHandle));
+            operation.cancel();
+            self.complete_operation(operation, Err(RuntimeError::ClosedHandle));
             return;
         }
         let close_after = table::WorkerContext::with(|ctx| {
@@ -899,14 +940,14 @@ impl Runtime {
                 Ok(borrowed) => borrowed,
                 Err(error) => {
                     self.registry.end_job(cap);
-                    self.complete_operation(&operation, Err(error));
+                    self.complete_operation(operation, Err(error));
                     return false;
                 }
             };
             let table::TablePayload::Snapshot(resource) = payload else {
                 ctx.table.mark_live(cap);
                 self.registry.end_job(cap);
-                self.complete_operation(&operation, Err(RuntimeError::InvalidArgument));
+                self.complete_operation(operation, Err(RuntimeError::InvalidArgument));
                 return false;
             };
             let mut access = session::SnapshotAccess {
@@ -915,7 +956,7 @@ impl Runtime {
                 job: operation.id,
                 prepared: &mut resource.prepared,
             };
-            self.run_snapshot_job(&operation, work, &mut access);
+            self.run_snapshot_job(operation, work, &mut access);
             ctx.table.mark_live(cap);
             self.registry.end_job(cap);
             matches!(
@@ -928,18 +969,13 @@ impl Runtime {
             Ok(false) => {}
             Err(error) => {
                 self.registry.end_job(cap);
-                self.complete_operation(&operation, Err(error));
+                self.complete_operation(operation, Err(error));
             }
         }
     }
 
-    /// One publication transition. L13 either calls
-    /// [`session::PublicationSink::accept`] with the live ticket `commit`,
-    /// or returns [`crate::db_wire::PullOutcome::committed_output`] and
-    /// L12 commits via [`crate::db_wire::accept_publication`] under the
-    /// same output lock. After acceptance: no allocate, read, checkpoint,
-    /// or preview. Predelivery `Err` publishes nothing. `None` means the
-    /// page is already registered — notify only.
+    /// One delivery acceptance boundary for live tickets and collections.
+    /// `None` means the output is registered; completion only notifies.
     fn run_payload_publication(
         &self,
         operation: &Operation,
@@ -951,44 +987,28 @@ impl Runtime {
         let value = match work(&operation.context, native, &mut sink) {
             Ok(value) => value,
             Err(_) if sink.accepted() => return Ok(None),
-            Err(error) => {
-                crate::db_wire::reject_publication(native);
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         };
         if sink.accepted() {
             return Ok(None);
         }
         if !value.queued_publication() {
-            crate::db_wire::reject_publication(native);
             operation.context.checkpoint()?;
             return Ok(Some(value));
         }
-        let mut slot = lock(&operation.output);
-        if matches!(&*slot, Some(Ok(output)) if output.queued_publication()) {
-            crate::db_wire::reject_publication(native);
-            drop(value);
-            return Ok(None);
-        }
-        if sink.armed() {
-            crate::db_wire::reject_publication(native);
-            drop(value);
-            return Err(RuntimeError::Work(WorkError::Cancelled));
-        }
-        crate::db_wire::accept_publication(native);
-        *slot = Some(Ok(value));
+        sink.accept(value, || {})?;
         Ok(None)
     }
 
     fn dispatch_payload_message(
         &self,
         cap: Capability,
-        operation: Arc<Operation>,
+        operation: &Arc<Operation>,
         work: session::PayloadWork,
     ) {
         if self.registry.begin_job(cap).is_err() {
-            operation.context.cancel();
-            self.complete_operation(&operation, Err(RuntimeError::ClosedHandle));
+            operation.cancel();
+            self.complete_operation(operation, Err(RuntimeError::ClosedHandle));
             return;
         }
         let close_after = table::WorkerContext::with(|ctx| {
@@ -996,18 +1016,16 @@ impl Runtime {
                 Ok(borrowed) => borrowed,
                 Err(error) => {
                     self.registry.end_job(cap);
-                    self.complete_operation(&operation, Err(error));
-                    return false;
+                    return (false, false, Err(error));
                 }
             };
             let table::TablePayload::Native(native) = payload else {
                 ctx.table.mark_live(cap);
                 self.registry.end_job(cap);
-                self.complete_operation(&operation, Err(RuntimeError::InvalidArgument));
-                return false;
+                return (false, false, Err(RuntimeError::InvalidArgument));
             };
             let result = catch_unwind(AssertUnwindSafe(|| {
-                self.run_payload_publication(&operation, native, work)
+                self.run_payload_publication(operation, native, work)
             }));
             ctx.table.mark_live(cap);
             self.registry.end_job(cap);
@@ -1025,9 +1043,9 @@ impl Runtime {
                     self.begin_close();
                 }
                 match result {
-                    Ok(None) => self.complete_published(&operation),
-                    Ok(Some(value)) => self.complete_operation(&operation, Ok(value)),
-                    Err(error) => self.complete_operation(&operation, Err(error)),
+                    Ok(None) => self.complete_published(operation),
+                    Ok(Some(value)) => self.complete_operation(operation, Ok(value)),
+                    Err(error) => self.complete_operation(operation, Err(error)),
                 }
                 if close {
                     self.drop_closing_entry(cap);
@@ -1035,12 +1053,12 @@ impl Runtime {
             }
             Err(error) => {
                 self.registry.end_job(cap);
-                self.complete_operation(&operation, Err(error));
+                self.complete_operation(operation, Err(error));
             }
         }
     }
 
-    fn install_send_on_worker(&self, cap: Capability, payload: registry::Payload) {
+    fn install_send_on_worker(&self, cap: Capability, payload: Box<registry::Payload>) {
         match self.registry.state(cap) {
             Ok(registry::ResourceState::Closing) | Err(_) => {
                 drop(payload);
@@ -1072,9 +1090,9 @@ impl Runtime {
         let state = lock(&self.state);
         state.owners.iter().find_map(|(&owner, entry)| {
             entry.databases.iter().find_map(|(&database, db)| {
-                db.sessions.get(&cap.id).and_then(|slot| {
-                    (slot.cap == cap).then_some((owner, database))
-                })
+                db.sessions
+                    .get(&cap.id)
+                    .and_then(|slot| (slot.cap == cap).then_some((owner, database)))
             })
         })
     }
@@ -1106,11 +1124,11 @@ impl Runtime {
                 // never arrived. Snapshot slots still need the owner map
                 // cleared; native routes just drop. Both releases are
                 // idempotent if the row is already gone.
-                if cap.kind == NativeKind::Snapshot {
-                    if let Some((owner, database)) = self.snapshot_route_owner(cap) {
-                        self.release_snapshot_route(owner, database, cap);
-                        return;
-                    }
+                if cap.kind == NativeKind::Snapshot
+                    && let Some((owner, database)) = self.snapshot_route_owner(cap)
+                {
+                    self.release_snapshot_route(owner, database, cap);
+                    return;
                 }
                 self.release_native_route(cap);
             }
@@ -1281,29 +1299,6 @@ impl Runtime {
 pub(crate) struct RetainedNative {
     runtime: Arc<Runtime>,
     bytes: u64,
-}
-
-impl RetainedNative {
-    /// Grows this resource's retained byte charge (draft chunks accumulate;
-    /// chunks never reset the aggregate). Refuses typed at the aggregate
-    /// resultBytes cap before any growth is recorded.
-    pub(crate) fn grow(&mut self, bytes: u64) -> Result<(), RuntimeError> {
-        let mut state = lock(&self.runtime.state);
-        let used = state.reserved[3];
-        let limit = self.runtime.options.aggregate_bytes[3];
-        if used.checked_add(bytes).is_none_or(|next| next > limit) {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "resultBytes",
-                used,
-                requested: bytes,
-                limit,
-            });
-        }
-        state.reserved[3] += bytes;
-        drop(state);
-        self.bytes += bytes;
-        Ok(())
-    }
 }
 
 impl Drop for RetainedNative {

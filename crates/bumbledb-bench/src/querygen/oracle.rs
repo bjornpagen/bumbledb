@@ -155,8 +155,8 @@ fn param_value(
     let (rel, field) = (anchor.relation, anchor.field);
     let ty = &target::schema().relation(rel).field(field).value_type;
     match ty {
-        ValueType::Id128 => {
-            unreachable!("the querygen target declares no id128 column — teach the draws first")
+        ValueType::Uuid => {
+            unreachable!("the querygen target declares no uuid column — teach the draws first")
         }
         ValueType::U64 => {
             let domain = u64_domain(rel, field, domains).max(1);

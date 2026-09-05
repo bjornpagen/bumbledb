@@ -18,7 +18,7 @@ mod support;
 use std::sync::Arc;
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::apply::{self, ApplyError};
 use bumbledb_log::history::command::{Command, CommandMetadata, UnverifiedOutcome};
@@ -73,7 +73,7 @@ fn seal_inserts(
             identity,
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -109,13 +109,17 @@ fn forge(
 ) -> Vec<u8> {
     let authority = history.authority().expect("authority reads");
     let position = authority.position().expect("live genesis");
+    let before_state = StateStamp {
+        incarnation: identity.incarnation_id,
+        ..position.state
+    };
     let after = if advance_state {
         StateStamp {
-            incarnation: position.state.incarnation,
+            incarnation: identity.incarnation_id,
             data_revision: position.state.data_revision + 1,
         }
     } else {
-        position.state
+        before_state
     };
     let canonical_command = command.encode(LIMITS).expect("command encodes");
     encode_decision(
@@ -124,7 +128,7 @@ fn forge(
             seq: position.decision.seq + 1,
             parent: position.decision,
             parent_object: None,
-            before_state: position.state,
+            before_state,
             after_state: after,
             canonical_command: &canonical_command,
             outcome,
@@ -135,7 +139,7 @@ fn forge(
 }
 
 /// Harness validity: an HONEST decision materializes, and replaying the
-/// exact same immutable decision refuses (the chain extends exactly once) —
+/// exact same immutable decision is idempotent (the chain extends exactly once) —
 /// forged refusals below are therefore refusals of the forgery, not of the
 /// harness (PROTO-03 idempotent replay boundary).
 #[test]
@@ -171,13 +175,9 @@ fn an_honest_decision_materializes_once_and_never_twice() {
         advanced.position().expect("live").decision.seq,
         before.decision.seq + 1
     );
-    // Replaying the applied decision against the ADVANCED authority refuses:
-    // its parent no longer matches; no duplicate facts appear.
+    // Exact replay returns the already-applied authority without another write.
     let replay = apply::materialize(&db, &advanced, &bytes, LIMITS, &work());
-    assert!(
-        matches!(replay, Err(ApplyError::Chain(_))),
-        "exact replay refuses: {replay:?}"
-    );
+    assert_eq!(replay.expect("idempotent replay"), advanced);
     assert_eq!(row_count(&db), 1, "replay committed nothing");
 }
 
@@ -254,8 +254,8 @@ fn a_forged_rejection_of_a_lawful_command_refuses_whole() {
 fn a_foreign_identity_decision_refuses_before_evaluation() {
     let (db, history) = keyed_history("foreign");
     let foreign = DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0xee; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xef; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0xee; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xef; 16])),
         schema_id: history.identity().schema_id,
     };
     let command = seal_inserts(&db, foreign, 0x44, &[(4, "delta")]);
@@ -366,7 +366,10 @@ fn a_malformed_interior_parent_locator_refuses_before_state_moves() {
         "wrong parent kind is not a walkable link"
     );
     let refused = apply::materialize(&db, &authority, &bytes, LIMITS, &work());
-    assert!(refused.is_err(), "malformed interior link refuses: {refused:?}");
+    assert!(
+        refused.is_err(),
+        "malformed interior link refuses: {refused:?}"
+    );
     assert_eq!(row_count(&db), 0);
 }
 

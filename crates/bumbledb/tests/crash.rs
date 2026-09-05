@@ -103,7 +103,9 @@ fn kill_during_commit_leaves_a_consistent_database() {
         .unwrap();
 
         let count = db
-            .read(common::work(), |snap| Ok(snap.scan_facts::<Item>()?.count()))
+            .read(common::work(), |snap| {
+                Ok(snap.scan_facts::<Item>()?.count())
+            })
             .expect("count after crash");
         assert!(count >= 1);
     }

@@ -84,22 +84,24 @@ export type {
 	F64Field,
 	FloatIntervalValue,
 	I64Field,
-	Id128Field,
 	Infer,
 	IntervalElementKind,
 	IntervalField,
 	IntervalValue,
 	SignatureOf,
 	StrField,
-	U64Field
+	U64Field,
+	UuidField
 } from "#fields.ts"
-export { bool, bytes, f64, i64, id128, interval, span, str, u64 } from "#fields.ts"
-export { Id128 } from "#id128.ts"
+export { bool, bytes, f64, i64, interval, span, str, u64, uuid } from "#fields.ts"
 export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
+export type { Violation, ViolationFact } from "#native.ts"
+export type { FindColumn } from "#query/atom.ts"
+export { ALLEN } from "#query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"
 export { Compute } from "#query/compute.ts"
-export type { Agg, FindColumn } from "#query/find.ts"
+export type { Agg } from "#query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -191,3 +193,4 @@ export type {
 	StatementData
 } from "#statements.ts"
 export { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
+export { Uuid } from "#uuid.ts"

@@ -4,7 +4,7 @@
 //! a function return requires moving the whole owner. There is no payload
 //! extraction that sheds the reservation while bytes remain live.
 
-use super::{ByteKind, ByteReservation, Resource, WorkContext, WorkError};
+use super::{ByteKind, ByteReservation, WorkContext, WorkError};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,10 +23,7 @@ fn exhausted(work: &WorkContext, kind: ByteKind, used: u64, requested: u64) -> W
 }
 
 fn conservative_capacity(needed: usize) -> usize {
-    needed
-        .max(8)
-        .checked_next_power_of_two()
-        .unwrap_or(needed)
+    needed.max(8).checked_next_power_of_two().unwrap_or(needed)
 }
 
 fn try_reserve_vec(buf: &mut Vec<u8>, additional: usize) -> Result<(), ()> {
@@ -52,11 +49,7 @@ impl ChargedBytes {
     /// Reserve for `bytes.len()`, then take ownership.
     /// # Errors
     /// Refuses growth beyond the operation allowance.
-    pub fn adopt(
-        work: &WorkContext,
-        kind: ByteKind,
-        bytes: Box<[u8]>,
-    ) -> Result<Self, WorkError> {
+    pub fn adopt(work: &WorkContext, kind: ByteKind, bytes: Box<[u8]>) -> Result<Self, WorkError> {
         let charge = work.reserve(kind, bytes.len() as u64)?;
         Ok(Self { bytes, charge })
     }
@@ -92,11 +85,7 @@ impl ChargedBytes {
     /// for the duration of the copy (C2 overlap).
     /// # Errors
     /// Refuses growth beyond the destination ledger, or allocator refusal.
-    pub fn admit_copy(
-        &self,
-        work: &WorkContext,
-        kind: ByteKind,
-    ) -> Result<Self, WorkError> {
+    pub fn admit_copy(&self, work: &WorkContext, kind: ByteKind) -> Result<Self, WorkError> {
         let charge = work.reserve(kind, self.bytes.len() as u64)?;
         let mut buf = Vec::new();
         if try_reserve_exact_vec(&mut buf, self.bytes.len()).is_err() {
@@ -224,9 +213,8 @@ impl ChargedBuffer {
             )
         })?;
         if needed > self.inner.capacity() {
-            let next = conservative_capacity(
-                needed.max(self.inner.capacity().saturating_mul(2).max(8)),
-            );
+            let next =
+                conservative_capacity(needed.max(self.inner.capacity().saturating_mul(2).max(8)));
             self.reserve_capacity(next)?;
         }
         self.inner.extend_from_slice(data);
@@ -362,10 +350,7 @@ impl ChargedImage {
     /// The source owner stays charged (C2 overlap).
     /// # Errors
     /// Refuses bytes beyond the cache allowance.
-    pub fn admit_copy(
-        &self,
-        cache: &super::CacheLedger,
-    ) -> Result<Self, super::cache::CacheError> {
+    pub fn admit_copy(&self, cache: &super::CacheLedger) -> Result<Self, super::cache::CacheError> {
         let charge = cache.reserve(self.bytes as u64)?;
         Ok(Self {
             bytes: self.bytes,
@@ -393,7 +378,7 @@ impl ChargedImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work::ExecutionPolicy;
+    use crate::work::{ExecutionPolicy, Resource};
     use std::time::Duration;
 
     fn work(working: u64) -> WorkContext {
@@ -441,7 +426,8 @@ mod tests {
     #[test]
     fn charged_buffer_reserves_before_first_push() {
         let ctx = work(4096);
-        let mut buffer = ChargedBuffer::with_capacity(&ctx, ByteKind::Working, 256).expect("create");
+        let mut buffer =
+            ChargedBuffer::with_capacity(&ctx, ByteKind::Working, 256).expect("create");
         assert!(buffer.capacity() >= 256);
         buffer.try_extend_from_slice(&[0u8; 128]).expect("extend");
         assert_eq!(buffer.len(), 128);
@@ -461,7 +447,8 @@ mod tests {
     #[test]
     fn d01_charged_buffer_clear_keeps_capacity_charge() {
         let ctx = work(4096);
-        let mut buffer = ChargedBuffer::with_capacity(&ctx, ByteKind::Working, 512).expect("create");
+        let mut buffer =
+            ChargedBuffer::with_capacity(&ctx, ByteKind::Working, 512).expect("create");
         buffer.try_extend_from_slice(&[1u8; 200]).expect("extend");
         let charged = ctx.used(Resource::WorkingBytes);
         buffer.clear();
@@ -473,8 +460,8 @@ mod tests {
     #[test]
     fn d01_admit_copy_charges_overlap_until_source_drops() {
         let ctx = work(4096);
-        let source =
-            ChargedBytes::adopt(&ctx, ByteKind::Working, Box::from(*b"overlap-payload")).expect("src");
+        let source = ChargedBytes::adopt(&ctx, ByteKind::Working, Box::from(*b"overlap-payload"))
+            .expect("src");
         let once = ctx.used(Resource::WorkingBytes);
         let dest = source.admit_copy(&ctx, ByteKind::Result).expect("copy");
         assert_eq!(
@@ -526,12 +513,12 @@ mod tests {
     #[test]
     fn d01_charged_bytes_as_ref_matches_as_bytes() {
         let ctx = work(4096);
-        let owner =
-            ChargedBytes::adopt(&ctx, ByteKind::Working, Box::from(*b"charged-as-ref")).expect("adopt");
+        let owner = ChargedBytes::adopt(&ctx, ByteKind::Working, Box::from(*b"charged-as-ref"))
+            .expect("adopt");
         assert_eq!(owner.as_ref(), owner.as_bytes());
         assert_eq!(owner.as_ref(), b"charged-as-ref");
         let kept = owner.into_owner();
-        assert_eq!(<&[u8]>::from(kept.as_ref()), kept.as_bytes());
+        assert_eq!(kept.as_ref(), kept.as_bytes());
         drop(kept);
         assert_eq!(ctx.used(Resource::WorkingBytes), 0);
     }

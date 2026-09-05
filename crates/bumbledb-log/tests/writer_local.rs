@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, Id128, RelationId, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
 use bumbledb_log::history::{
@@ -85,8 +85,8 @@ fn work() -> WorkContext {
 
 fn identity(db: &Db<SchemaDescriptor>) -> DatabaseIdentity {
     DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([0xa1; 16])),
-        incarnation_id: IncarnationId::from_core(Id128::from_bytes([0xb2; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([0xa1; 16])),
+        incarnation_id: IncarnationId::from_core(Uuid::from_bytes([0xb2; 16])),
         schema_id: bumbledb::schema::fingerprint::fingerprint(db.schema()),
     }
 }
@@ -105,7 +105,7 @@ fn command(
         identity,
         id: CommandId {
             receipt_epoch: ReceiptEpoch::INITIAL,
-            request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+            request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
         },
         condition,
     };
@@ -125,7 +125,7 @@ fn open(
         Arc::clone(&db),
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([0xc3; 16])),
+        OperationId::from_core(Uuid::from_bytes([0xc3; 16])),
         LIMITS,
         &work(),
     )
@@ -295,7 +295,7 @@ fn resolve_returns_the_retained_receipt_and_not_recorded_for_unknown() {
     // fabricated failure.
     let unseen = CommandId {
         receipt_epoch: ReceiptEpoch::INITIAL,
-        request_id: RequestId::from_core(Id128::from_bytes([0x99; 16])),
+        request_id: RequestId::from_core(Uuid::from_bytes([0x99; 16])),
     };
     let unseen_ref = bumbledb_log::history::CommandRef {
         identity,
@@ -382,7 +382,7 @@ fn deleted_authority_has_no_receipt_table() {
     // Production tombstone: the P05 admin transition over the same store.
     match bumbledb_log::admin::tombstone_local(
         &db,
-        OperationId::from_core(Id128::from_bytes([0xd4; 16])),
+        OperationId::from_core(Uuid::from_bytes([0xd4; 16])),
         bumbledb_log::history::authority::DeletedReason::Erasure,
         LIMITS.envelope_bytes,
         &work(),
@@ -431,7 +431,7 @@ fn deleted_authority_has_no_receipt_table() {
 fn foreign_identity_and_uninitialized_open_refuse() {
     let (_db, history, identity) = open("foreign");
     let mut foreign = identity;
-    foreign.incarnation_id = IncarnationId::from_core(Id128::from_bytes([0xee; 16]));
+    foreign.incarnation_id = IncarnationId::from_core(Uuid::from_bytes([0xee; 16]));
     let command = command(
         history.db(),
         foreign,
@@ -475,6 +475,13 @@ fn same_tip_receipt_retirement_does_not_mint_a_user_decision() {
     };
     let before = history.authority().unwrap();
     let decision_before = before.position().unwrap().decision;
+    bumbledb_log::admin::rotate_receipts_local(
+        history.db(),
+        bumbledb_log::history::ReceiptEpoch::new(2).unwrap(),
+        LIMITS.envelope_bytes,
+        &work(),
+    )
+    .expect("rotate epoch");
     bumbledb_log::admin::retire_receipts_local(history.db(), 1, LIMITS.envelope_bytes, &work())
         .expect("same-tip retirement");
     let after = history.authority().unwrap();
@@ -498,15 +505,17 @@ fn oddly_named_admitted_dest_is_not_unpublished() {
     use bumbledb_log::apply::{self, ApplyError};
 
     let dest = temp_dir("odd-name").join("tenant.staging.0000000000000001");
-    let db = Db::create(&dest, theory(), work())
-        .expect("create oddly named dest")
-        .expect("admits");
+    let db = Arc::new(
+        Db::create(&dest, theory(), work())
+            .expect("create oddly named dest")
+            .expect("admits"),
+    );
     let identity = identity(&db);
     let history = LocalHistory::create(
         Arc::clone(&db),
         identity.database_id,
         identity.incarnation_id,
-        OperationId::from_core(Id128::from_bytes([0xc3; 16])),
+        OperationId::from_core(Uuid::from_bytes([0xc3; 16])),
         LIMITS,
         &work(),
     )
@@ -549,7 +558,7 @@ fn materialize_without_authority_is_unpublished_not_a_name_check() {
         identity,
         genesis,
         Activation::Activated {
-            operation: OperationId::from_core(Id128::from_bytes([0xc3; 16])),
+            operation: OperationId::from_core(Uuid::from_bytes([0xc3; 16])),
             target_genesis: genesis.hash,
             cause: ActivationCause::Create,
         },

@@ -202,7 +202,9 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     // The image cache is gone with the transitional store (owned snapshots
     // replaced images), so the store block is the two file sizes.
     let store = report::StoreNumbers {
-        db_bytes: db.disk_size().map_err(|e| format!("{e:?}"))?,
+        db_bytes: db
+            .disk_size(crate::harness::bench_work())
+            .map_err(|e| format!("{e:?}"))?,
         sqlite_bytes: std::fs::metadata(&paths.oracle).map_or(0, |m| m.len()),
     };
 

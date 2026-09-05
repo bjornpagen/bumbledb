@@ -14,7 +14,7 @@ statement form, each proved sound AND complete against its
 the per-statement dispatcher (`Statement.checkB`,
 `Statement.checkB_iff`), the whole-theory executable judge
 (`holdsB`, `holdsB_iff_holds`, the derived
-`decideJudgment`/`decideHolds`), and the two-phase `Txn.judgeB` —
+`decideJudgment`/`decideHolds`), and the complete `Txn.judgeB` —
 key phase then statement phase, mirroring `Txn.judge` and proved to
 agree with its verdict and its violation sets, phase for phase, with
 NO instance-side premise beyond the merge (`Txn.judgeB_agrees`,
@@ -85,7 +85,7 @@ The conformance lane runs a judgment arm: `lake exe conformance`
 dispatches `judgment-*.json` cases (`lean/Main.lean`) to `Txn.judgeB`
 over `(theory, instance, delta)` documents serialized by
 `crates/bumbledb-bench/src/conformance/judgment.rs`, comparing the
-verdict and the per-phase violation sets against what the engine and
+verdict and the complete violation sets against what the engine and
 the naive model agreed on — engine verdict vs naive verdict vs this
 judge, the write-side third oracle. `Bridge.lean` carries the rows
 (`holdsB_iff_holds`, `Txn.judgeB_agrees`); the corpus
@@ -384,6 +384,8 @@ theorem mem_points_u64 (v : Value) (x : U64) :
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | f64 => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
+  | uuid => exact ⟨fun h => (nomatch h),
+      by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | str => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | fixedBytes n => exact ⟨fun h => (nomatch h),
@@ -427,6 +429,8 @@ theorem mem_points_i64 (v : Value) (x : I64) :
   | i64 => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | f64 => exact ⟨fun h => (nomatch h),
+      by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
+  | uuid => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | str => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
@@ -1018,7 +1022,7 @@ def decideHolds {T : Theory} {W : RowInstance}
     Decidable (holds T W.den) :=
   decidable_of_iff (holdsB T W = true) (holdsB_iff_holds hclosed)
 
-/-! ## The two-phase executable judge -/
+/-! ## The complete executable judge -/
 
 namespace Txn
 
@@ -1060,21 +1064,35 @@ def statementViolationsB (T : Theory) (W : RowInstance) :
     List (Statement × Nat) :=
   T.statements.zipIdx.filter fun p => !p.1.isKey && !p.1.checkB T W
 
-/-- **`judgeB` — the executable two-phase judge**, mirroring
-`Txn.judge`: any key violation rejects with the complete violated-key
-list and the statement phase never runs; else any statement violation
-rejects with the complete non-key list; else accept (`none`). A
-rejection carries its phase (`true` = key) and the position-tagged
-citations — the payload the conformance lane compares whole, one
-`checkB` evaluation per statement per phase. -/
+/-- All violated statements in materialized declaration order. -/
+def violationsB (T : Theory) (W : RowInstance) : List (Statement × Nat) :=
+  T.statements.zipIdx.filter fun p => !p.1.checkB T W
+
+/-- Executable complete judge. The Boolean only describes an all-key result;
+it never controls which statements are checked or included. -/
 def judgeB (T : Theory) (W : RowInstance) :
     Option (Bool × List (Statement × Nat)) :=
-  match keyViolationsB T W with
-  | [] =>
-    match statementViolationsB T W with
-    | [] => none
-    | v => some (false, v)
-  | v => some (true, v)
+  match violationsB T W with
+  | [] => none
+  | v => some (v.all fun p => p.1.isKey, v)
+
+/-- The executable citations equal the whole semantic violation set. -/
+theorem mem_violationsB {T : Theory} {W : RowInstance}
+    (hclosed : WorldCarriesClosed T W) {st : Statement} :
+    st ∈ (violationsB T W).map (·.1) ↔ st ∈ Txn.violationSet T W.den := by
+  unfold violationsB
+  rw [zipIdx_filter_fst (fun st : Statement => !st.checkB T W)]
+  constructor
+  · intro h
+    obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
+    refine ⟨hmem, fun hj => ?_⟩
+    rw [(Statement.checkB_iff hclosed).mpr hj] at hcond
+    exact nomatch hcond
+  · rintro ⟨hmem, hj⟩
+    refine List.mem_filter.mpr ⟨hmem, ?_⟩
+    cases hc : st.checkB T W with
+    | false => rfl
+    | true => exact absurd ((Statement.checkB_iff hclosed).mp hc) hj
 
 /-- The executable key citations are exactly `Txn.keyViolationSet`,
 membership for membership (the statement projection of the tagged
@@ -1274,71 +1292,38 @@ theorem completeRosterPassesB_iff_holds {T : Theory} {W : RowInstance}
   rw [completeRosterPassesB_iff hclosed,
       completeRosterPasses_iff_holds W.den hv]
 
-/-- **The two-phase agreement**: `judgeB` and `Txn.judge` render one
-verdict on EVERY row instance — accept together (and the accepted
-state is the judged instance), or reject in the SAME phase, the
-executable payload's statement projection and the model's violation
-set agreeing member for member (`mem_keyViolationsB` /
-`mem_statementViolationsB`). No premise beyond the merge. -/
+/-- Executable and semantic judges agree on acceptance and the complete
+rejection set, under only the closed-roster merge premise. -/
 theorem judgeB_agrees {T : Theory} {W : RowInstance}
     (hclosed : WorldCarriesClosed T W) :
     (judgeB T W = none ∧
       ∃ h, Txn.judge T W.den = .ok ⟨W.den, h⟩) ∨
-    (judgeB T W = some (true, keyViolationsB T W) ∧
-      Txn.judge T W.den = .reject (Txn.keyViolationSet T W.den)) ∨
-    (judgeB T W = some (false, statementViolationsB T W) ∧
-      Txn.judge T W.den =
-        .reject (Txn.statementViolationSet T W.den)) := by
+    (judgeB T W = some ((violationsB T W).all fun p => p.1.isKey, violationsB T W) ∧
+      Txn.judge T W.den = .reject (Txn.violationSet T W.den)) := by
   by_cases hh : holds T W.den
   · refine Or.inl ⟨?_, hh, Txn.judge_holds hh⟩
-    have hkey : keyViolationsB T W = [] := by
+    have hnil : violationsB T W = [] := by
       refine List.filter_eq_nil_iff.mpr fun p hp => ?_
       intro hcond
-      obtain ⟨-, h2⟩ := andB_iff.mp hcond
       rw [(Statement.checkB_iff hclosed).mpr
-        (hh p.1 (fst_mem_of_mem_zipIdx hp))] at h2
-      exact nomatch h2
-    have hstmt : statementViolationsB T W = [] := by
-      refine List.filter_eq_nil_iff.mpr fun p hp => ?_
-      intro hcond
-      obtain ⟨-, h2⟩ := andB_iff.mp hcond
-      rw [(Statement.checkB_iff hclosed).mpr
-        (hh p.1 (fst_mem_of_mem_zipIdx hp))] at h2
-      exact nomatch h2
+        (hh p.1 (fst_mem_of_mem_zipIdx hp))] at hcond
+      exact nomatch hcond
     unfold judgeB
-    rw [hkey, hstmt]
-  · by_cases hk : (Txn.keyViolationSet T W.den).Nonempty
-    · refine Or.inr (Or.inl ⟨?_, Txn.judge_key_preempts hh hk⟩)
-      obtain ⟨st, hstv⟩ := hk
-      have hne : keyViolationsB T W ≠ [] := fun h0 => by
-        have hm := (mem_keyViolationsB hclosed).mpr hstv
-        rw [h0] at hm
-        exact nomatch hm
-      unfold judgeB
-      cases hkv : keyViolationsB T W with
-      | nil => exact absurd hkv hne
-      | cons a l => rfl
-    · refine Or.inr (Or.inr ⟨?_, Txn.judge_statement_phase hh hk⟩)
-      have hkey : keyViolationsB T W = [] := by
-        rcases hkv : keyViolationsB T W with _ | ⟨a, l⟩
-        · rfl
-        · exact absurd ⟨a.1, (mem_keyViolationsB hclosed).mp
-            (List.mem_map.mpr ⟨a, hkv ▸ List.mem_cons_self .., rfl⟩)⟩ hk
-      have hex : ∃ st, st ∈ Txn.violationSet T W.den :=
-        Classical.byContradiction fun hne =>
-          hh fun st hst => Classical.byContradiction fun hj =>
-            hne ⟨st, hst, hj⟩
-      obtain ⟨st, hv⟩ := hex
-      have hne : statementViolationsB T W ≠ [] := fun h0 => by
-        have hm := (mem_statementViolationsB hclosed).mpr
-          (Txn.statement_phase_all hk hv)
-        rw [h0] at hm
-        exact nomatch hm
-      unfold judgeB
-      rw [hkey]
-      cases hsv : statementViolationsB T W with
-      | nil => exact absurd hsv hne
-      | cons a l => rfl
+    rw [hnil]
+  · refine Or.inr ⟨?_, Txn.judge_not_holds hh⟩
+    have hex : ∃ st, st ∈ Txn.violationSet T W.den :=
+      Classical.byContradiction fun hne =>
+        hh fun st hst => Classical.byContradiction fun hj =>
+          hne ⟨st, hst, hj⟩
+    obtain ⟨st, hv⟩ := hex
+    have hne : violationsB T W ≠ [] := fun h0 => by
+      have hm := (mem_violationsB hclosed).mpr hv
+      rw [h0] at hm
+      exact nomatch hm
+    unfold judgeB
+    cases hsv : violationsB T W with
+    | nil => exact absurd hsv hne
+    | cons a l => rfl
 
 /-- **L5.** The executable complete-admission judge: `judgeB` over
 the candidate instance, no pre-state and no delta. The incremental
@@ -1347,7 +1332,7 @@ because a delta-restricted engine verdict would mismatch this
 oracle; those fences lift here. -/
 abbrev completeAdmissionB := judgeB
 
-/-- Complete admission is the two-phase judge — one denotation. -/
+/-- Complete admission is the complete judge — one denotation. -/
 theorem completeAdmissionB_eq_judgeB : completeAdmissionB = judgeB :=
   rfl
 
@@ -1358,11 +1343,8 @@ theorem completeAdmissionB_agrees {T : Theory} {W : RowInstance}
     (hclosed : WorldCarriesClosed T W) :
     (completeAdmissionB T W = none ∧
       ∃ h, completeAdmission T W.den = .ok ⟨W.den, h⟩) ∨
-    (completeAdmissionB T W = some (true, keyViolationsB T W) ∧
-      completeAdmission T W.den = .reject (keyViolationSet T W.den)) ∨
-    (completeAdmissionB T W = some (false, statementViolationsB T W) ∧
-      completeAdmission T W.den =
-        .reject (statementViolationSet T W.den)) :=
+    (completeAdmissionB T W = some ((violationsB T W).all fun p => p.1.isKey, violationsB T W) ∧
+      completeAdmission T W.den = .reject (violationSet T W.den)) :=
   judgeB_agrees hclosed
 
 end Txn

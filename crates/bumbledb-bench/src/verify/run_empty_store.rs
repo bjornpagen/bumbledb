@@ -12,7 +12,7 @@ use crate::sqlmap;
 pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     let empty_dir = cfg.out_dir.join("empty-db");
     let _ = std::fs::remove_dir_all(&empty_dir);
-    let empty_db = Db::create(&empty_dir, Ledger)
+    let empty_db = Db::create(&empty_dir, Ledger, crate::harness::bench_work())
         .expect("create empty store")
         .expect("accepted");
     let empty_conn = rusqlite::Connection::open_in_memory().expect("empty oracle");
@@ -29,9 +29,13 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
 
     let empty_cal_dir = cfg.out_dir.join("empty-cal-db");
     let _ = std::fs::remove_dir_all(&empty_cal_dir);
-    let empty_cal = Db::create(&empty_cal_dir, crate::calendar::Scheduling)
-        .expect("create empty calendar")
-        .expect("accepted");
+    let empty_cal = Db::create(
+        &empty_cal_dir,
+        crate::calendar::Scheduling,
+        crate::harness::bench_work(),
+    )
+    .expect("create empty calendar")
+    .expect("accepted");
     let cal_conn = rusqlite::Connection::open_in_memory().expect("empty calendar oracle");
     for statement in crate::calendar::corpus::ddl() {
         cal_conn

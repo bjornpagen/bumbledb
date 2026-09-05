@@ -5,7 +5,7 @@
 //! grammar only: it never upgrades bytes into a verified core value, a durable
 //! decision, or authority. Allocation is capped before it happens.
 
-use bumbledb::Id128;
+use bumbledb::Uuid;
 
 use super::{
     CommandId, DatabaseId, DatabaseIdentity, DecisionDigest, DecisionStamp, IncarnationId,
@@ -178,8 +178,8 @@ impl<'a> Reader<'a> {
 
     pub(crate) fn identity(&mut self) -> Result<DatabaseIdentity, FrameError> {
         Ok(DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes(self.array()?)),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes(self.array()?)),
+            database_id: DatabaseId::from_core(Uuid::from_bytes(self.array()?)),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes(self.array()?)),
             schema_id: SchemaId(self.array()?),
         })
     }
@@ -187,13 +187,13 @@ impl<'a> Reader<'a> {
     pub(crate) fn id(&mut self) -> Result<CommandId, FrameError> {
         Ok(CommandId {
             receipt_epoch: ReceiptEpoch::new(self.u64()?).ok_or(FrameError::InvalidEpoch)?,
-            request_id: RequestId::from_core(Id128::from_bytes(self.array()?)),
+            request_id: RequestId::from_core(Uuid::from_bytes(self.array()?)),
         })
     }
 
     pub(crate) fn state(&mut self) -> Result<StateStamp, FrameError> {
         Ok(StateStamp {
-            incarnation: IncarnationId::from_core(Id128::from_bytes(self.array()?)),
+            incarnation: IncarnationId::from_core(Uuid::from_bytes(self.array()?)),
             data_revision: self.u64()?,
         })
     }
@@ -220,7 +220,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-pub(crate) fn read_object_ref(input: &mut Reader<'_>) -> Result<crate::store::ObjectRef, FrameError> {
+pub(crate) fn read_object_ref(
+    input: &mut Reader<'_>,
+) -> Result<crate::store::ObjectRef, FrameError> {
     use crate::store::ObjectKind;
     let epoch = input.u64()?;
     let kind = match input.tag()? {

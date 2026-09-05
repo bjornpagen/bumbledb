@@ -36,9 +36,7 @@ pub enum CompileError {
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ProjectionIdExhausted => {
-                f.write_str("compiled projection id space exhausted")
-            }
+            Self::ProjectionIdExhausted => f.write_str("compiled projection id space exhausted"),
         }
     }
 }
@@ -170,11 +168,7 @@ impl ProjectionBinding {
     }
 }
 
-fn permute_by_fields(
-    values: &[Value],
-    from: &[FieldId],
-    to: &[FieldId],
-) -> Option<Vec<Value>> {
+fn permute_by_fields(values: &[Value], from: &[FieldId], to: &[FieldId]) -> Option<Vec<Value>> {
     if values.len() != from.len() {
         return None;
     }
@@ -230,6 +224,7 @@ impl CompiledProjection {
     /// Scalar determinant values in physical intern order.
     /// Index-boundary coordinate only; grouping uses
     /// [`CompiledTheory::group_key`].
+    #[must_use]
     pub fn scalar_values(&self, row: &[Value]) -> Vec<Value> {
         self.scalar_positions
             .iter()
@@ -239,7 +234,8 @@ impl CompiledProjection {
 
     #[must_use]
     pub fn interval_field(&self) -> Option<FieldId> {
-        self.interval_position.map(|position| self.projection[position])
+        self.interval_position
+            .map(|position| self.projection[position])
     }
 
     /// Complete physical determinant key width: tag + projection id +
@@ -376,7 +372,13 @@ impl CompiledTheory {
         for view in schema.statements() {
             match view {
                 StatementView::Key(_, statement) => {
-                    compile_key(schema, statement, &mut intern, &mut by_statement, &mut adjacency)?;
+                    compile_key(
+                        schema,
+                        statement,
+                        &mut intern,
+                        &mut by_statement,
+                        &mut adjacency,
+                    )?;
                 }
                 StatementView::Containment(_, statement) => {
                     compile_containment(
@@ -399,15 +401,23 @@ impl CompiledTheory {
             }
         }
 
+        let Interning {
+            projections,
+            by_relation,
+            key_by_relation,
+            witnesses,
+            max_key,
+            ..
+        } = intern;
         Ok(Self {
-            projections: intern.projections.into_boxed_slice(),
+            projections: projections.into_boxed_slice(),
             by_statement,
-            by_relation: intern.by_relation,
-            key_by_relation: intern.key_by_relation,
-            witnesses: intern.witnesses.into_boxed_slice(),
+            by_relation,
+            key_by_relation,
+            witnesses: witnesses.into_boxed_slice(),
             fields: fields.into_boxed_slice(),
             adjacency,
-            max_determinant_key_width: intern.max_key,
+            max_determinant_key_width: max_key,
         })
     }
 
@@ -428,9 +438,7 @@ impl CompiledTheory {
 
     #[must_use]
     pub fn projections_of_relation(&self, relation: RelationId) -> &[ProjectionId] {
-        self.by_relation
-            .get(&relation)
-            .map_or(&[], Vec::as_slice)
+        self.by_relation.get(&relation).map_or(&[], Vec::as_slice)
     }
 
     /// Interned key-law projections of one relation (not containment/capacity
@@ -559,6 +567,8 @@ impl CompiledTheory {
 
     /// Descriptor-based candidate walk. Existence-only stops after the first
     /// sufficient exact witness. `Stop` and source `Err` prevent later visits.
+    /// # Errors
+    /// Returns the visitor's first error without visiting later candidates.
     pub fn consume_visits<T, E>(
         witness: DistinctnessWitness,
         candidates: impl IntoIterator<Item = T>,
@@ -569,11 +579,10 @@ impl CompiledTheory {
         for item in candidates {
             visited = visited.saturating_add(1);
             match visit(item)? {
-                VisitControl::Continue => {}
                 VisitControl::Sufficient if existence_only => {
                     return Ok(VisitOutcome::Sufficient { visited });
                 }
-                VisitControl::Sufficient => {}
+                VisitControl::Continue | VisitControl::Sufficient => {}
                 VisitControl::Stop => return Ok(VisitOutcome::Stopped { visited }),
             }
         }
@@ -590,7 +599,8 @@ impl CompiledTheory {
         schema
             .statements()
             .filter(|view| {
-                !schema.closed_constant(*view) && !self.adjacency.delta_local_skippable(*view, delta)
+                !schema.closed_constant(*view)
+                    && !self.adjacency.delta_local_skippable(*view, delta)
             })
             .collect()
     }
@@ -679,7 +689,12 @@ fn compile_key(
         .entry(statement.relation)
         .or_default()
         .push(statement.id);
-    if schema.relation(statement.relation).body().closed_rows().is_some() {
+    if schema
+        .relation(statement.relation)
+        .body()
+        .closed_rows()
+        .is_some()
+    {
         return Ok(());
     }
     let witness = match statement.form() {
@@ -715,47 +730,45 @@ fn compile_containment(
         .or_default()
         .push(statement.id);
 
-        let access = by_statement
-            .entry(statement.id)
-            .or_insert_with(empty_access);
-        match &statement.enforcement {
-            Enforcement::Closed { .. } => {
-                bind_coordinates(
-                    intern.fields,
-                    access,
-                    statement.source.relation,
-                    &statement.source.projection,
-                    statement.target.relation,
-                    &statement.target.projection,
-                );
-                Ok(())
-            }
-            Enforcement::ScalarProbe {
-                target_key,
-                key_projection,
-            }
-            | Enforcement::IntervalCoverage {
-                target_key,
-                key_projection,
-                ..
-            } => {
-                bind_sides(
-                    schema,
-                    intern,
-                    access,
-                    statement.source.relation,
-                    &statement.source.projection,
-                    statement.target.relation,
-                    &statement.target.projection,
-                    key_projection,
-                    *target_key,
-                    DistinctnessWitness::FullRowEquality,
-                    DistinctnessWitness::ExistenceOnly {
-                        projection: ProjectionId(0),
-                    },
-                )
-            }
+    let access = by_statement
+        .entry(statement.id)
+        .or_insert_with(empty_access);
+    match &statement.enforcement {
+        Enforcement::Closed { .. } => {
+            bind_coordinates(
+                intern.fields,
+                access,
+                statement.source.relation,
+                &statement.source.projection,
+                statement.target.relation,
+                &statement.target.projection,
+            );
+            Ok(())
         }
+        Enforcement::ScalarProbe {
+            target_key,
+            key_projection,
+        }
+        | Enforcement::IntervalCoverage {
+            target_key,
+            key_projection,
+            ..
+        } => bind_sides(
+            schema,
+            intern,
+            access,
+            statement.source.relation,
+            &statement.source.projection,
+            statement.target.relation,
+            &statement.target.projection,
+            key_projection,
+            *target_key,
+            DistinctnessWitness::FullRowEquality,
+            DistinctnessWitness::ExistenceOnly {
+                projection: ProjectionId(0),
+            },
+        ),
+    }
 }
 
 fn compile_capacity(
@@ -779,22 +792,22 @@ fn compile_capacity(
     let access = by_statement
         .entry(statement.id)
         .or_insert_with(empty_access);
-        match &statement.enforcement {
-            CapacityEnforcement::Closed { .. } => {
-                bind_coordinates(
-                    intern.fields,
-                    access,
-                    statement.source.relation,
-                    &statement.source.projection,
-                    statement.target.relation,
-                    &statement.target.projection,
-                );
-                Ok(())
-            }
-            CapacityEnforcement::ScalarProbe {
-                target_key,
-                key_projection,
-            } => bind_sides(
+    match &statement.enforcement {
+        CapacityEnforcement::Closed { .. } => {
+            bind_coordinates(
+                intern.fields,
+                access,
+                statement.source.relation,
+                &statement.source.projection,
+                statement.target.relation,
+                &statement.target.projection,
+            );
+            Ok(())
+        }
+        CapacityEnforcement::ScalarProbe {
+            target_key,
+            key_projection,
+        } => bind_sides(
             schema,
             intern,
             access,
@@ -834,6 +847,10 @@ fn bind_coordinates(
     ));
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+)]
 fn bind_sides(
     schema: &Schema,
     intern: &mut Interning<'_>,
@@ -878,6 +895,10 @@ fn bind_sides(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+)]
 fn attach_side(
     intern: &mut Interning<'_>,
     access: &mut StatementAccess,
@@ -995,9 +1016,10 @@ fn stronger_witness(left: DistinctnessWitness, right: DistinctnessWitness) -> Di
         (DistinctnessWitness::FullRowEquality, _) | (_, DistinctnessWitness::FullRowEquality) => {
             DistinctnessWitness::FullRowEquality
         }
-        (DistinctnessWitness::ExistenceOnly { projection }, DistinctnessWitness::ExistenceOnly { .. }) => {
-            DistinctnessWitness::ExistenceOnly { projection }
-        }
+        (
+            DistinctnessWitness::ExistenceOnly { projection },
+            DistinctnessWitness::ExistenceOnly { .. },
+        ) => DistinctnessWitness::ExistenceOnly { projection },
     }
 }
 
@@ -1047,6 +1069,7 @@ fn interval_tail_encoded_width(value_type: &ValueType) -> usize {
 }
 
 /// Routing-byte width for schema validation (exact scalar or fingerprint).
+#[must_use]
 pub fn select_key_encoding_width(scalar_fields: &[FieldDescriptor]) -> usize {
     match select_encoding(scalar_fields) {
         KeyEncoding::ExactBounded { scalar_width } => scalar_width as usize,
@@ -1089,7 +1112,7 @@ fn exact_scalar_width(value_type: &ValueType) -> Option<usize> {
     match value_type {
         ValueType::Bool => Some(1),
         ValueType::U64 | ValueType::I64 | ValueType::F64 => Some(8),
-        ValueType::Id128 => Some(16),
+        ValueType::Uuid => Some(16),
         ValueType::FixedBytes { len } => Some(usize::from(*len)),
         ValueType::FixedInterval { .. } | ValueType::String | ValueType::Interval { .. } => None,
     }
@@ -1098,6 +1121,7 @@ fn exact_scalar_width(value_type: &ValueType) -> Option<usize> {
 /// Encode scalar determinant values as compact order-preserving bytes
 /// (chapter 40). Used for exact-bounded index routing and exact confirmation.
 /// Schema types are already known: no per-field tags are written.
+#[must_use]
 pub fn encode_scalar_group(values: &[Value], fields: &[FieldDescriptor]) -> Option<Vec<u8>> {
     if values.len() != fields.len() {
         return None;
@@ -1109,18 +1133,14 @@ pub fn encode_scalar_group(values: &[Value], fields: &[FieldDescriptor]) -> Opti
     Some(out)
 }
 
-fn append_exact_scalar(
-    value: &Value,
-    value_type: &ValueType,
-    out: &mut Vec<u8>,
-) -> Option<()> {
+fn append_exact_scalar(value: &Value, value_type: &ValueType, out: &mut Vec<u8>) -> Option<()> {
     use crate::encoding::{encode_bool, encode_f64, encode_i64, encode_u64};
     match (value, value_type) {
         (Value::Bool(v), ValueType::Bool) => out.push(encode_bool(*v)),
         (Value::U64(v), ValueType::U64) => out.extend_from_slice(&encode_u64(*v)),
         (Value::I64(v), ValueType::I64) => out.extend_from_slice(&encode_i64(*v)),
         (Value::F64(v), ValueType::F64) => out.extend_from_slice(&encode_f64(*v)),
-        (Value::Id128(v), ValueType::Id128) => out.extend_from_slice(v.as_bytes()),
+        (Value::Uuid(v), ValueType::Uuid) => out.extend_from_slice(v.as_bytes()),
         (Value::FixedBytes(bytes), ValueType::FixedBytes { len }) => {
             if bytes.len() != usize::from(*len) {
                 return None;
@@ -1203,7 +1223,11 @@ mod tests {
             KeyEncoding::ExactBounded { scalar_width: 8 }
         ));
         let routing = encode_scalar_group(&[Value::U64(42)], &proj.scalar_fields).expect("exact");
-        assert_eq!(routing, encode_u64(42), "compact u64 key bytes, not width arithmetic");
+        assert_eq!(
+            routing,
+            encode_u64(42),
+            "compact u64 key bytes, not width arithmetic"
+        );
         assert!(
             !routing.contains(&3),
             "exact keys do not serialize schema tags"
@@ -1227,7 +1251,9 @@ mod tests {
         assert_eq!(proj.encoding, KeyEncoding::FingerprintBucket);
         assert_eq!(
             theory.distinctness_witness(proj.id),
-            Some(DistinctnessWitness::ScalarKeyUnique { projection: proj.id })
+            Some(DistinctnessWitness::ScalarKeyUnique {
+                projection: proj.id
+            })
         );
     }
 
@@ -1274,7 +1300,10 @@ mod tests {
             .expect("containment reverse");
         assert_eq!(source.relation, RelationId(1));
         assert_eq!(&*source.projection, &[FieldId(1)]);
-        assert_ne!(source.id, key.id, "source reverse is a distinct physical index");
+        assert_ne!(
+            source.id, key.id,
+            "source reverse is a distinct physical index"
+        );
         assert_eq!(
             theory.distinctness_witness(target.id),
             Some(DistinctnessWitness::ScalarKeyUnique {
@@ -1366,11 +1395,19 @@ mod tests {
                 fd(RelationId(0), &[FieldId(0)]),
                 fd(RelationId(1), &[FieldId(0)]),
                 containment(
-                    side_where(RelationId(1), &[FieldId(1)], vec![(FieldId(2), Value::U64(1))]),
+                    side_where(
+                        RelationId(1),
+                        &[FieldId(1)],
+                        vec![(FieldId(2), Value::U64(1))],
+                    ),
                     side(RelationId(0), &[FieldId(0)]),
                 ),
                 containment(
-                    side_where(RelationId(1), &[FieldId(1)], vec![(FieldId(2), Value::U64(2))]),
+                    side_where(
+                        RelationId(1),
+                        &[FieldId(1)],
+                        vec![(FieldId(2), Value::U64(2))],
+                    ),
                     side(RelationId(0), &[FieldId(0)]),
                 ),
             ],
@@ -1471,10 +1508,7 @@ mod tests {
             KeyEncoding::ExactBounded { scalar_width: 8 }
         ));
         assert_eq!(key.interval_tail_width, 16);
-        assert_eq!(
-            key.complete_key_width(),
-            DETERMINANT_KEY_OVERHEAD + 8 + 16
-        );
+        assert_eq!(key.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8 + 16);
         assert_eq!(
             theory.distinctness_witness(key.id),
             Some(DistinctnessWitness::FullRowEquality),
@@ -1514,11 +1548,15 @@ mod tests {
         .expect("closed Source[a,b] ⊆ Target[b,a]");
         let theory = compile(&schema);
         assert!(
-            theory.source_projection(StatementId(1)).is_none(),
+            theory.source_projection(StatementId(2)).is_none(),
             "closed source must not mint a physical index"
         );
-        let source = theory.source_binding(StatementId(1)).expect("closed coordinate");
-        let target = theory.target_binding(StatementId(1)).expect("target coordinate");
+        let source = theory
+            .source_binding(StatementId(2))
+            .expect("closed coordinate");
+        let target = theory
+            .target_binding(StatementId(2))
+            .expect("target coordinate");
         assert!(source.projection.is_none());
         assert!(target.projection.is_some());
         let source_row = [Value::U64(0), Value::U64(1), Value::I64(2)];
@@ -1536,7 +1574,7 @@ mod tests {
         );
         let probe = CompiledTheory::index_key(target, &target_group).expect("index probe");
         let compiled = theory
-            .target_projection(StatementId(1))
+            .target_projection(StatementId(2))
             .expect("ordinary target index");
         assert_eq!(
             probe,
@@ -1566,11 +1604,7 @@ mod tests {
                     name: "Child".into(),
                     fields: vec![field("parent", ValueType::U64)],
                 },
-                closed(
-                    "Parent",
-                    vec![],
-                    vec![row("p", vec![])],
-                ),
+                closed("Parent", vec![], vec![row("p", vec![])]),
             ],
             statements: vec![containment(
                 side(RelationId(0), &[FieldId(0)]),
@@ -1580,10 +1614,10 @@ mod tests {
         .validate()
         .expect("ordinary ⊆ closed handle");
         let theory = compile(&schema);
-        assert!(theory.source_projection(StatementId(0)).is_none());
-        assert!(theory.target_projection(StatementId(0)).is_none());
-        let source = theory.source_binding(StatementId(0)).expect("source coord");
-        let target = theory.target_binding(StatementId(0)).expect("target coord");
+        assert!(theory.source_projection(StatementId(1)).is_none());
+        assert!(theory.target_projection(StatementId(1)).is_none());
+        let source = theory.source_binding(StatementId(1)).expect("source coord");
+        let target = theory.target_binding(StatementId(1)).expect("target coord");
         assert!(source.projection.is_none());
         assert!(target.projection.is_none());
         let child = [Value::U64(0)];
@@ -1623,7 +1657,7 @@ mod tests {
             [Value::U64(1), Value::U64(11)]
         );
         assert_eq!(
-            theory.full_row_witness(),
+            CompiledTheory::full_row_witness(),
             DistinctnessWitness::FullRowEquality
         );
     }

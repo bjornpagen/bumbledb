@@ -106,12 +106,19 @@ def renderF64 (value : F64) : String :=
 
 /-- One value in the tagged compact form (the interchange format's
 value spelling; `lean/conformance/README.md`). -/
+def renderUuid (value : Uuid) : String :=
+  String.join ((List.range 32).map fun position =>
+    let digit := value.val / 16 ^ (31 - position) % 16
+    let hex := String.singleton (Char.ofNat (if digit < 10 then 48 + digit else 87 + digit))
+    (if position = 8 ∨ position = 12 ∨ position = 16 ∨ position = 20 then "-" else "") ++ hex)
+
 def renderValue : Value → String
   | { type := .bool, val := b } =>
     "{\"bool\":" ++ cond b "true" "false" ++ "}"
   | { type := .u64, val := x } => "{\"u64\":" ++ toString x.val ++ "}"
   | { type := .i64, val := x } => "{\"i64\":" ++ toString x.val ++ "}"
   | { type := .f64, val := x } => "{\"f64\":\"" ++ renderF64 x ++ "\"}"
+  | { type := .uuid, val := x } => "{\"uuid\":\"" ++ renderUuid x ++ "\"}"
   | { type := .str, val := s } => "{\"str\":" ++ toString s.id ++ "}"
   | { type := .fixedBytes _, val := bs } =>
     "{\"bytes\":[" ++
@@ -291,7 +298,23 @@ def decodeIntervalI64 (j : Json) : Except String (Interval I64) := do
   | _ => .error "interval expects [start, end]"
 
 /-- One tagged value. -/
+def decodeUuid (text : String) : Except String Uuid := do
+  if text.length != 36 then throw "uuid expects canonical hyphenated text"
+  let digits := text.toList.filter (· != '-')
+  let bits ← digits.foldlM (init := 0) fun value digit => do
+    let n := digit.toNat
+    let nibble ← if 48 ≤ n ∧ n ≤ 57 then pure (n - 48)
+                 else if 97 ≤ n ∧ n ≤ 102 then pure (n - 87)
+                 else throw "uuid expects lowercase ASCII hex"
+    pure (value * 16 + nibble)
+  if h : bits < 2^128 then
+    let id : Uuid := ⟨bits, h⟩
+    if renderUuid id = text then pure id else throw "noncanonical uuid"
+  else throw "uuid exceeds 128 bits"
+
 def decodeValue (j : Json) : Except String Value := do
+  if let some n := objKey? j "uuid" then
+    return ⟨.uuid, ← decodeUuid (← n.getStr?)⟩
   if let some b := objKey? j "bool" then
     return ⟨.bool, ← b.getBool?⟩
   if let some n := objKey? j "u64" then
@@ -530,6 +553,7 @@ def typeOfName (s : String) : Except String ValueType :=
   | "u64" => .ok .u64
   | "i64" => .ok .i64
   | "f64" => .ok .f64
+  | "uuid" => .ok .uuid
   | "str" => .ok .str
   | "interval_u64" => .ok (.interval .u64)
   | "interval_i64" => .ok (.interval .i64)

@@ -221,9 +221,7 @@ impl ReceiveFault {
     #[must_use]
     pub fn into_io(self, key: &str) -> io::Error {
         match self {
-            Self::Work(error) => {
-                io::Error::new(io::ErrorKind::TimedOut, format!("{error:?}"))
-            }
+            Self::Work(error) => io::Error::new(io::ErrorKind::TimedOut, format!("{error:?}")),
             Self::Capped { cap, got } => io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("object {key} length {got}, expected at most {cap}"),
@@ -232,9 +230,7 @@ impl ReceiveFault {
                 io::ErrorKind::InvalidData,
                 format!("object {key} length overflow"),
             ),
-            Self::Alloc => {
-                io::Error::new(io::ErrorKind::OutOfMemory, "receive allocation failed")
-            }
+            Self::Alloc => io::Error::new(io::ErrorKind::OutOfMemory, "receive allocation failed"),
             Self::Io(error) => error,
             Self::WrongLength { expected, got } => io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -263,11 +259,7 @@ impl<'a> ReceiveAccumulator<'a> {
     /// Cap at the reference length (intersected with the caller's envelope)
     /// and hash chunks under the kind's digest domain as they arrive.
     #[must_use]
-    pub fn verified(
-        ctx: TransportContext<'a>,
-        kind: ObjectKind,
-        reference: &ObjectRef,
-    ) -> Self {
+    pub fn verified(ctx: TransportContext<'a>, kind: ObjectKind, reference: &ObjectRef) -> Self {
         let max_bytes = ctx.receive.max_bytes.min(reference.length);
         Self {
             ctx: TransportContext {
@@ -284,6 +276,11 @@ impl<'a> ReceiveAccumulator<'a> {
     #[must_use]
     pub fn len(&self) -> u64 {
         self.buf.len() as u64
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buf.len() == 0
     }
 
     #[must_use]
@@ -325,12 +322,9 @@ impl<'a> ReceiveAccumulator<'a> {
         match &mut self.buf {
             AccBuf::Empty => {
                 if let Some(work) = self.ctx.work {
-                    let mut charged = ChargedBuffer::with_capacity(
-                        work,
-                        ByteKind::Working,
-                        chunk.len(),
-                    )
-                    .map_err(ReceiveFault::Work)?;
+                    let mut charged =
+                        ChargedBuffer::with_capacity(work, ByteKind::Working, chunk.len())
+                            .map_err(ReceiveFault::Work)?;
                     charged
                         .try_extend_from_slice(chunk)
                         .map_err(ReceiveFault::Work)?;
@@ -453,6 +447,24 @@ impl<T: ReceivingStore + ?Sized> ReceivingStore for &T {
     }
 }
 
+impl<T: ReceivingStore + ?Sized> ReceivingStore for std::sync::Arc<T> {
+    fn receive_object(
+        &self,
+        key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedBody, T::Error> {
+        (**self).receive_object(key, ctx)
+    }
+
+    fn receive_head(
+        &self,
+        head_key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedHead, T::Error> {
+        (**self).receive_head(head_key, ctx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,10 +507,8 @@ mod tests {
         let ctx = work(64, Duration::from_secs(5));
         let baseline = ctx.used(bumbledb::work::Resource::WorkingBytes);
         {
-            let mut acc = ReceiveAccumulator::new(TransportContext::new(
-                &ctx,
-                ReceiveLimits::capped(32),
-            ));
+            let mut acc =
+                ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
             acc.push(b"payload").expect("push");
             assert!(ctx.used(bumbledb::work::Resource::WorkingBytes) > baseline);
             drop(acc);
@@ -510,10 +520,8 @@ mod tests {
     fn accumulator_checkpoints_deadline_between_chunks() {
         let ctx = work(1_024, Duration::from_millis(1));
         std::thread::sleep(Duration::from_millis(3));
-        let mut acc = ReceiveAccumulator::new(TransportContext::new(
-            &ctx,
-            ReceiveLimits::capped(32),
-        ));
+        let mut acc =
+            ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
         assert!(matches!(
             acc.push(b"late"),
             Err(ReceiveFault::Work(WorkError::DeadlineExceeded))
@@ -561,10 +569,8 @@ mod tests {
         let ctx = work(64, Duration::from_secs(5));
         let baseline = ctx.used(bumbledb::work::Resource::WorkingBytes);
         let body = {
-            let mut acc = ReceiveAccumulator::new(TransportContext::new(
-                &ctx,
-                ReceiveLimits::capped(32),
-            ));
+            let mut acc =
+                ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
             acc.push(b"payload").expect("push");
             acc.finish().expect("finish")
         };

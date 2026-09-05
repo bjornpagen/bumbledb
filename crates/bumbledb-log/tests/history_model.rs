@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bumbledb::Id128;
+use bumbledb::Uuid;
 use bumbledb_log::history::admission::{AdmissionView, Refusal, Submission};
 use bumbledb_log::history::{
     AccessMode, CommandDigest, CommandId, CommandRef, CommandResult, Condition, DatabaseId,
@@ -476,9 +476,9 @@ fn independent_admission_matrix_matches_the_production_guard() {
 }
 
 fn compare_guard(model: &Model, intent: &Intent, stored: u8) {
-    let incarnation = IncarnationId::from_core(Id128::from_bytes([2; 16]));
+    let incarnation = IncarnationId::from_core(Uuid::from_bytes([2; 16]));
     let identity = DatabaseIdentity {
-        database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
+        database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
         incarnation_id: incarnation,
         schema_id: SchemaId([3; 32]),
     };
@@ -502,12 +502,12 @@ fn compare_guard(model: &Model, intent: &Intent, stored: u8) {
     };
     let command = CommandRef {
         identity: DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([intent.scope; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([intent.scope; 16])),
             ..identity
         },
         id: CommandId {
             receipt_epoch: ReceiptEpoch::new(intent.epoch).unwrap(),
-            request_id: RequestId::from_core(Id128::from_bytes([1; 16])),
+            request_id: RequestId::from_core(Uuid::from_bytes([1; 16])),
         },
         digest: CommandDigest::from_bytes([5; 32]),
     };
@@ -574,7 +574,12 @@ enum IndependentResolve {
 }
 
 impl Model {
-    fn resolve_after_unknown(&self, epoch: u64, request: u8, version_consumed: bool) -> IndependentResolve {
+    fn resolve_after_unknown(
+        &self,
+        epoch: u64,
+        request: u8,
+        version_consumed: bool,
+    ) -> IndependentResolve {
         if self.receipts.contains_key(&(epoch, request)) {
             return IndependentResolve::Found;
         }

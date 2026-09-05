@@ -17,14 +17,31 @@ only find candidates; collisions cannot merge, lose, or delete the wrong
 fact. A compact physical row ID is local indirection, not a generated
 business identity or a cross-incarnation identifier.
 
-Booleans, integer domains, F64, application Id128, fixed-width bytes,
+Booleans, integer domains, F64, UUIDs, fixed-width bytes,
 text and supported interval domains each have one canonical encoding and
 checked construction boundary. Invalid UTF-8, malformed arity/type,
 alternate already-canonical encodings and unknown tags refuse. Text stays
 inline in durable values; an execution token is not a durable dictionary
-ID. Id128 is ordinary application-owned data; reuse the same ID across
+ID. A UUID is ordinary application-owned data; reuse the same ID across
 command retries. Keys, not a hash or UUID issuance theorem, enforce
 schema uniqueness.
+
+`Uuid` is the standard Rust `uuid::Uuid`, and the structural template-literal
+type `${string}-${string}-${string}-${string}-${string}` in TypeScript.
+UUID literals and compatible host generators need no casts or nominal brands.
+The type describes shape, not validation: parsing, byte decoding, and database
+boundaries check exact hexadecimal width and canonical spelling at runtime.
+The pure `Uuid.parse`, `Uuid.fromBytes`, and `Uuid.toBytes` conversions return
+Effect `Result` values. Every 128-bit payload is valid, including Nil, Max, and
+unknown versions or variants. UUID values occupy exactly 16 payload bytes;
+comparison is unsigned lexicographic order over standard UUID bytes, never
+mixed-endian GUID layout. Equality, joins, and `<`, `<=`, `>`, `>=` compare
+the complete value. This gives UUIDv7 time locality, not a causal clock or a
+cross-writer monotonicity guarantee. Generate identifiers in the host library;
+the engine has no clock, entropy source, or entity-specific nominal types.
+Rust macro newtypes and TypeScript brands can distinguish application entities
+without changing stored identity. UUIDs are not numeric aggregate inputs or
+interval endpoints.
 
 Within one sealed change set, duplicate exact additions/removals
 disappear and addition wins when the same exact fact occurs on both
@@ -120,7 +137,11 @@ float-duration capacity is selected.
 ## Wire and proof boundary
 
 Host TypeScript uses number for F64, bigint for integers, and canonical
-lowercase hex for Id128 at the native cell boundary. Generic JSON float
+lowercase hyphenated UUID text (`00112233-4455-6677-8899-aabbccddeeff`)
+at the native cell boundary. `Uuid.parse` in TypeScript accepts uppercase
+hyphenated host input and normalizes it; native and persisted artifact
+boundaries require canonical spelling. UUIDv4/v7 generation belongs to the
+host ecosystem, not the database. Generic JSON float
 artifacts use canonical-bit tagged data (`{"$f64":"7ff8000000000000"}`).
 Exact native/artifact grammar has one authoritative codec.
 
@@ -147,7 +168,7 @@ planner is not an oracle. L20 owns seven executable `C-*` ids in
 `C-D19-mean-once`, `C-D19-merge-not-idemp`, `C-G03-mutable-support`,
 `C-G03-add-wins`, `C-G03-raw-commute`.
 
-Identity/surface goldens are `python3 scripts/spec-gen.py --check`
+Identity/surface goldens are `cargo nextest run -p bumbledb-log --test conformance_v3`
 against `crates/bumbledb-log/conformance/v3`. That is a wire-byte
 fixpoint, not an authority theorem. Census no longer runs those
 goldens.

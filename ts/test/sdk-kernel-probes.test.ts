@@ -25,7 +25,7 @@
 
 import assert from "node:assert/strict"
 import { test } from "node:test"
-
+import { Result } from "effect"
 import { closed } from "#closed.ts"
 import { interval, span, str, u64 } from "#fields.ts"
 import { ALLEN } from "#query/atom.ts"
@@ -48,7 +48,7 @@ test("CONTROL: allen() accepts a literal interval side (sibling is interval-type
 		const { active } = v(Session)
 		return r
 			.match(Session, { active })
-			.where(r.allen(span(0n, 12n), ALLEN.intersects, active))
+			.where(r.allen(Result.getOrThrow(span(0n, 12n)), ALLEN.intersects, active))
 			.find({ iv: active })
 	})
 	assert.doesNotThrow(function lowerIt() {
@@ -71,7 +71,7 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 		const { holder, at } = v(Session)
 		return r
 			.match(Session, { holder, at })
-			.where(r.pointIn(at, span(0n, 10n)))
+			.where(r.pointIn(at, Result.getOrThrow(span(0n, 10n))))
 			.find({ h: holder, t: at })
 	})
 	const ir = lowerQuery(q)

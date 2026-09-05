@@ -7,6 +7,8 @@ pub mod view;
 
 mod bind;
 mod build;
+#[cfg(test)]
+pub(crate) use build::test_generation;
 pub(crate) mod canon;
 mod decode;
 mod distinct;
@@ -18,8 +20,8 @@ mod stride;
 pub(crate) mod testsupport;
 
 pub(crate) use bind::{ImageBind, SourceImages};
-pub(crate) use build::build_from_source;
-pub(crate) use epoch::{CacheGeneration, TextGeneration, ViewEpoch};
+pub(crate) use build::{build_from_source, estimated_slab_bytes};
+pub(crate) use epoch::{CacheGeneration, ViewEpoch};
 
 pub use build::{TransientImage, synthesize_closed};
 /// Production intern/image refusal. L05 execute/spill matches
@@ -29,13 +31,8 @@ pub use build::{TransientImage, synthesize_closed};
 /// `u64 ==`; resolver failure is `Err`, never inequality).
 /// Stamp memos with [`NonresidentTextStore::epoch`] (full owner id, not
 /// packed into tokens). Invalidate on mismatch or drop.
-pub use intern::{
-    is_resident_token, is_scratch_token, ResidentAdmit, ResidentTextExhausted, SCRATCH_TOKEN_TAG,
-};
-pub use nonresident::{
-    scratch_token_epoch, NonresidentTextStore, TextEq, TextStoreEpoch,
-};
-pub use crate::work::cache::WeakGenerationHandle;
+pub use intern::{ResidentAdmit, ResidentTextExhausted, is_resident_token, is_scratch_token};
+pub use nonresident::{NonresidentTextStore, TextEq, TextStoreEpoch};
 
 const SET_STRIDE: usize = 16_384;
 
@@ -108,7 +105,7 @@ pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[
                 // Sixteen exact identity bytes: two big-endian word
                 // columns — byte order IS the value's one total order,
                 // so two-word lexicographic comparison is exact.
-                ValueType::Id128 => ColumnWidth::Words { count: 2 },
+                ValueType::Uuid => ColumnWidth::Words { count: 2 },
                 ValueType::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))
                         .expect("bytes width is at most 8 words")
@@ -159,8 +156,19 @@ pub struct RelationImage {
     bytes: Vec<u8>,
 
     generation: crate::work::GenerationHandle,
-    charge: Option<crate::work::ChargedImage>,
+    _charge: Option<SlabCharge>,
     strings: Box<[bool]>,
+}
+
+/// The allocation, not the cache slot or builder, retains its budget.
+#[derive(Debug)]
+enum SlabCharge {
+    Cache {
+        _owner: crate::work::ChargedImage,
+    },
+    Working {
+        _owner: crate::work::ByteReservation,
+    },
 }
 
 impl RelationImage {
@@ -175,13 +183,16 @@ impl RelationImage {
     }
 
     #[must_use]
-    pub fn resolver(&self) -> crate::work::ResolverView<'_> {
-        self.generation.resolver()
-    }
-
-    #[must_use]
+    #[cfg(test)]
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "Tests inspect the live reservation owned by the RAII charge guard"
+    )]
     pub fn charged_bytes(&self) -> Option<u64> {
-        self.charge.as_ref().map(crate::work::ChargedImage::charged_bytes)
+        self._charge.as_ref().map(|charge| match charge {
+            SlabCharge::Cache { _owner: charge } => charge.charged_bytes(),
+            SlabCharge::Working { _owner: charge } => charge.bytes(),
+        })
     }
 
     /// True when this field's column words are intern/scratch text tokens.

@@ -1,7 +1,7 @@
 //! Compact chapter-40 scorecard (resident read, mutation→read, numeric/
 //! interval/Pack, nonresident, tenant lifecycle, hosted decision).
 //! Gates APP-FAST/MUTATE/NUMERIC/LARGE/TENANTS/TARGETS/METHOD/MAGIC;
-//! audit PERF-001–005 and REVIEW-001. Verification: NotRun.
+//! audit PERF-001–005 and REVIEW-001. Verification: `NotRun`.
 //!
 //! Authored during F1; every measurement executes only in F3, serialized per
 //! host. The module owns:
@@ -155,7 +155,7 @@ pub struct CostAccount {
     /// On-disk consumption after the cell (store + temporary scratch).
     pub disk_bytes: Option<u64>,
     pub scratch_bytes: Option<u64>,
-    /// Actual visitor counts (L01 consume_visits). Missing is a hole, not zero.
+    /// Actual visitor counts (L01 `consume_visits`). Missing is a hole, not zero.
     pub source_visits: Option<u64>,
     pub group_visits: Option<u64>,
     /// Charged-owner snapshot (L03). Logical bytes, not RSS.

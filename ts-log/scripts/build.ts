@@ -44,7 +44,14 @@ function verifyPack(packageRoot: string): void {
 		const tarball = stageLogPackage(packageRoot, staging, scratch)
 
 		const files = tarballFiles(tarball)
-		for (const required of ["package.json", "dist/index.js", "dist/index.d.ts", "dist/schema.js", "dist/migrations/index.js", "dist/migrations/bin.js"]) {
+		for (const required of [
+			"package.json",
+			"dist/index.js",
+			"dist/index.d.ts",
+			"dist/schema.js",
+			"dist/migrations/index.js",
+			"dist/migrations/bin.js"
+		]) {
 			if (!files.includes(required)) {
 				throw new BuildInputError({ message: `package tarball is missing ${required}` })
 			}
@@ -73,13 +80,19 @@ function verifyPack(packageRoot: string): void {
 		assertEntry(table, "./schema", "./dist/schema.d.ts", "./dist/schema.js")
 		assertEntry(table, "./migrations", "./dist/migrations/index.d.ts", "./dist/migrations/index.js")
 		const bin = packed.success.bin
-		if (typeof bin !== "object" || bin === null || (bin as Record<string, unknown>)["bumbledb-log"] !== "./dist/migrations/bin.js") {
+		if (
+			typeof bin !== "object" ||
+			bin === null ||
+			(bin as Record<string, unknown>)["bumbledb-log"] !== "./dist/migrations/bin.js"
+		) {
 			throw new BuildInputError({ message: 'package.json bin must map "bumbledb-log" to ./dist/migrations/bin.js' })
 		}
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })
 	}
-	console.log("bumbledb-log build: staged tarball carries dist JS, declarations, subpaths and the CLI; checkout untouched")
+	console.log(
+		"bumbledb-log build: staged tarball carries dist JS, declarations, subpaths and the CLI; checkout untouched"
+	)
 }
 
 function assertEntry(exports: Record<string, unknown>, entry: string, types: string, main: string): void {

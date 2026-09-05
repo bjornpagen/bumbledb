@@ -13,8 +13,8 @@ use std::time::Instant;
 use bumbledb::work::{WorkContext, WorkError};
 use bumbledb::{ChangeSet, RelationId, Value};
 
-use crate::runtime::registry::registry_draft::{DraftPayload, PendingChange};
 use crate::runtime::registry::Payload;
+use crate::runtime::registry::registry_draft::{DraftPayload, PendingChange};
 use crate::runtime::{Output, RuntimeError};
 
 use super::{change_error, value_bytes};
@@ -28,8 +28,6 @@ fn draft_spent(entry: &DraftPayload) -> bool {
 
 fn mark_terminal(entry: &mut DraftPayload) {
     entry.ledger.terminal = true;
-    entry.used_input = entry.allowance_input.saturating_add(1);
-    entry.used_rows = entry.allowance_rows.saturating_add(1);
 }
 
 fn draft_deadline(entry: &mut DraftPayload) -> Result<(), RuntimeError> {
@@ -56,6 +54,21 @@ pub(crate) fn ingest_from_payload(
     if draft_spent(entry) {
         return Err(RuntimeError::SpentHandle);
     }
+    let result = ingest_chunk(entry, context, relation, insert, rows, chunk_bytes);
+    if result.is_err() {
+        mark_terminal(entry);
+    }
+    result
+}
+
+fn ingest_chunk(
+    entry: &mut DraftPayload,
+    context: &WorkContext,
+    relation: u32,
+    insert: bool,
+    rows: Vec<Vec<Value>>,
+    chunk_bytes: u64,
+) -> Result<Output, RuntimeError> {
     context.checkpoint()?;
     draft_deadline(entry)?;
     let chunk_work = rows.len() as u64;
@@ -122,7 +135,7 @@ pub(crate) fn finish_from_payload(
     if draft_spent(entry) {
         return Err(RuntimeError::SpentHandle);
     }
-    context.checkpoint()?;
+    context.checkpoint().inspect_err(|_| mark_terminal(entry))?;
     draft_deadline(entry)?;
     let finish_work = entry.pending.len() as u64;
     let next_work = entry.ledger.used_work.saturating_add(finish_work);
@@ -204,13 +217,9 @@ pub(crate) fn parse_draft_rows(
         let field = &roster.fields[(index as usize) % arity];
         let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "draft cells")
             .map_err(|_| RuntimeError::InvalidArgument)?;
-        let value = crate::marshal::schema_value_in(
-            &field.value_type,
-            &value,
-            &roster.name,
-            &field.name,
-        )
-        .map_err(|_| RuntimeError::InvalidArgument)?;
+        let value =
+            crate::marshal::schema_value_in(&field.value_type, &value, &roster.name, &field.name)
+                .map_err(|_| RuntimeError::InvalidArgument)?;
         bytes = bytes.saturating_add(value_bytes(&value));
         row.push(value);
         if row.len() == arity {

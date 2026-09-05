@@ -21,6 +21,7 @@
  * and the idiomatic host values (bigint/number/Uint8Array) the core SDK's
  * `literal` constructor may retain.
  */
+import { Uuid } from "@bjornpagen/bumbledb"
 import { bytesHex, f64Bits } from "#migrations/canonical.ts"
 import type { PlanExpression, PlanValue } from "#migrations/types.ts"
 
@@ -127,10 +128,8 @@ export function planValueOf(value: unknown): PlanValue | string {
 			const bits = bitsOf(body)
 			return bits === null ? "f64 literal needs a number or 16 lowercase hex bits" : { $f64: bits }
 		}
-		case "id128":
-			return typeof body === "string" && isCanonicalHex(body, 32)
-				? { id128: body }
-				: "id128 literal needs canonical 32-lowercase-hex"
+		case "uuid":
+			return Uuid.isUuid(body) ? { uuid: body } : "uuid literal needs a canonical UUID"
 		case "string":
 			return typeof body === "string" && body.length <= MAX_TEXT && body.isWellFormed()
 				? { string: body }
@@ -139,7 +138,12 @@ export function planValueOf(value: unknown): PlanValue | string {
 			if (body instanceof Uint8Array && body.length <= MAX_TEXT) {
 				return { fixedBytes: bytesHex(body) }
 			}
-			if (typeof body === "string" && body.length <= 2 * MAX_TEXT && body.length % 2 === 0 && isCanonicalHex(body, body.length)) {
+			if (
+				typeof body === "string" &&
+				body.length <= 2 * MAX_TEXT &&
+				body.length % 2 === 0 &&
+				isCanonicalHex(body, body.length)
+			) {
 				return { fixedBytes: body }
 			}
 			return "fixedBytes literal needs a bounded Uint8Array or lowercase hex"

@@ -190,10 +190,26 @@ impl NaiveDb {
     /// incremental `judge` cannot see without a holds-before premise.
     #[must_use]
     pub fn judge_complete(&self) -> Vec<Violation> {
-        let state = &self.relations;
-        let minted = &self.dict;
+        self.judge_state(&self.relations, &[], None)
+    }
+
+    // The oracle judges the entire candidate independently. Incremental routing
+    // is an engine optimization, not a second meaning for a violated statement.
+    fn judge_state(
+        &self,
+        state: &[BTreeSet<Tuple>],
+        minted: &[Box<str>],
+        touched: Option<&BTreeSet<RelationId>>,
+    ) -> Vec<Violation> {
         let mut found: Vec<Violation> = Vec::new();
         for (sid, statement) in self.statements.iter().enumerate() {
+            if touched.is_some_and(|relations| {
+                !successor::admission::consulted(statement)
+                    .iter()
+                    .any(|relation| relations.contains(relation))
+            }) {
+                continue;
+            }
             let StatementDescriptor::Functionality {
                 relation,
                 projection,
@@ -210,10 +226,14 @@ impl NaiveDb {
                 }
             }
         }
-        if !found.is_empty() {
-            return sealed(found);
-        }
         for (sid, statement) in self.statements.iter().enumerate() {
+            if touched.is_some_and(|relations| {
+                !successor::admission::consulted(statement)
+                    .iter()
+                    .any(|relation| relations.contains(relation))
+            }) {
+                continue;
+            }
             match statement {
                 StatementDescriptor::Containment { source, target } => {
                     for fact in &state[source.relation.0 as usize] {
@@ -320,9 +340,15 @@ impl NaiveDb {
         if let Some(refusal) = self.ray_weight_refusal(delta) {
             return Err(vec![refusal]);
         }
-        let (next, inserted) = self.staged(delta);
+        let (next, _) = self.staged(delta);
         let minted = self.minted(delta);
-        let violations = self.judge(&next, &inserted, &minted);
+        let touched = delta
+            .inserts
+            .iter()
+            .chain(&delta.deletes)
+            .map(|(relation, _)| *relation)
+            .collect();
+        let violations = self.judge_state(&next, &minted, Some(&touched));
         if violations.is_empty() {
             Ok((next, minted))
         } else {
@@ -386,119 +412,6 @@ impl NaiveDb {
             next[rel.0 as usize].insert(tuple);
         }
         (next, inserted)
-    }
-
-    /// (materialized statement order; source before target within one
-    fn judge(
-        &self,
-        state: &[BTreeSet<Tuple>],
-        inserted: &[BTreeSet<Tuple>],
-        minted: &[Box<str>],
-    ) -> Vec<Violation> {
-        let mut found: Vec<Violation> = Vec::new();
-        for (rel, facts) in inserted.iter().enumerate() {
-            for fact in facts {
-                for (sid, statement) in self.statements.iter().enumerate() {
-                    let StatementDescriptor::Functionality {
-                        relation,
-                        projection,
-                    } = statement
-                    else {
-                        continue;
-                    };
-                    if relation.0 as usize == rel
-                        && self.functionality_violated(state, *relation, projection, fact)
-                    {
-                        found.push(Violation::Functionality {
-                            statement: statement_id(sid),
-                        });
-                    }
-                }
-            }
-        }
-        if !found.is_empty() {
-            return sealed(found);
-        }
-        for (rel, facts) in inserted.iter().enumerate() {
-            for fact in facts {
-                for (sid, statement) in self.statements.iter().enumerate() {
-                    let StatementDescriptor::Containment { source, target } = statement else {
-                        continue;
-                    };
-                    if source.relation.0 as usize == rel
-                        && satisfies_selection(fact, &source.selection)
-                        && !self.contained(state, source, target, fact)
-                    {
-                        found.push(Violation::Containment {
-                            statement: statement_id(sid),
-                            direction: Direction::SourceUnsatisfied,
-                        });
-                    }
-                }
-            }
-        }
-        for (sid, statement) in self.statements.iter().enumerate() {
-            let StatementDescriptor::Containment { source, target } = statement else {
-                continue;
-            };
-            for fact in &state[source.relation.0 as usize] {
-                if inserted[source.relation.0 as usize].contains(fact) {
-                    continue;
-                }
-
-                // instance that held before and fails after. This is the
-
-                if satisfies_selection(fact, &source.selection)
-                    && self.contained(&self.relations, source, target, fact)
-                    && !self.contained(state, source, target, fact)
-                {
-                    found.push(Violation::Containment {
-                        statement: statement_id(sid),
-                        direction: Direction::TargetRequired,
-                    });
-                }
-            }
-        }
-
-        // (`lean/Bumbledb/Txn.lean` — the statement-phase violation set
-
-        // (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-
-        for (sid, statement) in self.statements.iter().enumerate() {
-            match statement {
-                StatementDescriptor::Capacity {
-                    target,
-                    weight,
-                    lo,
-                    hi,
-                    source,
-                } => {
-                    // every walked parent's own row BEFORE its window
-
-                    if let Some(Bound::TargetDuration(field)) = hi
-                        && self.target_facts(state, target).any(|parent| {
-                            satisfies_selection(parent, &target.selection)
-                                && is_ray(&parent.0[field.0 as usize])
-                        })
-                    {
-                        return vec![Violation::CapacityRayMeasure {
-                            statement: statement_id(sid),
-                        }];
-                    }
-                    if let Some(measure) =
-                        self.capacity_violated(state, minted, target, *weight, *lo, *hi, source)
-                    {
-                        found.push(Violation::Capacity {
-                            statement: statement_id(sid),
-                            measure,
-                        });
-                    }
-                }
-                StatementDescriptor::Functionality { .. }
-                | StatementDescriptor::Containment { .. } => {}
-            }
-        }
-        sealed(found)
     }
 
     /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). Returns the

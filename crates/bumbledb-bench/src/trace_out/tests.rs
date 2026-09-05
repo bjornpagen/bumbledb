@@ -285,22 +285,30 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
         seed: 1,
         scale: Scale::S,
     };
-    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger)
-        .expect("create")
-        .expect("accepted");
+    let db = bumbledb::Db::create(
+        &dir.join("db"),
+        crate::schema::Ledger,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
 
     let family = crate::families::all()
         .iter()
         .find(|f| f.name == "containment_walk")
         .expect("registered");
-    let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+    let mut prepared = db
+        .prepare(&(family.query)(), crate::harness::bench_work())
+        .expect("prepare");
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = bumbledb::Answers::new();
     let mut run = || {
         let args = crate::families::param_args(rotation.next_set());
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("{e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("{e:?}"))?;
         Ok(buffer.len() as u64)
     };
     // Warm first — the traced sample is a warm one.

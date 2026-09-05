@@ -26,7 +26,7 @@ pub const UUID_V4_RANDOM_BITS: u32 = 122;
 
 /// Full-random 16-byte application IDs (the recommended helper) do carry the
 /// whole 128 bits.
-pub const ID128_RANDOM_BITS: u32 = 128;
+pub const UUID_RANDOM_BITS: u32 = 128;
 
 #[expect(
     clippy::cast_precision_loss,

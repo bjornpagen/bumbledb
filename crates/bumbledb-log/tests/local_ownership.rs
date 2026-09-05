@@ -260,7 +260,7 @@ fn d28_successor_reuses_the_persistent_lock_inode_without_deleting_it() {
             Err(error) => panic!("death releases ownership: {error}"),
         }
     };
-    assert_eq!(successor.lock_path(), lock_path.as_path());
+    assert_eq!(successor.lock_path(), lock_path.canonicalize().unwrap());
     let after = successor.lock_inode().expect("successor inode");
     assert_eq!(after.dev, inode.0);
     assert_eq!(after.ino, inode.1);

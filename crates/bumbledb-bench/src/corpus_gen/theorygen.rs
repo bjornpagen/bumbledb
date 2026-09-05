@@ -9,8 +9,8 @@ use super::Rng;
 mod arity;
 
 pub use arity::{
-    ARITY_WIDTH_BOUND, ArityCoverage, ArityDescriptorCase, ArityExpectation, ArityOpsCase,
-    MAX_MIXED_ARITY, SelectionPlacement, arity_descriptor, random_arity_descriptor,
+    ARITY_COVERAGE_BYTES, ArityCoverage, ArityDescriptorCase, ArityExpectation, ArityOpsCase,
+    MAX_COVERED_ARITY, SelectionPlacement, arity_descriptor, random_arity_descriptor,
     random_valid_arity_descriptor, random_valid_arity_ops,
 };
 
@@ -167,11 +167,11 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
             };
             Value::FixedBytes(vec![0xA5; width].into())
         }
-        ValueType::Id128 => {
+        ValueType::Uuid => {
             let mut bytes = [0u8; 16];
             bytes[..8].copy_from_slice(&rng.u64().to_be_bytes());
             bytes[8..].copy_from_slice(&rng.u64().to_be_bytes());
-            Value::Id128(bumbledb::Id128::from_bytes(bytes))
+            Value::Uuid(bumbledb::Uuid::from_bytes(bytes))
         }
         ValueType::Interval { element } => interval_value(rng, *element),
         ValueType::FixedInterval { element, .. } => interval_value(rng, element.element()),

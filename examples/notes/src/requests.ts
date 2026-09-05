@@ -1,7 +1,7 @@
 /**
  * The application's request/job record — the durable coordinate that makes
  * command retries safe (chapters 30/35): the client supplies a stable
- * Idempotency-Key (an Id128), the app derives the ONE command identity
+ * Idempotency-Key (a UUID), the app derives the ONE command identity
  * from it, persists the sealed command's ref BEFORE dispatch, and records
  * the observed outcome after. A timeout retries the IDENTICAL command or
  * resolves the retained ref; it never mints a fresh identity.
@@ -16,7 +16,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { randomUUID } from "node:crypto"
-import type { Id128 } from "@bjornpagen/bumbledb"
+import type { Uuid } from "@bjornpagen/bumbledb"
 import type { CommandRef, SubmitOutcome } from "@bjornpagen/bumbledb-log"
 import { renderCommandRef, renderDecisionStamp } from "@bjornpagen/bumbledb-log"
 import { Effect } from "effect"
@@ -26,7 +26,7 @@ function requestDir(tenantId: string): string {
 	return path.join(base, tenantId)
 }
 
-function recordPath(tenantId: string, requestKey: Id128): string {
+function recordPath(tenantId: string, requestKey: Uuid): string {
 	return path.join(requestDir(tenantId), `${requestKey}.json`)
 }
 
@@ -49,7 +49,7 @@ function readRecord(file: string): Record<string, unknown> {
 }
 
 /** Persist the ref BEFORE dispatch; the recovery coordinate survives us. */
-export const rememberCommandRef = (tenantId: string, requestKey: Id128, ref: CommandRef) =>
+export const rememberCommandRef = (tenantId: string, requestKey: Uuid, ref: CommandRef) =>
 	Effect.sync(() => {
 		const file = recordPath(tenantId, requestKey)
 		const existing = readRecord(file)
@@ -57,7 +57,7 @@ export const rememberCommandRef = (tenantId: string, requestKey: Id128, ref: Com
 	})
 
 /** Record what THIS invocation observed (bounded evidence, no payloads). */
-export const rememberSubmitOutcome = (tenantId: string, requestKey: Id128, outcome: SubmitOutcome) =>
+export const rememberSubmitOutcome = (tenantId: string, requestKey: Uuid, outcome: SubmitOutcome) =>
 	Effect.sync(() => {
 		const file = recordPath(tenantId, requestKey)
 		const existing = readRecord(file)
@@ -73,7 +73,7 @@ export const rememberSubmitOutcome = (tenantId: string, requestKey: Id128, outco
 	})
 
 /** The stored ref string for a request, if any — resolve() input on recovery. */
-export function storedRef(tenantId: string, requestKey: Id128): string | undefined {
+export function storedRef(tenantId: string, requestKey: Uuid): string | undefined {
 	const file = recordPath(tenantId, requestKey)
 	if (!fs.existsSync(file)) {
 		return undefined

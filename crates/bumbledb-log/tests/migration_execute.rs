@@ -14,7 +14,7 @@ use bumbledb::schema::{
     FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
     StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
-use bumbledb::{ChangeSet, Db, Id128, Value};
+use bumbledb::{ChangeSet, Db, Uuid, Value};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{
@@ -73,7 +73,7 @@ fn insert_notes(history: &LocalHistory<SchemaDescriptor>, rows: &[(u64, &str)], 
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -118,7 +118,10 @@ fn request<'a>(
     }
 }
 
-fn scan_all(db: &Db<SchemaDescriptor>, relation: RelationId) -> Vec<Vec<Value>> {
+fn scan_all(
+    db: &Db<SchemaDescriptor>,
+    relation: RelationId,
+) -> Vec<bumbledb::canonical::DecodedRow> {
     let mut rows = Vec::new();
     db.read(work(), |read| {
         for row in read.scan(relation)? {
@@ -177,7 +180,7 @@ fn whole_suffix_executes_into_one_frozen_verified_target() {
                 identity: history.identity(),
                 id: CommandId {
                     receipt_epoch: ReceiptEpoch::INITIAL,
-                    request_id: RequestId::from_core(Id128::from_bytes([9; 16])),
+                    request_id: RequestId::from_core(Uuid::from_bytes([9; 16])),
                 },
                 condition: Condition::Unconditional,
             },
@@ -213,7 +216,8 @@ fn whole_suffix_executes_into_one_frozen_verified_target() {
             assert_eq!(row[2], Value::Bool(false), "backfilled default");
         }
         let tags = scan_all(&target, RelationId(1));
-        assert_eq!(tags, vec![vec![Value::String("seeded".into())]]);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].as_ref(), &[Value::String("seeded".into())]);
 
         // The target refuses commands while AwaitingCutover.
         let target_history = LocalHistory::open(Arc::new(target), LIMITS).unwrap();
@@ -502,7 +506,8 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
     let mid_dir = root_b
         .join("targets")
         .join(hex_name(incarnation(0xe7).as_core().as_bytes()));
-    let mid: Arc<Db<SchemaDescriptor>> = Arc::new(Db::open(&mid_dir, pinned_schema(), work()).unwrap());
+    let mid: Arc<Db<SchemaDescriptor>> =
+        Arc::new(Db::open(&mid_dir, pinned_schema(), work()).unwrap());
     let mid_history = LocalHistory::open(Arc::clone(&mid), LIMITS).unwrap();
     let second_steps = vec![StepInput {
         plan: plan_tagged(),
@@ -710,23 +715,19 @@ fn plan_nonempty_required() -> Plan {
 
 fn target_entries(root: &std::path::Path) -> usize {
     std::fs::read_dir(root.join("targets"))
-        .map(|listing| listing.filter_map(Result::ok).count())
-        .unwrap_or(0)
+        .map_or(0, |listing| listing.filter_map(Result::ok).count())
 }
 
 /// D20/D26: compile every expression under verified schemas before freeze
 /// or install, including zero source rows. Empty nonempty-required target
-/// stays absent; the same plan with valid rows admits. Verification: NotRun.
+/// stays absent; the same plan with valid rows admits. Verification: `NotRun`.
 #[test]
 fn d20_d26_compile_before_effects_and_invalid_target_stays_absent() {
     let plan = plan_nonempty_required();
     nonempty_required().validate().expect("target validates");
-    let compiled = bumbledb_log::migration::compile::compile(
-        &plan,
-        &base_schema(),
-        &nonempty_required(),
-    )
-    .expect("empty-input compile binds every field before effects");
+    let compiled =
+        bumbledb_log::migration::compile::compile(&plan, &base_schema(), &nonempty_required())
+            .expect("empty-input compile binds every field before effects");
     assert!(
         !compiled.actions.is_empty(),
         "compiled actions exist even for zero rows"
@@ -746,9 +747,11 @@ fn d20_d26_compile_before_effects_and_invalid_target_stays_absent() {
     let empty_runner = LocalMigration::new(&empty_history, &empty_root.join("targets"), LIMITS);
     let empty_request = request(&empty_manifest, &empty_steps, 0xd6, 0xe6);
     match empty_runner.migrate(&empty_request, &work()) {
-        Err(MigrationError::State(StateError::Rejected { .. }))
-        | Err(MigrationError::AdmissionRejected(_))
-        | Err(MigrationError::Hydration(_)) => {}
+        Err(
+            MigrationError::State(StateError::Rejected { .. })
+            | MigrationError::AdmissionRejected(_)
+            | MigrationError::Hydration(_),
+        ) => {}
         other => panic!("empty nonempty-required target must refuse, got {other:?}"),
     }
     assert_eq!(

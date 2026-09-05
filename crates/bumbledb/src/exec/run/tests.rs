@@ -149,8 +149,8 @@ fn colts_with_params(
                         .collect()
                 })
                 .collect();
-            let image = &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
-                .expect("small")];
+            let image =
+                &images[usize::try_from(occurrence.bind.edb().expect("fixture").0).expect("small")];
             Colt::new(
                 apply(
                     image,

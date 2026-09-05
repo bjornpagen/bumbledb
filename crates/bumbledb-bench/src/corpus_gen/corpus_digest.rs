@@ -40,7 +40,7 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
         }
         // New canonical kinds extend the tag roster; existing tags never
         // renumber, so old corpus digests stay stable.
-        Value::Id128(id) => {
+        Value::Uuid(id) => {
             digest.update(&[9]);
             digest.update(id.as_bytes());
         }

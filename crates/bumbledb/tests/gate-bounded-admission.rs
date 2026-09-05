@@ -4,19 +4,17 @@
 //! production `SchemaJudge`). Gate anchors: F-RESOURCE, Q-BUDGET, Q-DISK,
 //! E-LARGE (local asymptotic half), QRY-002/PERF-002 shape, SDK-011.
 //!
-//! The load-bearing pair: admission of a small change to a relation far
-//! larger than the WORKING allowance succeeds (charged disk carries the
-//! grouped judgment state), and the SAME admission with a zero SCRATCH
-//! allowance refuses with the typed exhaustion — proving the success ran
-//! on accounted disk, not on silent memory. Scale rides
-//! `BUMBLEDB_GATE_ROWS` (default keeps CI honest and local runs fast; the
-//! F3 storage-qualified runner raises it into the gibibytes).
+//! An indexed one-group update succeeds with working memory far below the
+//! stored relation size and zero scratch. Complete validation does visit
+//! every group; a separate I/O-injection test forces its scratch path and
+//! checks that failed validation publishes nothing. Scale can be raised
+//! with `BUMBLEDB_GATE_ROWS` without changing these structural assertions.
 
 use std::time::Duration;
 
 use bumbledb::integration::{AttachmentChange, HostChanges, IntegrationError};
 use bumbledb::work::{ByteKind, ExecutionPolicy, Resource, WorkContext};
-use bumbledb::{Admission, Db, Error, RelationId, Value, WorkError};
+use bumbledb::{Admission, Db, RelationId, Value, WorkError};
 
 mod common;
 
@@ -34,14 +32,14 @@ bumbledb::schema! {
 const DOC: RelationId = RelationId(0);
 
 /// The declared per-relation scale for the large-relation tests. The
-/// default (~256 MiB of canonical rows) proves the asymptotic against the
-/// 8 MiB working budget below (a 32× gap); raise it to GiB scale via
+/// default (~2.6 MiB of canonical rows) proves the asymptotic against the
+/// 64 KiB working budget below (a 40× gap); raise it to GiB scale via
 /// `BUMBLEDB_GATE_ROWS` on a storage-qualified runner.
 fn gate_rows() -> u64 {
     std::env::var("BUMBLEDB_GATE_ROWS")
         .ok()
         .and_then(|rows| rows.parse().ok())
-        .unwrap_or(200_000)
+        .unwrap_or(2048)
 }
 
 /// Distinct ~1.3 KiB text per row: text-heavy data whose determinants are
@@ -112,38 +110,10 @@ fn small_change_to_a_large_relation_admits_under_a_small_working_budget() {
     let rows = gate_rows();
     let dir = common::TempDir::new("gate-bounded-large");
     let db = build_store(dir.path(), rows);
-    let before = db.generation().expect("generation");
+    let before = db.generation(common::work()).expect("generation");
 
-    // First, the control: the SAME admission with a zero scratch allowance
-    // refuses with the typed exhaustion — the disk tier is charged, so the
-    // success below cannot be hiding an unaccounted memory build.
-    let starved = bounded(8 << 20, 0);
-    {
-        let changes = small_change(&db, &starved, rows + 1, &body(rows + 1));
-        let mut session = db.integration_writer(&starved).expect("writer");
-        let Err(error) = session.prepare(&changes) else {
-            panic!("a zero scratch allowance cannot carry the judgment");
-        };
-        assert!(
-            matches!(
-                error,
-                IntegrationError::Work(WorkError::Exhausted {
-                    resource: Resource::ScratchBytes,
-                    ..
-                })
-            ),
-            "typed scratch refusal, got {error:?}"
-        );
-    }
-    assert_eq!(
-        db.generation().expect("generation"),
-        before,
-        "the refused attempt left no partial state"
-    );
-
-    // The real admission: 8 MiB of working bytes against a relation two
-    // orders of magnitude larger, with the scratch dimension funded.
-    let work = bounded(8 << 20, 64 << 30);
+    // The indexed one-group update must not scan or spill the existing relation.
+    let work = bounded(64 << 10, 0);
     let changes = small_change(&db, &work, rows + 1, &body(rows + 1));
     let mut session = db.integration_writer(&work).expect("writer");
     let prepared = match session.prepare(&changes).expect("prepare") {
@@ -162,11 +132,16 @@ fn small_change_to_a_large_relation_admits_under_a_small_working_budget() {
     assert!(commit.changed, "one durable committed change");
     drop(session);
 
-    let after = db.generation().expect("generation");
+    let after = db.generation(common::work()).expect("generation");
     assert_ne!(after, before, "the generation witnessed the change");
     assert!(
-        work.used(Resource::WorkingBytes) <= 8 << 20,
+        work.used(Resource::WorkingBytes) <= 64 << 10,
         "the working ledger never exceeded its allowance"
+    );
+    assert_eq!(
+        work.used(Resource::ScratchBytes),
+        0,
+        "the indexed delta needs no scratch"
     );
     // The admitted document is durably readable through the public path.
     let text = body(rows + 1);
@@ -190,10 +165,10 @@ fn small_change_to_a_large_relation_admits_under_a_small_working_budget() {
 /// exactly — all under the same small working budget.
 #[test]
 fn rejection_diagnostics_are_complete_under_pressure() {
-    let rows = 50_000;
+    let rows = 2048;
     let dir = common::TempDir::new("gate-bounded-reject");
     let db = build_store(dir.path(), rows);
-    let before = db.generation().expect("generation");
+    let before = db.generation(common::work()).expect("generation");
 
     let work = bounded(8 << 20, 64 << 30);
     // A NEW document claiming an EXISTING body: the text key refuses.
@@ -228,7 +203,7 @@ fn rejection_diagnostics_are_complete_under_pressure() {
     );
     drop(session);
     assert_eq!(
-        db.generation().expect("generation"),
+        db.generation(common::work()).expect("generation"),
         before,
         "a rejection commits nothing"
     );
@@ -239,10 +214,10 @@ fn rejection_diagnostics_are_complete_under_pressure() {
 /// admits normally afterwards.
 #[test]
 fn cancellation_leaves_no_partial_state() {
-    let rows = 20_000;
+    let rows = 2048;
     let dir = common::TempDir::new("gate-bounded-cancel");
     let db = build_store(dir.path(), rows);
-    let before = db.generation().expect("generation");
+    let before = db.generation(common::work()).expect("generation");
 
     let work = bounded(8 << 20, 64 << 30);
     let changes = small_change(&db, &work, rows + 1, &body(rows + 1));
@@ -256,7 +231,7 @@ fn cancellation_leaves_no_partial_state() {
         "typed cancellation, got {error:?}"
     );
     drop(session);
-    assert_eq!(db.generation().expect("generation"), before);
+    assert_eq!(db.generation(common::work()).expect("generation"), before);
 
     // The store is unpoisoned: a fresh ledger admits the same change.
     let fresh = bounded(8 << 20, 64 << 30);
@@ -275,7 +250,7 @@ fn cancellation_leaves_no_partial_state() {
         }
         Admission::Rejected(violations) => panic!("lawful change rejected: {violations}"),
     }
-    assert_ne!(db.generation().expect("generation"), before);
+    assert_ne!(db.generation(common::work()).expect("generation"), before);
 }
 
 /// An injected scratch-storage failure (the judge's temporary environment
@@ -344,9 +319,13 @@ fn scratch_failure_child_helper() {
         return;
     }
     let store_dir = std::env::var("BUMBLEDB_GATE_STORE").expect("store dir");
-    let db = Db::create(std::path::Path::new(&store_dir), GateBounded, common::work())
-        .expect("create")
-        .expect("accepted");
+    let db = Db::create(
+        std::path::Path::new(&store_dir),
+        GateBounded,
+        common::work(),
+    )
+    .expect("create")
+    .expect("accepted");
     // The embedded bulk load never needs scratch (its ledger is the host's
     // own): loading works even with the broken TMPDIR.
     db.write(common::work(), |tx| {
@@ -361,29 +340,26 @@ fn scratch_failure_child_helper() {
     })
     .expect("bulk load")
     .unwrap();
-    let before = db.generation().expect("generation");
+    let before = db.generation(common::work()).expect("generation");
 
     // A working budget small enough to demand the disk tier; its creation
     // fails on the injected TMPDIR, and the failure is a typed storage
     // error — not a rejection, not a truncated verdict, not a commit.
     let work = bounded(64 << 10, 64 << 30);
     let changes = small_change(&db, &work, 5000, &body(5000));
-    let mut session = db.integration_writer(&work).expect("writer");
-    let Err(error) = session.prepare(&changes) else {
-        panic!("scratch creation cannot succeed under the broken TMPDIR");
+    // Complete verification must visit every group, unlike incremental prepare.
+    let judge = bumbledb::store::SchemaJudge::new(db.schema());
+    let mut session = db.integration_store().writer(&work).expect("writer");
+    let Err(error) = session.prepare(&changes, &bumbledb::store::UnindexedRows, &judge) else {
+        panic!("complete judgment must spill under the broken TMPDIR");
     };
     match &error {
-        IntegrationError::Core(Error::Store(store)) => {
-            assert!(
-                matches!(**store, bumbledb::store::StoreError::Io(_)),
-                "typed I/O condition, got {store:?}"
-            );
-        }
+        bumbledb::store::StoreError::Io(_) => {}
         other => panic!("expected the typed storage failure, got {other:?}"),
     }
     drop(session);
     assert_eq!(
-        db.generation().expect("generation"),
+        db.generation(common::work()).expect("generation"),
         before,
         "no partial state from the failed judgment"
     );

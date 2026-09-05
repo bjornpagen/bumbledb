@@ -15,7 +15,7 @@ expressions with no hidden native work. The package requires Effect
 
 Relation declarations describe their fields, and the statements passed to
 `schema()` connect those fields into typed keys and references. Values remain
-ordinary `bigint`, `number` (for `f64`), `string`, boolean, byte, `Id128`,
+ordinary `bigint`, `number` (for `f64`), `string`, boolean, byte, `Uuid`,
 and interval values; queries infer their parameter and result types from how
 those values are used.
 
@@ -50,8 +50,7 @@ import {
 	Db,
 	f64,
 	i64,
-	id128,
-	Id128,
+	uuid,
 	interval,
 	key,
 	NativeRuntime,
@@ -69,11 +68,11 @@ import {
 import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 
 // Relations describe stored records. Identity fields are ordinary
-// application-owned Id128 values — the database issues no identity.
-const Student = relation("Student", { id: id128, name: str, budget: u64 })
+// application-owned Uuid values — the database issues no identity.
+const Student = relation("Student", { id: uuid, name: str, budget: u64 })
 const Attempt = relation("Attempt", {
-	id: id128,
-	student: id128,
+	id: uuid,
+	student: uuid,
 	score: f64,
 	units: u64,
 	active: interval(i64)
@@ -109,8 +108,8 @@ const attemptsFor = query(Learning).rule((r) => {
 const program = Effect.scoped(
 	Effect.gen(function* () {
 		const db = yield* Db.open(localPath, Learning, work)
-		const studentId = yield* Id128.random()
-		const attemptId = yield* Id128.random()
+		const studentId = yield* Effect.sync(() => crypto.randomUUID())
+		const attemptId = yield* Effect.sync(() => crypto.randomUUID())
 
 		const draft = yield* ChangeSet.builder(Learning, work)
 		yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
@@ -147,14 +146,14 @@ real surface by `test/readme.test.ts` — the examples cannot drift.
 The SDK translates TypeScript values directly into the engine's shared schema
 and query representations.
 
-- Fields use `bool`, `bytes`, `f64`, `i64`, `id128`, `u64`, `str`, and
+- Fields use `bool`, `bytes`, `f64`, `i64`, `uuid`, `u64`, `str`, and
   `interval` (`interval(f64)` is the dense float interval); `span` builds
   checked interval values. `relation()` declares stored records, while
   `closed()` declares a fixed enum-like set whose values may carry typed
-  columns. `Infer` exposes the resulting TypeScript value type. `Id128` is
-  the ordinary application-owned 128-bit identity: 32 lowercase hex,
-  generated with the effectful `Id128.random()`, parsed with the pure
-  `Id128.fromHex` returning `Result`.
+  columns. `Infer` exposes the resulting TypeScript value type. `Uuid` is
+  the ordinary application-owned 128-bit identity: canonical UUID,
+  generated with the effectful `Effect.sync(() => crypto.randomUUID())`, parsed with the pure
+  `Uuid.parse` returning `Result`.
 - `schema()` accepts `key`, `contained`, `mirrors`, and `capacity`
   statements. Keys are declared statements — there is no minted identity.
   `capacity(target, { from, weight?, within })` takes named options;

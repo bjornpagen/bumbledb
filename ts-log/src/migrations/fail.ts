@@ -83,13 +83,7 @@ export function repository(operation: string, path: string, detail: string): Pro
 }
 
 /** A generation/seed budget refusal on the core resource reason. */
-export function budget(
-	operation: string,
-	dimension: string,
-	used: bigint,
-	requested: bigint,
-	limit: bigint
-): DbError {
+export function budget(operation: string, dimension: string, used: bigint, requested: bigint, limit: bigint): DbError {
 	return new DbError({
 		operation,
 		reason: { _tag: "ResourceLimit", dimension, used, requested, limit }

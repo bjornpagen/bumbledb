@@ -187,15 +187,16 @@ fn a_tiny_working_budget_stops_colt_growth_with_the_typed_refusal() {
         crate::api::prepared::source::is_working_exhaustion(&error),
         "the refusal is exactly the bounded-restart trigger"
     );
+    drop(colts);
+    drop(executor);
     assert_eq!(
         tiny.used(Resource::WorkingBytes),
         0,
-        "the failed execution's growth reservations are refunded before \
-         the restart could run"
+        "dropping failed execution pools refunds their retained capacity"
     );
 }
 
-/// Bind the current ledger before force_root. A leftover Exhausted from
+/// Bind the current ledger before `force_root`. A leftover Exhausted from
 /// a cancelled/tiny prior execution must not poison the next bind.
 #[test]
 fn bind_clears_prior_refusal_before_force() {

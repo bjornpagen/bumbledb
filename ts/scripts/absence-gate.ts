@@ -33,9 +33,9 @@ import { EFFECT_PIN } from "./pin.ts"
  *  6. No stale binary artifact is tracked: no `.node`, `.dylib`, `.so`,
  *     `.a`, `.tgz` in git.
  *
- * Scans TRACKED files only (`git ls-files`), so gitignored build output
- * and local node_modules never produce false findings, and preserved
- * historical evidence under `audit/` is explicitly exempt where noted.
+ * Scans existing tracked and nonignored new files, so pending deletions
+ * and additions work before the final commit. Ignored build output and
+ * node_modules are excluded; historical audit evidence is exempt below.
  *
  * Run from anywhere: `node ts/scripts/absence-gate.ts`. Exit 0 is the
  * gate; every finding is listed before the failure.
@@ -75,8 +75,18 @@ const TEXT_EXTENSIONS = new Set([
 	".yml"
 ])
 
-function trackedFiles(): string[] {
-	const listed = spawnSync("git", ["-c", `safe.directory=${REPO_ROOT}`, "-C", REPO_ROOT, "ls-files", "-z"])
+function candidateFiles(): string[] {
+	const listed = spawnSync("git", [
+		"-c",
+		`safe.directory=${REPO_ROOT}`,
+		"-C",
+		REPO_ROOT,
+		"ls-files",
+		"--cached",
+		"--others",
+		"--exclude-standard",
+		"-z"
+	])
 	if (listed.error) {
 		throw new ScriptError({ message: "spawn git ls-files", cause: listed.error })
 	}
@@ -86,7 +96,7 @@ function trackedFiles(): string[] {
 	return listed.stdout
 		.toString("utf8")
 		.split("\0")
-		.filter((file) => file !== "")
+		.filter((file) => file !== "" && fs.existsSync(path.join(REPO_ROOT, file)))
 }
 
 function isEvidence(file: string): boolean {
@@ -289,7 +299,7 @@ function checkTrackedArtifacts(files: readonly string[], findings: string[]): vo
 }
 
 function main(): void {
-	const files = trackedFiles()
+	const files = candidateFiles()
 	const findings: string[] = []
 	checkCSurface(files, findings)
 	checkRustProducts(findings)

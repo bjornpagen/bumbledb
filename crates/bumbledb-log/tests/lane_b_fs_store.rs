@@ -7,12 +7,12 @@
 
 use std::path::PathBuf;
 
+use bumbledb::{ExecutionPolicy, WorkContext};
 use bumbledb_log::store::fs::{FsStore, Inject, Phase, content_version};
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore as _, PutOutcome, ReceiveLimits, ReceivedHead,
     ReceivingStore, TransportContext, TransportObservation,
 };
-use bumbledb::{ExecutionPolicy, WorkContext};
 use std::time::Duration;
 
 fn fresh_root(name: &str) -> PathBuf {

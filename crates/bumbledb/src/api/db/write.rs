@@ -14,8 +14,8 @@
 use super::tx::change_set_of_pending;
 use super::{Db, OwnedRead, ReadFrame, WriteTx};
 use crate::error::{Committed, ConditionalWrite, Error, Result};
-use crate::storage::GenerationId;
 use crate::schema::judge::LawfulParent;
+use crate::storage::GenerationId;
 use crate::storage::store::{
     AttachmentChange, EnvironmentId, HostChanges, Prepared, SchemaJudge, UnindexedRows,
 };
@@ -61,9 +61,15 @@ pub enum ApplyExpected<S> {
 /// }
 /// ```
 pub enum ApplyOutcome {
-    Accepted { generation: GenerationId },
-    NoChange { generation: GenerationId },
-    InvariantRejected { violations: crate::error::Violations },
+    Accepted {
+        generation: GenerationId,
+    },
+    NoChange {
+        generation: GenerationId,
+    },
+    InvariantRejected {
+        violations: crate::error::Violations,
+    },
     Moved {
         witnessed: GenerationId,
         current: GenerationId,
@@ -71,7 +77,6 @@ pub enum ApplyOutcome {
 }
 
 impl<S> OwnedRead<S> {
-    #[must_use]
     pub fn witness(&self) -> Witness<S> {
         Witness {
             environment: self.snapshot.identity().environment,
@@ -82,6 +87,9 @@ impl<S> OwnedRead<S> {
 }
 
 impl<S> ReadFrame<'_, S> {
+    /// Capture the pinned generation for a later conditional write.
+    /// # Errors
+    /// No current failure; matches the fallible read-frame operations.
     pub fn witness(&self) -> Result<Witness<S>> {
         Ok(self.owner.witness())
     }
@@ -185,6 +193,10 @@ impl<S> Db<S> {
         }
     }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Database operations accept owned call-scoped work and key values consistently"
+    )]
     fn write_witnessed<R>(
         &self,
         work: WorkContext,

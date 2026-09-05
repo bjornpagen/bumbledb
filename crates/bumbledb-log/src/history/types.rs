@@ -1,4 +1,4 @@
-use bumbledb::Id128;
+use bumbledb::Uuid;
 
 use super::SchemaId;
 
@@ -6,16 +6,16 @@ macro_rules! identity_role {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(Id128);
+        pub struct $name(Uuid);
 
         impl $name {
             #[must_use]
-            pub const fn from_core(value: Id128) -> Self {
+            pub const fn from_core(value: Uuid) -> Self {
                 Self(value)
             }
 
             #[must_use]
-            pub const fn as_core(self) -> Id128 {
+            pub const fn as_core(self) -> Uuid {
                 self.0
             }
         }

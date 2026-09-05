@@ -5,7 +5,7 @@
 //! order and physical reminting cannot change the kept set. Resource
 //! exhaustion refuses; it never becomes a shorter verdict.
 
-use crate::canonical::{self, RowError};
+use crate::canonical::{self, CanonicalRow, RowError};
 use crate::schema::{RelationId, Schema};
 use crate::work::ByteReservation;
 use crate::{Value, WorkContext};
@@ -18,7 +18,7 @@ use super::{CandidateFact, JudgeError};
 pub(super) struct CitationTopK {
     budget: usize,
     /// Strictly increasing sort keys; length ≤ budget.
-    chosen: Vec<(Vec<u8>, CandidateFact)>,
+    chosen: Vec<(CanonicalRow, CandidateFact)>,
     charges: Vec<ByteReservation>,
     extra: bool,
     considered: u64,
@@ -49,11 +49,10 @@ impl CitationTopK {
             RowError::Work(work) => JudgeError::Work(work),
             _ => unreachable!("citation keys follow already-decoded rows"),
         })?;
-        if self
-            .chosen
-            .iter()
-            .any(|(existing, fact)| existing == &key && fact.relation == relation)
-        {
+        let at = self.chosen.binary_search_by(|(existing, fact)| {
+            (fact.relation, existing.as_bytes()).cmp(&(relation, key.as_bytes()))
+        });
+        if at.is_ok() {
             return Ok(());
         }
         self.considered = self.considered.saturating_add(1);
@@ -61,9 +60,6 @@ impl CitationTopK {
             self.extra = true;
             return Ok(());
         }
-        let at = self
-            .chosen
-            .binary_search_by(|(existing, _)| existing.as_slice().cmp(key.as_slice()));
         match at {
             Ok(_) => Ok(()),
             Err(index) if self.chosen.len() < self.budget => {
@@ -87,7 +83,7 @@ impl CitationTopK {
         _schema: &Schema,
         work: &WorkContext,
         index: usize,
-        key: Vec<u8>,
+        key: CanonicalRow,
         relation: RelationId,
         values: &[Value],
     ) -> Result<(), JudgeError<E>> {
@@ -113,13 +109,7 @@ impl CitationTopK {
         self.extra || self.considered > u64::try_from(self.budget).unwrap_or(u64::MAX)
     }
 
-    pub(super) fn into_examples(
-        self,
-    ) -> (
-        Box<[CandidateFact]>,
-        bool,
-        Vec<ByteReservation>,
-    ) {
+    pub(super) fn into_examples(self) -> (Box<[CandidateFact]>, bool, Vec<ByteReservation>) {
         let truncated = self.truncated();
         let examples = self
             .chosen

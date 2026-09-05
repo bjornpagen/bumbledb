@@ -422,16 +422,14 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
 }
 
 #[test]
-#[expect(
-    clippy::redundant_closure_for_method_calls,
-    reason = "the method-path form is not general enough over the snapshot lifetime (HRTB)"
-)]
 fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
     let dir = common::TempDir::new("points-snap-generation");
     let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let before = db.read(common::work(), |snap| snap.generation()).expect("read");
+    let before = db
+        .read(common::work(), |snap| Ok(snap.generation()))
+        .expect("read");
     let committed = db
         .write(common::work(), |tx| {
             let id = AccountId(1);
@@ -444,7 +442,103 @@ fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
         })
         .expect("write")
         .unwrap();
-    let after = db.read(common::work(), |snap| snap.generation()).expect("read");
+    let after = db
+        .read(common::work(), |snap| Ok(snap.generation()))
+        .expect("read");
     assert_eq!(after, committed.generation);
     assert_ne!(before, after);
+}
+
+#[test]
+fn dynamic_read_owners_keep_their_charge_after_the_read_frame_closes() {
+    use bumbledb::work::Resource;
+    use bumbledb::{RelationId, StatementId, Value};
+
+    let dir = common::TempDir::new("points-retained-row-charge");
+    let db = Db::create(dir.path(), Ledger, common::work())
+        .unwrap()
+        .unwrap();
+    let holder = "retained-text".repeat(128);
+    db.write(common::work(), |tx| {
+        tx.insert([&Account {
+            id: AccountId(1),
+            holder: &holder,
+            balance: 7,
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+
+    let work = common::work();
+    let row = db
+        .read(work.clone(), |frame| {
+            frame.get_dyn(RelationId(0), StatementId(0), &[Value::U64(1)])
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.values(),
+        &[
+            Value::U64(1),
+            Value::String(holder.clone().into()),
+            Value::I64(7)
+        ]
+    );
+    assert!(row.charged_bytes() >= holder.len() as u64);
+    assert_eq!(work.used(Resource::WorkingBytes), row.charged_bytes());
+
+    let scanned = db
+        .read(work.clone(), |frame| {
+            frame
+                .scan(RelationId(0))?
+                .collect::<bumbledb::Result<Vec<_>>>()
+        })
+        .unwrap();
+    assert_eq!(scanned.len(), 1);
+    assert_eq!(scanned[0], row);
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        row.charged_bytes() + scanned[0].charged_bytes()
+    );
+    drop(row);
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        scanned[0].charged_bytes()
+    );
+    drop(scanned);
+    assert_eq!(work.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
+fn typed_read_borrows_the_snapshot_not_its_temporary_operation_context() {
+    let dir = common::TempDir::new("points-owned-borrow");
+    let db = Db::create(dir.path(), Ledger, common::work())
+        .unwrap()
+        .unwrap();
+    db.write(common::work(), |tx| {
+        tx.insert([&Account {
+            id: AccountId(1),
+            holder: "pinned",
+            balance: 7,
+        }])?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let pin = db.snapshot(&common::work()).unwrap();
+    let row = {
+        let work = common::work();
+        pin.get(AccountById { id: AccountId(1) }, &work)
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        row,
+        Account {
+            id: AccountId(1),
+            holder: "pinned",
+            balance: 7
+        }
+    );
 }

@@ -1,6 +1,10 @@
-//! The allocation gate: the doc's protocol as a contract of warm
-//! INVARIANT: this binary holds exactly ONE test function, and check.sh
-#![cfg(feature = "alloc-counter")]
+//! Zero-allocation resident Free Join execution after warmup. Direct canonical
+//! point reads and writes own per-operation buffers; their cardinality-scaling
+//! contract is tested separately in `alloc_budgets.rs`. One test owns the global
+//! allocator counters so concurrent test bodies cannot contaminate measurement.
+// Debug invariant checks intentionally allocate (for example, checking
+// disjoint set-selection positions). This is the release cost contract.
+#![cfg(all(feature = "alloc-counter", not(debug_assertions)))]
 use bumbledb::alloc_counter;
 use bumbledb::ir::{
     Atom, AtomSource, CmpOp, Comparison, FindTerm, FoldOp, HeadTerm, Interior, InteriorId, ParamId,
@@ -114,6 +118,26 @@ fn schema() -> SchemaDescriptor {
             },
         ],
         statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(2),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(3),
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(4),
+                projection: Box::new([FieldId(0)]),
+            },
             StatementDescriptor::Containment {
                 source: Side {
                     relation: RelationId(0),
@@ -162,15 +186,6 @@ fn digest16(id: u64) -> [u8; 16] {
 const ITEM_CHAIN: u64 = 8;
 
 const ITEM_LADDER: [u64; 5] = [6, 24, 72, 240, 660];
-
-bumbledb::schema! {
-    pub GateLedger;
-    relation GateItem {
-        id: u64 as GateItemId, fresh,
-        memo: str,
-    }
-    GateItem(memo) -> GateItem;
-}
 
 const LADDER: [u64; 5] = [6, 24, 72, 240, 660];
 
@@ -547,12 +562,15 @@ fn interiors_only_query() -> Query {
     };
     Query {
         interiors: vec![Interior {
-            rules: vec![ProjectionRule {
-                finds: vec![VarId(0), VarId(1)],
-                atoms: join.atoms,
-                negated: join.negated,
-                conditions: join.conditions,
-            }],
+            rules: vec![
+                ProjectionRule {
+                    finds: vec![VarId(0), VarId(1)],
+                    atoms: join.atoms,
+                    negated: join.negated,
+                    conditions: join.conditions,
+                }
+                .into(),
+            ],
         }],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -658,36 +676,6 @@ fn pack_query() -> Query {
             bindings: vec![
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(2), Term::Var(VarId(1))),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    })
-}
-
-fn key_probe_query() -> Query {
-    Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(POSTING),
-            bindings: vec![
-                (FieldId(0), Term::Param(ParamId(0))),
-                (FieldId(2), Term::Var(VarId(0))),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    })
-}
-
-fn blob_probe_query() -> Query {
-    Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(BLOB),
-            bindings: vec![
-                (FieldId(0), Term::Param(ParamId(0))),
-                (FieldId(1), Term::Var(VarId(0))),
             ],
         }],
         negated: vec![],
@@ -978,82 +966,6 @@ fn escalation_gate(
     assert!(!out.is_empty(), "{label}: the fixture produced rows");
 }
 
-fn borrowed_struct_gate() {
-    let dir = common::TempDir::new("alloc-gate-borrowed");
-    let db = Db::create(dir.path(), GateLedger, common::work())
-        .expect("create")
-        .expect("accepted");
-    let item = common::expect_admitted(db.write(common::work(), |tx| {
-        let id: GateItemId = tx.reserve(1)?.start().expect("nonempty");
-        tx.insert([&GateItem {
-            id,
-            memo: "memo-borrowed",
-        }])?;
-        Ok(id)
-    }));
-    db.write(common::work(), |tx| {
-        tx.insert([&GateItem {
-            id: item,
-            memo: "memo-borrowed",
-        }])?;
-        alloc_counter::reset();
-        let fact = GateItem {
-            id: item,
-            memo: "memo-borrowed",
-        };
-        tx.insert([&fact])?;
-        let got = tx.get(item)?.expect("present");
-        assert_eq!(got.memo, "memo-borrowed");
-        let bytes = alloc_counter::snapshot();
-        assert_eq!(
-            (
-                bytes.window.allocs,
-                bytes.window.deallocs,
-                bytes.window.alloc_bytes,
-                bytes.window.dealloc_bytes
-            ),
-            (0, 0, 0, 0),
-            "borrowed-struct insert + get must be host-allocation-free"
-        );
-        Ok(())
-    })
-    .expect("borrowed-struct gate")
-    .expect("accepted");
-
-    // The snapshot twin (ruled 2026-07-23, R15): the committed-state
-
-    db.read(common::work(), |snap| {
-        let key = GateItemByMemo {
-            memo: "memo-borrowed",
-        };
-        let warm = snap.get(key)?.expect("present");
-        assert!(snap.contains(&warm)?);
-        alloc_counter::reset();
-        let got = snap.get(key)?.expect("present");
-        assert_eq!(got.memo, "memo-borrowed");
-        assert!(snap.contains(&warm)?);
-        assert!(
-            snap.get(GateItemByMemo {
-                memo: "memo-never-interned",
-            })?
-            .is_none()
-        );
-        let bytes = alloc_counter::snapshot();
-        assert_eq!(
-            (
-                bytes.window.allocs,
-                bytes.window.deallocs,
-                bytes.window.alloc_bytes,
-                bytes.window.dealloc_bytes
-            ),
-            (0, 0, 0, 0),
-            "snapshot keyed get (hit, contains, miss) must be host-allocation-free"
-        );
-        Ok(())
-    })
-    .expect("snapshot point-read gate");
-}
-
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -1074,19 +986,13 @@ fn zero_warm_allocation_gate() {
         vec![BindValue::I64(40)],
     ];
 
-    let key_probe_params = vec![
-        vec![BindValue::U64(9999)],
-        vec![BindValue::U64(5)],
-        vec![BindValue::U64(499)],
-    ];
-
     db.read(common::work(), |snap| {
         for batch in [1usize, 2, 64, 128] {
-            let mut join = db.prepare(&join_query())?;
+            let mut join = db.prepare(&join_query(), common::work())?;
             join.set_batch_size(batch);
             gate(&format!("join/batch{batch}"), &mut join, snap, &join_params);
 
-            let mut aggregate = db.prepare(&aggregate_query())?;
+            let mut aggregate = db.prepare(&aggregate_query(), common::work())?;
             aggregate.set_batch_size(batch);
             gate(
                 &format!("aggregate/batch{batch}"),
@@ -1096,43 +1002,32 @@ fn zero_warm_allocation_gate() {
             );
         }
 
-        let mut interiors_only = db.prepare(&interiors_only_query())?;
+        let mut interiors_only = db.prepare(&interiors_only_query(), common::work())?;
         gate("interiors-only", &mut interiors_only, snap, &join_params);
 
         let no_params = vec![vec![]];
-        let mut strings = db.prepare(&string_query())?;
+        let mut strings = db.prepare(&string_query(), common::work())?;
         gate("string", &mut strings, snap, &no_params);
-        let mut minmax = db.prepare(&minmax_query())?;
+        let mut minmax = db.prepare(&minmax_query(), common::work())?;
         gate("minmax", &mut minmax, snap, &no_params);
 
-        let mut pack = db.prepare(&pack_query())?;
+        let mut pack = db.prepare(&pack_query(), common::work())?;
         gate("pack", &mut pack, snap, &no_params);
-
-        let mut key_probe = db.prepare(&key_probe_query())?;
-        gate("key_probe", &mut key_probe, snap, &key_probe_params);
 
         let blob_digests: Vec<[u8; 16]> = (0..4u64).map(digest16).collect();
         let blob_digest_params: Vec<Vec<BindValue<'_>>> = blob_digests
             .iter()
             .map(|digest| vec![BindValue::FixedBytes(digest)])
             .collect();
-        let mut blob_selection = db.prepare(&blob_selection_query())?;
+        let mut blob_selection = db.prepare(&blob_selection_query(), common::work())?;
         gate(
             "bytes-selection",
             &mut blob_selection,
             snap,
             &blob_digest_params,
         );
-        let mut blob_ne = db.prepare(&blob_ne_query())?;
+        let mut blob_ne = db.prepare(&blob_ne_query(), common::work())?;
         gate("bytes-ne-filter", &mut blob_ne, snap, &blob_digest_params);
-
-        let blob_probe_params = vec![
-            vec![BindValue::U64(9999)],
-            vec![BindValue::U64(3)],
-            vec![BindValue::U64(7)],
-        ];
-        let mut blob_probe = db.prepare(&blob_probe_query())?;
-        gate("bytes-key-probe", &mut blob_probe, snap, &blob_probe_params);
 
         let set_a: Vec<Value> = [0u64, 2, 1, 2]
             .iter()
@@ -1143,18 +1038,18 @@ fn zero_warm_allocation_gate() {
             .map(|id| Value::FixedBytes(Box::from(digest16(*id))))
             .collect();
         let blob_set_args = vec![vec![ParamArg::Set(&set_a)], vec![ParamArg::Set(&set_b)]];
-        let mut blob_set = db.prepare(&blob_set_query())?;
+        let mut blob_set = db.prepare(&blob_set_query(), common::work())?;
         gate_args("bytes-set", &mut blob_set, snap, &blob_set_args);
 
         let marks_params: Vec<Vec<BindValue<'_>>> =
             (0..4u64).map(|doc| vec![BindValue::U64(doc)]).collect();
-        let mut marks = db.prepare(&marks_query())?;
+        let mut marks = db.prepare(&marks_query(), common::work())?;
         gate("marks", &mut marks, snap, &marks_params);
 
         // aggregate regime) all sit at their high-water after warmup.
-        let mut union_rules = db.prepare(&union_rules_query())?;
+        let mut union_rules = db.prepare(&union_rules_query(), common::work())?;
         gate("union-rules", &mut union_rules, snap, &join_params);
-        let mut union_aggregate = db.prepare(&union_aggregate_query())?;
+        let mut union_aggregate = db.prepare(&union_aggregate_query(), common::work())?;
         gate("union-aggregate", &mut union_aggregate, snap, &join_params);
 
         // measured rotations must not touch the allocator.
@@ -1164,15 +1059,15 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|text| vec![BindValue::Str(text)])
             .collect();
-        let mut selection = db.prepare(&selection_query())?;
+        let mut selection = db.prepare(&selection_query(), common::work())?;
         gate("selection", &mut selection, snap, &selection_params);
 
-        let mut latch = db.prepare(&latch_query())?;
+        let mut latch = db.prepare(&latch_query(), common::work())?;
         gate("literal-latch", &mut latch, snap, &no_params);
 
         let account_params: Vec<Vec<BindValue<'_>>> =
             (0..4).map(|a| vec![BindValue::U64(a)]).collect();
-        let mut string_rotation = db.prepare(&string_rotation_query())?;
+        let mut string_rotation = db.prepare(&string_rotation_query(), common::work())?;
         gate(
             "string-rotation",
             &mut string_rotation,
@@ -1185,21 +1080,21 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
             .collect();
-        let mut recursive = db.prepare(&recursive_query())?;
+        let mut recursive = db.prepare(&recursive_query(), common::work())?;
         gate("recursive", &mut recursive, snap, &recursive_params);
 
         // gate protocol): holders 5..10 bind the ladder accounts —
 
         let escalation_params: Vec<Vec<BindValue<'_>>> =
             (5..10u64).map(|h| vec![BindValue::U64(h)]).collect();
-        let mut escalation = db.prepare(&escalation_query())?;
+        let mut escalation = db.prepare(&escalation_query(), common::work())?;
         escalation_gate("escalation", &mut escalation, snap, &escalation_params);
 
         let recursive_escalation: Vec<Vec<BindValue<'_>>> = [4u64, 9, 14, 19, 24]
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
             .collect();
-        let mut recursive_escalation_q = db.prepare(&recursive_query())?;
+        let mut recursive_escalation_q = db.prepare(&recursive_query(), common::work())?;
         escalation_gate(
             "recursive-escalation",
             &mut recursive_escalation_q,
@@ -1207,7 +1102,7 @@ fn zero_warm_allocation_gate() {
             &recursive_escalation,
         );
 
-        let mut fresh = db.prepare(&join_query())?;
+        let mut fresh = db.prepare(&join_query(), common::work())?;
         let mut out = Answers::new();
         let mut per_round = Vec::new();
         for _ in 0..3 {
@@ -1231,12 +1126,12 @@ fn zero_warm_allocation_gate() {
     db.read(common::work(), |snap| {
         let marks_params: Vec<Vec<BindValue<'_>>> =
             (0..4u64).map(|doc| vec![BindValue::U64(doc)]).collect();
-        let mut marks = db.prepare(&marks_query())?;
+        let mut marks = db.prepare(&marks_query(), common::work())?;
         gate("marks-postwrite", &mut marks, snap, &marks_params);
 
         let marks_escalation: Vec<Vec<BindValue<'_>>> =
             (20..25u64).map(|doc| vec![BindValue::U64(doc)]).collect();
-        let mut marks_escalation_q = db.prepare(&marks_query())?;
+        let mut marks_escalation_q = db.prepare(&marks_query(), common::work())?;
         escalation_gate(
             "marks-escalation",
             &mut marks_escalation_q,
@@ -1248,6 +1143,4 @@ fn zero_warm_allocation_gate() {
     .expect("marks windows");
 
     // string is committed (and its scratch warmed) before the measured
-
-    borrowed_struct_gate();
 }

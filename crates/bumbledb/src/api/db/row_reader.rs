@@ -13,7 +13,7 @@
 //! storage.
 
 use crate::error::{CorruptionError, Error, Result};
-use bumbledb_theory::{F64, Id128, Interval};
+use bumbledb_theory::{F64, Interval, Uuid};
 
 /// Wire tags, mirrored from the canonical codec (C01 contract).
 mod tag {
@@ -25,7 +25,7 @@ mod tag {
     pub const FIXED_BYTES: u8 = 5;
     pub const INTERVAL_U64: u8 = 6;
     pub const INTERVAL_I64: u8 = 7;
-    pub const ID128: u8 = 8;
+    pub const UUID: u8 = 8;
     pub const INTERVAL_F64: u8 = 9;
 }
 
@@ -116,9 +116,9 @@ impl<'a> RowReader<'a> {
 
     /// # Errors
     /// Corruption on a wrong tag or malformed payload.
-    pub fn next_id128(&mut self) -> Result<Id128> {
-        self.expect_tag(tag::ID128, "canonical id128 field")?;
-        Ok(Id128::from_bytes(self.word("canonical id128 payload")?))
+    pub fn next_uuid(&mut self) -> Result<Uuid> {
+        self.expect_tag(tag::UUID, "canonical uuid field")?;
+        Ok(Uuid::from_bytes(self.word("canonical uuid payload")?))
     }
 
     /// # Errors

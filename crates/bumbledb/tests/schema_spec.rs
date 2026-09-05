@@ -37,6 +37,8 @@ bumbledb::schema! {
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
 
     SavingsTerms(account) -> SavingsTerms;
+    Holder(id) -> Holder;
+    Account(id) -> Account;
     Account(holder) <= Holder(id);
     Account(kind) <= Kind(id);
     Account(status) <= Status(id);
@@ -209,6 +211,14 @@ fn everything_spec() -> SchemaSpec {
                 relation: "SavingsTerms".into(),
                 projection: vec!["account".into()],
             },
+            StatementSpec::Fd {
+                relation: "Holder".into(),
+                projection: vec!["id".into()],
+            },
+            StatementSpec::Fd {
+                relation: "Account".into(),
+                projection: vec!["id".into()],
+            },
             StatementSpec::Containment {
                 source: side("Account", &["holder"]),
                 target: side("Holder", &["id"]),
@@ -335,6 +345,7 @@ bumbledb::schema! {
     }
 
     Item(id, flag) -> Item;
+    Item(id) -> Item;
     Item(id | flag == true) <= Item(id);
     Item(id | count == 5) <= Item(id);
     Item(id | delta == -7) <= Item(id);
@@ -461,6 +472,10 @@ fn seam_spec() -> SchemaSpec {
             StatementSpec::Fd {
                 relation: "Item".into(),
                 projection: vec!["id".into(), "flag".into()],
+            },
+            StatementSpec::Fd {
+                relation: "Item".into(),
+                projection: vec!["id".into()],
             },
             contain(side_valued("Item", &["id"], "flag", Value::Bool(true))),
             contain(side_valued("Item", &["id"], "count", Value::U64(5))),
@@ -666,14 +681,14 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
     let issues = error.issues();
     assert!(
         issues.contains(&SpecIssue::UnknownRelation {
-            statement: 14,
+            statement: 16,
             relation: "Nowhere".into()
         }),
         "the unknown relation is cited: {issues:?}"
     );
     assert!(
         issues.contains(&SpecIssue::UnknownField {
-            statement: 15,
+            statement: 17,
             relation: "Account".into(),
             field: "nope".into()
         }),
@@ -684,7 +699,7 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
             closed: "Status".into(),
             handle: "Thawed".into(),
             at: LiteralAt::Selection {
-                statement: 16,
+                statement: 18,
                 side: StatementSide::Source,
                 binding: 0,
                 literal: 0
@@ -712,7 +727,7 @@ fn a_handle_on_a_non_reference_field_is_typed() {
             field: "holder".into(),
             handle: "Frozen".into(),
             at: LiteralAt::Selection {
-                statement: 14,
+                statement: 16,
                 side: StatementSide::Source,
                 binding: 0,
                 literal: 0
@@ -734,7 +749,7 @@ fn paired_faces_with_disagreeing_newtypes_are_rejected_typed() {
     assert_eq!(
         error.issues(),
         [SpecIssue::StatementNewtypeMismatch {
-            statement: 14,
+            statement: 16,
             position: 0,
             source: FaceNewtype {
                 relation: "Account".into(),
@@ -772,7 +787,7 @@ fn a_labeled_face_never_pairs_with_a_bare_one() {
     assert_eq!(
         error.issues(),
         [SpecIssue::StatementNewtypeMismatch {
-            statement: 14,
+            statement: 16,
             position: 0,
             source: FaceNewtype {
                 relation: "SavingsTerms".into(),
@@ -828,7 +843,7 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     assert_eq!(
         error.issues(),
         [SpecIssue::StatementNewtypeMismatch {
-            statement: 14,
+            statement: 16,
             position: 0,
             source: FaceNewtype {
                 relation: "Account".into(),
@@ -864,7 +879,7 @@ fn inverted_bounds_refuse_and_the_old_ban_table_spellings_lower_canonically() {
     assert_eq!(
         error.issues(),
         [SpecIssue::CapacityInverted {
-            statement: 14,
+            statement: 16,
             lo: 4,
             hi: 2,
         }],
@@ -928,7 +943,7 @@ fn a_path_bound_is_refused_naming_the_pinned_column_idiom() {
     assert_eq!(
         error.issues(),
         [SpecIssue::BoundPathRefused {
-            statement: 14,
+            statement: 16,
             path: "grid.supply".into(),
         }],
     );
@@ -955,7 +970,7 @@ fn a_path_weight_is_refused_naming_the_pinned_column_idiom() {
     assert_eq!(
         error.issues(),
         [SpecIssue::WeightPathRefused {
-            statement: 14,
+            statement: 16,
             path: "kind.mastered".into(),
         }],
     );
@@ -983,7 +998,7 @@ fn a_dependent_floor_is_refused_hi_slot_only() {
     let error = spec.descriptor().expect_err("a dependent floor");
     assert_eq!(
         error.issues(),
-        [SpecIssue::CapacityDependentFloor { statement: 14 }],
+        [SpecIssue::CapacityDependentFloor { statement: 16 }],
     );
 }
 

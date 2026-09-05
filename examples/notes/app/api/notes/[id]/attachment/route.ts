@@ -6,7 +6,7 @@
  * unrepresentable. Retrying the whole request re-uploads identical
  * content to the identical key and rebuilds the identical command.
  */
-import { Id128 } from "@bjornpagen/bumbledb"
+import { Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Result } from "effect"
 import { requirePrincipal } from "../../../../../src/auth.ts"
 import { putBlob } from "../../../../../src/blob.ts"
@@ -25,7 +25,7 @@ const postAttachment = Effect.fn("routes.postAttachment")(
 	function* (request: Request, rawId: string, body: Uint8Array) {
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
-		const noteId = yield* Effect.fromResult(Id128.fromHex(rawId))
+		const noteId = yield* Effect.fromResult(Uuid.parse(rawId))
 		const work = requestPolicy(request)
 		// 1. Immutable blob first — app-owned S3, content-addressed key.
 		const uploaded = yield* putBlob(principal.tenantId, body).pipe(Effect.result)

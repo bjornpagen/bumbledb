@@ -132,10 +132,10 @@ fn unique_tag(tag: &str) -> String {
 /// replayer's `dbPrepare` acceptance).
 fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     let dir = TempDir::new(&unique_tag(tag));
-    let db = Db::create(dir.path(), theory)
+    let db = Db::create(dir.path(), theory, common::work())
         .expect("create the corpus theory's store")
         .expect("accepted");
-    db.prepare(query)
+    db.prepare(query, common::work())
         .unwrap_or_else(|error| panic!("case {tag}: the corpus query validates: {error:?}"));
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
     render(&schema, query)
@@ -189,7 +189,7 @@ fn value_json(value: &Value) -> String {
                 "a bytes literal has no canonical corpus JSON (Uint8Array does not JSON.stringify canonically) — keep bytes out of corpus cases"
             )
         }
-        Value::Id128(id) => format!("{{\"kind\":\"id128\",\"value\":\"{id}\"}}"),
+        Value::Uuid(id) => format!("{{\"kind\":\"uuid\",\"value\":\"{id}\"}}"),
         Value::IntervalF64(_) => panic!(
             "dense interval notation cases need the shared lossless JSON fixture adapter F64 cases need: JSON.stringify maps nonfinite endpoints to null"
         ),

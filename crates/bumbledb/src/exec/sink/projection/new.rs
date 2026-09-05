@@ -5,6 +5,7 @@ use crate::exec::sink::{
     FindSpec, ProjectionSink, ProjectionSources, SinkBudget, SinkSpec, SpillSet, StageRowVisit,
     encode_stage_row, sources_of,
 };
+#[cfg(test)]
 use crate::work::WorkContext;
 
 impl ProjectionSink {
@@ -96,6 +97,7 @@ impl ProjectionSink {
     /// Admit a RAM-first dest for [`Self::stream_into_scratch`]. Does not
     /// open a scratch environment.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn admit_dest(work: &WorkContext, ram_bytes: usize) -> ScratchRelation {
         ScratchRelation::new(work, ram_bytes)
     }

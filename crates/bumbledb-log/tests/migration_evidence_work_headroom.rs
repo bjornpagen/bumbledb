@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::checkpointer::{Headroom, admission_headroom};
 use bumbledb_log::history::command::{Command, CommandMetadata};
@@ -83,7 +83,7 @@ fn insert_notes(history: &LocalHistory<SchemaDescriptor>, rows: &[(u64, &str)], 
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -188,7 +188,10 @@ fn activation_evidence_resolves_while_a_live_owner_serves_the_target() {
     let steps = steps_full();
     let targets = root.join("targets");
     let runner = LocalMigration::new(&history, &targets, LIMITS);
-    let reference = match runner.migrate(&request(&plans, &steps, 0xd2, 0xe2), &work()).unwrap() {
+    let reference = match runner
+        .migrate(&request(&plans, &steps, 0xd2, 0xe2), &work())
+        .unwrap()
+    {
         MigrateOutcome::ReadyToSwitch { activation_ref, .. } => activation_ref,
         other => panic!("{other:?}"),
     };
@@ -205,7 +208,10 @@ fn activation_evidence_resolves_while_a_live_owner_serves_the_target() {
 
     // A migrate rerun of the settled operation resolves from the recorded
     // evidence without opening the served store, and mutates nothing.
-    match runner.migrate(&request(&plans, &steps, 0xd2, 0xe2), &work()).unwrap() {
+    match runner
+        .migrate(&request(&plans, &steps, 0xd2, 0xe2), &work())
+        .unwrap()
+    {
         MigrateOutcome::AlreadyActivated { access, .. } => {
             assert_eq!(access, AccessMode::Active);
         }

@@ -6,8 +6,9 @@
  * stable creation identity plus checked initialization artifact instead of
  * fabricating genesis or applied migration history.
  */
-import type { Effect, Scope } from "effect"
+
 import type { AnySchema, NativeRuntime } from "@bjornpagen/bumbledb"
+import type { Effect, Scope } from "effect"
 import type { LogError } from "#errors.ts"
 import type {
 	HostedBinding,

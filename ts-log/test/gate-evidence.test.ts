@@ -19,13 +19,13 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
 import type { ExecutionPolicy, NativeRuntimeOptions, Violation } from "@bjornpagen/bumbledb"
-import { ChangeSet, lower, NativeRuntime, relation, schema, u64 } from "@bjornpagen/bumbledb"
-import { key } from "@bjornpagen/bumbledb"
+import { ChangeSet, key, NativeRuntime, relation, schema, u64 } from "@bjornpagen/bumbledb"
+import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, ManagedRuntime } from "effect"
-import { ProtocolError } from "#errors.ts"
-import type { DatabaseIdentity, DecisionStamp, OperationId, ReceiptEpoch, RequestId } from "#identity.ts"
-import { LocalHistory } from "#history.ts"
 import { Command } from "#command.ts"
+import { ProtocolError } from "#errors.ts"
+import { LocalHistory } from "#history.ts"
+import type { DatabaseIdentity, DecisionStamp, OperationId, ReceiptEpoch, RequestId } from "#identity.ts"
 import { productionCodec } from "#migrations/native.ts"
 import type { SubmitOptions } from "#options.ts"
 import type { SubmitOutcome, TerminalReceipt } from "#outcome.ts"
@@ -75,19 +75,22 @@ function storeDir(tag: string): string {
 	return path.join(dir, "tenant")
 }
 
-const hex = (byte: number, width: number) => byte.toString(16).padStart(2, "0").repeat(width)
+const uuid = (byte: number) => {
+	const hex = byte.toString(16).padStart(2, "0").repeat(16)
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 function identityFor(seed: number, schemaId: string): DatabaseIdentity {
 	return {
-		databaseId: hex(seed, 16) as DatabaseIdentity["databaseId"],
-		incarnationId: hex(seed ^ 0xff, 16) as DatabaseIdentity["incarnationId"],
+		databaseId: uuid(seed) as DatabaseIdentity["databaseId"],
+		incarnationId: uuid(seed ^ 0xff) as DatabaseIdentity["incarnationId"],
 		schemaId: schemaId as DatabaseIdentity["schemaId"]
 	}
 }
 
 function creationFor(seed: number, snapshot: string) {
 	return {
-		operationId: hex(seed + 1, 16) as OperationId,
+		operationId: uuid(seed + 1) as OperationId,
 		artifact: new TextEncoder().encode(snapshot)
 	}
 }
@@ -97,7 +100,7 @@ function commandInput(scope: DatabaseIdentity, request: number, changes: ChangeS
 		scope,
 		id: {
 			receiptEpoch: 1n as ReceiptEpoch,
-			requestId: hex(request, 16) as RequestId
+			requestId: uuid(request) as RequestId
 		},
 		changes,
 		precondition: { kind: "blind" } as const,

@@ -168,11 +168,13 @@ fn f64_interval_with_nan_endpoint_refuses_like_strict_decode() {
     let interner = TextInterner::default();
     let mut text = TextWords::Lookup(&interner);
     let mut out = Vec::new();
-    assert!(row_words(
-        float_schema.relation(super::R).fields(),
-        &bytes,
-        &mut text,
-        &mut out
-    )
-    .is_err());
+    assert!(
+        row_words(
+            float_schema.relation(super::R).fields(),
+            &bytes,
+            &mut text,
+            &mut out
+        )
+        .is_err()
+    );
 }

@@ -11,8 +11,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crate::image::intern::TextInterner;
 use crate::image::CacheGeneration;
+use crate::image::intern::TextInterner;
 
 /// Cross-operation resident-cache allowance. Zero means no retention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,9 +177,7 @@ impl GenerationState {
         Self {
             identity,
             ledger,
-            resolver: Mutex::new(TextInterner::new(
-                crate::image::TextGeneration::of(identity),
-            )),
+            resolver: Mutex::new(TextInterner::default()),
         }
     }
 
@@ -390,10 +388,8 @@ mod tests {
     #[test]
     fn weak_idle_handle_fails_after_last_strong_drop() {
         let ledger = CacheLedger::unbounded();
-        let handle = GenerationHandle::new(GenerationState::new(
-            CacheGeneration::initial(),
-            ledger,
-        ));
+        let handle =
+            GenerationHandle::new(GenerationState::new(CacheGeneration::initial(), ledger));
         let weak = handle.downgrade();
         assert_eq!(weak.identity(), CacheGeneration::initial());
         assert!(weak.upgrade().is_some());
@@ -403,9 +399,7 @@ mod tests {
 
     #[test]
     fn cache_reservation_refunds_on_drop() {
-        let ledger = CacheLedger::new(CachePolicy {
-            cache_bytes: 1024,
-        });
+        let ledger = CacheLedger::new(CachePolicy { cache_bytes: 1024 });
         let reservation = ledger.reserve(512).expect("reserve");
         assert_eq!(ledger.used(), 512);
         drop(reservation);

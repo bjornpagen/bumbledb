@@ -18,16 +18,15 @@ pub use decode::{
 };
 #[cfg(test)]
 pub use decode::{
-    decode_bool_at, decode_field, decode_fixed_bytes, decode_id128, decode_interval_f64,
-    decode_interval_i64, decode_interval_u64, decode_u64,
+    decode_bool_at, decode_field, decode_fixed_bytes, decode_interval_f64, decode_interval_i64,
+    decode_interval_u64, decode_u64, decode_uuid,
 };
-pub(crate) use decode::{decode_values, interval_words, split_halves};
+pub(crate) use decode::{decode_values, decode_values_keyed_into, interval_words, split_halves};
 pub use encode::{append_field, encode_bool, encode_f64, encode_i64, encode_literal, encode_u64};
 #[cfg(test)]
-pub use encode::{encode_fact, encode_id128};
+pub use encode::{encode_fact, encode_uuid};
 
-#[cfg(test)]
-pub(crate) use encode::{encode_interval_f64, encode_interval_u64};
+pub(crate) use encode::{encode_interval_f64, encode_interval_i64, encode_interval_u64};
 
 pub use bumbledb_theory::schema::ValueType;
 
@@ -119,7 +118,7 @@ pub enum ValueRef {
 
     /// The application-owned identity scalar: sixteen exact bytes, stored
     /// and indexed verbatim (byte order is its total order).
-    Id128(bumbledb_theory::Id128),
+    Uuid(bumbledb_theory::Uuid),
 
     String(InternId),
 

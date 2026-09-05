@@ -107,6 +107,8 @@ pub struct HostResume {
 impl HostResume {
     /// # Errors
     /// Key longer than [`MAX_HOST_KEY`].
+    /// # Panics
+    /// If `MAX_HOST_KEY` is changed to exceed its u16 length representation.
     pub fn from_key(key: &[u8]) -> Result<Self, super::error::StoreError> {
         if key.len() > MAX_HOST_KEY {
             return Err(super::error::StoreError::HostKey(
@@ -117,7 +119,8 @@ impl HostResume {
         stored[..key.len()].copy_from_slice(key);
         Ok(Self {
             key: stored,
-            len: key.len() as u16,
+            len: u16::try_from(key.len())
+                .expect("host key length was checked against MAX_HOST_KEY"),
         })
     }
 
@@ -129,6 +132,10 @@ impl HostResume {
 
 /// One charged host window. Peak RAM is this window, not every matching key.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The bounded resume key stays inline to avoid an allocation for each streamed host window"
+)]
 pub enum HostWindow {
     /// More keys may exist after [`HostResume`].
     More {

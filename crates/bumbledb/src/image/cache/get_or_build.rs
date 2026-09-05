@@ -19,6 +19,7 @@ use bumbledb_theory::schema::RelationId;
 use super::{Cached, ImageCache, RelationSlot, VersionCache};
 
 impl ImageCache {
+    #[cfg(test)]
     pub(crate) fn get_or_build_at(
         &self,
         source: &QuerySource<'_>,
@@ -42,14 +43,13 @@ impl ImageCache {
     ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
         match (self.slot(rel), epoch) {
             (RelationSlot::Closed(slot), ViewEpoch::Closed) => {
-                self.get_or_synthesize(schema, rel, slot, generation)
+                Self::get_or_synthesize(schema, rel, slot, generation)
             }
             (RelationSlot::Ordinary(cache), ViewEpoch::Store(version)) => {
-                self.get_or_build_ordinary(source, schema, rel, cache, version, generation)
+                Self::get_or_build_ordinary(source, schema, rel, cache, version, generation)
             }
             (RelationSlot::Ordinary(_), ViewEpoch::Heap(_)) => {
-                self.counters.miss();
-                self.build_full(source, schema, rel, generation)
+                Self::build_full(source, schema, rel, generation)
             }
             (RelationSlot::Closed(_), _) => {
                 unreachable!("Closed slot carries no generation")
@@ -61,7 +61,6 @@ impl ImageCache {
     }
 
     fn get_or_build_ordinary(
-        &self,
         source: &QuerySource<'_>,
         schema: &Schema,
         rel: RelationId,
@@ -72,7 +71,6 @@ impl ImageCache {
         {
             let inner = cache.lock();
             if let Some(cached) = inner.map.get(&version) {
-                self.counters.hit();
                 crate::obs::event(
                     crate::obs::names::CACHE_HIT,
                     crate::obs::TraceArgs::Count(u64::from(rel.0)),
@@ -80,9 +78,7 @@ impl ImageCache {
                 return Ok(ResidentAdmit::Ready(Arc::clone(&cached.image)));
             }
         }
-        self.counters.miss();
-
-        let image = match self.build_full(source, schema, rel, generation)? {
+        let image = match Self::build_full(source, schema, rel, generation)? {
             ResidentAdmit::Ready(image) => image,
             ResidentAdmit::BeyondMemory(exhausted) => {
                 return Ok(ResidentAdmit::BeyondMemory(exhausted));
@@ -117,7 +113,6 @@ impl ImageCache {
     }
 
     fn build_full(
-        &self,
         source: &QuerySource<'_>,
         schema: &Schema,
         rel: RelationId,
@@ -127,7 +122,6 @@ impl ImageCache {
             crate::obs::names::IMAGE_BUILD,
             crate::obs::TraceArgs::Count(u64::from(rel.0)),
         );
-        self.counters.build();
         let admitted = build_from_source(source, schema, generation, rel)?;
         if let ResidentAdmit::Ready(image) = &admitted {
             span.set_pair(u64::from(rel.0), image.byte_size() as u64);
@@ -136,29 +130,22 @@ impl ImageCache {
     }
 
     fn get_or_synthesize(
-        &self,
         schema: &Schema,
         rel: RelationId,
         slot: &OnceLock<Arc<RelationImage>>,
         generation: &GenerationHandle,
     ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
         if let Some(image) = slot.get() {
-            self.counters.hit();
             crate::obs::event(
                 crate::obs::names::CACHE_HIT,
                 crate::obs::TraceArgs::Count(u64::from(rel.0)),
             );
             return Ok(ResidentAdmit::Ready(Arc::clone(image)));
         }
-        self.counters.miss();
-        if let Some(image) = slot.get() {
-            return Ok(ResidentAdmit::Ready(Arc::clone(image)));
-        }
         let mut span = crate::obs::span_args(
             crate::obs::names::IMAGE_BUILD,
             crate::obs::TraceArgs::Count(u64::from(rel.0)),
         );
-        self.counters.build();
         let built = match synthesize_closed(rel, schema.relation(rel), generation.clone())? {
             ResidentAdmit::Ready(built) => built,
             ResidentAdmit::BeyondMemory(exhausted) => {

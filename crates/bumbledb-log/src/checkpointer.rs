@@ -210,7 +210,10 @@ pub fn capture_into<S, K: ChunkSink>(
 where
     K::Error: Into<CheckpointError>,
 {
-    let snapshot = db.integration_store().snapshot(work).map_err(store_failure)?;
+    let snapshot = db
+        .integration_store()
+        .snapshot(work)
+        .map_err(store_failure)?;
     let control = snapshot
         .attachment()
         .map_err(store_failure)?
@@ -221,15 +224,16 @@ where
     // snapshot. Writer refusals are smuggled out around the storage error
     // channel; the poison `Cancelled` below never escapes.
     let mut sink_error: Option<WriteError<K::Error>> = None;
-    let exported = snapshot.export(work, &mut |relation, row| {
-        match writer.fact(relation.0, row) {
+    let exported = snapshot.export(
+        work,
+        &mut |relation, row| match writer.fact(relation.0, row) {
             Ok(()) => Ok(()),
             Err(error) => {
                 sink_error = Some(error);
                 Err(bumbledb::store::StoreError::Work(WorkError::Cancelled))
             }
-        }
-    });
+        },
+    );
     if let Some(error) = sink_error.take() {
         return Err(write_failure(error));
     }
@@ -286,7 +290,7 @@ where
 
 /// The suffix walk: verify the exact decisions `(base, tip]` chain back from
 /// `tip` to `base`, counting bytes and the oldest epoch touched. The initial
-/// tip ObjectRef is preserved (C6).
+/// tip `ObjectRef` is preserved (C6).
 struct Suffix {
     tail_bytes: u64,
     epoch_floor: u64,
@@ -321,12 +325,10 @@ impl ChainVisitor for SuffixVisitor {
 
 fn map_suffix_walk(error: ObjectError) -> CheckpointError {
     match error {
-        ObjectError::Frame(_)
-        | ObjectError::Missing { .. }
-        | ObjectError::WrongDigest { .. } => CheckpointError::Corruption(
-            "suffix walk did not reach the captured base",
-        ),
-        ObjectError::Backend(error) => CheckpointError::Object(ObjectError::Backend(error)),
+        ObjectError::Frame(_) | ObjectError::Missing { .. } | ObjectError::WrongDigest { .. } => {
+            CheckpointError::Corruption("suffix walk did not reach the captured base")
+        }
+        other => CheckpointError::Object(other),
     }
 }
 
@@ -486,8 +488,15 @@ where
 
     // 2/3. One coherent capture streamed straight into verified chunk
     // uploads, plus its streamed manifest.
-    let (mut manifest, mut manifest_ref) =
-        upload_snapshot(db, backend, prefix, staged_epoch, retired_filter, policy, work)?;
+    let (mut manifest, mut manifest_ref) = upload_snapshot(
+        db,
+        backend,
+        prefix,
+        staged_epoch,
+        retired_filter,
+        policy,
+        work,
+    )?;
     if manifest.identity != parent.control.identity {
         return Err(CheckpointError::Corruption("captured foreign identity"));
     }
@@ -510,7 +519,12 @@ where
         ))?;
         // Distinguish ordinary base advancement from same-base receipt-policy
         // replacement (LOG-017): retirement at the same decision is valid.
-        if base.seq < current_recovery.base.seq {
+        let advances_retirement = matches!(kind, CheckpointKind::RetireReceipts { through } if through > live.receipts.retired_through());
+        if base.seq < current_recovery.base.seq
+            || (base == current_recovery.base
+                && current_recovery.checkpoint.is_some()
+                && !advances_retirement)
+        {
             return Ok(CheckpointOutcome::Discarded {
                 current_base_seq: current_recovery.base.seq,
             });
@@ -564,12 +578,7 @@ where
             staged_epoch = new_epoch;
         }
         let recovery = if live.decision == base {
-            RecoveryRoot::checkpoint_only(
-                Some(manifest_ref),
-                base,
-                0,
-                current.object_epoch,
-            )
+            RecoveryRoot::checkpoint_only(Some(manifest_ref), base, 0, current.object_epoch)
         } else {
             let tip_object = suffix.tip_object.ok_or(CheckpointError::Corruption(
                 "suffix root missing tip ObjectRef",

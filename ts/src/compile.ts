@@ -2,11 +2,11 @@ import { Effect } from "effect"
 import { isClosedMember } from "#closed.ts"
 import { dbNative } from "#db-native.ts"
 import { SdkInvariantError } from "#errors.ts"
+import type { SchemaClasses } from "#law.ts"
 import { lower } from "#lower.ts"
 import type { SealedDescriptor } from "#native.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
 import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
-import type { SchemaClasses } from "#law.ts"
 import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "#schema.ts"
 import type { Statement } from "#statements.ts"
 
@@ -71,10 +71,7 @@ function tablesOf(theory: AnySchema): SchemaTables {
 	for (const statement of theory.statements) {
 		const data = statement.data
 		if (data.kind === "key" && !primaryKeys.has(data.owner.name)) {
-			primaryKeys.set(
-				data.owner.name,
-				Object.freeze({ statementId: offset, projection: data.projection })
-			)
+			primaryKeys.set(data.owner.name, Object.freeze({ statementId: offset, projection: data.projection }))
 		}
 		offset += declaredWidth(statement)
 	}

@@ -1,7 +1,14 @@
 import { Context, Duration, Effect, Exit, Layer } from "effect"
 import type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 import { CloseFailure, DbError, dbError } from "#runtime-errors.ts"
-import type { CloseWire, OperationHandle, OptionsWire, PolicyWire, RepositoryLockHandle, RuntimeHandle } from "#runtime-native.ts"
+import type {
+	CloseWire,
+	OperationHandle,
+	OptionsWire,
+	PolicyWire,
+	RepositoryLockHandle,
+	RuntimeHandle
+} from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
 
 export interface ExecutionPolicy {
@@ -133,9 +140,10 @@ function joinInterruptDrain(
 	)
 }
 
-function attachInterruptClose(operation: string, stash: { report?: CloseReport }): <A, E, R>(
-	effect: Effect.Effect<A, E, R>
-) => Effect.Effect<A, E, R> {
+function attachInterruptClose(
+	operation: string,
+	stash: { report?: CloseReport }
+): <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> {
 	return (effect) =>
 		effect.pipe(
 			Effect.onExit((exit) => {
@@ -179,11 +187,7 @@ function close(handle: RuntimeHandle): Effect.Effect<CloseReport> {
  * queued Page/Rows. A second call is native-idempotent (Committed
  * mutations stay; only unpublished delivery is dropped).
  */
-function startCancelDrain(
-	operation: string,
-	lease: OperationHandle,
-	stash: { report?: CloseReport }
-): void {
+function startCancelDrain(operation: string, lease: OperationHandle, stash: { report?: CloseReport }): void {
 	try {
 		runtimeNative.runtimeCancel(lease, (report) => {
 			stash.report = closeReport(operation, report)
@@ -213,7 +217,10 @@ export function nativeOperationWith<A, Value>(
 ): Effect.Effect<A, DbError> {
 	const stash: { report?: CloseReport } = {}
 	const cancelOp = `${operation}.cancel`
-	return attachInterruptClose(cancelOp, stash)(
+	return attachInterruptClose(
+		cancelOp,
+		stash
+	)(
 		Effect.callback((resume, signal) => {
 			let lease: OperationHandle
 			try {
@@ -232,11 +239,7 @@ export function nativeOperationWith<A, Value>(
 				resume(Effect.fail(failure(operation, cause)))
 				return
 			}
-			return joinInterruptDrain(
-				cancelOp,
-				(callback) => runtimeNative.runtimeCancel(lease, callback),
-				stash
-			)
+			return joinInterruptDrain(cancelOp, (callback) => runtimeNative.runtimeCancel(lease, callback), stash)
 		})
 	)
 }
@@ -297,9 +300,7 @@ const acquire = Effect.fn("NativeRuntime.acquire")(function* (configuration: Nat
 									const error = failure("NativeRuntime.acquire", cause)
 									resume(
 										close(owner).pipe(
-											Effect.flatMap((report) =>
-												afterClose("NativeRuntime.acquire", report, Effect.fail(error))
-											)
+											Effect.flatMap((report) => afterClose("NativeRuntime.acquire", report, Effect.fail(error)))
 										)
 									)
 								}
@@ -388,7 +389,7 @@ export const internalAcquireRepositoryLock = Effect.fn("internalAcquireRepositor
 	const closeOp = `${operation}.repositoryLock`
 	return yield* Effect.uninterruptibleMask((restore) =>
 		Effect.gen(function* () {
-			const slot: { owner?: RepositoryLockHandle } = {}
+			const slot: { owner: RepositoryLockHandle | undefined } = { owner: undefined }
 			const release = Effect.suspend(() => {
 				const held = slot.owner
 				if (held === undefined) {

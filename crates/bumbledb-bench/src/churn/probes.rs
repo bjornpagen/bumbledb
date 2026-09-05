@@ -162,7 +162,7 @@ pub struct ProbeRun {
 pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<ProbeRun, String> {
     let query = (probe.query)();
     let mut prepared = db
-        .prepare(&query)
+        .prepare(&query, crate::harness::bench_work())
         .map_err(|e| format!("{}: prepare: {e:?}", probe.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .signature()
@@ -174,15 +174,19 @@ pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<Prob
     let mut reference = Vec::with_capacity(sets.len());
     for draw in sets {
         let args = param_args(draw);
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("{}: execute: {e:?}", probe.name))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("{}: execute: {e:?}", probe.name))?;
         reference.push(compare::from_answers(&buffer, &types));
     }
     let mut rotation = Rotation::new(sets.to_vec());
     let mut run = || {
         let args = param_args(rotation.next_set());
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .map_err(|e| format!("execute: {e:?}"))?;
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)
     };
     let plain = harness::measure(PROBE_PROTO, &mut run)?;

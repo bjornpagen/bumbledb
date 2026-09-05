@@ -20,16 +20,16 @@ use bumbledb::{WorkContext, WorkError};
 
 use crate::checkpointer::read_live_head;
 use crate::codec::{StreamLimits, decode_manifest};
-use crate::history::command::Limits;
 use crate::history::authority::{AuthorityError, HeadAuthority};
+use crate::history::command::Limits;
 use crate::history::locator::{self, ChainVisitor};
 use crate::history::{FrameError, HeadRevision, OperationId};
 use crate::manifest::wire::{self, Reader};
 use crate::manifest::{Barrier, GcPhase, HeadError, HeadRecord, RecoveryRoot, encode_head};
 use crate::store::{
-    BackendError, ConditionalOutcome, ConditionalStore, ObjectError, ObjectKind, ObjectRef,
-    ObservedError, ReceivingStore, TransportContext, backend as backend_error,
-    get_verified, head_key, objects_prefix, parse_object_key, put_verified,
+    BackendError, ConditionalOutcome, ObjectError, ObjectKind, ObjectRef, ObservedError,
+    ReceivingStore, TransportContext, backend as backend_error, get_verified, head_key,
+    objects_prefix, parse_object_key, put_verified,
 };
 
 pub const MARK_FAMILY: &[u8] = b"bumbledb.mark.v1\0";
@@ -121,6 +121,20 @@ impl From<AuthorityError> for GcError {
     }
 }
 
+/// Collection progresses on both live and deleted tenants. Only its revision
+/// changes; this never makes a tombstone writable again.
+fn collection_control(control: &HeadAuthority) -> Result<HeadAuthority, GcError> {
+    let revision = control
+        .revision
+        .0
+        .checked_add(1)
+        .ok_or(GcError::Corruption("head revision exhausted"))?;
+    Ok(HeadAuthority {
+        revision: HeadRevision(revision),
+        ..*control
+    })
+}
+
 /// One durable-progress CAS: read the exact current head, let `compose`
 /// build the successor from it (preserving intervening data changes), and
 /// conditionally replace. `compose` refuses with `CollectionMoved` when the
@@ -137,7 +151,7 @@ where
 {
     for _ in 0..policy.cas_attempts {
         work.checkpoint()?;
-        let (current, version) = read_live_head(backend, prefix, policy.head_cap)?;
+        let (current, version) = read_live_head(backend, prefix, policy.head_cap, work)?;
         let proposed = compose(&current)?;
         let body = encode_head(&proposed, policy.head_cap)?;
         match backend
@@ -148,7 +162,7 @@ where
             ConditionalOutcome::Published { .. } => return Ok(proposed),
             ConditionalOutcome::PreconditionFailed => {}
             ConditionalOutcome::Indeterminate => {
-                let (observed, _) = read_live_head(backend, prefix, policy.head_cap)?;
+                let (observed, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
                 if observed.gc == proposed.gc && observed.object_epoch == proposed.object_epoch {
                     return Ok(observed);
                 }
@@ -196,25 +210,7 @@ where
             protected: current.protected_closure().into_boxed_slice(),
         };
         barrier_out = Some(barrier.clone());
-        // Tombstones still advance their epoch for collection: use the raw
-        // record fields (control untouched except revision maintenance where
-        // live; deleted controls keep their recorded revision).
-        let control = match current.control.maintained() {
-            Ok(control) => control,
-            Err(AuthorityError::Deleted) => {
-                let revision = current
-                    .control
-                    .revision
-                    .0
-                    .checked_add(1)
-                    .ok_or(GcError::Corruption("head revision exhausted"))?;
-                HeadAuthority {
-                    revision: HeadRevision(revision),
-                    ..current.control
-                }
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let control = collection_control(&current.control)?;
         Ok(HeadRecord {
             control,
             recovery: current.recovery,
@@ -254,6 +250,28 @@ fn mark_root<B: ReceivingStore>(
 where
     B::Error: BackendError + ObservedError,
 {
+    struct MarkVisitor<'a> {
+        prefix: &'a str,
+        budget: &'a mut u64,
+        marks: &'a mut BTreeSet<String>,
+        work: &'a WorkContext,
+        charge: &'a dyn Fn(&String, &mut u64) -> Result<(), GcError>,
+    }
+    impl ChainVisitor for MarkVisitor<'_> {
+        type Error = GcError;
+        fn visit(
+            &mut self,
+            _stamp: crate::history::DecisionStamp,
+            _bytes: &[u8],
+            reference: ObjectRef,
+        ) -> Result<bool, GcError> {
+            self.work.checkpoint()?;
+            let key = reference.key(self.prefix);
+            (self.charge)(&key, self.budget)?;
+            self.marks.insert(key);
+            Ok(true)
+        }
+    }
     let charge = |key: &String, budget: &mut u64| -> Result<(), GcError> {
         let cost = key.len() as u64 + 16;
         if *budget < cost {
@@ -287,28 +305,6 @@ where
     }
     // Decisions of exactly the tail (base, tip]. The shared walker stops at
     // the captured base and never epoch-probes.
-    struct MarkVisitor<'a> {
-        prefix: &'a str,
-        budget: &'a mut u64,
-        marks: &'a mut BTreeSet<String>,
-        work: &'a WorkContext,
-        charge: &'a dyn Fn(&String, &mut u64) -> Result<(), GcError>,
-    }
-    impl ChainVisitor for MarkVisitor<'_> {
-        type Error = GcError;
-        fn visit(
-            &mut self,
-            _stamp: crate::history::DecisionStamp,
-            _bytes: &[u8],
-            reference: ObjectRef,
-        ) -> Result<bool, GcError> {
-            self.work.checkpoint()?;
-            let key = reference.key(self.prefix);
-            (self.charge)(&key, self.budget)?;
-            self.marks.insert(key);
-            Ok(true)
-        }
-    }
     let mut walk_budget = policy.walk_budget;
     let mut visitor = MarkVisitor {
         prefix,
@@ -329,11 +325,7 @@ where
         &mut visitor,
     )
     .map_err(|error| match error {
-        GcError::Object(ObjectError::Backend(inner))
-            if inner.to_string().contains("decision walk budget exhausted") =>
-        {
-            GcError::MarkBudget
-        }
+        GcError::Object(ObjectError::WalkBudgetExhausted) => GcError::MarkBudget,
         GcError::Object(ObjectError::Missing { .. }) => {
             GcError::Corruption("parent locator missing before recovery base")
         }
@@ -370,7 +362,7 @@ pub fn decode_marks(
     cap: usize,
 ) -> Result<BTreeSet<String>, GcError> {
     let mut input = Reader::begin(bytes, MARK_FAMILY, MARK_LAYOUT, MARK_KIND, cap)?;
-    let id = OperationId::from_core(bumbledb::Id128::from_bytes(
+    let id = OperationId::from_core(bumbledb::Uuid::from_bytes(
         input.array().map_err(GcError::Frame)?,
     ));
     if id != expected_barrier {
@@ -412,7 +404,7 @@ pub fn mark<B: ReceivingStore>(
 where
     B::Error: BackendError + ObservedError,
 {
-    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
     let barrier = match &head.gc {
         GcPhase::Marking { barrier } => barrier.clone(),
         GcPhase::Sweeping { marks, .. } => return Ok(*marks),
@@ -436,7 +428,7 @@ where
     // New mark-work objects live in the current (open) epoch, outside the
     // collection cutoff, so a concurrent collector cannot collect them.
     let bytes = encode_marks(&barrier, &marks)?;
-    let (current, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (current, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
     let marks_ref = put_verified(
         backend,
         prefix,
@@ -446,7 +438,7 @@ where
     )?;
     let installed = cas_head(backend, prefix, policy, work, |current| match &current.gc {
         GcPhase::Marking { barrier: recorded } if recorded.id == barrier.id => {
-            let control = current.control.maintained().map_err(GcError::from)?;
+            let control = collection_control(&current.control)?;
             Ok(HeadRecord {
                 control,
                 recovery: current.recovery,
@@ -477,7 +469,7 @@ where
         },
         Err(GcError::CollectionMoved) => {
             // Re-read: duplicated safe work is fine; durable evidence wins.
-            let (observed, _) = read_live_head(backend, prefix, policy.head_cap)?;
+            let (observed, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
             match observed.gc {
                 GcPhase::Sweeping {
                     barrier: recorded,
@@ -510,6 +502,10 @@ pub struct SweepReport {
 /// # Errors
 /// Stale collectors get `CollectionMoved`; failed deletions return
 /// `DeleteFailed` with resumable durable progress retained.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep the ordered execution and cleanup transitions together"
+)]
 pub fn sweep<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
@@ -519,7 +515,7 @@ pub fn sweep<B: ReceivingStore>(
 where
     B::Error: BackendError + ObservedError,
 {
-    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
     let (barrier, marks_ref, mut cursor) = match &head.gc {
         GcPhase::Sweeping {
             barrier,
@@ -611,7 +607,7 @@ where
         GcPhase::Sweeping {
             barrier: recorded, ..
         } if recorded.id == barrier.id => {
-            let control = current.control.maintained().map_err(GcError::from)?;
+            let control = collection_control(&current.control)?;
             Ok(HeadRecord {
                 control,
                 recovery: current.recovery,
@@ -657,7 +653,7 @@ where
             {
                 return Err(GcError::CollectionMoved);
             }
-            let control = current.control.maintained().map_err(GcError::from)?;
+            let control = collection_control(&current.control)?;
             Ok(HeadRecord {
                 control,
                 recovery: current.recovery,
@@ -691,7 +687,7 @@ pub fn run_collection<B: ReceivingStore>(
 where
     B::Error: BackendError + ObservedError,
 {
-    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
     match &head.gc {
         GcPhase::Idle => {
             close_epoch(backend, prefix, operation, policy, work)?;
@@ -700,7 +696,7 @@ where
             // Resume the running collection; duplicated work is safe.
         }
     }
-    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
     if matches!(head.gc, GcPhase::Marking { .. }) {
         mark(backend, prefix, limits, policy, work)?;
     }

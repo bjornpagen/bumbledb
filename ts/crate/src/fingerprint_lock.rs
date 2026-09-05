@@ -136,24 +136,39 @@ fn the_macro_twin_hashes_to_the_pinned_fingerprint() {
 #[test]
 fn the_bridge_typestate_and_the_macro_twin_open_each_other_s_stores() {
     let dir = TempDir::new("fingerprint-lock");
+    let work = bumbledb::work::ExecutionPolicy {
+        input_bytes: 1 << 20,
+        working_bytes: 1 << 20,
+        scratch_bytes: 1 << 20,
+        result_bytes: 1 << 20,
+        rows: 1024,
+        work_units: 1 << 20,
+        timeout: std::time::Duration::from_secs(10),
+    }
+    .start()
+    .expect("valid test policy");
 
     // Created through the bridge's exact typestate (`Db<SchemaDescriptor>`
     // — what every JS `dbCreate` produces), opened under the macro twin.
     drop(
-        Db::create(&dir.0, CrossHost.descriptor())
+        Db::create(&dir.0, CrossHost.descriptor(), work.clone())
             .expect("descriptor create")
             .expect("accepted"),
     );
-    drop(Db::open(&dir.0, CrossHost).expect("the macro twin opens the descriptor-created store"));
+    drop(
+        Db::open(&dir.0, CrossHost, work.clone())
+            .expect("the macro twin opens the descriptor-created store"),
+    );
 
     // And the runtime lane (the bridge's `dbOpen`) reopens it as well.
-    drop(Db::open(&dir.0, CrossHost.descriptor()).expect("descriptor reopen"));
+    drop(Db::open(&dir.0, CrossHost.descriptor(), work.clone()).expect("descriptor reopen"));
 
     // Teeth: a twisted twin (one statement fewer) is the typed refusal.
     let mut twisted = CrossHost.descriptor();
     twisted.statements.pop();
-    match Db::open(&dir.0, twisted).map(|_| ()) {
-        Err(bumbledb::Error::SchemaMismatch { .. }) => {}
+    match Db::open(&dir.0, twisted, work).map(|_| ()) {
+        Err(bumbledb::Error::Store(error))
+            if matches!(*error, bumbledb::store::StoreError::SchemaMismatch) => {}
         other => panic!("a twisted twin must refuse as SchemaMismatch, got {other:?}"),
     }
 }

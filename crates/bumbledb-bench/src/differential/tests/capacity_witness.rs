@@ -64,7 +64,7 @@ fn the_witness_walks_the_permuted_key_order() {
         ],
     };
     let dir = TempDir::new("capacity-witness-permuted");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
@@ -135,7 +135,7 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
     }]);
 
     let dir = TempDir::new("capacity-witness-interned");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
@@ -157,7 +157,7 @@ fn the_witness_walks_intern_order_not_lexicographic_order() {
     assert_eq!(agreed(&db, &mut naive, &overflow), expected);
 
     let dir = TempDir::new("capacity-witness-pending");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);

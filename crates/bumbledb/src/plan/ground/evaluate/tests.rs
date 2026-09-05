@@ -1,16 +1,16 @@
 //! against the honest pipeline (validate → normalize → grounding) over a
 //! condition's refusal shape is easier to pin in isolation.
 use super::*;
-use crate::image::view::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 use crate::image::CacheGeneration;
+use crate::image::view::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, normalize_rules};
-use crate::work::{CacheLedger, GenerationHandle, GenerationState};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value};
 use crate::ir::{CmpOp, WordCmp};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
+use crate::work::{CacheLedger, GenerationHandle, GenerationState};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
     FieldDescriptor, IntervalElement, RelationDescriptor, Row, SchemaDescriptor, Side,

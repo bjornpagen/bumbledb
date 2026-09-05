@@ -20,5 +20,5 @@
 [{"u64":1},{"interval_u64_fixed":[0,1]},{"u64":100}],
 [{"u64":1},{"interval_u64_fixed":[0,1]},{"u64":999}]
 ]}]},
-"verdict":{"reject":{"phase":"key","violations":[0,1]}}
+"verdict":{"reject":{"phase":"statement","violations":[0,1,3]}}
 }

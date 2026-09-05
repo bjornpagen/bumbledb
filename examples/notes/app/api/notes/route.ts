@@ -5,7 +5,7 @@
  * interruption. All database work is Effect; the Promise below is the
  * framework boundary, not a database API.
  */
-import { encodeBoundaryRows, Id128 } from "@bjornpagen/bumbledb"
+import { encodeBoundaryRows, Uuid } from "@bjornpagen/bumbledb"
 import { Effect, Result } from "effect"
 import { requirePrincipal } from "../../../src/auth.ts"
 import { bindingFor } from "../../../src/db/bindings.ts"
@@ -35,7 +35,7 @@ const listNotes = Effect.fn("routes.listNotes")(
 )
 
 /**
- * Create requires a client-supplied note id (32 lowercase hex): the id is
+ * Create requires a client-supplied note id (canonical UUID): the id is
  * generated ONCE by the caller for the original intent and reused on
  * retries — the same id builds the identical command and the receipt
  * lookup deduplicates. Cross-origin writes are refused by the app's own
@@ -47,7 +47,7 @@ const postNote = Effect.fn("routes.postNote")(
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
 		const work = requestPolicy(request)
-		const noteId = yield* Effect.fromResult(Id128.fromHex(body.id))
+		const noteId = yield* Effect.fromResult(Uuid.parse(body.id))
 		const databases = yield* Databases
 		const db = yield* databases.acquire(binding, work)
 		const outcome = yield* createNote(db, principal.tenantId, noteId, body.text, work)

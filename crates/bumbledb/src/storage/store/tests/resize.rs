@@ -115,9 +115,7 @@ fn a_growth_ceiling_is_a_typed_exhaustion_never_a_wrap() {
         initial_map_bytes: 1 << 20,
         max_map_bytes: Some(2 << 20),
     };
-    let store = Store::create(&path, &schema(), ceiling)
-        .expect("create")
-        .0;
+    let store = Store::create(&path, &schema(), ceiling).expect("create").0;
     // First growth reaches the ceiling.
     let report = store.grow(&work(), None).expect("grow to ceiling");
     assert_eq!(report.new_map_bytes, 2 << 20);

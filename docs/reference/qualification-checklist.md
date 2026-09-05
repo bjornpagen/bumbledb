@@ -124,7 +124,7 @@ Permanent scope (L19 authored; L21 binds qualification):
   `judge_final_state`, `crates/bumbledb-bench/src/naive/successor/staged.rs`,
   and `crates/bumbledb-bench/src/closure/history_model.rs` — not the
   production planner.
-- Identity/surface goldens: `python3 scripts/spec-gen.py --check`.
+- Identity/surface goldens: `cargo nextest run -p bumbledb-log --test conformance_v3`.
   Census no longer runs them.
 
 ### L20 — measurement integration

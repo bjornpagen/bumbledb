@@ -4,12 +4,13 @@
  * not a security boundary. Native kind/runtime/owner/state validation remains
  * mandatory on every verb. Real types are shipped; this is not stripInternal.
  */
-export type { ChangeDraft, ChangeSet } from "#changes.ts"
+export type { ChangeDraft } from "#changes.ts"
 export { ChangeSet, internalChanges } from "#changes.ts"
-export type { ExecutionSession, QueryReader } from "#db.ts"
-export { Db, internalPublishedReader } from "#db.ts"
 export type { CompiledSchema, SchemaId } from "#compile.ts"
 export { Schema } from "#compile.ts"
+export type { ExecutionSession, QueryReader } from "#db.ts"
+export { Db, internalPublishedReader } from "#db.ts"
+export type { SnapshotHandle } from "#db-native.ts"
 export { lower } from "#lower.ts"
 export { internalMigrationRead, internalMigrationSchema } from "#migration.ts"
 export {
@@ -41,9 +42,9 @@ export type {
 	DirectoryHandle,
 	InspectionWire,
 	NativeKind,
-	RepositoryLockHandle,
 	OperationHandle,
 	PolicyWire,
+	RepositoryLockHandle,
 	ResourceHeader,
 	RuntimeHandle
 } from "#runtime-native.ts"

@@ -8,7 +8,7 @@
 //! sorts entries by ascending UTF-8 name bytes, refuses duplicate names,
 //! and reuses the canonical row codec's scalar tags and payload encodings
 //! (tags 0/1/2/3/4/5/8 — booleans, integers, canonical F64 payload bits,
-//! strings, bytes, Id128) so no second value vocabulary exists. Interval
+//! strings, bytes, Uuid) so no second value vocabulary exists. Interval
 //! values are not scalars and refuse. The EMPTY record is the empty byte
 //! string — exactly the log's existing `CommandResult::empty()`; a
 //! nonempty record opens with its own domain-separating family magic and
@@ -22,7 +22,7 @@
 //! F3 format freeze (C12); a change bumps [`LAYOUT`].
 
 use crate::work::WorkError;
-use crate::{F64, Id128, Value, WorkContext};
+use crate::{F64, Uuid, Value, WorkContext};
 
 /// The result frame's family magic; no other frame family shares it.
 pub const FAMILY: &[u8] = b"bumbledb.result.v1\0";
@@ -45,7 +45,7 @@ const TAG_I64: u8 = 2;
 const TAG_F64: u8 = 3;
 const TAG_STRING: u8 = 4;
 const TAG_BYTES: u8 = 5;
-const TAG_ID128: u8 = 8;
+const TAG_UUID: u8 = 8;
 
 /// Every refusal of the result-record codec, encode and strict decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +127,7 @@ fn scalar_payload_len(entry: usize, value: &Value) -> Result<usize, ResultError>
     match value {
         Value::Bool(_) => Ok(1),
         Value::U64(_) | Value::I64(_) | Value::F64(_) => Ok(8),
-        Value::Id128(_) => Ok(16),
+        Value::Uuid(_) => Ok(16),
         Value::String(text) => text.len().checked_add(8).ok_or(ResultError::LengthOverflow),
         Value::FixedBytes(bytes) => bytes
             .len()
@@ -239,8 +239,8 @@ pub fn encode_result(
                 out.extend_from_slice(&(v.len() as u64).to_be_bytes());
                 out.extend_from_slice(v);
             }
-            Value::Id128(v) => {
-                out.push(TAG_ID128);
+            Value::Uuid(v) => {
+                out.push(TAG_UUID);
                 out.extend_from_slice(v.as_bytes());
             }
             Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
@@ -382,7 +382,7 @@ pub fn decode_result(
                 owned.extend_from_slice(span);
                 Value::FixedBytes(owned.into_boxed_slice())
             }
-            TAG_ID128 => Value::Id128(Id128::from_bytes(input.array()?)),
+            TAG_UUID => Value::Uuid(Uuid::from_bytes(input.array()?)),
             got => return Err(ResultError::Tag { at, got }),
         };
         let mut owned_name = String::new();
@@ -402,7 +402,7 @@ pub fn decode_result(
 mod tests {
     use super::{FAMILY, LAYOUT, MAX_NAME_BYTES, ResultError, decode_result, encode_result};
     use crate::work::ExecutionPolicy;
-    use crate::{F64, Id128, Interval, Value, WorkContext};
+    use crate::{F64, Interval, Uuid, Value, WorkContext};
     use std::time::Duration;
 
     fn work() -> WorkContext {
@@ -432,7 +432,7 @@ mod tests {
                 "blob",
                 Value::FixedBytes(Box::from([0xde, 0xad, 0xbe, 0xef])),
             ),
-            ("entity", Value::Id128(Id128::from_bytes([7; 16]))),
+            ("entity", Value::Uuid(Uuid::from_bytes([7; 16]))),
         ]
     }
 

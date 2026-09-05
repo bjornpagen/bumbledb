@@ -665,7 +665,10 @@ fn d05_evidence_bytes_survive_opposite_insertion_and_remint() {
                 field("email", ValueType::String),
             ],
         }],
-        statements: vec![fd(RelationId(0), &[FieldId(0)]), fd(RelationId(0), &[FieldId(1)])],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(0), &[FieldId(1)]),
+        ],
     }
     .validate()
     .expect("valid");

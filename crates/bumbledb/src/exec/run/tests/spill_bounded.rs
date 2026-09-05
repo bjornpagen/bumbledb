@@ -1,9 +1,8 @@
-//! Spill-bounded derived consumption (D09). Verification: NotRun.
+//! Spill-bounded derived consumption (D09). Verification: `NotRun`.
 //! A scratch-backed stage walks through L03's charged visitor: `Err`
 //! stops immediately and `Ok(false)` is a clean early stop. Peak decode
 //! storage is one row. No `type_name` / `size_of`.
 
-use super::*;
 use crate::api::prepared::derived::{ScratchStage, SealedStage};
 use crate::error::Error;
 use crate::exec::scratch::ScratchRelation;

@@ -364,7 +364,7 @@ pub(super) fn encode_value(value: &Value, out: &mut Vec<u8>) {
             out.extend_from_slice(&v.start().to_be_bytes());
             out.extend_from_slice(&v.end().to_be_bytes());
         }
-        Value::Id128(v) => {
+        Value::Uuid(v) => {
             out.push(8);
             out.extend_from_slice(v.as_bytes());
         }

@@ -15,14 +15,14 @@
 //! The one canonical value spelling (shared by schema extension rows, plan
 //! literals and seed rows):
 //! `{"bool":true}`, `{"u64":"7"}`, `{"i64":"-7"}`,
-//! `{"$f64":"<16 lowercase hex canonical bits>"}`, `{"id128":"<32 hex>"}`,
+//! `{"$f64":"<16 lowercase hex canonical bits>"}`, `{"uuid":"<canonical UUID>"}`,
 //! `{"string":"…"}`, `{"fixedBytes":"<hex>"}`, `{"intervalU64":["a","b"]}`,
 //! `{"intervalI64":["a","b"]}`, `{"intervalF64":["<16hex>","<16hex>"]}`.
 
 use std::collections::BTreeMap;
 use std::ops::Index;
 
-use bumbledb::{F64, Id128, Interval, Value};
+use bumbledb::{F64, Interval, Uuid, Value};
 
 /// A strict-grammar refusal: the static message names the first offense.
 pub(crate) type JsonResult<T> = Result<T, &'static str>;
@@ -305,9 +305,13 @@ pub(crate) fn parse_value(json: &Json) -> JsonResult<Value> {
         "u64" => Ok(Value::U64(parse_u64(body)?)),
         "i64" => Ok(Value::I64(parse_i64(body)?)),
         "$f64" => Ok(Value::F64(parse_f64_bits(body)?)),
-        "id128" => {
-            let raw = unhex_exact::<16>(body.as_str().ok_or("id128 hex")?)?;
-            Ok(Value::Id128(Id128::from_bytes(raw)))
+        "uuid" => {
+            let text = body.as_str().ok_or("uuid text")?;
+            let id = Uuid::parse_str(text).map_err(|_| "uuid syntax")?;
+            if id.hyphenated().encode_lower(&mut Uuid::encode_buffer()) != text {
+                return Err("canonical uuid");
+            }
+            Ok(Value::Uuid(id))
         }
         "string" => Ok(Value::String(body.as_str().ok_or("string")?.into())),
         "fixedBytes" => Ok(Value::FixedBytes(
@@ -360,9 +364,12 @@ pub(crate) fn render_value(out: &mut String, value: &Value) {
             push_hex(out, &v.to_be_bytes());
             out.push_str("\"}");
         }
-        Value::Id128(v) => {
-            out.push_str("{\"id128\":\"");
-            push_hex(out, v.as_bytes());
+        Value::Uuid(v) => {
+            out.push_str("{\"uuid\":\"");
+            out.push_str(
+                v.hyphenated()
+                    .encode_lower(&mut bumbledb::Uuid::encode_buffer()),
+            );
             out.push_str("\"}");
         }
         Value::String(text) => {
@@ -508,7 +515,7 @@ pub(crate) fn push_indent(out: &mut String, depth: usize) {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::{F64, Id128, Interval, Value};
+    use bumbledb::{F64, Interval, Uuid, Value};
 
     use super::{parse_value, read_tree, render_value};
 
@@ -528,7 +535,7 @@ mod tests {
             Value::U64(u64::MAX),
             Value::I64(i64::MIN),
             Value::F64(one),
-            Value::Id128(Id128::from_bytes([0xab; 16])),
+            Value::Uuid(Uuid::from_bytes([0xab; 16])),
             Value::String("π \"quoted\"\n".into()),
             Value::FixedBytes(Box::from(*b"\x00\xff")),
             Value::IntervalU64(Interval::new(1, 5).unwrap()),
@@ -545,7 +552,7 @@ mod tests {
             r#"{"bool":true,"u64":"1"}"#,
             r#"{"$f64":"7ff8000000000001"}"#,
             r#"{"$f64":"3FF0000000000000"}"#,
-            r#"{"id128":"abcd"}"#,
+            r#"{"uuid":"abcd"}"#,
             r#"{"u64":"+7"}"#,
             r#"{"intervalF64":["3ff0000000000000","3ff0000000000000"]}"#,
             r#"{"fresh":true}"#,

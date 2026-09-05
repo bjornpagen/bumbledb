@@ -154,7 +154,7 @@ pub enum RecoveryStall {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use crate::history::authority::{Activation, ActivationCause, HeadAuthority};
     use crate::history::{
@@ -166,8 +166,8 @@ mod tests {
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
@@ -181,7 +181,7 @@ mod tests {
             identity(),
             genesis,
             Activation::Activated {
-                operation: OperationId::from_core(Id128::from_bytes([4; 16])),
+                operation: OperationId::from_core(Uuid::from_bytes([4; 16])),
                 target_genesis: genesis.hash,
                 cause: ActivationCause::Create,
             },
@@ -260,7 +260,7 @@ mod tests {
         let head = authority(2);
         let deleted = match head
             .delete(
-                OperationId::from_core(Id128::from_bytes([7; 16])),
+                OperationId::from_core(Uuid::from_bytes([7; 16])),
                 crate::history::authority::DeletedReason::Erasure,
             )
             .unwrap()

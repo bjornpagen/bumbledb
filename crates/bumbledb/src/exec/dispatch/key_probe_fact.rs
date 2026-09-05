@@ -48,7 +48,7 @@ fn const_words(
     out: &mut Vec<u64>,
 ) -> Result<()> {
     match value {
-        Const::Word(word) => out.push(*word),
+        Const::Word(scalar) => out.push(*scalar),
         Const::Byte(byte) => out.push(u64::from(*byte)),
         Const::Words(words) => out.extend_from_slice(words),
         Const::Interval { start, end } => out.extend([*start, *end]),
@@ -95,11 +95,11 @@ fn value_of_words(
                 .ok()
                 .flatten()?,
         ),
-        ValueType::Id128 => {
+        ValueType::Uuid => {
             let mut bytes = [0u8; 16];
             bytes[..8].copy_from_slice(&words[0].to_be_bytes());
             bytes[8..].copy_from_slice(&words[1].to_be_bytes());
-            Value::Id128(bumbledb_theory::Id128::from_bytes(bytes))
+            Value::Uuid(bumbledb_theory::Uuid::from_bytes(bytes))
         }
         ValueType::FixedBytes { len } => {
             let mut bytes = Vec::with_capacity(usize::from(*len));
@@ -200,6 +200,10 @@ impl Operands for ProbeRow<'_> {
 /// words (text interned) in `row`.
 /// # Errors
 /// Storage failure, stopped work, or corrupt stored bytes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+)]
 pub(crate) fn key_probe_row(
     plan: &KeyProbePlan,
     source: &QuerySource<'_>,
@@ -269,9 +273,8 @@ pub(crate) fn key_probe_row(
         }
         super::KeyProbeKind::Uniqueness { .. } => {
             let indexed = match source {
-                QuerySource::Store { snapshot, work, .. } => probe_uniqueness_indexed(
-                    snapshot,
-                    work,
+                QuerySource::Store { .. } => probe_uniqueness_indexed(
+                    source,
                     plan.relation,
                     fields,
                     &field_types,
@@ -334,8 +337,7 @@ pub(crate) fn key_probe_row(
               re-bundled into a transient struct"
 )]
 fn probe_uniqueness_indexed(
-    snapshot: &crate::storage::store::OwnedSnapshot,
-    work: &crate::work::WorkContext,
+    source: &QuerySource<'_>,
     relation: bumbledb_theory::schema::RelationId,
     fields: &[bumbledb_theory::schema::FieldDescriptor],
     field_types: &[ValueType],
@@ -346,6 +348,9 @@ fn probe_uniqueness_indexed(
     row: &mut RowWords,
 ) -> Result<Option<bool>> {
     use crate::api::prepared::source::store_error;
+    let QuerySource::Store { snapshot, work, .. } = source else {
+        return Ok(None);
+    };
     let key_fields: Vec<FieldId> = key_words.iter().map(|(field, _)| *field).collect();
     let Some(key) = snapshot.determinants().key_for(relation, &key_fields) else {
         return Ok(None);
@@ -364,9 +369,8 @@ fn probe_uniqueness_indexed(
             None => return Ok(Some(false)),
         }
     }
-    let projected =
-        crate::storage::store::det_index::determinant_bytes(key, &determinant, work)
-            .map_err(store_error)?;
+    let projected = crate::storage::store::det_index::determinant_bytes(key, &determinant, work)
+        .map_err(store_error)?;
     let mut probe = RowWords::new(field_types);
     let mut hit = false;
     let mut visit_err: Option<Error> = None;
@@ -375,42 +379,26 @@ fn probe_uniqueness_indexed(
             if visit_err.is_some() || hit {
                 return Ok(false);
             }
-            work.step(1).map_err(crate::storage::store::StoreError::Work)?;
+            work.step(1)
+                .map_err(crate::storage::store::StoreError::Work)?;
+            source.note_visits(1);
             if let Err(error) = crate::api::prepared::decode_row(
-                &mut probe,
-                fields,
-                bytes,
-                interner,
-                store,
-                work,
-                false,
+                &mut probe, fields, bytes, interner, store, work, false,
             ) {
                 visit_err = Some(error);
                 return Ok(false);
             }
-            let matches = match key_spans_match(
-                interner,
-                store,
-                field_types,
-                key_words,
-                &probe,
-                scratch,
-            ) {
-                Ok(matched) => matched,
-                Err(error) => {
-                    visit_err = Some(error);
-                    return Ok(false);
-                }
-            };
+            let matches =
+                match key_spans_match(interner, store, field_types, key_words, &probe, scratch) {
+                    Ok(matched) => matched,
+                    Err(error) => {
+                        visit_err = Some(error);
+                        return Ok(false);
+                    }
+                };
             if matches {
                 if let Err(error) = crate::api::prepared::decode_row(
-                    row,
-                    fields,
-                    bytes,
-                    interner,
-                    store,
-                    work,
-                    true,
+                    row, fields, bytes, interner, store, work, true,
                 ) {
                     visit_err = Some(error);
                     return Ok(false);
@@ -460,7 +448,10 @@ fn probe_uniqueness_scan(
         super::KeyProbeKind::Membership { .. } => crate::schema::CompiledTheory::full_row_witness(),
     };
     let fields_owned = key_words.iter().map(|(f, _)| *f).collect::<Vec<_>>();
-    let words: Vec<u64> = key_words.iter().map(|(_, range)| scratch[range.start]).collect();
+    let words: Vec<u64> = key_words
+        .iter()
+        .map(|(_, range)| scratch[range.start])
+        .collect();
     if let Some(_outcome) = source.consume_compiled_visits(
         schema,
         plan.relation,
@@ -477,14 +468,8 @@ fn probe_uniqueness_scan(
                 source.work(),
                 false,
             )?;
-            let matches = key_spans_match(
-                interner,
-                store,
-                field_types,
-                key_words,
-                &probe,
-                scratch,
-            )?;
+            let matches =
+                key_spans_match(interner, store, field_types, key_words, &probe, scratch)?;
             if matches {
                 crate::api::prepared::decode_row(
                     row,
@@ -523,7 +508,7 @@ fn key_spans_match(
         let left = probe.span_words(*field);
         let right = &scratch[range.clone()];
         let same = if matches!(ty, ValueType::String) {
-            eq.tokens_equal(left[0], right[0])
+            eq.tokens_equal(left[0], right[0])?
         } else {
             left == right
         };

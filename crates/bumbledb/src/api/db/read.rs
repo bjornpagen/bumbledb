@@ -57,7 +57,11 @@ impl<S> Db<S> {
     /// owned and outlives the frame; execution binds a frame again.
     /// # Errors
     /// Prepare-time validation or storage failure.
-    pub fn prepare(&self, query: &crate::ir::Query, work: WorkContext) -> Result<crate::PreparedQuery<S>> {
+    pub fn prepare(
+        &self,
+        query: &crate::ir::Query,
+        work: WorkContext,
+    ) -> Result<crate::PreparedQuery<S>> {
         self.read(work, |frame| frame.prepare(query))
     }
 
@@ -65,6 +69,10 @@ impl<S> Db<S> {
     /// Prefer [`Self::snapshot`] when the pin must outlive a single call.
     /// # Errors
     /// Storage failure opening the snapshot, or the closure's own error.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Database operations accept owned call-scoped work and key values consistently"
+    )]
     pub fn read<R>(
         &self,
         work: WorkContext,

@@ -12,7 +12,7 @@ per user/student/tenant, LMDB underneath, warm Free Join and selective
 probes first, disk-backed bounded fallback when working sets grow. Typed
 schema/query values instead of SQL text; canonical full bytes decide
 equality; first-class exact F64 with deterministic sum/mean; grouped
-exact measures; application-owned `Id128` identity (no allocator, no
+exact measures; application-owned `Uuid` identity (no allocator, no
 FreshRef). It is not an analytics warehouse, fleet platform or generic
 framework.
 

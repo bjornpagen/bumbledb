@@ -43,10 +43,9 @@ use crate::space::store_source;
 
 use super::{CostAccount, PhaseSplit, Regime};
 
-fn work() -> Result<bumbledb::WorkContext, String> {
+fn work() -> bumbledb::WorkContext {
     harness::bench_work()
 }
-
 
 #[derive(Debug, Clone)]
 pub struct RegimeRow {
@@ -64,8 +63,8 @@ pub struct RegimeRow {
 /// # Errors
 pub fn cold_open(dir: &Path) -> Result<RegimeRow, String> {
     let m = harness::measure_batched(Protocol::COLD, Modes::default(), 1, || {
-        let db = Db::open(dir, Ledger, work()?).map_err(|e| format!("cold open: {e:?}"))?;
-        let read_work = work()?;
+        let db = Db::open(dir, Ledger, work()).map_err(|e| format!("cold open: {e:?}"))?;
+        let read_work = work();
         let count = db
             .read(read_work.clone(), |snap| snap.count(ids::ACCOUNT))
             .map_err(|e| format!("cold first read: {e:?}"))?;
@@ -94,7 +93,7 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
         samples: samples.unwrap_or(Protocol::WARM.samples),
     };
     let m = harness::measure_batched(proto, Modes::default(), 1, || {
-        db.read(work()?, |snap| snap.count(ids::ACCOUNT))
+        db.read(work(), |snap| snap.count(ids::ACCOUNT))
             .map_err(|e| format!("warm scan: {e:?}"))
     })?;
     Ok(RegimeRow {
@@ -140,12 +139,12 @@ pub fn post_write_first_read(
             // The untimed mutation before each timed first read.
             let row = victim.clone();
             let outcome = if present {
-                db.write(work().expect("write work"), |tx| {
+                db.write(work(), |tx| {
                     tx.delete_dyn(ids::POSTING_TAG, [row])?;
                     Ok(())
                 })
             } else {
-                db.write(work().expect("write work"), |tx| {
+                db.write(work(), |tx| {
                     tx.insert_dyn(ids::POSTING_TAG, [row])?;
                     Ok(())
                 })
@@ -156,7 +155,7 @@ pub fn post_write_first_read(
             present = !present;
         },
         || {
-            db.read(work()?, |snap| snap.count(ids::POSTING_TAG))
+            db.read(work(), |snap| snap.count(ids::POSTING_TAG))
                 .map_err(|e| format!("first read after mutation: {e:?}"))
         },
     )?;
@@ -188,10 +187,9 @@ pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, 
     for _ in 0..count {
         let whole = Instant::now();
         let start = Instant::now();
-        let owned: Vec<Vec<bumbledb::Value>> = db
-            .read(work()?, |snap| {
-                snap.scan(ids::POSTING)?
-                    .collect::<Result<Vec<_>, _>>()
+        let owned = db
+            .read(work(), |snap| {
+                snap.scan(ids::POSTING)?.collect::<Result<Vec<_>, _>>()
             })
             .map_err(|e| format!("large-result execute: {e:?}"))?;
         execute_ns.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
@@ -258,7 +256,7 @@ pub fn tenant_churn(
     let mut dirs = Vec::with_capacity(tenants as usize);
     for tenant in 0..tenants {
         let dir = base.join(format!("tenant-{tenant}"));
-        let db = Db::create(&dir, Ledger, work()?)
+        let db = Db::create(&dir, Ledger, work())
             .map_err(|e| format!("tenant {tenant} create: {e:?}"))?
             .expect("accepted");
         crate::corpus::load_bumbledb(&db, cfg)
@@ -286,10 +284,10 @@ pub fn tenant_churn(
             usize::try_from(next() % u64::from(tenants)).expect("bounded")
         };
         let start = Instant::now();
-        let db = Db::open(&dirs[tenant], Ledger, work()?)
+        let db = Db::open(&dirs[tenant], Ledger, work())
             .map_err(|e| format!("tenant {tenant} open: {e:?}"))?;
         rows_read += db
-            .read(work()?, |snap| snap.count(ids::ACCOUNT))
+            .read(work(), |snap| snap.count(ids::ACCOUNT))
             .map_err(|e| format!("tenant {tenant} read: {e:?}"))?;
         drop(db);
         latencies.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
@@ -365,6 +363,10 @@ fn push_row(out: &mut String, row: &RegimeRow) {
 /// timing. Hosted/maintenance stay `not-run-here` with their owner.
 ///
 /// # Errors
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep the ordered execution and cleanup transitions together"
+)]
 pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     if args.plan {
         print!("{}", super::plan::render());
@@ -384,11 +386,11 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
         scale: args.scale,
     };
     let corpus_dir = scratch.join("corpus");
-    let db = Db::create(&corpus_dir, Ledger, work()?)
+    let db = Db::create(&corpus_dir, Ledger, work())
         .map_err(|e| format!("corpus create: {e:?}"))?
         .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).map_err(|e| format!("corpus load: {e:?}"))?;
-    let map_work = work()?;
+    let map_work = work();
     let map = db
         .integration_store()
         .map_report(&map_work)

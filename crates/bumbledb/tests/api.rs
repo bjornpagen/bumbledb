@@ -1,6 +1,7 @@
 //! end to end through the public surface — create → write{insert} →
 //! read{point lookup, join, aggregate} → mutate via delete+insert → read
 //! the export → collection-insert ETL round trip on both lanes (`insert`
+use bumbledb::canonical::DecodedRow;
 use bumbledb::ir::{
     Atom, AtomSource, FindTerm, FoldOp, HeadTerm, InteriorId, NonEmpty, ParamId, Query, Rec,
     RecRule, RecStep, Rule, Term, Value, VarId,
@@ -174,9 +175,15 @@ fn usage_shapes_end_to_end() {
         .unwrap()
         .value;
 
-    let mut point = db.prepare(&point_query()).expect("prepare point");
-    let mut join = db.prepare(&join_query()).expect("prepare join");
-    let mut aggregate = db.prepare(&aggregate_query()).expect("prepare agg");
+    let mut point = db
+        .prepare(&point_query(), common::work())
+        .expect("prepare point");
+    let mut join = db
+        .prepare(&join_query(), common::work())
+        .expect("prepare join");
+    let mut aggregate = db
+        .prepare(&aggregate_query(), common::work())
+        .expect("prepare agg");
     db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut point, &[BindValue::U64(accounts[2].id.0)])?;
         assert_eq!(answers.len(), 1);
@@ -388,9 +395,9 @@ fn export_scan_inserts_into_a_fresh_database() {
 
     let (holders, accounts) = old
         .read(common::work(), |snap| {
-            let holders: Vec<Vec<Value>> =
+            let holders: Vec<DecodedRow> =
                 snap.scan(Holder::RELATION)?.collect::<Result<_, _>>()?;
-            let accounts: Vec<Vec<Value>> =
+            let accounts: Vec<DecodedRow> =
                 snap.scan(Account::RELATION)?.collect::<Result<_, _>>()?;
             Ok((holders, accounts))
         })
@@ -418,13 +425,17 @@ fn export_scan_inserts_into_a_fresh_database() {
         .value;
     assert_eq!(loaded, 3);
 
-    let mut join_old = old.prepare(&join_query()).expect("prepare");
+    let mut join_old = old.prepare(&join_query(), common::work()).expect("prepare");
     let answers_old = old
-        .read(common::work(), |snap| snap.execute_collect(&mut join_old, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| {
+            snap.execute_collect(&mut join_old, &[] as &[bumbledb::BindValue])
+        })
         .expect("query old");
-    let mut join_new = new.prepare(&join_query()).expect("prepare");
+    let mut join_new = new.prepare(&join_query(), common::work()).expect("prepare");
     let answers_new = new
-        .read(common::work(), |snap| snap.execute_collect(&mut join_new, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| {
+            snap.execute_collect(&mut join_new, &[] as &[bumbledb::BindValue])
+        })
         .expect("query new");
     assert_eq!(
         name_amount_answers(&answers_old),
@@ -492,7 +503,9 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(rendered.contains("Account(id) -> Account"), "{rendered}");
     let count = db
-        .read(common::work(), |snap| Ok(snap.scan_facts::<Account>()?.count()))
+        .read(common::work(), |snap| {
+            Ok(snap.scan_facts::<Account>()?.count())
+        })
         .expect("scan");
     assert_eq!(count, 0, "the aborted transaction left nothing");
 
@@ -613,7 +626,7 @@ fn open_mismatches_and_snapshot_usability() {
     })
     .expect("seed")
     .unwrap();
-    let mut join = db.prepare(&join_query()).expect("prepare");
+    let mut join = db.prepare(&join_query(), common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         let mut out = Answers::new();
 
@@ -642,7 +655,7 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     .expect("seed")
     .unwrap();
 
-    let mut join = db.prepare(&join_query()).expect("prepare");
+    let mut join = db.prepare(&join_query(), common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         let before = snap.scan_facts::<Holder>()?.count();
         assert_eq!(before, 1);
@@ -667,7 +680,9 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     .expect("pinned read");
 
     let after = db
-        .read(common::work(), |snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .read(common::work(), |snap| {
+            Ok(snap.scan_facts::<Holder>()?.count())
+        })
         .expect("fresh read");
     assert_eq!(after, 3);
 }
@@ -697,12 +712,14 @@ fn collection_insert_equals_sequential_inserts() {
         .value;
     assert_eq!(loaded, n);
     for chunk in facts.chunks(512) {
-        seq.write(common::work(), |tx| tx.insert_dyn(Holder::RELATION, chunk).map(|_| ()))
-            .expect("sequential insert")
-            .unwrap();
+        seq.write(common::work(), |tx| {
+            tx.insert_dyn(Holder::RELATION, chunk).map(|_| ())
+        })
+        .expect("sequential insert")
+        .unwrap();
     }
 
-    let by_id = |mut rows: Vec<Vec<Value>>| {
+    let by_id = |mut rows: Vec<DecodedRow>| {
         rows.sort_by_key(|f| match f[0] {
             Value::U64(id) => id,
             _ => unreachable!("id column"),
@@ -710,12 +727,16 @@ fn collection_insert_equals_sequential_inserts() {
         rows
     };
     let a = by_id(
-        all.read(common::work(), |snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
-            .expect("scan all"),
+        all.read(common::work(), |snap| {
+            snap.scan(Holder::RELATION)?.collect::<Result<_, _>>()
+        })
+        .expect("scan all"),
     );
     let b = by_id(
-        seq.read(common::work(), |snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
-            .expect("scan seq"),
+        seq.read(common::work(), |snap| {
+            snap.scan(Holder::RELATION)?.collect::<Result<_, _>>()
+        })
+        .expect("scan seq"),
     );
     assert_eq!(a, b);
     assert_eq!(a.len(), usize::try_from(n).expect("64-bit"));
@@ -734,7 +755,9 @@ fn collection_insert_equals_sequential_inserts() {
         .unwrap_err();
     assert!(matches!(err, bumbledb::Error::FactShape(_)), "{err:?}");
     let persisted = fail
-        .read(common::work(), |snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .read(common::work(), |snap| {
+            Ok(snap.scan_facts::<Holder>()?.count())
+        })
         .expect("scan");
     assert_eq!(persisted, 0);
 }
@@ -766,7 +789,9 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
         .value;
     assert_eq!(again, 0);
     let persisted = db
-        .read(common::work(), |snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .read(common::work(), |snap| {
+            Ok(snap.scan_facts::<Holder>()?.count())
+        })
         .expect("scan");
     assert_eq!(persisted, usize::try_from(n).expect("64-bit"));
 
@@ -776,9 +801,12 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
         balance: 1,
     };
     let accounts: Vec<_> = (0..n).map(account).collect();
-    let _ = common::expect_rejected(db.write(common::work(), |tx| Ok(tx.insert(&accounts)?.changed())));
+    let _ =
+        common::expect_rejected(db.write(common::work(), |tx| Ok(tx.insert(&accounts)?.changed())));
     let account_count = db
-        .read(common::work(), |snap| Ok(snap.scan_facts::<Account>()?.count()))
+        .read(common::work(), |snap| {
+            Ok(snap.scan_facts::<Account>()?.count())
+        })
         .expect("scan accounts");
     assert_eq!(account_count, 0);
 }
@@ -789,7 +817,7 @@ fn disk_size_and_generation_report_store_state() {
     let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let empty = db.disk_size().expect("size");
+    let empty = db.disk_size(common::work()).expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
     assert_eq!(db.generation(common::work()).expect("gen").value(), 0);
 
@@ -805,7 +833,7 @@ fn disk_size_and_generation_report_store_state() {
     })
     .expect("collection write")
     .unwrap();
-    let grown = db.disk_size().expect("size");
+    let grown = db.disk_size(common::work()).expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
     assert_eq!(db.generation(common::work()).expect("gen").value(), 1);
 }
@@ -871,10 +899,12 @@ fn cover_choice_iterates_the_selected_side() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     let params = vec![ParamArg::Scalar(BindValue::Str("target"))];
     let out = db
-        .read(common::work(), |snap| snap.execute_collect(&mut prepared, &params))
+        .read(common::work(), |snap| {
+            snap.execute_collect(&mut prepared, &params)
+        })
         .expect("execute");
     assert_eq!(out.len(), 7, "one group per target holder");
 }
@@ -903,21 +933,28 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         .expect("commit")
         .unwrap();
     }
-    let source_size = db.disk_size().expect("size");
+    let source_size = db.disk_size(common::work()).expect("size");
     let generation = db.generation(common::work()).expect("generation");
-    let scan_digest = |db: &Db<Ledger>| -> Vec<Vec<Value>> {
-        let mut rows: Vec<Vec<Value>> = db
-            .read(common::work(), |snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+    let scan_digest = |db: &Db<Ledger>| -> Vec<DecodedRow> {
+        let mut rows: Vec<DecodedRow> = db
+            .read(common::work(), |snap| {
+                snap.scan(Holder::RELATION)?.collect::<Result<_, _>>()
+            })
             .expect("scan");
-        rows.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        rows.sort_by_key(|row| match row[0] {
+            Value::U64(id) => id,
+            _ => unreachable!("id column"),
+        });
         rows
     };
     let source_rows = scan_digest(&db);
 
     let compact_dir = dir.path().join("compacted");
-    db.compact(&compact_dir).expect("compact");
+    db.compact(&compact_dir, common::work()).expect("compact");
 
-    let err = db.compact(&compact_dir).expect_err("must refuse");
+    let err = db
+        .compact(&compact_dir, common::work())
+        .expect_err("must refuse");
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
             if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
@@ -926,12 +963,15 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     drop(db);
 
     let compacted = Db::open(&compact_dir, Ledger, common::work()).expect("open compacted");
-    let compact_size = compacted.disk_size().expect("size");
+    let compact_size = compacted.disk_size(common::work()).expect("size");
     assert!(
         compact_size * 10 <= source_size * 8,
         "compaction reclaims the churn: {compact_size} vs {source_size}"
     );
-    assert_eq!(compacted.generation(common::work()).expect("generation"), generation);
+    assert_eq!(
+        compacted.generation(common::work()).expect("generation"),
+        generation
+    );
     assert_eq!(scan_digest(&compacted), source_rows, "byte-identical facts");
 
     compacted
@@ -984,7 +1024,9 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
         "both clocks read 1"
     );
 
-    let mut prepared = db_a.prepare(&join_query()).expect("prepare on A");
+    let mut prepared = db_a
+        .prepare(&join_query(), common::work())
+        .expect("prepare on A");
     db_a.read(common::work(), |snap| {
         let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
@@ -1031,20 +1073,25 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
     let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let err = Db::open(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
+    let err = Db::open(dir.path(), Ledger, common::work())
+        .map(|_| ())
+        .unwrap_err();
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
             if matches!(**e, bumbledb::store::StoreError::StoreLocked { .. })),
         "{err:?}"
     );
-    let err = Db::create(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), Ledger, common::work())
+        .map(|_| ())
+        .unwrap_err();
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
             if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
         "create refuses an existing destination before the lock: {err:?}"
     );
     drop(db);
-    let reopened = Db::open(dir.path(), Ledger, common::work()).expect("the lock died with the handle");
+    let reopened =
+        Db::open(dir.path(), Ledger, common::work()).expect("the lock died with the handle");
     drop(reopened);
 }
 
@@ -1071,7 +1118,9 @@ fn create_refuses_a_foreign_lmdb_environment() {
         db.put(&mut wtxn, b"k", b"v").expect("put");
         wtxn.commit().expect("commit");
     }
-    let err = Db::create(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), Ledger, common::work())
+        .map(|_| ())
+        .unwrap_err();
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
             if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
@@ -1093,13 +1142,17 @@ fn create_refuses_a_foreign_lmdb_environment() {
     }
     // A half-created foreign environment is not a recognizable store: the
     // successor refuses the open before adopting anything.
-    let err = Db::open(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
+    let err = Db::open(dir.path(), Ledger, common::work())
+        .map(|_| ())
+        .unwrap_err();
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
             if matches!(**e, bumbledb::store::StoreError::UnrecognizedStore { .. })),
         "{err:?}"
     );
-    let err = Db::create(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), Ledger, common::work())
+        .map(|_| ())
+        .unwrap_err();
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
             if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
@@ -1116,7 +1169,9 @@ fn nested_write_is_a_typed_refusal_instead_of_deadlocking() {
     // The successor refuses reentrancy with the typed
     // `StoreError::ReentrantWriter` — never a deadlock, never a panic.
     let err = db
-        .write(common::work(), |_| db.write(common::work(), |_| Ok(())).map(|_| ()))
+        .write(common::work(), |_| {
+            db.write(common::work(), |_| Ok(())).map(|_| ())
+        })
         .expect_err("the nested write refuses");
     assert!(
         matches!(&err, bumbledb::Error::Store(e)
@@ -1197,7 +1252,7 @@ fn prepared_executions_observe_exactly_one_generation() {
         });
         for _ in 0..3 {
             scope.spawn(|| {
-                let mut prepared = db.prepare(&join_query()).expect("prepare");
+                let mut prepared = db.prepare(&join_query(), common::work()).expect("prepare");
                 let mut out = Answers::new();
                 for _ in 0..80 {
                     db.read(common::work(), |snap| {
@@ -1304,7 +1359,10 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     })
     .expect("dynamic delete")
     .unwrap();
-    assert_eq!(db.generation(common::work()).expect("generation"), generation);
+    assert_eq!(
+        db.generation(common::work()).expect("generation"),
+        generation
+    );
 
     db.write(common::work(), |tx| {
         let id = HolderId(mint());
@@ -1396,7 +1454,7 @@ fn a_plain_query_executes_as_today() {
     .unwrap();
 
     let query = join_query();
-    let mut prepared = db.prepare(&query).expect("prepare query");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare query");
     db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 3);
@@ -1483,8 +1541,12 @@ fn prepare_executes_recursion_under_the_driver() {
         head: vec![HeadTerm::Var],
         rules: vec![identity_main(1)],
     };
-    let mut recursive_prepared = db.prepare(&query).expect("recursion executes");
-    let mut base_prepared = db.prepare(&Query::single(base)).expect("prepare base");
+    let mut recursive_prepared = db
+        .prepare(&query, common::work())
+        .expect("recursion executes");
+    let mut base_prepared = db
+        .prepare(&Query::single(base), common::work())
+        .expect("prepare base");
     db.read(common::work(), |snap| {
         let closure =
             snap.execute_collect(&mut recursive_prepared, &[] as &[bumbledb::BindValue])?;
@@ -1618,8 +1680,12 @@ fn recursive_answers_agree_scalar_and_vectorized() {
             })
             .collect()
     };
-    let mut vectorized = db.prepare(&closure_query()).expect("prepare");
-    let mut scalar = db.prepare(&closure_query()).expect("prepare");
+    let mut vectorized = db
+        .prepare(&closure_query(), common::work())
+        .expect("prepare");
+    let mut scalar = db
+        .prepare(&closure_query(), common::work())
+        .expect("prepare");
     scalar.set_batch_size(1);
     db.read(common::work(), |snap| {
         let vectorized =
@@ -1667,7 +1733,9 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     })
     .expect("write")
     .unwrap();
-    let mut prepared = db.prepare(&primer_reach_xx()).expect("prepare");
+    let mut prepared = db
+        .prepare(&primer_reach_xx(), common::work())
+        .expect("prepare");
     db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert!(answers.is_empty(), "a DAG has no reach(x, x)");
@@ -1703,7 +1771,9 @@ fn reach_execute_answers_the_closure() {
     })
     .expect("write")
     .unwrap();
-    let mut prepared = db.prepare(&closure_query()).expect("prepare");
+    let mut prepared = db
+        .prepare(&closure_query(), common::work())
+        .expect("prepare");
     db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 16, "the closure's hand answer");
@@ -1730,7 +1800,7 @@ fn a_tight_derived_budget_trips_under_reach() {
     .expect("write")
     .unwrap();
     let mut prepared = db
-        .prepare(&single_source_chain_query())
+        .prepare(&single_source_chain_query(), common::work())
         .expect("recursion executes");
     let error = db
         .read(common::work(), |snap| {

@@ -177,14 +177,12 @@ impl<S> LocalHistory<S> {
                 receipt,
                 local_health,
             },
-            SubmitOutcome::NotSubmitted { command, error } => SubmitCertainty::NotSubmitted {
-                command,
-                error,
-            },
-            SubmitOutcome::OutcomeUnknown { command, error } => SubmitCertainty::OutcomeUnknown {
-                command,
-                error,
-            },
+            SubmitOutcome::NotSubmitted { command, error } => {
+                SubmitCertainty::NotSubmitted { command, error }
+            }
+            SubmitOutcome::OutcomeUnknown { command, error } => {
+                SubmitCertainty::OutcomeUnknown { command, error }
+            }
         }
     }
 
@@ -246,9 +244,14 @@ impl<S> LocalHistory<S> {
             }
             Plan::Evaluate => {
                 match decide::prepare_real(&mut session, schema, command, self.limits, work)? {
-                    RealPrepared::Admitted { prepared, judged } => {
-                        decide::seal_candidate(prepared, &authority, command, judged, None, self.limits)?
-                    }
+                    RealPrepared::Admitted { prepared, judged } => decide::seal_candidate(
+                        prepared,
+                        &authority,
+                        command,
+                        judged,
+                        None,
+                        self.limits,
+                    )?,
                     RealPrepared::Rejected { evidence } => {
                         let prepared = decide::prepare_empty(&mut session, schema, work)?;
                         decide::seal_candidate(

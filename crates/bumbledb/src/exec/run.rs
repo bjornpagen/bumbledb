@@ -32,8 +32,9 @@ impl Flow {
 
     pub(crate) fn from_sink_progress(progress: crate::exec::sink::SinkProgress) -> Self {
         match progress {
-            crate::exec::sink::SinkProgress::Continue
-            | crate::exec::sink::SinkProgress::Finish => Self::Continue,
+            crate::exec::sink::SinkProgress::Continue | crate::exec::sink::SinkProgress::Finish => {
+                Self::Continue
+            }
             crate::exec::sink::SinkProgress::Stop => Self::Stop,
             crate::exec::sink::SinkProgress::Error => Self::Error,
         }
@@ -41,11 +42,7 @@ impl Flow {
 
     /// Prefer a terminal progress over a licensed skip.
     pub(crate) const fn or_skip(self, emitted: Self) -> Self {
-        if self.is_terminal() {
-            self
-        } else {
-            emitted
-        }
+        if self.is_terminal() { self } else { emitted }
     }
 }
 
@@ -358,11 +355,13 @@ fn compare_wide(
     if width == 1 {
         return op.compare(&lhs(0), &rhs(0));
     }
-    match op {
-        crate::ir::WordCmp::Eq => (0..width).all(|i| lhs(i) == rhs(i)),
-        crate::ir::WordCmp::Ne => (0..width).any(|i| lhs(i) != rhs(i)),
-        _ => unreachable!("validated: multi-word values admit Eq/Ne only as whole values"),
-    }
+    // Canonical words are big-endian significance order. Equality and order
+    // share the same comparison, including UUIDs differing only in word two.
+    let order = (0..width)
+        .map(|i| lhs(i).cmp(&rhs(i)))
+        .find(|order| !order.is_eq())
+        .unwrap_or(std::cmp::Ordering::Equal);
+    op.compare(&order, &std::cmp::Ordering::Equal)
 }
 
 /// Grow-only scratch sizing (the pooled high-water contract): the buffer

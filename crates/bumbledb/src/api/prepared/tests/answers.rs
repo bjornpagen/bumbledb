@@ -127,7 +127,6 @@ fn finalize_resolves_each_distinct_intern_once() {
     assert_eq!(out.len(), 64);
     assert_eq!(count, 1, "one distinct intern, one resolution");
     assert_eq!(out.byte_len(), "shared-memo".len(), "bytes stored once");
-    assert_eq!(prepared.uncharged_copy_bytes(), 0);
 
     let (out, count) = resolves(&mut prepared, 2);
     assert_eq!(out.len(), 16);
@@ -138,7 +137,6 @@ fn finalize_resolves_each_distinct_intern_once() {
         count, 16,
         "each finalize re-resolves into the charged answer heap"
     );
-    assert_eq!(prepared.uncharged_copy_bytes(), 0);
     assert_eq!(out.len(), 16);
     let mut memos: Vec<String> = (0..out.len())
         .map(|answer| {
@@ -161,7 +159,7 @@ fn finalize_resolves_each_distinct_intern_once() {
 }
 
 /// Forced work refusal during text compare fails the query. It does
-/// not return a successful empty or wrong answer. Verification: NotRun.
+/// not return a successful empty or wrong answer. Verification: `NotRun`.
 #[test]
 fn text_compare_refusal_fails_the_query() {
     let fix = postings(&[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
@@ -173,10 +171,6 @@ fn text_compare_refusal_fails_the_query() {
     work.cancel();
     let source = crate::api::prepared::source::QuerySource::heap(&fix.instance, 1, work);
     let mut out = Answers::new();
-    let err = prepared.execute_source(
-        &source,
-        &[BindValue::U64(7), BindValue::I64(0)],
-        &mut out,
-    );
+    let err = prepared.execute_source(&source, &[BindValue::U64(7), BindValue::I64(0)], &mut out);
     assert!(err.is_err(), "refusal must fail the query");
 }

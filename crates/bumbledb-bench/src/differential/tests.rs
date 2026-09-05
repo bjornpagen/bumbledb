@@ -510,7 +510,7 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
 
     let descriptor = schema();
     let dir = TempDir::new("differential-net-disposition");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);
@@ -551,7 +551,7 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
             violations,
             vec![Violation::Containment {
                 statement: StatementId(3),
-                direction: Direction::TargetRequired,
+                direction: Direction::SourceUnsatisfied,
             }]
         );
     }
@@ -561,7 +561,7 @@ fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
 fn fixed_200_op_stream_agrees_with_the_engine() {
     let descriptor = schema();
     let dir = TempDir::new("differential-200");
-    let db = Db::create(dir.path(), descriptor.clone())
+    let db = Db::create(dir.path(), descriptor.clone(), crate::harness::bench_work())
         .expect("create engine store")
         .expect("accepted");
     let mut naive = NaiveDb::new(&descriptor);

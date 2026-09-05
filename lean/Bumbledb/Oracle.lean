@@ -125,9 +125,10 @@ spent through `accepted_target_key_spent` — the gate's "an accepted
 statement is a measured promise" made literal: acceptance is what
 makes the unit cost honest). The premise enters as a hypothesis,
 never a conjunct — the acceptance ≠ denotation discipline unchanged.
-The `holds`-at-final-state hypothesis is the two-phase judge's phase
-order (`Txn.lean`): keys convict in the key phase before any
-statement probe runs.
+The `holds` hypothesis applies to admitted instances. Complete judgment of
+tentative, potentially key-conflicting rows cannot borrow it: that judgment
+collects groups and reports all violations, rather than assuming singleton
+target buckets before admission.
 
 ## The acceptance-gate theorem
 
@@ -351,9 +352,9 @@ theorem point_probe_honest (o : OrderedOracle K P β ple)
 `accepted_target_key_spent`) make the target oracle's every bucket a
 subsingleton — the gate's "an accepted statement is a measured
 promise" made literal: acceptance is exactly what licenses the unit
-consultation count. The `holds`-at-judged-state hypothesis is the
-two-phase judge's phase order (`Txn.lean`: keys convict before any
-statement probe runs). Serves the containment AND window forms — one
+consultation count. The `holds` hypothesis is an admitted-state premise,
+not permission to assume keys during complete tentative-state judgment.
+Serves the containment AND window forms — one
 target-key rule, one price theorem. -/
 theorem accepted_target_key_prices_the_probe {T : Theory}
     {I : Instance} (hI : holds T I) {tgt : Atom}

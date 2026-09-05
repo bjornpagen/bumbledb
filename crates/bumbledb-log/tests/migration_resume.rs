@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange};
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{Admission, ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::{Admission, ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{CommandId, CommandResult, Condition, ReceiptEpoch, RequestId};
@@ -60,7 +60,7 @@ fn insert_note(history: &LocalHistory<SchemaDescriptor>, id: u64, body: &str, re
             identity: history.identity(),
             id: CommandId {
                 receipt_epoch: ReceiptEpoch::INITIAL,
-                request_id: RequestId::from_core(Id128::from_bytes([request; 16])),
+                request_id: RequestId::from_core(Uuid::from_bytes([request; 16])),
             },
             condition: Condition::Unconditional,
         },
@@ -623,7 +623,8 @@ fn a_same_schema_data_only_plan_is_still_a_recorded_migration() {
     assert!(matches!(applied.source, AppliedSource::Database { .. }));
     // The target holds the mapped rows plus the seed: three notes.
     let namespace = TargetNamespace::new(&root.join("targets"), incarnation(0xec)).unwrap();
-    let target: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), base_schema(), work()).unwrap();
+    let target: Db<SchemaDescriptor> =
+        Db::open(&namespace.target_dir(), base_schema(), work()).unwrap();
     let mut count = 0;
     target
         .read(work(), |read| {

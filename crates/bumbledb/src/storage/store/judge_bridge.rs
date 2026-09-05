@@ -18,11 +18,11 @@ use super::error::{StoreCorruption, StoreError, StoreResult};
 use crate::Value;
 use crate::changes::ChangeKind;
 use crate::schema::compiled::CompiledProjection;
-use crate::schema::{ProjectionId, Schema, StatementId};
 use crate::schema::judge::{
-    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeError, JudgedViolation, JudgeScratch,
+    CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeError, JudgeScratch, JudgedViolation,
     Judgment as SchemaJudgment, LawfulParent, judge_incremental, store_fault,
 };
+use crate::schema::{ProjectionId, Schema, StatementId};
 use crate::work::WorkContext;
 
 /// The production C4 judge over a store candidate.
@@ -92,10 +92,9 @@ fn map_judged(
         Ok(SchemaJudgment::Rejected(violations)) => Ok(Judgment::Rejected(violations)),
         Err(JudgeError::Work(error)) => Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => Err(error),
-        Err(JudgeError::UndefinedDuration { statement }) => Err(StoreError::JudgeRefused {
-            statement,
-            detail: "undefined ray duration in a measured position",
-        }),
+        Err(JudgeError::UndefinedDuration { statement }) => {
+            Err(StoreError::UndefinedDuration { statement })
+        }
         Err(JudgeError::MeasureOverflow { statement }) => Err(StoreError::JudgeRefused {
             statement,
             detail: "grouped measure exceeded the widened accumulator",
@@ -166,10 +165,11 @@ impl<'v, 'a, 'store> CandidateView<'v, 'a, 'store> {
             return Ok(());
         };
         for record in changes.records() {
-            if record.relation == relation && record.kind == kind {
-                if !self.decode_visit(relation, record.row, visit)? {
-                    break;
-                }
+            if record.relation == relation
+                && record.kind == kind
+                && !self.decode_visit(relation, record.row, visit)?
+            {
+                break;
             }
         }
         Ok(())
@@ -248,19 +248,15 @@ fn visit_compiled_bucket(
 ) -> Result<Option<()>, StoreError> {
     let projected = super::det_index::determinant_bytes(compiled, determinant, view.work)?;
     let fields = view.schema.relation(compiled.relation).fields();
-    view.state.visit_determinant_bucket(
-        compiled.id,
-        &projected,
-        view.work,
-        &mut |_, bytes| {
+    view.state
+        .visit_determinant_bucket(compiled.id, &projected, view.work, &mut |_, bytes| {
             let decoded = crate::canonical::decode(fields, bytes, view.work)?;
             if compiled.scalar_values(decoded.values()).as_slice() == determinant {
                 visit(decoded.values())
             } else {
                 Ok(true)
             }
-        },
-    )?;
+        })?;
     Ok(Some(()))
 }
 
@@ -394,7 +390,9 @@ mod tests {
         }
         {
             let mut owner = store.writer(&work).expect("writer");
-            owner.ingest(&second, &UnindexedRows).expect("ingest second");
+            owner
+                .ingest(&second, &UnindexedRows)
+                .expect("ingest second");
         }
 
         let complete = store
@@ -420,7 +418,7 @@ mod tests {
         );
     }
 
-    /// D26 consumer: UnreadyStore::admit uses complete judgment and cannot
+    /// D26 consumer: `UnreadyStore::admit` uses complete judgment and cannot
     /// mint [`LawfulParent`]. A populated conflict with no further delta
     /// rejects; destination stays absent.
     #[test]
@@ -439,7 +437,10 @@ mod tests {
                 Ok(())
             })
             .expect("populate");
-        let error = unready.admit(&schema, &work).expect_err("admit must reject");
+        let error = unready
+            .admit(&schema, &work)
+            .err()
+            .expect("admit must reject");
         assert!(
             matches!(error, StoreError::JudgeRefused { .. }),
             "unready admit is complete judgment, got {error:?}"

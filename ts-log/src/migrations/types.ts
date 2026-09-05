@@ -24,7 +24,7 @@ import type { MigrationIntent } from "#migrations/intent.ts"
  * One canonical value cell (`migration::json` grammar, shared by plans and
  * schema snapshots): a single-arm object. Integers are decimal strings;
  * `$f64` is the canonical bit image (canonical quiet NaN, canonical +0) as
- * 16 lowercase hex digits; `id128` is 32 lowercase hex; bytes are lowercase
+ * 16 lowercase hex digits; `uuid` is canonical UUID; bytes are lowercase
  * hex; intervals are `[start, end]` pairs in their element spelling.
  */
 export type PlanValue =
@@ -32,7 +32,7 @@ export type PlanValue =
 	| { readonly u64: string }
 	| { readonly i64: string }
 	| { readonly $f64: string }
-	| { readonly id128: string }
+	| { readonly uuid: string }
 	| { readonly string: string }
 	| { readonly fixedBytes: string }
 	| { readonly intervalU64: readonly [string, string] }

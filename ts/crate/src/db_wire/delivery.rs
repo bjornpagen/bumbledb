@@ -31,7 +31,7 @@
 //! the lawful-EOF `drained` bit.
 //!
 //! L12 handoff: [`publish_from_payload`] calls
-//! `publication.accept(committed_output, || { ticket.commit(); Ok(()) })`.
+//! `publication.accept(committed_output, || ticket.commit())`.
 //! This file does not write `operation.output`.
 //!
 //! Delete: `inspect`/`copy` twins, eager `next_page_with_work` as the
@@ -46,17 +46,6 @@ use crate::runtime::{Output, PublicationSink, QueuedOutput, RuntimeError};
 
 use super::engine_error;
 
-/// How many leading inspected rows form one lawful page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PagePlan {
-    /// No remaining rows: commit EOF.
-    Eof,
-    /// Take this many inspected rows (at least one).
-    Take(usize),
-    /// First row exceeds the page budget: refuse, cursor unchanged.
-    OversizedFirst { bytes: u64 },
-}
-
 /// L16: the public collect/page cap cannot enlarge `work.resultBytes`.
 #[must_use]
 pub fn intersected_result_bytes(requested: u64, work: &WorkContext) -> u64 {
@@ -70,33 +59,6 @@ pub fn intersected_result_bytes(requested: u64, work: &WorkContext) -> u64 {
 pub fn page_row_cap(work: &WorkContext, remaining: u64) -> usize {
     let capped = work.limit(Resource::Rows).min(remaining);
     usize::try_from(capped).unwrap_or(usize::MAX)
-}
-
-/// Plan a page from inspected logical sizes. Pure discriminator for D25:
-/// two rows that each fit, but not together, yield `Take(1)`.
-/// A zero cap does not become one byte — that would enlarge work.resultBytes.
-pub fn plan_page(sizes: &[u64], page_bytes: u64) -> PagePlan {
-    let cap = page_bytes;
-    if sizes.is_empty() {
-        return PagePlan::Eof;
-    }
-    if sizes[0] > cap {
-        return PagePlan::OversizedFirst { bytes: sizes[0] };
-    }
-    let mut total = 0u64;
-    let mut take = 0usize;
-    for &size in sizes {
-        if take > 0 && total.saturating_add(size) > cap {
-            break;
-        }
-        total = total.saturating_add(size);
-        take += 1;
-    }
-    if take == 0 {
-        PagePlan::OversizedFirst { bytes: sizes[0] }
-    } else {
-        PagePlan::Take(take)
-    }
 }
 
 pub(crate) fn resource_limit(error: WorkError) -> RuntimeError {
@@ -123,38 +85,12 @@ pub(crate) fn resource_limit(error: WorkError) -> RuntimeError {
     }
 }
 
-fn ticket_error(error: bumbledb::Error) -> RuntimeError {
-    match engine_error(&error) {
+fn ticket_error(error: &bumbledb::Error) -> RuntimeError {
+    match engine_error(error) {
         RuntimeError::Work(work) => resource_limit(work),
         other => other,
     }
 }
-
-/// Resource refusal stays an error (cursor unchanged, `drained` untouched).
-/// Backing failure is [`PullOutcome::Terminal`] — never lawful EOF.
-pub(crate) fn preview_error_outcome(
-    error: RuntimeError,
-) -> Result<PullOutcome, RuntimeError> {
-    if is_terminal_backing(&error) {
-        Ok(PullOutcome::Terminal(error))
-    } else {
-        Err(error)
-    }
-}
-
-/// `preview_page` returned `None` because the cursor is already `done`
-/// without a committed empty terminal — fail-closed, not EOF.
-pub(crate) fn preview_none_outcome() -> PullOutcome {
-    PullOutcome::Terminal(RuntimeError::ClosedHandle)
-}
-
-/// L12 fallback after `PublicationSink::accept`. Live pull already
-/// committed; this is a no-op.
-pub(crate) fn accept_publication(_payload: &mut Payload) {}
-
-/// L12 fallback when work returns `Err` or a non-page. Live pull already
-/// aborted the ticket; this is a no-op.
-pub(crate) fn reject_publication(_payload: &mut Payload) {}
 
 /// Convert admitted answers into queued output. Reserve overlapping
 /// conversion charge before any cell copy (D01). This file does not
@@ -210,7 +146,7 @@ pub(crate) fn collect_from_payload(
         .map_err(resource_limit)?;
     let answers = result
         .collect_with_work(row_limit, work, cap)
-        .map_err(engine_error)?;
+        .map_err(|error| engine_error(&error))?;
     let queued = match register_page(work, &answers) {
         Ok(queued) => queued,
         Err(error) => {
@@ -251,8 +187,18 @@ fn open_preview<'a>(
     work.checkpoint()?;
     cursor.rebind_work(work);
     let cap = intersected_result_bytes(page_bytes, work);
+    // Bound the queued row's fixed cell/vector allocations, plus UUID text
+    // (the only scalar expanding into a string), without decoding the row.
+    // Two encoded copies cover the preview and variable-sized output heaps;
+    // a third covers the one-row scratch decode buffer on disk-backed pages.
+    let fixed = (std::mem::size_of::<Vec<marshal::ValueOut>>() as u64).saturating_add(
+        (cursor.arity() as u64)
+            .saturating_mul(std::mem::size_of::<marshal::ValueOut>() as u64 + 36),
+    );
     let mut ticket = DeliveryTicket::open(cursor);
-    match ticket.preview_page(work, cap) {
+    match ticket.preview_page_with_cost(work, cap, |bytes| {
+        fixed.saturating_add(bytes.saturating_mul(3))
+    }) {
         Ok(None) => {
             ticket.abort();
             Err(RuntimeError::ClosedHandle)
@@ -271,21 +217,8 @@ fn open_preview<'a>(
             }
         }
         Err(error) => {
-            let error = ticket_error(error);
-            match preview_error_outcome(error) {
-                Ok(PullOutcome::Terminal(error)) => {
-                    ticket.abort();
-                    Err(error)
-                }
-                Ok(_) => {
-                    ticket.abort();
-                    Err(RuntimeError::Internal)
-                }
-                Err(error) => {
-                    ticket.abort();
-                    Err(error)
-                }
-            }
+            ticket.abort();
+            Err(ticket_error(&error))
         }
     }
 }
@@ -303,10 +236,7 @@ pub(crate) fn publish_from_payload(
     if *drained {
         return Ok(Output::Page(None));
     }
-    let (ticket, answers, terminal) = match open_preview(cursor, work, page_bytes) {
-        Ok(opened) => opened,
-        Err(error) => return Err(error),
-    };
+    let (ticket, answers, terminal) = open_preview(cursor, work, page_bytes)?;
     let queued = match answers {
         None => None,
         Some(answers) => match register_page(work, &answers) {
@@ -317,28 +247,15 @@ pub(crate) fn publish_from_payload(
             }
         },
     };
-    let outcome = match queued {
-        Some(queued) => PullOutcome::Page { queued, terminal },
-        None => PullOutcome::Eof,
-    };
-    let output = match outcome.committed_output() {
-        Ok(output) => output,
-        Err(error) => {
-            ticket.abort();
-            return Err(error);
-        }
-    };
+    let output = Output::Page(queued);
     let mut ticket = Some(ticket);
     match publication.accept(output, || {
         ticket.take().expect("live ticket").commit();
-        Ok(())
+        *drained = terminal;
     }) {
         Ok(()) => {
             if let Some(leftover) = ticket.take() {
                 leftover.abort();
-            }
-            if terminal {
-                *drained = true;
             }
             Ok(Output::Ready)
         }
@@ -352,6 +269,7 @@ pub(crate) fn publish_from_payload(
 }
 
 /// Test/discriminator pull: preview, register, abort. Cursor unchanged.
+#[cfg(test)]
 pub(crate) fn pull_from_payload(
     payload: &mut Payload,
     work: &WorkContext,
@@ -385,6 +303,7 @@ pub(crate) fn pull_from_payload(
     Ok(PullOutcome::Page { queued, terminal })
 }
 
+#[cfg(test)]
 pub(crate) enum PullOutcome {
     Page {
         queued: QueuedOutput,
@@ -394,6 +313,7 @@ pub(crate) enum PullOutcome {
     Terminal(RuntimeError),
 }
 
+#[cfg(test)]
 impl PullOutcome {
     /// Output L12's sink registers. Live pull commits the same ticket.
     pub fn committed_output(self) -> Result<Output, RuntimeError> {

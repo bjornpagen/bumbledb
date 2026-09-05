@@ -19,12 +19,13 @@ import {
 	provideRuntime,
 	receiptWire,
 	refWire,
+	registerChange,
 	submitOptions,
 	work
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
-const OPERATION = "4b".repeat(16) as OperationId
+const OPERATION = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId
 const adminOptions = { ...work, operationId: OPERATION }
 
 describe("publication phase on the wire", function suite() {
@@ -40,6 +41,8 @@ describe("publication phase on the wire", function suite() {
 						double.plan("logCommandSeal", {
 							result: { command: { __command: true }, ref: refWire }
 						})
+						const changes = { __changes: true }
+						registerChange(changes, { native: "change" })
 						const command = yield* machine.Command.seal(
 							{
 								scope: {
@@ -48,9 +51,9 @@ describe("publication phase on the wire", function suite() {
 									schemaId: refWire.identity.schemaId
 								},
 								id: { receiptEpoch: 1n, requestId: refWire.requestId },
-								changes: { __changes: true },
+								changes,
 								precondition: { kind: "blind" },
-								result: { attempt: "6f".repeat(16) }
+								result: { attempt: "6f6f6f6f-6f6f-6f6f-6f6f-6f6f6f6f6f6f" }
 							} as never,
 							work
 						)
@@ -106,9 +109,7 @@ describe("publication phase on the wire", function suite() {
 				error: { source: "protocol", reason: { _tag: "OperationConflict" } }
 			}
 		})
-		const outcome = await Effect.runPromise(
-			provideRuntime(machine.admin.checkpoint(localBinding, adminOptions))
-		)
+		const outcome = await Effect.runPromise(provideRuntime(machine.admin.checkpoint(localBinding, adminOptions)))
 		assert.equal(outcome.kind, "not-started")
 		if (outcome.kind === "not-started") {
 			assert.equal(outcome.phase, "provedNonpublication")

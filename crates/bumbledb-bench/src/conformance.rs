@@ -54,7 +54,7 @@ pub struct Report {
     /// kind, so such a query is inexpressible there — excluded, counted.
     pub excluded_compute: u64,
 
-    /// Cases touching an `Id128` or dense-interval value the Lean value
+    /// Cases touching an `Uuid` or dense-interval value the Lean value
     /// grammar cannot spell yet — excluded, counted.
     pub excluded_value: u64,
 }
@@ -85,7 +85,7 @@ pub(super) enum Exclusion {
     /// A computed head — inexpressible in the Lean case grammar.
     ComputedHead,
 
-    /// An `Id128` or dense `Interval<F64>` value — the Lean value grammar
+    /// An `Uuid` or dense `Interval<F64>` value — the Lean value grammar
     /// has no tag for either yet.
     UnrepresentableValue,
 }
@@ -140,7 +140,7 @@ pub fn build_world(seed: u64) -> World {
             target::ids::JOURNAL_ENTRY => load_du_cluster(&db, cfg),
             target::ids::IMPORT_BATCH => {}
             _ => {
-                db.write(|tx| {
+                db.write(crate::harness::bench_work(), |tx| {
                     tx.insert_dyn(rel, target::corpus_relation_rows(cfg, rel))
                         .map(bumbledb::MutationReport::changed)
                 })
@@ -154,7 +154,7 @@ pub fn build_world(seed: u64) -> World {
     }
     // The fixed-width Lane (`interval<i64, 5>`) sits after the closed
 
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         tx.insert_dyn(
             target::ids::LANE,
             target::corpus_relation_rows(cfg, target::ids::LANE),
@@ -205,7 +205,7 @@ fn load_du_cluster(db: &Db<target::Target>, cfg: GenConfig) {
     let mut start = 0u64;
     while start < entries {
         let end = (start + CHUNK).min(entries);
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             for i in start..end {
                 let fact = target::corpus_row(cfg, &domains, target::ids::JOURNAL_ENTRY, i);
                 tx.insert_dyn(target::ids::JOURNAL_ENTRY, [&fact])?;
@@ -339,7 +339,7 @@ fn push_value(
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::Id128(_) | Value::IntervalF64(_) => {
+        Value::Uuid(_) | Value::IntervalF64(_) => {
             return Err(Exclusion::UnrepresentableValue);
         }
     }
@@ -636,7 +636,7 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::Interval {
             element: bumbledb::schema::IntervalElement::F64,
         } => "interval_f64".into(),
-        ValueType::Id128 => "id128".into(),
+        ValueType::Uuid => "uuid".into(),
 
         ValueType::FixedInterval {
             element: bumbledb::schema::FixedIntervalElement::U64,

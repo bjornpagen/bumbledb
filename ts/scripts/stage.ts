@@ -40,7 +40,7 @@ function readReleaseDigest(flag: "--candidate-digest" | "--specification-revisio
 	return digest
 }
 
-export function packProvenance(packageName: string, version: string): PackProvenance {
+function packProvenance(packageName: string, version: string): PackProvenance {
 	return {
 		candidateSourceDigest: readReleaseDigest("--candidate-digest"),
 		specificationRevision: readReleaseDigest("--specification-revision"),
@@ -273,4 +273,13 @@ if (invokedDirectly) {
 	main()
 }
 
-export { packInto, packProvenance, readJson, stageMainPackage, stagePlatformPackage, tarballFile, tarballFiles, writeManifest }
+export {
+	packInto,
+	packProvenance,
+	readJson,
+	stageMainPackage,
+	stagePlatformPackage,
+	tarballFile,
+	tarballFiles,
+	writeManifest
+}

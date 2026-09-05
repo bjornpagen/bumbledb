@@ -19,11 +19,16 @@ pub fn cmd_gen(corpus: &CorpusArgs) -> Result<(), String> {
 pub fn cmd_verify(corpus: &CorpusArgs, cases: u32) -> Result<i32, String> {
     let cfg = gen_config(corpus);
     let paths = ensure_corpus(&corpus.dir, cfg)?;
-    let db = Db::open(&paths.db, Ledger).map_err(|e| format!("open db: {e:?}"))?;
+    let db = Db::open(&paths.db, Ledger, crate::harness::bench_work())
+        .map_err(|e| format!("open db: {e:?}"))?;
     let conn = Connection::open(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     corpus::configure_sqlite(&conn).map_err(|e| format!("configure oracle: {e}"))?;
-    let cal_db = Db::open(&paths.cal_db, crate::calendar::Scheduling)
-        .map_err(|e| format!("open calendar db: {e:?}"))?;
+    let cal_db = Db::open(
+        &paths.cal_db,
+        crate::calendar::Scheduling,
+        crate::harness::bench_work(),
+    )
+    .map_err(|e| format!("open calendar db: {e:?}"))?;
     let cal_conn =
         Connection::open(&paths.cal_oracle).map_err(|e| format!("open calendar oracle: {e}"))?;
     corpus::configure_sqlite(&cal_conn).map_err(|e| format!("configure calendar oracle: {e}"))?;

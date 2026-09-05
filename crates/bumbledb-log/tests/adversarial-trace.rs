@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{Db, Id128, RelationId, Value};
+use bumbledb::{Db, RelationId, Uuid, Value};
 
 use bumbledb_bench::closure::history_model::{
     Command as ModelCommand, CommandId as ModelCommandId, Condition as ModelCondition, Event,
@@ -42,7 +42,7 @@ use lane_support::{LIMITS, fresh_db, op, test_identity, work};
 fn model_id(id: CommandId) -> ModelCommandId {
     ModelCommandId {
         epoch: 1,
-        request: u128::from_le_bytes(id.request_id.as_core().to_bytes()),
+        request: u128::from_le_bytes(id.request_id.as_core().into_bytes()),
     }
 }
 
@@ -357,7 +357,7 @@ fn contended_hosted_writers_produce_a_lawful_receipt_trace() {
 
     // The duplicate decided exactly once: both returned receipts carry the
     // same decision stamp.
-    let duplicate_request = RequestId::from_core(Id128::from_bytes([0x30; 16]));
+    let duplicate_request = RequestId::from_core(Uuid::from_bytes([0x30; 16]));
     let duplicates: Vec<&TerminalReceipt> = receipts
         .iter()
         .filter(|r| r.command.id.request_id == duplicate_request)

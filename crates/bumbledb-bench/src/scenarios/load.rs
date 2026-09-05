@@ -12,9 +12,13 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     std::fs::create_dir_all(&root).map_err(|e| format!("scenario dir: {e}"))?;
     let schema = (scenario.schema)();
 
-    let db = Db::create(&root.join("db"), (scenario.descriptor)())
-        .map_err(|e| format!("create db: {e:?}"))?
-        .expect("accepted");
+    let db = Db::create(
+        &root.join("db"),
+        (scenario.descriptor)(),
+        crate::harness::bench_work(),
+    )
+    .map_err(|e| format!("create db: {e:?}"))?
+    .expect("accepted");
     let conn = Connection::open(root.join("oracle.sqlite")).map_err(|e| format!("sqlite: {e}"))?;
     corpus::configure_sqlite(&conn).map_err(|e| format!("configure sqlite: {e}"))?;
     for statement in sqlmap::schema_ddl(schema) {
@@ -26,7 +30,7 @@ pub(super) fn load(dir: &Path, scenario: &Scenario, seed: u64) -> Result<Stores,
     for (rel, rows) in (scenario.rows)(seed) {
         let rows: Vec<Vec<Value>> = rows.collect();
         total += rows.len() as u64;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, rows.iter().cloned())
                 .map(bumbledb::MutationReport::changed)
         })

@@ -195,7 +195,9 @@ pub(crate) fn read_relation_version(
         return Ok(RelationVersion::initial());
     };
     let word = u64::from_be_bytes(bytes.try_into().map_err(|_| {
-        StoreError::Corruption(StoreCorruption::MalformedKey("relation version value width"))
+        StoreError::Corruption(StoreCorruption::MalformedKey(
+            "relation version value width",
+        ))
     })?);
     Ok(RelationVersion::from_storage(word))
 }

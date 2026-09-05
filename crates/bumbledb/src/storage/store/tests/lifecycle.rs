@@ -285,14 +285,24 @@ fn install_populated_publishes_complete_store() {
     let schema = schema();
     let work = work();
     let changes = change_set(&schema, &[(NOTE, note(1, "published"))], &[]);
-    let store = Store::install_populated(&path, &schema, MapPolicy::default(), &work, |stage, work| {
-        stage.apply(&changes, work)?;
-        Ok(())
-    })
+    let store = Store::install_populated(
+        &path,
+        &schema,
+        MapPolicy::default(),
+        &work,
+        |stage, work| {
+            stage.apply(&changes, work)?;
+            Ok(())
+        },
+    )
     .expect("installed");
     assert!(path.exists());
     assert_eq!(
-        store.snapshot(&work).expect("snap").row_count(NOTE).expect("count"),
+        store
+            .snapshot(&work)
+            .expect("snap")
+            .row_count(NOTE)
+            .expect("count"),
         1
     );
 }
@@ -317,7 +327,11 @@ fn unready_admit_install_publishes_without_query_surface() {
         InstallOutcome::Installed(store) => {
             assert!(path.exists());
             assert_eq!(
-                store.snapshot(&work).expect("snap").row_count(NOTE).expect("count"),
+                store
+                    .snapshot(&work)
+                    .expect("snap")
+                    .row_count(NOTE)
+                    .expect("count"),
                 1
             );
         }

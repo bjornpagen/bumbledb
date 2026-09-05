@@ -10,7 +10,7 @@ import { AuthoringError } from "#errors.ts"
  * records all spell the field's own name, checked by type
  * (`FaceFields`/`MatchShape`). `Fact<>` is the inferred row object type
  * at BARE structural value types: every field is present. Identities are
- * ordinary application-owned values (`Id128`); the database mints none.
+ * ordinary application-owned values (`Uuid`); the database mints none.
  */
 
 import { type AnyField, assertDeclarationOrderKey, assertDeclarationRecord, type Infer, literalOf } from "#fields.ts"

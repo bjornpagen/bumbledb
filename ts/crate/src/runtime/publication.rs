@@ -1,15 +1,14 @@
 //! One-shot publication-gap cancel (D12/D25). L16 declares
 //! `runtimeArmPublicationCancel`; this is the native symbol it calls.
 //!
-//! Armed: [`crate::db_wire::reject_publication`] then drop the local page.
-//! Accept: live-ticket `PublicationSink::accept` or write plus
-//! [`crate::db_wire::accept_publication`] as one locked transition.
+//! The hook cancels the actual operation immediately before the same
+//! `PublicationSink::accept` gate used by ordinary interruption.
 //! No public scheduling debug API.
 
 use napi::bindgen_prelude::{Env, External};
 use napi_derive::napi;
 
-use crate::runtime_wire::{owner, thrown, RuntimeHandle};
+use crate::runtime_wire::{RuntimeHandle, owner, thrown};
 
 /// Arm the next `dispatch_payload_message` / `run_payload_publication`.
 /// After `work()` returns a page and before `operation.output` is written,

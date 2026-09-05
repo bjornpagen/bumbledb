@@ -3,10 +3,9 @@
 use super::*;
 use crate::schema::{
     FieldDescriptor, RelationDescriptor, Schema, SchemaDescriptor, StatementDescriptor,
-    ValidateDescriptor as _,
 };
 use crate::storage::store::judge_bridge::{SchemaJudge, UnindexedRows};
-use crate::storage::store::{HostRecordChange, HostChanges, AttachmentChange};
+use crate::storage::store::{AttachmentChange, HostChanges, HostRecordChange};
 use bumbledb_theory::schema::{FieldId, RelationId};
 
 fn keyed_schema() -> Schema {
@@ -97,11 +96,11 @@ fn fresh_create_adopts_complete_snapshot() {
 }
 
 fn commit_row(store: &Store, schema: &Schema, work: &WorkContext, id: u64) {
-    let changes = ChangeSet::builder(schema, work.clone())
+    let mut builder = ChangeSet::builder(schema, work.clone());
+    builder
         .insert(RelationId(0), &[Value::U64(id)])
-        .expect("stage")
-        .finish()
-        .expect("seal");
+        .expect("stage");
+    let changes = builder.finish().expect("seal");
     let mut owner = store.writer(work).expect("writer");
     let prepared = match owner
         .prepare_incremental(

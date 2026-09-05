@@ -170,7 +170,7 @@ pub fn load<S>(
     rows: fn(Mass, RelationId) -> Box<dyn Iterator<Item = Vec<Value>>>,
 ) -> Result<(), String> {
     for rel in [ids::PARENT, ids::CHILD] {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert_dyn(rel, rows(mass, rel))
                 .map(bumbledb::MutationReport::changed)
         })
@@ -193,12 +193,14 @@ pub fn commit_capacity_sum(
         let pool = power::PoolId(rng.range(PARENTS));
         let id = power::DeviceId(*mint);
         *mint += 1;
-        db.write(|tx| tx.insert([&power::Device { id, pool, watts: 1 }]))
+        db.write(crate::harness::bench_work(), |tx| {
+            tx.insert([&power::Device { id, pool, watts: 1 }])
+        })
         .map(|admission| {
             admission.unwrap();
             1
         })
-            .map_err(|e| format!("commit_capacity_sum: {e:?}"))
+        .map_err(|e| format!("commit_capacity_sum: {e:?}"))
     })
 }
 
@@ -214,12 +216,14 @@ pub fn commit_capacity_baseline(
         let pool = power_baseline::PoolId(rng.range(PARENTS));
         let id = power_baseline::DeviceId(*mint);
         *mint += 1;
-        db.write(|tx| tx.insert([&power_baseline::Device { id, pool, watts: 1 }]))
+        db.write(crate::harness::bench_work(), |tx| {
+            tx.insert([&power_baseline::Device { id, pool, watts: 1 }])
+        })
         .map(|admission| {
             admission.unwrap();
             1
         })
-            .map_err(|e| format!("commit_capacity_baseline: {e:?}"))
+        .map_err(|e| format!("commit_capacity_baseline: {e:?}"))
     })
 }
 
@@ -239,7 +243,7 @@ pub fn commit_capacity_duration(
         sample += 1;
         let id = calendar::BookingId(*mint);
         *mint += 1;
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             tx.insert([&calendar::Booking {
                 id,
                 room,

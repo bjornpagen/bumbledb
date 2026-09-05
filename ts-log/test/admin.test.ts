@@ -28,7 +28,7 @@ import {
 	work
 } from "#test/double.ts"
 
-const OPERATION = "4b".repeat(16) as OperationId
+const OPERATION = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId
 const adminOptions = { ...work, operationId: OPERATION }
 
 const plans: GeneratedMigrations = {
@@ -163,7 +163,7 @@ describe("admin certainty", function suite() {
 		assert.equal(error.value.code, "UnsupportedArtifact")
 	})
 
-	test("interrupting a mutating operation is outcome-unknown under the original operationId", async function interrupted() {
+	test("interrupting admin joins cancellation and retains the caller's operationId", async function interrupted() {
 		const { double, machine } = make()
 		double.plan("logAdmin", {
 			hold: true,
@@ -178,15 +178,8 @@ describe("admin certainty", function suite() {
 		await new Promise((resolve) => setImmediate(resolve))
 		await Effect.runPromise(Fiber.interrupt(fiber))
 		const exit = await Effect.runPromise(Fiber.await(fiber))
-		assert.ok(Exit.isSuccess(exit))
-		const outcome = Exit.getSuccess(exit)
-		assert.ok(outcome._tag === "Some")
-		assert.equal(outcome.value.kind, "outcome-unknown")
-		if (outcome.value.kind === "outcome-unknown") {
-			assert.equal(outcome.value.ref.operation, OPERATION)
-			assert.equal(outcome.value.phase, "dispatchedUnresolved")
-			assert.equal(outcome.value.error.code, "Cancelled")
-		}
+		assert.ok(Exit.hasInterrupts(exit))
+		assert.equal(adminOptions.operationId, OPERATION)
 		assert.ok(double.cancelCount() >= 1)
 	})
 })
@@ -203,7 +196,9 @@ describe("migration wrappers", function suite() {
 				}
 			}
 		})
-		const status = await Effect.runPromise(provideRuntime(machine.migrations.migrationStatus(localBinding, plans, work)))
+		const status = await Effect.runPromise(
+			provideRuntime(machine.migrations.migrationStatus(localBinding, plans, work))
+		)
 		assert.equal(status.kind, "pending")
 		if (status.kind === "pending") {
 			assert.deepEqual(status.pending, ["0000-initialize"])
@@ -220,7 +215,7 @@ describe("migration wrappers", function suite() {
 		const activation = {
 			operationId: OPERATION,
 			planSetDigest: "8c".repeat(32),
-			target: { ...identityWire, incarnationId: "9b".repeat(16) },
+			target: { ...identityWire, incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b" },
 			targetGenesis: "7a".repeat(32)
 		}
 		double.plan("logAdmin", {
@@ -254,7 +249,9 @@ describe("migration wrappers", function suite() {
 		}
 		// Exactly one wire verb ran: migrate never dispatched an activation.
 		assert.equal(double.calls.length, 1)
-		assert.equal((double.calls[0]?.request as { verb: string }).verb, "migration-migrate")
+		const call = double.calls[0]
+		assert.ok(call)
+		assert.equal((call.request as { verb: string }).verb, "migration-migrate")
 	})
 
 	test("migrate completed(paused) reports the frozen source, not a success claim", async function paused() {
@@ -267,7 +264,10 @@ describe("migration wrappers", function suite() {
 					verb: "migration-migrate",
 					value: {
 						kind: "paused",
-						error: { source: "protocol", reason: { _tag: "InsufficientLocalDisk", requiredBytes: 10n, availableBytes: 1n } },
+						error: {
+							source: "protocol",
+							reason: { _tag: "InsufficientLocalDisk", requiredBytes: 10n, availableBytes: 1n }
+						},
 						sourceState: { access: "frozen", operationId: OPERATION }
 					}
 				}
@@ -290,7 +290,7 @@ describe("migration wrappers", function suite() {
 		const { double, machine } = make()
 		const target = {
 			databaseId: identityWire.databaseId,
-			incarnationId: "9b".repeat(16),
+			incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b",
 			schemaId: identityWire.schemaId
 		}
 		const activationRef = {
@@ -317,7 +317,7 @@ describe("migration wrappers", function suite() {
 				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-activate",
-					target: { ...identityWire, incarnationId: "9b".repeat(16) },
+					target: { ...identityWire, incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b" },
 					accessMode: "active",
 					operationId: OPERATION,
 					activatedNow: true
@@ -337,7 +337,7 @@ describe("migration wrappers", function suite() {
 				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-abort",
-					target: { ...identityWire, incarnationId: "9b".repeat(16) },
+					target: { ...identityWire, incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b" },
 					targetFenced: true,
 					sourceAccess: "active"
 				}
@@ -365,7 +365,11 @@ describe("migration wrappers", function suite() {
 			result: {
 				certainty: "completed",
 				publicationPhase: "confirmed",
-				value: { verb: "migration-initialize", binding: { kind: "local", directory: "/tmp/t", identity: identityWire }, genesis: "7a".repeat(32) }
+				value: {
+					verb: "migration-initialize",
+					binding: { kind: "local", directory: "/tmp/t", identity: identityWire },
+					genesis: "7a".repeat(32)
+				}
 			}
 		})
 		const outcome = await Effect.runPromise(
@@ -445,7 +449,7 @@ describe("migration wrappers", function suite() {
 
 	test("restore and verifyBackup thread the backup operation id", async function backupId() {
 		const { double, machine } = make()
-		const backup = "0a".repeat(16) as OperationId
+		const backup = "0a0a0a0a-0a0a-0a0a-0a0a-0a0a0a0a0a0a" as OperationId
 		const schema = { __schema: "restore-target" } as unknown as AnySchema
 		double.plan("logAdmin", {
 			result: {
@@ -503,7 +507,7 @@ describe("migration wrappers", function suite() {
 			planSetDigest: "8c".repeat(32) as PlanSetDigest,
 			target: {
 				databaseId: identityWire.databaseId,
-				incarnationId: "9b".repeat(16),
+				incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b",
 				schemaId: identityWire.schemaId
 			},
 			targetGenesis: "7a".repeat(32)
@@ -514,7 +518,7 @@ describe("migration wrappers", function suite() {
 				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-activate",
-					target: { ...identityWire, incarnationId: "9b".repeat(16) },
+					target: { ...identityWire, incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b" },
 					accessMode: "active",
 					operationId: OPERATION,
 					activatedNow: false
@@ -549,7 +553,7 @@ describe("migration wrappers", function suite() {
 						planSetDigest: "8c".repeat(32),
 						target: {
 							databaseId: identityWire.databaseId,
-							incarnationId: "9b".repeat(16),
+							incarnationId: "9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b",
 							schemaId: identityWire.schemaId
 						}
 					} as unknown as Parameters<typeof machine.migrations.abortMigration>[0],

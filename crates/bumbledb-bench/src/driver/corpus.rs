@@ -61,23 +61,27 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
         );
 
         let load_dir = paths.root.join("db-load");
-        let db = Db::create(&load_dir, Ledger)
+        let db = Db::create(&load_dir, Ledger, crate::harness::bench_work())
             .map_err(|e| format!("create db: {e:?}"))?
             .expect("accepted");
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load bumbledb: {e:?}"))?;
-        db.compact(&paths.db)
+        db.compact(&paths.db, crate::harness::bench_work())
             .map_err(|e| format!("compact: {e:?}"))?;
         drop(db);
         std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove db-load: {e}"))?;
         corpus::load_sqlite(&paths.oracle, cfg).map_err(|e| format!("load sqlite: {e}"))?;
 
         let cal_load_dir = paths.root.join("cal-db-load");
-        let cal = Db::create(&cal_load_dir, crate::calendar::Scheduling)
-            .map_err(|e| format!("create cal db: {e:?}"))?
-            .expect("accepted");
+        let cal = Db::create(
+            &cal_load_dir,
+            crate::calendar::Scheduling,
+            crate::harness::bench_work(),
+        )
+        .map_err(|e| format!("create cal db: {e:?}"))?
+        .expect("accepted");
         crate::calendar::corpus::load_bumbledb(&cal, cfg)
             .map_err(|e| format!("load calendar: {e:?}"))?;
-        cal.compact(&paths.cal_db)
+        cal.compact(&paths.cal_db, crate::harness::bench_work())
             .map_err(|e| format!("compact calendar: {e:?}"))?;
         drop(cal);
         std::fs::remove_dir_all(&cal_load_dir).map_err(|e| format!("remove cal-db-load: {e}"))?;

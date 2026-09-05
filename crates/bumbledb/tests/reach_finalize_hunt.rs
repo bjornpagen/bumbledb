@@ -149,7 +149,9 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .unwrap();
 
     let expected = naive_closure(&edges);
-    let mut prepared = db.prepare(&closure_query()).expect("prepare");
+    let mut prepared = db
+        .prepare(&closure_query(), common::work())
+        .expect("prepare");
     db.read(common::work(), |snap| {
         for run in 0..3 {
             let got =
@@ -262,7 +264,7 @@ fn a_finished_interior_feeds_a_linear_rec() {
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![pair_rule((0, 1), vec![interior_atom(1, 0, 1)])],
     };
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         for run in 0..3 {
             let got =
@@ -324,7 +326,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
             conditions: vec![],
         }],
     };
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         for run in 0..2 {
             let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
@@ -449,7 +451,7 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
         })
         .collect();
 
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         for run in 0..3 {
             let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
@@ -496,7 +498,9 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
     })
     .expect("write")
     .unwrap();
-    let mut prepared = db.prepare(&single_source_chain_query()).expect("prepare");
+    let mut prepared = db
+        .prepare(&single_source_chain_query(), common::work())
+        .expect("prepare");
     for run in 0..2 {
         db.read(common::work(), |snap| {
             let err = snap
@@ -611,7 +615,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
             conditions: vec![],
         }],
     };
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         // big → small → empty → big → small: every transition where a
 
@@ -732,7 +736,7 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
             )
         })
         .collect();
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         for run in 0..2 {
             let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
@@ -819,7 +823,7 @@ fn word_columnar_finalize_reproduces_every_cell() {
             )
         })
         .collect();
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db.prepare(&query, common::work()).expect("prepare");
     db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         let got: BTreeSet<(u64, (u64, u64), bool, i64)> = answers

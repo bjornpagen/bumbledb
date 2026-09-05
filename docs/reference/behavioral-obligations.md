@@ -373,7 +373,7 @@ only that one test is sufficient.
 | `BACKUP-04` | Data-plane credentials cannot delete the protected recovery root |
 | `BACKUP-05` | Streamed >RAM backup/results stay bounded |
 | `RESTORE-01` | Restore creates a new writable incarnation; it never mutates the source lineage in place |
-| `RESTORE-02` | Application Id128 values and applied migration history are preserved |
+| `RESTORE-02` | Application Uuid values and applied migration history are preserved |
 | `RESTORE-03` | Old bindings keep refusing with a lineage mismatch rather than silently serving the wrong incarnation |
 
 ### Migration and erase

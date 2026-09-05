@@ -34,7 +34,7 @@ function boundedName(value: unknown): string | null {
 /** Canonical type spelling for exact comparison and messages. */
 function typeKey(value: unknown): string | null {
 	if (typeof value === "string") {
-		return ["bool", "u64", "i64", "f64", "string", "id128"].includes(value) ? JSON.stringify(value) : null
+		return ["bool", "u64", "i64", "f64", "string", "uuid"].includes(value) ? JSON.stringify(value) : null
 	}
 	if (!isRecord(value)) {
 		return null

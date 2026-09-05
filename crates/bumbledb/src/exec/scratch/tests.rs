@@ -179,10 +179,7 @@ fn disposal_removes_the_scratch_directory() {
     let mut scratch = ScratchRelation::new(&work, 0);
     scratch.insert_if_absent(b"k", b"v").expect("insert");
     assert!(scratch.spilled());
-    let path = match &scratch.tier {
-        Tier::Lmdb(env) => env.cleanup.0.clone(),
-        Tier::Ram { .. } => unreachable!("spilled above"),
-    };
+    let path = scratch.scratch_path().expect("spilled above");
     assert!(path.exists(), "environment directory exists while owned");
     drop(scratch);
     assert!(

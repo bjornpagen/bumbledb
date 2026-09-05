@@ -27,7 +27,10 @@ pub(crate) const DETERMINANT_KEY_MIN_LEN: usize = 1 + 2 + 8;
 const PROJECTION_OFF: usize = 1;
 const ROUTING_OFF: usize = 3;
 
-pub(crate) fn row_key(relation: bumbledb_theory::schema::RelationId, row: RowId) -> [u8; ROW_KEY_LEN] {
+pub(crate) fn row_key(
+    relation: bumbledb_theory::schema::RelationId,
+    row: RowId,
+) -> [u8; ROW_KEY_LEN] {
     let mut key = [0u8; ROW_KEY_LEN];
     key[0] = TAG_ROW;
     key[1..5].copy_from_slice(&relation.0.to_be_bytes());

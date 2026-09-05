@@ -221,7 +221,7 @@ pub(super) fn run_naive_slice<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
 
     let naive_dir = cfg.out_dir.join("naive-db");
     let _ = std::fs::remove_dir_all(&naive_dir);
-    let db = Db::create(&naive_dir, Ledger)
+    let db = Db::create(&naive_dir, Ledger, crate::harness::bench_work())
         .expect("create naive-slice store")
         .expect("accepted");
 

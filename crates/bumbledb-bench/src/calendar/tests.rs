@@ -159,7 +159,7 @@ fn both_stores_load_the_same_corpus() {
         scale: Scale::Tiny,
         ..CFG
     };
-    let db = Db::create(&dir.join("db"), Scheduling)
+    let db = Db::create(&dir.join("db"), Scheduling, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     let ours = corpus::load_bumbledb(&db, cfg).expect("bumbledb load");
@@ -194,18 +194,22 @@ fn goldens_pin_the_translator() {
 fn every_family_has_witnesses_on_the_unit_corpus() {
     let dir = scratch("unit-witnesses");
     let sizes = CalSizes::unit();
-    let db = Db::create(&dir.join("db"), Scheduling)
+    let db = Db::create(&dir.join("db"), Scheduling, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
     for family in families::all() {
         let query = (family.query)();
-        let mut prepared = db.prepare(&query).expect("prepare");
+        let mut prepared = db
+            .prepare(&query, crate::harness::bench_work())
+            .expect("prepare");
         let draw = families::unit_draw(family.name, CFG.seed, &sizes);
         let args = param_args(&draw);
         let mut buffer = Answers::new();
-        db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-            .expect("execute");
+        db.read(crate::harness::bench_work(), |snap| {
+            snap.execute(&mut prepared, &args, &mut buffer)
+        })
+        .expect("execute");
         assert!(
             !buffer.is_empty(),
             "{}: the unit draw must produce witnesses",
@@ -223,7 +227,7 @@ fn every_family_has_witnesses_on_the_unit_corpus() {
 fn the_hand_coalesce_matches_pack() {
     let dir = scratch("coalesce");
     let sizes = CalSizes::unit();
-    let db = Db::create(&dir.join("db"), Scheduling)
+    let db = Db::create(&dir.join("db"), Scheduling, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     corpus::load_bumbledb_sized(&db, CFG, sizes).expect("unit load");
@@ -235,7 +239,9 @@ fn the_hand_coalesce_matches_pack() {
         .find(|f| f.name == "free_busy")
         .expect("registered");
     let query = (family.query)();
-    let mut prepared = db.prepare(&query).expect("prepare");
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .expect("prepare");
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .signature()
         .columns
@@ -245,8 +251,10 @@ fn the_hand_coalesce_matches_pack() {
     let draw = families::unit_draw("free_busy", CFG.seed, &sizes);
     let args = param_args(&draw);
     let mut buffer = Answers::new();
-    db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-        .expect("execute");
+    db.read(crate::harness::bench_work(), |snap| {
+        snap.execute(&mut prepared, &args, &mut buffer)
+    })
+    .expect("execute");
     let ours = crate::compare::from_answers(&buffer, &types);
 
     let translated = family.sql_for(&query, &draw).expect("hand SQL");

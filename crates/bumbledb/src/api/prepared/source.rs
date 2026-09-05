@@ -2,8 +2,8 @@
 //! statistic, image build, key probe, cursor fallback and result copy reads
 //! committed rows through this enum — an owned coherent LMDB snapshot
 //! ([`OwnedSnapshot`], one real read transaction) or an admitted heap
-//! instance's sorted canonical rows. Closed relations never reach a source:
-//! they synthesize from the schema's sealed extension.
+//! instance's sorted canonical rows. Closed relations stream from the
+//! schema's sealed extension without requiring a resident image.
 //!
 //! Identity discipline: a prepared query pins its source identity at
 //! prepare. Store sources carry the store+environment identity
@@ -141,6 +141,7 @@ impl<'a> QuerySource<'a> {
     }
 
     /// Actual source-row visits this execution has charged (D10).
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn visit_count(&self) -> usize {
         match self {
@@ -148,7 +149,7 @@ impl<'a> QuerySource<'a> {
         }
     }
 
-    fn note_visits(&self, n: usize) {
+    pub(crate) fn note_visits(&self, n: usize) {
         match self {
             Self::Store { visits, .. } | Self::Heap { visits, .. } => {
                 visits.set(visits.get().saturating_add(n));
@@ -201,10 +202,11 @@ impl<'a> QuerySource<'a> {
     /// Storage failure, stopped work, or the sink's failure.
     pub(crate) fn scan(
         &self,
+        schema: &Schema,
         relation: RelationId,
         sink: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<()> {
-        self.scan_early(relation, &mut |bytes| sink(bytes).map(|()| true))
+        self.scan_early(schema, relation, &mut |bytes| sink(bytes).map(|()| true))
     }
 
     /// As [`Self::scan`], but returning `Ok(false)` from the visitor stops
@@ -213,10 +215,31 @@ impl<'a> QuerySource<'a> {
     /// Storage failure, stopped work, or the sink's failure.
     pub(crate) fn scan_early(
         &self,
+        schema: &Schema,
         relation: RelationId,
         sink: &mut dyn FnMut(&[u8]) -> Result<bool>,
     ) -> Result<()> {
         let work = self.work();
+        let descriptor = schema.relation(relation);
+        if let Some(extension) = descriptor.body().closed_rows() {
+            for row in extension {
+                work.step(1).map_err(work_error)?;
+                self.note_visits(1);
+                let values = crate::canonical::decode_sealed(descriptor, &row.fact, work)?;
+                let canonical = crate::canonical::CanonicalRow::encode(
+                    descriptor.fields(),
+                    values.values(),
+                    work,
+                )
+                .map_err(|error| {
+                    Error::from_store(StoreError::Changes(crate::changes::ChangeError::Row(error)))
+                })?;
+                if !sink(canonical.as_bytes())? {
+                    break;
+                }
+            }
+            return Ok(());
+        }
         match self {
             Self::Store { snapshot, .. } => {
                 let iterator = snapshot.rows(relation).map_err(store_error)?;
@@ -286,13 +309,7 @@ impl<'a> QuerySource<'a> {
                     return Ok(None);
                 };
                 Ok(Some(self.visit_store_projection(
-                    snapshot,
-                    work,
-                    compiled,
-                    key_fields,
-                    key_words,
-                    witness,
-                    visit,
+                    snapshot, work, compiled, key_fields, key_words, witness, visit,
                 )?))
             }
             Self::Heap { .. } => {
@@ -305,6 +322,10 @@ impl<'a> QuerySource<'a> {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+    )]
     fn visit_store_projection(
         &self,
         snapshot: &OwnedSnapshot,
@@ -331,12 +352,11 @@ impl<'a> QuerySource<'a> {
                 work.step(1).map_err(StoreError::Work)?;
                 visited = visited.saturating_add(1);
                 match visit(bytes) {
-                    Ok(VisitControl::Continue) => Ok(true),
                     Ok(VisitControl::Sufficient) if existence_only => {
                         outcome = VisitOutcome::Sufficient { visited };
                         Ok(false)
                     }
-                    Ok(VisitControl::Sufficient) => Ok(true),
+                    Ok(VisitControl::Continue | VisitControl::Sufficient) => Ok(true),
                     Ok(VisitControl::Stop) => {
                         outcome = VisitOutcome::Stopped { visited };
                         Ok(false)
@@ -406,52 +426,42 @@ fn key_values_from_words(
         ));
     }
     let mut values = Vec::with_capacity(compiled.scalar_positions.len());
-    for &position in compiled.scalar_positions.iter() {
+    for &position in &compiled.scalar_positions {
         let field = compiled.projection[position];
-        let idx = key_fields
-            .iter()
-            .position(|f| *f == field)
-            .ok_or_else(|| {
-                Error::Corruption(crate::error::CorruptionError::MalformedValue(
-                    "compiled key field",
-                ))
-            })?;
+        let idx = key_fields.iter().position(|f| *f == field).ok_or({
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "compiled key field",
+            ))
+        })?;
         let ty = compiled
             .scalar_fields
             .get(values.len())
-            .map(|f| f.value_type)
-            .unwrap_or(bumbledb_theory::schema::ValueType::U64);
+            .map_or(bumbledb_theory::schema::ValueType::U64, |f| f.value_type);
         values.push(word_to_value(ty, key_words[idx])?);
     }
     Ok(values)
 }
 
-fn word_to_value(
-    ty: bumbledb_theory::schema::ValueType,
-    word: u64,
-) -> Result<crate::ir::Value> {
+fn word_to_value(ty: bumbledb_theory::schema::ValueType, word: u64) -> Result<crate::ir::Value> {
     use bumbledb_theory::schema::ValueType;
     Ok(match ty {
         ValueType::Bool => crate::ir::Value::Bool(word != 0),
-        ValueType::U64 => crate::ir::Value::U64(word),
         ValueType::I64 => crate::ir::Value::I64((word ^ (1 << 63)).cast_signed()),
-        ValueType::F64 => crate::ir::Value::F64(
-            bumbledb_theory::F64::from_order_key(word).map_err(|_| {
+        ValueType::F64 => {
+            crate::ir::Value::F64(bumbledb_theory::F64::from_order_key(word).map_err(|_| {
                 Error::Corruption(crate::error::CorruptionError::MalformedValue(
                     "compiled key f64",
                 ))
-            })?,
-        ),
+            })?)
+        }
         _ => crate::ir::Value::U64(word),
     })
 }
 
 pub(crate) fn compile_error(error: crate::schema::CompileError) -> Error {
-    Error::Corruption(crate::error::CorruptionError::MalformedValue(
-        match error {
-            crate::schema::CompileError::ProjectionIdExhausted => "projection id exhausted",
-        },
-    ))
+    Error::Corruption(crate::error::CorruptionError::MalformedValue(match error {
+        crate::schema::CompileError::ProjectionIdExhausted => "projection id exhausted",
+    }))
 }
 
 /// The one condition licensing the bounded resident→fallback restart: the

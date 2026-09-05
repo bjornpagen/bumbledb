@@ -11,7 +11,7 @@
  *   node --experimental-strip-types scripts/migrate.ts activate <tenantId> <operationIdHex>
  *
  * The operation ID is SUPPLIED and persisted by the operator BEFORE
- * dispatch (a stable Id128 hex; mint one with scripts/mint-session.ts
+ * dispatch (a stable Uuid hex; mint one with scripts/mint-session.ts
  * --id). Rerunning with the same ID resumes/resolves the same operation;
  * a lost response is resolved by `status`, never by assuming failure.
  * `migrate` returning ready-to-switch does NOT activate: the target stays
@@ -20,7 +20,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { Id128, NativeRuntime } from "@bjornpagen/bumbledb"
+import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
 import { activateMigration, decodeReadyToSwitchActivation, migrate, migrationStatus } from "@bjornpagen/bumbledb-log/migrations"
 import { OperationId } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
@@ -40,9 +40,9 @@ function saveOutcome(name: string, body: unknown): void {
 }
 
 function operationIdOf(hex: string): OperationId {
-	const id = Id128.fromHex(hex)
+	const id = Uuid.parse(hex)
 	if (Result.isFailure(id)) {
-		throw new Error(`operation id must be 32 lowercase hex characters, got ${hex}`)
+		throw new Error(`operation id must be canonical UUID text, got ${hex}`)
 	}
 	const operation = OperationId.from(id.success)
 	if (Result.isFailure(operation)) {

@@ -1,7 +1,7 @@
 # The Bumbledb TypeScript cookbook
 
 Worked recipes for the successor Effect-native surface: typed schema values,
-declared keys and laws, application-owned `Id128` identity, one bounded
+declared keys and laws, application-owned `Uuid` identity, one bounded
 native runtime, scoped resources, immutable final-state changes, `Option`
 reads, sealed complete results, and one-shot page streams.
 
@@ -21,8 +21,8 @@ import {
 	duration,
 	f64,
 	i64,
-	id128,
-	Id128,
+	uuid,
+	Uuid,
 	interval,
 	key,
 	mirrors,
@@ -56,17 +56,17 @@ declare const localPath: string
 
 ## 1. One schema, typed twice — relations, declared keys, laws
 
-Identity fields are ordinary application-owned `Id128` values: the database
+Identity fields are ordinary application-owned `Uuid` values: the database
 issues no identity and there is no `fresh` mint. Keys are declared
 statements; references and capacity are laws over the same fields. The same
 declarations, spelled in Rust's `schema!`, produce the same canonical schema
 identity.
 
 ```ts
-const Student = relation("Student", { id: id128, name: str, budget: u64 })
+const Student = relation("Student", { id: uuid, name: str, budget: u64 })
 const Attempt = relation("Attempt", {
-	id: id128,
-	student: id128,
+	id: uuid,
+	student: uuid,
 	score: f64,
 	units: u64,
 	active: interval(i64)
@@ -99,7 +99,7 @@ with scope; reuse ONE layer value so Effect's memoization shares it.
 authority. Both are scoped acquisitions.
 
 ```ts
-const Doc = relation("Doc", { id: id128, text: str })
+const Doc = relation("Doc", { id: uuid, text: str })
 const Docs = schema("Docs", { Doc }, [key(Doc, ["id"])])
 
 const openExisting = Effect.scoped(
@@ -131,13 +131,13 @@ independent of call order. `finish()` consumes the draft into an immutable,
 reusable `ChangeSet`.
 
 ```ts
-const Task = relation("Task", { id: id128, title: str, done: u64 })
+const Task = relation("Task", { id: uuid, title: str, done: u64 })
 const Tasks = schema("Tasks", { Task }, [key(Task, ["id"])])
 
 const applyOnce = Effect.scoped(
 	Effect.gen(function* () {
 		const db = yield* Db.open(localPath, Tasks, work)
-		const taskId = yield* Id128.random()
+		const taskId = yield* Effect.sync(() => crypto.randomUUID())
 		const draft = yield* ChangeSet.builder(Tasks, work)
 		yield* draft.insert(Task, [{ id: taskId, title: "write the cookbook", done: 0n }])
 		const changes = yield* draft.finish()
@@ -163,10 +163,10 @@ void applyOnce
 `Option.none` — never a fake I/O error, never a nullable row.
 
 ```ts
-const Person = relation("Person", { id: id128, name: str })
+const Person = relation("Person", { id: uuid, name: str })
 const People = schema("People", { Person }, [key(Person, ["id"])])
 
-const lookup = (reader: QueryReader<typeof People>, personId: Id128) =>
+const lookup = (reader: QueryReader<typeof People>, personId: Uuid) =>
 	Effect.gen(function* () {
 		const found = yield* reader.get(Person, { id: personId }, work)
 		return Option.isSome(found) ? found.value.name : "unknown"
@@ -182,8 +182,8 @@ use. A template contains no tenant rows or live snapshot — execute it
 against any matching-schema reader.
 
 ```ts
-const Author = relation("Author", { id: id128, name: str })
-const Book = relation("Book", { id: id128, author: id128, pages: u64 })
+const Author = relation("Author", { id: uuid, name: str })
+const Book = relation("Book", { id: uuid, author: uuid, pages: u64 })
 const Library = schema("Library", { Author, Book }, [
 	key(Author, ["id"]),
 	key(Book, ["id"]),
@@ -217,7 +217,7 @@ Aggregates fold the group's distinct full bindings: keep the identity-bearing
 Exact float `sum`/`mean` are deterministic with one final rounding.
 
 ```ts
-const Sample = relation("Sample", { id: id128, series: id128, value: f64 })
+const Sample = relation("Sample", { id: uuid, series: uuid, value: f64 })
 const Series = schema("Series", { Sample }, [key(Sample, ["id"])])
 
 const stats = query(Series).rule((r) => {
@@ -239,8 +239,8 @@ A typed query template of the same schema splices as a derived stage:
 joins them. Naming materializes nothing.
 
 ```ts
-const Reading = relation("Reading", { id: id128, sensor: id128, value: f64 })
-const Sensor = relation("Sensor", { id: id128, label: str })
+const Reading = relation("Reading", { id: uuid, sensor: uuid, value: f64 })
+const Sensor = relation("Sensor", { id: uuid, label: str })
 const Telemetry = schema("Telemetry", { Reading, Sensor }, [
 	key(Reading, ["id"]),
 	key(Sensor, ["id"]),
@@ -272,7 +272,7 @@ private scoped cursor; a second run refuses. Every element is one owned page
 array — pages, not rows — delivered after complete evaluation.
 
 ```ts
-const Event = relation("Event", { id: id128, at: i64 })
+const Event = relation("Event", { id: uuid, at: i64 })
 const Feed = schema("Feed", { Event }, [key(Event, ["id"])])
 
 const everything = query(Feed).rule((r) => {
@@ -280,7 +280,7 @@ const everything = query(Feed).rule((r) => {
 	return r.match(Event, { id, at }).find({ id, at })
 })
 
-const drain = (result: CompleteResult<{ readonly id: Id128; readonly at: bigint }>) =>
+const drain = (result: CompleteResult<{ readonly id: Uuid; readonly at: bigint }>) =>
 	result.pages({ pageBytes: 65536n }, work).pipe(
 		Stream.runForEach((page) =>
 			Effect.sync(() => {
@@ -295,17 +295,17 @@ void [everything, drain]
 
 ## 9. Application identity: generate once, retain, never regenerate
 
-`Id128.random()` is effectful cryptographic entropy — run it once for an
+`Effect.sync(() => crypto.randomUUID())` is effectful cryptographic entropy — run it once for an
 original intent, persist the value with the request, and never regenerate
-inside a retry. `Id128.fromHex` is the pure fixed-size parser returning
+inside a retry. `Uuid.parse` is the pure fixed-size parser returning
 `Result`.
 
 ```ts
-const parsed = Id128.fromHex("00112233445566778899aabbccddeeff")
+const parsed = Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")
 const okOrRefused: boolean = Result.isSuccess(parsed)
 
 const mintOnce = Effect.gen(function* () {
-	const id = yield* Id128.random()
+	const id = yield* Effect.sync(() => crypto.randomUUID())
 	// Persist `id` with the original request BEFORE any database dispatch;
 	// a timeout retries the identical intent, never a new identity.
 	return id
@@ -320,10 +320,10 @@ Read under a short scope, keep the copied witness, and apply with
 the apply instead of silently overwriting.
 
 ```ts
-const Account = relation("Account", { id: id128, balance: i64 })
+const Account = relation("Account", { id: uuid, balance: i64 })
 const Bank = schema("Bank", { Account }, [key(Account, ["id"])])
 
-const correct = (accountId: Id128) =>
+const correct = (accountId: Uuid) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const db = yield* Db.open(localPath, Bank, work)
@@ -355,7 +355,7 @@ parameterized dense interval — half-open, NaN-free, strictly ordered.
 `span` builds checked interval values as `Result`s.
 
 ```ts
-const Window = relation("Window", { id: id128, confidence: interval(f64), during: interval(i64) })
+const Window = relation("Window", { id: uuid, confidence: interval(f64), during: interval(i64) })
 const Windows = schema("Windows", { Window }, [key(Window, ["id"])])
 
 const discrete = span(0n, 60n)
@@ -372,7 +372,7 @@ teardown surfaces a structured `CloseFailure` DEFECT in the Cause — never a
 silently swallowed failure, never falsely reclaimed resources.
 
 ```ts
-const Item = relation("Item", { id: id128, label: str })
+const Item = relation("Item", { id: uuid, label: str })
 const Items = schema("Items", { Item }, [key(Item, ["id"])])
 
 const explicitClose = Effect.scoped(
@@ -399,4 +399,3 @@ const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
 const asFloat = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
 void [incrementUnits, asFloat]
 ```
-

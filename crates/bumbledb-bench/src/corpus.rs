@@ -129,7 +129,9 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
         let rel = RelationId(rel);
         let name = schema.relation(rel).name();
         let ours = db
-            .read(|snap| Ok(snap.scan(rel)?.count()))
+            .read(crate::harness::bench_work(), |snap| {
+                Ok(snap.scan(rel)?.count())
+            })
             .expect("scan counts");
         let theirs: u64 = conn
             .query_row(&format!("SELECT COUNT(*) FROM \"{name}\""), [], |row| {
@@ -144,7 +146,9 @@ pub fn assert_loaded_equal(db: &Db<Ledger>, conn: &Connection, cfg: GenConfig) {
         let rel = RelationId(rel);
         let name = schema.relation(rel).name();
         let ours = db
-            .read(|snap| Ok(snap.scan(rel)?.count()))
+            .read(crate::harness::bench_work(), |snap| {
+                Ok(snap.scan(rel)?.count())
+            })
             .expect("scan counts");
         let theirs: u64 = conn
             .query_row(&format!("SELECT COUNT(*) FROM \"{name}\""), [], |row| {
@@ -195,7 +199,7 @@ mod tests {
             // Loader parity needs all relations, not a benchmark-sized corpus.
             scale: Scale::Tiny,
         };
-        let db = Db::create(&dir.join("db"), Ledger)
+        let db = Db::create(&dir.join("db"), Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         let ours = load_bumbledb(&db, cfg).expect("bumbledb load");

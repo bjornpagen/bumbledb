@@ -29,10 +29,7 @@ pub(crate) struct LaneId(pub usize);
 /// One command for a configured worker's ordinary event loop.
 pub(crate) enum WorkerCommand {
     /// One bounded job that borrows a live table entry.
-    Resource {
-        cap: Capability,
-        message: Message,
-    },
+    Resource { cap: Capability, message: Message },
     /// Already-owned close. Coalesced on the route; this wakes the worker.
     Close(Capability),
     /// Wake a sleeping worker for any other source (shared queue, cleanup).
@@ -41,7 +38,7 @@ pub(crate) enum WorkerCommand {
     /// the capability is already reserved; the worker owns insert/rollback.
     InstallSend {
         cap: Capability,
-        payload: super::registry::Payload,
+        payload: Box<super::registry::Payload>,
     },
 }
 
@@ -62,10 +59,6 @@ impl Runtime {
         let _state = super::lock(&self.state);
         self.changed.notify_all();
         Ok(())
-    }
-
-    pub(crate) fn wake_worker(&self, worker: u32) {
-        let _ = self.lane_send(LaneId(worker as usize), WorkerCommand::Wake);
     }
 
     /// Inbox Wake + lock-held notify. Caller must not hold `runtime.state`.

@@ -37,7 +37,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
             hex.push('\'');
             hex
         }
-        Value::Id128(id) => {
+        Value::Uuid(id) => {
             let mut hex = String::with_capacity(35);
             hex.push_str("X'");
             for b in id.as_bytes() {

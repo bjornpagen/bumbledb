@@ -397,7 +397,9 @@ where
     // An empty nonempty-required prefix never becomes Ready.
     let base_authority =
         HeadAuthority::genesis(source_identity, genesis_base, Activation::NotActivated).map_err(
-            |_| RestoreError::Recovery(RecoveryError::Corrupt("backup base is not a genesis stamp")),
+            |_| {
+                RestoreError::Recovery(RecoveryError::Corrupt("backup base is not a genesis stamp"))
+            },
         )?;
     let staged = begin_staged(directory, schema.clone(), work).map_err(RestoreError::Recovery)?;
     let mut authority = base_authority;
@@ -539,10 +541,14 @@ fn project_unready(
                 Ok(())
             })?;
             let mut system = SystemProjection::new();
-            reader.host_scan(&[HISTORY_KEY_PREFIX], work, &mut |key, value| {
-                system.record(key, value);
-                Ok(())
-            })?;
+            reader.host_scan(
+                &[HISTORY_KEY_PREFIX],
+                work,
+                &mut |key, value| -> bumbledb::store::StoreResult<()> {
+                    system.record(key, value);
+                    Ok(())
+                },
+            )?;
             Ok((application.finish(), system.finish()))
         })
         .map_err(RestoreError::Recovery)

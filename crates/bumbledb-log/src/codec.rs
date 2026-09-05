@@ -534,8 +534,8 @@ pub fn decode_manifest(
         limits.manifest_bytes,
     )?;
     let identity = DatabaseIdentity {
-        database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
-        incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        database_id: DatabaseId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
+        incarnation_id: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
         schema_id: SchemaId(input.array()?),
     };
     let decision = DecisionStamp {
@@ -543,7 +543,7 @@ pub fn decode_manifest(
         hash: DecisionDigest::from_bytes(input.array()?),
     };
     let state = StateStamp {
-        incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
         data_revision: input.u64()?,
     };
     let control_bytes = input.span(limits.manifest_bytes)?;
@@ -611,7 +611,7 @@ pub fn verify_summary(
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use super::*;
     use crate::history::authority::{Activation, HeadAuthority};
@@ -696,8 +696,8 @@ mod tests {
     /// Charged chunk owners decode through `as_ref` without a payload `to_vec`.
     #[test]
     fn charged_bytes_chunk_iterator_decodes_without_payload_copy() {
-        use bumbledb::work::{ByteKind, ChargedBytes};
         use bumbledb::ExecutionPolicy;
+        use bumbledb::work::{ByteKind, ChargedBytes};
         use std::time::Duration;
 
         let work = ExecutionPolicy {
@@ -807,8 +807,8 @@ mod tests {
     #[test]
     fn manifests_roundtrip_and_bind_identity_and_chunk_kinds() {
         let identity = DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         };
         let control = HeadAuthority::genesis(

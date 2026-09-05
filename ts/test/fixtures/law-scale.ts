@@ -297,7 +297,7 @@ const LawScale = schema(
 )
 
 // The machinery COMPUTED (never silently widened) — spot pins across the laws.
-const pinChain: Equal<(typeof LawScale)["classes"]["R5"]["ref"], "R4.id"> = true
+const pinChain: Equal<(typeof LawScale)["classes"]["R5"]["ref"], "R4.id" | "R5.ref"> = true
 const pinVocab: Equal<(typeof LawScale)["classes"]["R9"]["kind"], "Vocab1.id"> = true
 // The generator authority is deleted with fresh: an id in no law is BARE.
 const pinNoGenerator: Equal<(typeof LawScale)["classes"]["R31"]["id"], undefined> = true

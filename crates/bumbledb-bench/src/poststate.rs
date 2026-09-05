@@ -17,7 +17,7 @@ fn owned(value: &Value) -> Owned {
         Value::F64(v) => Owned::F64(v.to_bits()),
         Value::String(text) => Owned::Str(text.to_string()),
         Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
-        Value::Id128(id) => Owned::Id128(*id.as_bytes()),
+        Value::Uuid(id) => Owned::Uuid(*id.as_bytes()),
         Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
         Value::IntervalF64(interval) => {
@@ -28,8 +28,10 @@ fn owned(value: &Value) -> Owned {
 
 /// # Errors
 pub fn engine_rows<S>(db: &Db<S>, rel: RelationId) -> Result<Vec<Answer>, String> {
-    let rows: Vec<Vec<Value>> = db
-        .read(|snap| snap.scan(rel)?.collect())
+    let rows: Vec<bumbledb::canonical::DecodedRow> = db
+        .read(crate::harness::bench_work(), |snap| {
+            snap.scan(rel)?.collect()
+        })
         .map_err(|e| format!("engine scan: {e:?}"))?;
     Ok(rows
         .iter()

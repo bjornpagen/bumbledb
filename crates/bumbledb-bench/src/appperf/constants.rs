@@ -164,7 +164,6 @@ pub const CONSTANTS: &[Constant] = &[
     },
 ];
 
-#[must_use]
 pub fn by_class(class: ConstantClass) -> impl Iterator<Item = &'static Constant> {
     CONSTANTS.iter().filter(move |c| c.class == class)
 }

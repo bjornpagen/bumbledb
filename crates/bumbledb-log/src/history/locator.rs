@@ -12,8 +12,8 @@ use crate::history::command::Limits;
 use crate::history::decision;
 use crate::history::{DecisionStamp, FrameError};
 use crate::store::{
-    fetch_decision_ref, BackendError, ObjectError, ObjectKind, ObjectRef, ObservedError,
-    ReceiveLimits, ReceivingStore, TransportContext,
+    BackendError, ObjectError, ObjectKind, ObjectRef, ObservedError, ReceiveLimits, ReceivingStore,
+    TransportContext, fetch_decision_ref,
 };
 
 /// Intersect the caller's envelope with the locator's declared length.
@@ -30,15 +30,15 @@ fn work_object_error(error: bumbledb::WorkError) -> ObjectError {
     )))
 }
 
-/// ObjectRef wire width: 8 epoch + 1 kind + 32 digest + 8 length (C6).
+/// `ObjectRef` wire width: 8 epoch + 1 kind + 32 digest + 8 length (C6).
 pub const OBJECT_REF_WIRE_BYTES: usize = 49;
-/// Option tag only: absent ObjectRef (C6).
+/// Option tag only: absent `ObjectRef` (C6).
 pub const OBJECT_REF_OPTION_ABSENT_BYTES: usize = 1;
-/// One tag + one ObjectRef (C6). Never 51 (extra tag) or 45.
+/// One tag + one `ObjectRef` (C6). Never 51 (extra tag) or 45.
 pub const OBJECT_REF_OPTION_PRESENT_BYTES: usize =
     OBJECT_REF_OPTION_ABSENT_BYTES + OBJECT_REF_WIRE_BYTES;
 
-/// Encoded size of an optional ObjectRef field: absent 1, present 50.
+/// Encoded size of an optional `ObjectRef` field: absent 1, present 50.
 #[must_use]
 pub const fn object_ref_option_bytes(present: bool) -> usize {
     if present {
@@ -81,6 +81,10 @@ pub trait ChainVisitor {
 /// # Errors
 /// Missing locators before the base, stamp mismatch, budget exhaustion,
 /// or work refusal.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
+)]
 pub fn walk_decision_chain<B, V>(
     backend: &B,
     prefix: &str,
@@ -106,11 +110,7 @@ where
             return Err(ObjectError::Frame(FrameError::InvalidSequence).into());
         }
         if *budget == 0 {
-            return Err(ObjectError::Backend(Box::new(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "decision walk budget exhausted",
-            )))
-            .into());
+            return Err(ObjectError::WalkBudgetExhausted.into());
         }
         *budget -= 1;
         let reference = locator.take().ok_or_else(|| ObjectError::Missing {
@@ -155,6 +155,10 @@ where
 ///
 /// # Errors
 /// Same refusals as [`walk_decision_chain`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
+)]
 pub fn walk_decision_chain_collect<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
@@ -210,7 +214,7 @@ pub fn validate_tip_locator(
 }
 
 /// Checked recovery-root locators: checkpoint-only `base == tip` with no
-/// tip object, or suffix `base != tip` with a DecisionRef bound to the tip
+/// tip object, or suffix `base != tip` with a `DecisionRef` bound to the tip
 /// stamp. Comparison is the complete stamp, not sequence alone.
 pub fn validate_recovery_locators(
     base: DecisionStamp,
@@ -258,7 +262,7 @@ fn validate_decision_locator(
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::Id128;
+    use bumbledb::Uuid;
 
     use super::*;
     use crate::history::command::{CommandMetadata, Limits, UnverifiedOutcome, encode_command};
@@ -268,7 +272,7 @@ mod tests {
         ReceiptEpoch, RequestId, SchemaId, StateStamp,
     };
     use crate::store::mem::{MemStore, Op};
-    use crate::store::{put_verified, ObjectKind};
+    use crate::store::{ObjectKind, put_verified};
     use bumbledb::{ExecutionPolicy, WorkContext};
     use std::time::Duration;
 
@@ -295,8 +299,8 @@ mod tests {
 
     fn identity() -> DatabaseIdentity {
         DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            database_id: DatabaseId::from_core(Uuid::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Uuid::from_bytes([2; 16])),
             schema_id: SchemaId([3; 32]),
         }
     }
@@ -314,7 +318,7 @@ mod tests {
                 identity: identity(),
                 id: CommandId {
                     receipt_epoch: ReceiptEpoch::INITIAL,
-                    request_id: RequestId::from_core(Id128::from_bytes([4; 16])),
+                    request_id: RequestId::from_core(Uuid::from_bytes([4; 16])),
                 },
                 condition: crate::history::Condition::Unconditional,
             },
@@ -380,10 +384,7 @@ mod tests {
             validate_recovery_locators(base, tip, Some(tip_object)),
             Err(FrameError::InvalidTerminalStamp)
         );
-        assert_eq!(
-            validate_recovery_locators(base, base, None),
-            Ok(())
-        );
+        assert_eq!(validate_recovery_locators(base, base, None), Ok(()));
         assert_eq!(
             validate_recovery_locators(base, base, Some(tip_object)),
             Err(FrameError::InvalidTerminalStamp)
@@ -557,17 +558,6 @@ mod tests {
     /// before the body is interpreted, and it refunds on cleanup.
     #[test]
     fn walker_keeps_receive_charge_through_decode_and_refunds_after() {
-        use bumbledb::work::Resource;
-
-        let store = MemStore::new();
-        let genesis = DecisionStamp {
-            seq: 0,
-            hash: DecisionDigest::from_bytes([9; 32]),
-        };
-        let (one, ref_one, _) = put_decision(&store, genesis, None, 1);
-        let (two, ref_two, bytes_two) = put_decision(&store, one, Some(ref_one), 2);
-        let ctx = work();
-        let baseline = ctx.used(Resource::WorkingBytes);
         struct ChargeProbe<'a> {
             work: &'a WorkContext,
             baseline: u64,
@@ -592,6 +582,17 @@ mod tests {
                 Ok(true)
             }
         }
+        use bumbledb::work::Resource;
+
+        let store = MemStore::new();
+        let genesis = DecisionStamp {
+            seq: 0,
+            hash: DecisionDigest::from_bytes([9; 32]),
+        };
+        let (one, ref_one, _) = put_decision(&store, genesis, None, 1);
+        let (two, ref_two, bytes_two) = put_decision(&store, one, Some(ref_one), 2);
+        let ctx = work();
+        let baseline = ctx.used(Resource::WorkingBytes);
         let mut probe = ChargeProbe {
             work: &ctx,
             baseline,
@@ -617,7 +618,10 @@ mod tests {
             "walk cleanup refunds the receive charge"
         );
         let limits = receive_limits_for_object(&ref_two, LIMITS.envelope_bytes);
-        assert_eq!(limits.max_bytes, ref_two.length.min(LIMITS.envelope_bytes as u64));
+        assert_eq!(
+            limits.max_bytes,
+            ref_two.length.min(LIMITS.envelope_bytes as u64)
+        );
         assert_ne!(limits.max_bytes, u64::MAX);
         assert!(!bytes_two.is_empty());
     }

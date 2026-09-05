@@ -14,8 +14,8 @@ use crate::certainty::{AdminCertainty, PublicationPhase, ResolveEvidence, Submit
 use crate::history::admission::Refusal;
 use crate::history::authority::AuthorityError;
 use crate::history::command::FrameError;
-use crate::writer::LogError;
 use crate::store::TransportObservation;
+use crate::writer::LogError;
 use crate::writer::verbs::{ConditionalOutcome, PutOutcome};
 use crate::writer::{ResolveOutcome, SubmitOutcome};
 

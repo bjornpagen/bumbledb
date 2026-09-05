@@ -15,10 +15,10 @@
  */
 import { Effect } from "effect"
 import { dbNative } from "#db-native.ts"
-import type { SchemaSpec } from "#spec.ts"
-import { DbError, dbError } from "#runtime-errors.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
 import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import { DbError, dbError } from "#runtime-errors.ts"
+import type { SchemaSpec } from "#spec.ts"
 
 function owned(operation: string, value: Uint8Array | null): Uint8Array {
 	if (value === null) {
@@ -39,8 +39,7 @@ const internalMigrationSchema = Effect.fn("internalMigrationSchema")(function* (
 	const runtime = yield* runtimeHandle()
 	return yield* nativeOperationWith(
 		"internalMigrationSchema",
-		(callback) =>
-			dbNative.runtimeMigrationSchema(runtime, policyWire(work, "internalMigrationSchema"), spec, callback),
+		(callback) => dbNative.runtimeMigrationSchema(runtime, policyWire(work, "internalMigrationSchema"), spec, callback),
 		dbNative.runtimeBytesTake,
 		(bytes) => owned("internalMigrationSchema", bytes)
 	)
@@ -56,15 +55,12 @@ const internalMigrationRead = Effect.fn("internalMigrationRead")(function* (
 	work: ExecutionPolicy
 ) {
 	if (!(request instanceof Uint8Array) || !(request.buffer instanceof ArrayBuffer)) {
-		return yield* Effect.fail(
-			new DbError({ operation: "internalMigrationRead", reason: { _tag: "InvalidArgument" } })
-		)
+		return yield* Effect.fail(new DbError({ operation: "internalMigrationRead", reason: { _tag: "InvalidArgument" } }))
 	}
 	const runtime = yield* runtimeHandle()
 	return yield* nativeOperationWith(
 		"internalMigrationRead",
-		(callback) =>
-			dbNative.runtimeMigrationRead(runtime, policyWire(work, "internalMigrationRead"), request, callback),
+		(callback) => dbNative.runtimeMigrationRead(runtime, policyWire(work, "internalMigrationRead"), request, callback),
 		dbNative.runtimeBytesTake,
 		(bytes) => owned("internalMigrationRead", bytes)
 	)

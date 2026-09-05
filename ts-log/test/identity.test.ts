@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { Uuid } from "@bjornpagen/bumbledb"
 import { Result } from "effect"
 import {
 	CommandDigest,
@@ -18,20 +19,20 @@ import {
 	parseDecisionStamp,
 	parseStateStamp,
 	ReceiptEpoch,
+	RequestId,
+	RootId,
 	renderCommandRef,
 	renderDatabaseIdentity,
 	renderDecisionStamp,
 	renderStateStamp,
-	RequestId,
-	RootId,
 	sameCommandRef
 } from "#identity.ts"
 
-const DB = "0f".repeat(16)
-const INC = "1e".repeat(16)
+const DB = "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f"
+const INC = "1e1e1e1e-1e1e-1e1e-1e1e-1e1e1e1e1e1e"
 const SCHEMA = "2d".repeat(32)
 const HASH = "3c".repeat(32)
-const REQUEST = "4b".repeat(16)
+const REQUEST = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b"
 const DIGEST = "5a".repeat(32)
 
 function ok<A, E>(result: Result.Result<A, E>): A {
@@ -45,24 +46,26 @@ function bad<A, E>(result: Result.Result<A, E>): E {
 }
 
 describe("identity roles", function suite() {
-	test("Id128-backed roles accept exactly 32 lowercase hex", function roles() {
-		ok(DatabaseId.fromHex(DB))
-		ok(IncarnationId.fromHex(INC))
-		ok(RequestId.fromHex(REQUEST))
-		ok(OperationId.fromHex(REQUEST))
-		bad(DatabaseId.fromHex(DB.toUpperCase()))
-		bad(DatabaseId.fromHex(DB.slice(2)))
-		bad(DatabaseId.fromHex(`${DB.slice(2)}zz`))
-		bad(RequestId.fromHex(""))
+	test("Uuid-backed roles accept exactly canonical UUID", function roles() {
+		ok(DatabaseId.parse(DB))
+		ok(IncarnationId.parse(INC))
+		ok(RequestId.parse(REQUEST))
+		ok(OperationId.parse(REQUEST))
+		bad(DatabaseId.parse(DB.toUpperCase()))
+		bad(DatabaseId.parse(DB.slice(2)))
+		bad(DatabaseId.parse(`${DB.slice(2)}zz`))
+		bad(RequestId.parse(""))
 	})
 
 	test("RequestId.from is a nominal conversion, not a scalar codec", function nominal() {
-		// The canonical Id128 runtime value is its 32-lowercase-hex string.
-		const id = REQUEST as unknown as Parameters<typeof RequestId.from>[0]
-		const request = ok(RequestId.from(id))
+		// The canonical Uuid runtime value is its canonical hyphenated UUID string.
+		const request = ok(RequestId.from(REQUEST))
 		assert.equal(request, REQUEST)
+		const core: Uuid = request
+		ok(Uuid.toBytes(core))
 		// A hostile structural forgery (non-string) refuses instead of casting.
-		bad(RequestId.from(42 as unknown as Parameters<typeof RequestId.from>[0]))
+		// @ts-expect-error — deliberately exercise the runtime boundary
+		bad(RequestId.from(42))
 	})
 
 	test("receipt epochs are positive u64", function epochs() {
@@ -88,7 +91,7 @@ describe("stamp and ref tokens", function suite() {
 		bad(parseDecisionStamp(`07:${HASH}`)) // leading zero is noncanonical
 		bad(parseDecisionStamp(`7:${HASH.toUpperCase()}`))
 		bad(parseDecisionStamp(`7:${HASH}:extra`))
-		bad(parseDecisionStamp("18446744073709551616:" + HASH)) // > u64
+		bad(parseDecisionStamp(`18446744073709551616:${HASH}`)) // > u64
 	})
 
 	test("state stamp round-trips", function states() {
@@ -111,10 +114,10 @@ describe("stamp and ref tokens", function suite() {
 
 		bad(parseCommandRef(`${identityToken}:0:${REQUEST}:${DIGEST}`)) // epoch 0
 		bad(parseCommandRef(`${identityToken}:1:${REQUEST}`)) // missing digest
-		bad(parseCommandRef(`${identityToken}:1:${DIGEST}:${DIGEST}`)) // 64-hex in a 32-hex role
+		bad(parseCommandRef(`${identityToken}:1:${DIGEST}:${DIGEST}`)) // 64-hex in a UUID role
 	})
 
-	test("digest widths are role-exact: 32-hex ids never parse as digests", function widths() {
+	test("digest widths are role-exact: UUIDs never parse as digests", function widths() {
 		bad(CommandDigest.fromHex(REQUEST))
 		ok(CommandDigest.fromHex(DIGEST))
 	})

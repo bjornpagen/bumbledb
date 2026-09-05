@@ -33,11 +33,7 @@ fn chained_selections_intersect_and_contradict() {
     let entries = drain(&mut colt, cursor, 0);
     assert_eq!(entries.len(), 1, "one fact carries (3, 13)");
 
-    assert!(
-        colt.select(&[vec![3], vec![14]])
-            .expect("select")
-            .is_none()
-    );
+    assert!(colt.select(&[vec![3], vec![14]]).expect("select").is_none());
 }
 
 #[test]
@@ -89,13 +85,7 @@ fn reset_retains_selection_capacity() {
         .expect("select")
         .expect("key 3 exists");
     let first = colt.watermark();
-    colt.reset(apply(
-        &image,
-        &[],
-        &[],
-        Vec::new(),
-        image.generation().text_eq(None),
-    ));
+    colt.reset(all(&image));
     assert_eq!(colt.watermark(), 1, "reset empties the pools");
     colt.select(&[vec![3]])
         .expect("select")

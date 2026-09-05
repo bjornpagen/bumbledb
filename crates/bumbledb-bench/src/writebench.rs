@@ -22,7 +22,7 @@ pub(crate) struct PostingMint(u64);
 impl PostingMint {
     pub(crate) fn probe(db: &Db<Ledger>) -> Result<Self, String> {
         let next = db
-            .read(|snap| {
+            .read(crate::harness::bench_work(), |snap| {
                 let mut max: Option<u64> = None;
                 for fact in snap.scan(ids::POSTING)? {
                     let row = fact?;
@@ -72,7 +72,7 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
     let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_single"), || {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             let id = mint.next();
             tx.insert([&prepared_posting(&mut rng, &sizes, id)])
         })
@@ -91,8 +91,8 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
     let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_witnessed"), || {
-        db.read(|instance| {
-            db.write_from(&instance.witness()?, |tx| {
+        db.read(crate::harness::bench_work(), |instance| {
+            db.write_from(crate::harness::bench_work(), &instance.witness()?, |tx| {
                 let id = mint.next();
                 tx.insert([&prepared_posting(&mut rng, &sizes, id)])
             })?
@@ -110,7 +110,7 @@ pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);
     let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_batch"), || {
-        db.write(|tx| {
+        db.write(crate::harness::bench_work(), |tx| {
             for _ in 0..512 {
                 let id = mint.next();
                 tx.insert([&prepared_posting(&mut rng, &sizes, id)])?;
@@ -145,7 +145,7 @@ pub fn insert_stream_bumbledb(
         let dir = scratch.join(format!("insert-stream-bumbledb-{sample}"));
         let db = mode.create(&dir, Ledger)?;
         for rel in non_posting_relations() {
-            db.write(|tx| {
+            db.write(crate::harness::bench_work(), |tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(cfg, rel))
                     .map(bumbledb::MutationReport::changed)
             })
@@ -159,7 +159,7 @@ pub fn insert_stream_bumbledb(
     harness::measure(proto, || {
         let db = pending.borrow_mut().pop_front().expect("pre-seeded store");
         let facts = db
-            .write(|tx| {
+            .write(crate::harness::bench_work(), |tx| {
                 let postings = tx
                     .insert_dyn(ids::POSTING, corpus_gen::relation_rows(cfg, ids::POSTING))?
                     .changed();
@@ -189,7 +189,9 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
         .find(|f| f.name == "containment_walk")
         .expect("containment_walk is registered");
     let query = (family.query)();
-    let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = Answers::new();
     harness::measure_cold(
@@ -197,8 +199,10 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
         harness::org_touch(db),
         || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("cold execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("cold execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         },
     )
@@ -219,7 +223,7 @@ pub(crate) fn posting_swap(
     prev: &Posting,
 ) -> Result<Posting, String> {
     let id = mint.next();
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         if tx.delete([prev])?.changed() == 0 {
             return Err(bumbledb::Error::from(std::io::Error::other(
                 "the swap touch must be delete-bearing: the previous revision was absent",
@@ -244,7 +248,7 @@ pub(crate) fn posting_swap_seed(
     mint: &mut PostingMint,
 ) -> Result<Posting, String> {
     let id = mint.next();
-    db.write(|tx| {
+    db.write(crate::harness::bench_work(), |tx| {
         let seed = prepared_posting(rng, sizes, id);
         tx.insert([&seed])?;
         Ok(seed)
@@ -265,7 +269,9 @@ pub fn cold_containment_walk_delete(
         .find(|f| f.name == "containment_walk")
         .expect("containment_walk is registered");
     let query = (family.query)();
-    let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = Answers::new();
     let sizes = Sizes::of(cfg.scale);
@@ -280,8 +286,10 @@ pub fn cold_containment_walk_delete(
         },
         || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("cold execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("cold execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         },
     )
@@ -299,7 +307,9 @@ pub fn trace_cold_containment_walk_delete(
         .find(|f| f.name == "containment_walk")
         .expect("containment_walk is registered");
     let query = (family.query)();
-    let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
+    let mut prepared = db
+        .prepare(&query, crate::harness::bench_work())
+        .map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = Answers::new();
     let sizes = Sizes::of(cfg.scale);
@@ -315,8 +325,10 @@ pub fn trace_cold_containment_walk_delete(
         },
         &mut || {
             let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("cold execute: {e:?}"))?;
+            db.read(crate::harness::bench_work(), |snap| {
+                snap.execute(&mut prepared, &args, &mut buffer)
+            })
+            .map_err(|e| format!("cold execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         },
     )
@@ -341,9 +353,11 @@ mod tests {
     }
 
     fn containment_target_db(dir: &Path) -> Db<Ledger> {
-        let db = Db::create(dir, Ledger).expect("create").expect("accepted");
+        let db = Db::create(dir, Ledger, crate::harness::bench_work())
+            .expect("create")
+            .expect("accepted");
         for rel in non_posting_relations() {
-            db.write(|tx| {
+            db.write(crate::harness::bench_work(), |tx| {
                 tx.insert_dyn(rel, corpus_gen::relation_rows(CFG, rel))
                     .map(bumbledb::MutationReport::changed)
             })
@@ -357,7 +371,9 @@ mod tests {
     #[test]
     fn cold_containment_walk_delete_traced_twin_lands() {
         let dir = scratch("cold-delete-trace");
-        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
+        let db = Db::create(&dir, Ledger, crate::harness::bench_work())
+            .expect("create")
+            .expect("accepted");
         corpus::load_bumbledb(&db, CFG).expect("load");
         let trace_dir = dir.join("trace");
         let table = trace_cold_containment_walk_delete(&db, CFG, Some(&trace_dir))
@@ -394,18 +410,24 @@ mod tests {
         let mut mint = PostingMint::probe(&db).expect("probe");
 
         let seed = posting_swap_seed(&db, &mut rng, &sizes, &mut mint).expect("seed");
-        let generation_before = db.generation().expect("generation");
+        let generation_before = db
+            .generation(crate::harness::bench_work())
+            .expect("generation");
         let next = posting_swap(&db, &mut rng, &sizes, &mut mint, &seed).expect("swap");
         assert!(
             next.id.0 > seed.id.0,
             "the application-owned cursor mints forward"
         );
         assert!(
-            db.generation().expect("generation") > generation_before,
+            db.generation(crate::harness::bench_work())
+                .expect("generation")
+                > generation_before,
             "the swap is one state-changing commit"
         );
 
-        let generation_at_refusal = db.generation().expect("generation");
+        let generation_at_refusal = db
+            .generation(crate::harness::bench_work())
+            .expect("generation");
         let refusal = posting_swap(&db, &mut rng, &sizes, &mut mint, &seed);
         assert!(
             refusal.is_err(),
@@ -414,7 +436,8 @@ mod tests {
         // The refusal aborts the transaction whole: no stray insert-only
 
         assert_eq!(
-            db.generation().expect("generation"),
+            db.generation(crate::harness::bench_work())
+                .expect("generation"),
             generation_at_refusal,
             "a refused swap must leave the store untouched"
         );
@@ -434,7 +457,7 @@ mod tests {
     #[test]
     fn commit_single_rejected_admission_is_not_a_measured_success() {
         let dir = scratch("commit-single-refusal");
-        let db = Db::create(&dir, Ledger)
+        let db = Db::create(&dir, Ledger, crate::harness::bench_work())
             .expect("create")
             .expect("accepted");
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

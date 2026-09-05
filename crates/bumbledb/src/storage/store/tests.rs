@@ -20,7 +20,7 @@
 
 use std::time::Duration;
 
-use bumbledb_theory::schema::RelationId;
+use bumbledb_theory::schema::{RelationId, StatementId};
 
 use crate::schema::ProjectionId;
 
@@ -41,11 +41,11 @@ use super::map::MapPolicy;
 use super::store_env::Store;
 
 mod admission;
-mod compiled_projection;
-mod fresh_adoption;
 mod candidate_visibility;
 mod collision;
+mod compiled_projection;
 mod crash;
+mod fresh_adoption;
 mod incremental;
 mod judged;
 mod large;
@@ -84,7 +84,12 @@ pub(super) fn schema() -> Schema {
                 extension: None,
             },
         ],
-        statements: vec![],
+        statements: vec![
+            bumbledb_theory::schema::StatementDescriptor::Functionality {
+                relation: NOTE,
+                projection: Box::from([bumbledb_theory::schema::FieldId(0)]),
+            },
+        ],
     }
     .validate()
     .expect("test schema validates")
@@ -151,9 +156,8 @@ impl RowIndexer for NoIndex {
         _relation: RelationId,
         _row: &[u8],
         _work: &WorkContext,
-        _        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
+        _emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
     ) -> StoreResult<()> {
-        let _ = emit;
         Ok(())
     }
 }

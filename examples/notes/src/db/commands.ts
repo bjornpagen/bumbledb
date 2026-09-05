@@ -11,7 +11,7 @@
  *    set effect); `scripts/dispatch-outbox.ts` performs and retires it.
  */
 import { createHash } from "node:crypto"
-import { ChangeSet, type ExecutionPolicy, Id128 } from "@bjornpagen/bumbledb"
+import { ChangeSet, type ExecutionPolicy, Uuid } from "@bjornpagen/bumbledb"
 import type { CommandRef, History, HistoryBorrow, SubmitOptions, SubmitOutcome } from "@bjornpagen/bumbledb-log"
 import { Command, RequestId } from "@bjornpagen/bumbledb-log"
 import { Effect } from "effect"
@@ -33,16 +33,16 @@ export const submitOptionsOf = (work: ExecutionPolicy): SubmitOptions => ({
  * the same 16 bytes, so a retried request rebuilds the identical command.
  * App policy (SHA-256 truncation), not a database allocator.
  */
-export function derivedId(source: Id128, role: string): Id128 {
+export function derivedId(source: Uuid, role: string): Uuid {
 	const digest = createHash("sha256").update(`${source}:${role}`).digest()
-	const parsed = Id128.fromBytes(digest.subarray(0, 16))
+	const parsed = Uuid.fromBytes(digest.subarray(0, 16))
 	if (parsed._tag !== "Success") {
 		throw new Error("derivedId: sixteen digest bytes always parse")
 	}
 	return parsed.success
 }
 
-const requestIdOf = (key: Id128) =>
+const requestIdOf = (key: Uuid) =>
 	Effect.fromResult(RequestId.from(key)).pipe(Effect.orDie)
 
 /**
@@ -54,9 +54,9 @@ const sealAndSubmit = Effect.fn("commands.sealAndSubmit")(
 	function* (
 		writer: Writer,
 		tenantId: string,
-		requestKey: Id128,
+		requestKey: Uuid,
 		changes: ChangeSet<typeof App>,
-		resultMeta: Readonly<Record<string, Id128>>,
+		resultMeta: Readonly<Record<string, Uuid>>,
 		work: ExecutionPolicy
 	) {
 		const requestId = yield* requestIdOf(requestKey)
@@ -83,7 +83,7 @@ const sealAndSubmit = Effect.fn("commands.sealAndSubmit")(
  * note does.
  */
 export const createNote = Effect.fn("commands.createNote")(
-	function* (writer: Writer, tenantId: string, noteId: Id128, text: string, work: ExecutionPolicy) {
+	function* (writer: Writer, tenantId: string, noteId: Uuid, text: string, work: ExecutionPolicy) {
 		const draft = yield* ChangeSet.builder(App, work)
 		yield* draft.insert(Note, [{ id: noteId, text, pinned: false }])
 		yield* draft.insert(Outbox, [{ id: derivedId(noteId, "outbox:note-created"), note: noteId, kind: "note-created" }])
@@ -103,8 +103,8 @@ export const setPinned = Effect.fn("commands.setPinned")(
 	function* (
 		writer: Writer & Pick<History<typeof App>, "snapshot">,
 		tenantId: string,
-		requestKey: Id128,
-		noteId: Id128,
+		requestKey: Uuid,
+		noteId: Uuid,
 		pinned: boolean,
 		work: ExecutionPolicy
 	) {
@@ -151,7 +151,7 @@ export const addAttachment = Effect.fn("commands.addAttachment")(
 	function* (
 		writer: Writer,
 		tenantId: string,
-		noteId: Id128,
+		noteId: Uuid,
 		blob: { readonly key: string; readonly bytes: bigint },
 		work: ExecutionPolicy
 	) {
@@ -184,7 +184,7 @@ export const retireOutbox = Effect.fn("commands.retireOutbox")(
 	function* (
 		writer: Writer,
 		tenantId: string,
-		row: { readonly id: Id128; readonly note: Id128; readonly kind: string },
+		row: { readonly id: Uuid; readonly note: Uuid; readonly kind: string },
 		work: ExecutionPolicy
 	) {
 		const draft = yield* ChangeSet.builder(App, work)

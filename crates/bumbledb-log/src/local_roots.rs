@@ -136,13 +136,13 @@ fn decode_registry(bytes: &[u8]) -> Result<Vec<LocalRoot>, FrameError> {
     }
     let mut roots = Vec::with_capacity(count);
     for _ in 0..count {
-        let id = OperationId::from_core(bumbledb::Id128::from_bytes(input.array()?));
+        let id = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
         let decision = DecisionStamp {
             seq: input.u64()?,
             hash: DecisionDigest::from_bytes(input.array()?),
         };
         let state = StateStamp {
-            incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+            incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(input.array()?)),
             data_revision: input.u64()?,
         };
         let manifest_digest = input.array()?;
@@ -169,15 +169,17 @@ fn decode_registry(bytes: &[u8]) -> Result<Vec<LocalRoot>, FrameError> {
 ///
 /// # Errors
 /// Storage/frame refusals.
-pub fn registered_roots<S>(db: &Db<S>) -> Result<Vec<LocalRoot>, LocalRootError> {
-    let mut owned = None;
-    db.read(|read| {
-        owned = Some(read.integration_host_record(REGISTRY_KEY)?.map(<[u8]>::to_vec));
-        Ok(())
-    })?;
-    match owned {
-        Some(Some(bytes)) => Ok(decode_registry(&bytes)?),
-        Some(None) => Ok(Vec::new()),
+pub fn registered_roots<S>(
+    db: &Db<S>,
+    work: &WorkContext,
+) -> Result<Vec<LocalRoot>, LocalRootError> {
+    let snapshot = db.snapshot(work)?;
+    let frame = snapshot.frame(work);
+    match frame
+        .integration_host_record(REGISTRY_KEY)
+        .map_err(bumbledb::integration::IntegrationError::from)?
+    {
+        Some(bytes) => Ok(decode_registry(bytes)?),
         None => Ok(Vec::new()),
     }
 }
@@ -252,7 +254,10 @@ pub fn create_restore_point<S>(
     root_policy: &RootPolicy,
     work: &WorkContext,
 ) -> Result<LocalRoot, LocalRootError> {
-    let roots = registered_roots(db)?;
+    let roots = registered_roots(db, work)?;
+    if roots.iter().any(|root| root.id == id) {
+        return Err(LocalRootError::DuplicateRoot);
+    }
     if !roots.iter().any(|root| root.id == id) && roots.len() >= root_policy.max_roots {
         return Err(LocalRootError::RootCapacityExceeded);
     }
@@ -316,7 +321,7 @@ fn commit_registry_insert<S>(
     work: &WorkContext,
 ) -> Result<(), LocalRootError> {
     let mut session = db.integration_writer(work)?;
-    let current = registered_roots(db)?;
+    let current = registered_roots(db, work)?;
     if current.len() >= root_policy.max_roots {
         return Err(LocalRootError::RootCapacityExceeded);
     }
@@ -373,7 +378,7 @@ pub fn release_restore_point<S>(
     work: &WorkContext,
 ) -> Result<ReleaseReport, LocalRootError> {
     let mut session = db.integration_writer(work)?;
-    let current = registered_roots(db)?;
+    let current = registered_roots(db, work)?;
     let Some(index) = current.iter().position(|root| root.id == id) else {
         return Err(LocalRootError::UnknownRoot);
     };
@@ -411,8 +416,12 @@ pub fn release_restore_point<S>(
 ///
 /// # Errors
 /// Storage/IO refusals.
-pub fn clean_roots<S>(db: &Db<S>, directory: &Path) -> Result<(), LocalRootError> {
-    let registered: std::collections::BTreeSet<String> = registered_roots(db)?
+pub fn clean_roots<S>(
+    db: &Db<S>,
+    directory: &Path,
+    work: &WorkContext,
+) -> Result<(), LocalRootError> {
+    let registered: std::collections::BTreeSet<String> = registered_roots(db, work)?
         .into_iter()
         .map(|root| hex_id(root.id))
         .collect();

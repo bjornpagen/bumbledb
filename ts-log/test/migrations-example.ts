@@ -14,11 +14,9 @@
  * Stage 2 → `0002-create-tag-seed-tag` new Tag relation with declarative seeds
  * Stage 3 → `0003-note`               rename Note.body → Note.text
  *
- * Intent expressions are the core `ScalarExpr` data roster (C01); the
- * `literal` spelling below is the recorded C01 assumption in
- * implementation/packets/P10.md until P07's constructor export lands.
+ * Intent expressions are authored through core's shared Scalar constructors.
  */
-import { bool, key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
+import { bool, key, relation, Scalar, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { backfill, migrationIntent, renameField, seed } from "#migrations/intent.ts"
 
 // --- Stage 0: the initial application schema -------------------------------
@@ -32,7 +30,7 @@ export const Note1 = relation("Note", { id: u64, body: str, pinned: bool })
 export const App1 = schema("App", { Note: Note1 }, [key(Note1, ["id"])])
 
 /** The typed literal AST (core ScalarExpr spelling), not a callback. */
-export const pinnedDefault = { kind: "literal", value: { bool: false } } as const
+export const pinnedDefault = Scalar.bool(false)
 
 export const evolution1 = migrationIntent(App1, [backfill(Note1, "pinned", pinnedDefault)])
 

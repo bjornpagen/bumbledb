@@ -1,8 +1,8 @@
 use super::{Answers, ResolveMemo};
 
 use crate::error::{CorruptionError, Error, Result};
-use crate::image::intern::InternerHandle;
 use crate::image::NonresidentTextStore;
+use crate::image::intern::InternerHandle;
 use crate::obs;
 
 impl ResolveMemo {
@@ -25,11 +25,6 @@ impl ResolveMemo {
         self.ranges.clear();
         self.last = None;
         self.scratch_epoch = None;
-    }
-
-    #[cfg(test)]
-    pub(super) fn uncharged_copy_bytes(&self) -> usize {
-        0
     }
 
     /// Resolve one token into this finalize's answer heap. Intern text
@@ -82,7 +77,8 @@ impl ResolveMemo {
         let start = buffer.text.len();
         let Some(len) = super::text::resolve_tagged(interner, store, word, |text| {
             buffer.text.push_str(text);
-        })? else {
+        })?
+        else {
             return Err(Error::Corruption(CorruptionError::DanglingInternId(
                 crate::encoding::InternId::from_raw(word),
             )));

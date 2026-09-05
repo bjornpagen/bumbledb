@@ -28,7 +28,9 @@ use crate::gc::{self, GcError, GcPolicy, SweepReport};
 use crate::history::OperationId;
 use crate::history::authority::{DeleteOutcome, DeletedReason};
 use crate::history::command::Limits;
-use crate::store::{BackendError, ReceivingStore, backend as backend_error, objects_prefix};
+use crate::store::{
+    BackendError, ObservedError, ReceivingStore, backend as backend_error, objects_prefix,
+};
 
 #[derive(Debug)]
 pub enum EraseError {
@@ -101,7 +103,7 @@ pub fn erase_hosted<B: ReceivingStore>(
     work: &WorkContext,
 ) -> Result<EraseReport, EraseError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     // 1. Release exactly the policy-allowed roots — while the head is still
     //    live, so the release is an ordinary maintained transition. Releases
@@ -109,7 +111,12 @@ where
     let mut released = Vec::with_capacity(release_roots.len());
     for root in release_roots {
         admin::hosted_result(admin::release_named_root_hosted(
-            backend, prefix, *root, true, policy.head_cap, work,
+            backend,
+            prefix,
+            *root,
+            true,
+            policy.head_cap,
+            work,
         ))?;
         released.push(*root);
     }
@@ -149,9 +156,10 @@ pub fn residual_report<B: ReceivingStore>(
     work: &WorkContext,
 ) -> Result<ResidualReport, EraseError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
-    let (head, _) = read_live_head(backend, prefix, policy.head_cap).map_err(AdminError::from)?;
+    let (head, _) =
+        read_live_head(backend, prefix, policy.head_cap, work).map_err(AdminError::from)?;
     let mut remaining = 0u64;
     let listing_prefix = objects_prefix(prefix);
     let mut cursor: Option<Box<[u8]>> = None;

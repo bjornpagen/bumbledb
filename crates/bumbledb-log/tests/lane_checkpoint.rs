@@ -82,7 +82,8 @@ fn checkpoint_captures_one_coherent_snapshot_and_publishes_exact_suffix() {
     );
     // The manifest decodes and its chunks verify from the store.
     let bytes = fetch_verified(&store, &manifest);
-    let decoded = codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("manifest decodes");
+    let decoded =
+        codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("manifest decodes");
     assert_eq!(decoded.rows, 3);
     assert_eq!(decoded.identity, identity);
     for chunk in &decoded.chunks {
@@ -176,7 +177,8 @@ fn moved_head_causes_bounded_rebase_with_validated_suffix_not_reexport() {
         let reference = recovery.checkpoint.expect("checkpoint");
         fetch_verified(&store, &reference)
     };
-    let decoded = codec::decode_manifest(manifest_bytes.as_bytes(), policy().stream).expect("decodes");
+    let decoded =
+        codec::decode_manifest(manifest_bytes.as_bytes(), policy().stream).expect("decodes");
     assert_eq!(
         puts,
         decoded.chunks.len(),
@@ -351,7 +353,7 @@ fn tail_envelope_backpressure_is_typed_and_clears_after_checkpoint() {
     let refused = head.decided(
         control,
         100,
-        None,
+        head.recovery.unwrap().tip_object,
         &TailPolicy {
             max_count: 0,
             max_bytes: 10,
@@ -449,7 +451,7 @@ fn receipt_retirement_advances_atomically_with_its_checkpoint() {
 }
 
 /// D16: nonzero checkpoint-only root (seq 7) has base == tip and no tip
-/// ObjectRef. Same-tip retirement/rebase remains legal. Verification: NotRun.
+/// `ObjectRef`. Same-tip retirement/rebase remains legal. Verification: `NotRun`.
 #[test]
 fn d16_checkpoint_only_at_sequence_seven_has_no_tip_locator() {
     let store = MemStore::new();
@@ -499,7 +501,7 @@ fn d16_checkpoint_only_at_sequence_seven_has_no_tip_locator() {
     assert!(
         matches!(
             retired,
-            Ok(CheckpointOutcome::Published { .. }) | Ok(CheckpointOutcome::Discarded { .. })
+            Ok(CheckpointOutcome::Published { .. } | CheckpointOutcome::Discarded { .. })
         ),
         "same-tip retirement/rebase is legal, got {retired:?}"
     );

@@ -585,7 +585,9 @@ fn adversarial_ir_never_panics() {
         };
         // The law under test: validate → normalize → prepare returns Ok
 
-        let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&query).map(|_| ())));
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            db.prepare(&query, crate::common::work()).map(|_| ())
+        }));
 
         #[expect(
             clippy::match_wild_err_arm,
@@ -654,7 +656,9 @@ fn adversarial_query_with_interiors_never_panics() {
             query
         };
         let rendered = format!("{query:#?}");
-        let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&query).map(|_| ())));
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            db.prepare(&query, crate::common::work()).map(|_| ())
+        }));
         #[expect(
             clippy::match_wild_err_arm,
             reason = "the test intentionally rejects every non-target error uniformly"
@@ -786,7 +790,7 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
     };
 
     let err = db
-        .prepare(&query(chain(3_000)))
+        .prepare(&query(chain(3_000)), common::work())
         .map(|_| ())
         .expect_err("hostile nesting is rejected");
     assert!(
@@ -806,6 +810,6 @@ fn deep_predicate_nesting_is_a_typed_rejection() {
     );
 
     let _ = db
-        .prepare(&query(chain(MAX_CONDITION_DEPTH)))
+        .prepare(&query(chain(MAX_CONDITION_DEPTH)), common::work())
         .expect("cap-deep nesting is an ordinary query");
 }

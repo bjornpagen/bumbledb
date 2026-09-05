@@ -34,6 +34,8 @@ bumbledb::schema! {
     Account(kind) <= Kind(id);
     Account(id | kind == Savings) == SavingsTerms(account);
     SavingsTerms(account) -> SavingsTerms;
+    Holder(id) -> Holder;
+    Account(id) -> Account;
 }
 
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
@@ -147,6 +149,14 @@ fn hand_built() -> bumbledb::schema::Schema {
             },
             StatementDescriptor::Functionality {
                 relation: RelationId(3),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(2),
                 projection: Box::new([FieldId(0)]),
             },
         ],
@@ -310,8 +320,8 @@ fn fact_and_key_structs_are_value_types() {
 
 #[test]
 fn typed_round_trip_through_fact_bytes() {
-    let dir = common::TempDir::new("macro-round-trip");
-    let db = Db::create(dir.path(), Ledger, common::work())
+    let dir = crate::common::TempDir::new("macro-round-trip");
+    let db = Db::create(dir.path(), Ledger, crate::common::work())
         .expect("create")
         .expect("accepted");
 
@@ -322,7 +332,7 @@ fn typed_round_trip_through_fact_bytes() {
         active: Interval::<i64>::new(-100, 100).expect("nonempty"),
     };
 
-    db.write(common::work(), |tx| {
+    db.write(crate::common::work(), |tx| {
         tx.insert([&Holder {
             id: HolderId(3),
             name: "alice",
@@ -333,7 +343,7 @@ fn typed_round_trip_through_fact_bytes() {
     .expect("write")
     .unwrap();
 
-    db.read(common::work(), |snap| {
+    db.read(crate::common::work(), |snap| {
         // The stored canonical row decodes back to the exact value: the
         // generated `Fact::decode` walks the real stored bytes (text
         // borrows the snapshot's pages — no dictionary, no copy).
@@ -457,6 +467,7 @@ mod selection_literals {
         }
         relation Reading { sensor: u64 as SensorId }
 
+        Sensor(id) -> Sensor;
         Reading(sensor) <= Sensor(id | span == -10..10, offset == -3, live == true, label == "north", tag == b"\x01");
     }
 
@@ -539,7 +550,7 @@ mod fixed_bytes_host_type {
     #[test]
     fn fixed_bytes_round_trip_through_the_typed_surface() {
         let dir = crate::common::TempDir::new("macro-fixed-bytes");
-        let db = Db::create(dir.path(), Content, common::work())
+        let db = Db::create(dir.path(), Content, crate::common::work())
             .expect("create")
             .expect("accepted");
         let mut digest = [0u8; 32];
@@ -549,10 +560,10 @@ mod fixed_bytes_host_type {
             hash: ContentHash(digest),
             head: [7u8; 9],
         };
-        db.write(common::work(), |tx| tx.insert([&original]))
+        db.write(crate::common::work(), |tx| tx.insert([&original]))
             .expect("write")
             .unwrap();
-        db.read(common::work(), |snap| {
+        db.read(crate::common::work(), |snap| {
             let back: Vec<Object> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(back, vec![original]);
             Ok(())
@@ -562,7 +573,7 @@ mod fixed_bytes_host_type {
         let copied: ContentHash = original.hash;
         assert_eq!(copied, ContentHash(digest));
 
-        let _ = crate::common::expect_rejected(db.write(common::work(), |tx| {
+        let _ = crate::common::expect_rejected(db.write(crate::common::work(), |tx| {
             tx.insert([&Object {
                 id: ObjectId(2),
                 hash: ContentHash(digest),
@@ -571,7 +582,7 @@ mod fixed_bytes_host_type {
             Ok(())
         }));
 
-        db.read(common::work(), |snap| {
+        db.read(crate::common::work(), |snap| {
             // The committed fixed-bytes row is reachable through the typed
             // encode path (append_values → canonical row), not just the
             // scan above: membership re-encodes the exact value.
@@ -604,13 +615,13 @@ mod two_schemas_per_module {
     fn two_schemas_coexist_in_one_module() {
         let dir_a = crate::common::TempDir::new("macro-two-schemas-a");
         let dir_b = crate::common::TempDir::new("macro-two-schemas-b");
-        let db_a = Db::create(dir_a.path(), LedgerA, common::work())
+        let db_a = Db::create(dir_a.path(), LedgerA, crate::common::work())
             .expect("create A")
             .expect("accepted");
-        let db_b = Db::create(dir_b.path(), LedgerB, common::work())
+        let db_b = Db::create(dir_b.path(), LedgerB, crate::common::work())
             .expect("create B")
             .expect("accepted");
-        db_a.write(common::work(), |tx| {
+        db_a.write(crate::common::work(), |tx| {
             tx.insert([&Alpha {
                 id: AlphaId(1),
                 note: "a",
@@ -619,9 +630,11 @@ mod two_schemas_per_module {
         })
         .expect("write A")
         .unwrap();
-        db_b.write(common::work(), |tx| tx.insert([&Beta { id: BetaId(1) }]).map(|_| ()))
-            .expect("write B")
-            .unwrap();
+        db_b.write(crate::common::work(), |tx| {
+            tx.insert([&Beta { id: BetaId(1) }]).map(|_| ())
+        })
+        .expect("write B")
+        .unwrap();
     }
 }
 
@@ -660,7 +673,7 @@ mod closed_relations {
             .expect("the declared schema is valid");
 
         let dir = crate::common::TempDir::new("macro-closed-relations");
-        Db::create(dir.path(), Review, common::work())
+        Db::create(dir.path(), Review, crate::common::work())
             .expect("create")
             .expect("accepted");
     }
@@ -700,8 +713,8 @@ mod closed_relations {
             .validate()
             .expect("the declared schema is valid");
 
-        assert_eq!(schema.keys().len() + schema.containments().len(), 5);
-        let StatementView::Containment(_, statement) = schema.statement(StatementId(4)) else {
+        assert_eq!(schema.keys().len() + schema.containments().len(), 4);
+        let StatementView::Containment(_, statement) = schema.statement(StatementId(3)) else {
             panic!("the second declared statement is a containment");
         };
         let source = &statement.source;
@@ -827,16 +840,17 @@ mod discriminated_union {
         DetArm(parent) -> DetArm;
         Parent(kind) <= GK(id);
         Parent(id | kind == Det) == DetArm(parent);
+        Parent(id) -> Parent;
     }
 
     #[test]
     fn the_du_pattern_survives_the_closed_discriminator() {
         let dir = crate::common::TempDir::new("macro-du-closed");
-        let db = Db::create(dir.path(), Graph, common::work())
+        let db = Db::create(dir.path(), Graph, crate::common::work())
             .expect("the DU theory validates")
             .expect("accepted");
 
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             let id = ParentId(1);
             tx.insert([&Parent {
                 id,
@@ -848,7 +862,7 @@ mod discriminated_union {
         .expect("a Det parent with its arm commits")
         .unwrap();
 
-        let _ = crate::common::expect_rejected(db.write(common::work(), |tx| {
+        let _ = crate::common::expect_rejected(db.write(crate::common::work(), |tx| {
             tx.insert([&Parent {
                 id: ParentId(2),
                 kind: GK::Det.id(),
@@ -856,7 +870,7 @@ mod discriminated_union {
             Ok(())
         }));
 
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             tx.insert([&Parent {
                 id: ParentId(3),
                 kind: GK::Custom.id(),
@@ -879,12 +893,13 @@ mod invalid_declaration {
         relation Child { parent: u64 as ParentId }
         Child(parent) <= Parent(id);
         Child(parent) <= Parent(id);
+        Parent(id) -> Parent;
     }
 
     #[test]
     fn invalid_declaration_is_a_typed_schema_error_from_create() {
         let dir = crate::common::TempDir::new("macro-invalid-declaration");
-        let Err(err) = Db::create(dir.path(), Duplicated, common::work()).map(|_| ()) else {
+        let Err(err) = Db::create(dir.path(), Duplicated, crate::common::work()).map(|_| ()) else {
             panic!("a duplicate statement must fail validation at create");
         };
         assert!(
@@ -925,7 +940,8 @@ mod equality_reverse_key {
         assert_eq!(&*target.projection, &[FieldId(0)]);
 
         let dir = crate::common::TempDir::new("macro-equality-reverse-key");
-        let Err(error) = Db::create(dir.path(), InvalidEquality, common::work()).map(|_| ()) else {
+        let Err(error) = Db::create(dir.path(), InvalidEquality, crate::common::work()).map(|_| ())
+        else {
             panic!("the reverse equality half must require Source(a) as a key");
         };
         assert!(matches!(
@@ -982,12 +998,12 @@ mod keyed_equality {
     #[test]
     fn three_field_reordered_key_equality_validates_and_enforces_both_directions() {
         let dir = crate::common::TempDir::new("macro-keyed-equality");
-        let db = Db::create(dir.path(), KeyedEquality, common::work())
+        let db = Db::create(dir.path(), KeyedEquality, crate::common::work())
             .expect("both projected products resolve to declared keys")
             .expect("accepted");
 
         assert_containment(
-            db.write(common::work(), |tx| {
+            db.write(crate::common::work(), |tx| {
                 tx.insert([&Source {
                     a: 7,
                     b: -3,
@@ -999,7 +1015,7 @@ mod keyed_equality {
         );
 
         assert_containment(
-            db.write(common::work(), |tx| {
+            db.write(crate::common::work(), |tx| {
                 tx.insert([&Target {
                     x: 7,
                     y: -3,
@@ -1012,7 +1028,7 @@ mod keyed_equality {
 
         // The selected projections correspond; whole facts do not. Their
 
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             tx.insert([&Source {
                 a: 7,
                 b: -3,
@@ -1029,7 +1045,7 @@ mod keyed_equality {
         .expect("one witness on each keyed projection commits")
         .unwrap();
 
-        let violations = crate::common::expect_rejected(db.write(common::work(), |tx| {
+        let violations = crate::common::expect_rejected(db.write(crate::common::work(), |tx| {
             tx.insert([&Target {
                 x: 7,
                 y: -3,
@@ -1072,10 +1088,10 @@ mod redundant_superkey_enforcement {
             .expect("the redundant superkey remains accepted");
 
         let dir = crate::common::TempDir::new("macro-redundant-superkey");
-        let db = Db::create(dir.path(), RedundantKeys, common::work())
+        let db = Db::create(dir.path(), RedundantKeys, crate::common::work())
             .expect("warning is non-fatal")
             .expect("accepted");
-        let error = db.write(common::work(), |tx| {
+        let error = db.write(crate::common::work(), |tx| {
             tx.insert([&Window {
                 id: 7,
                 span: Interval::<i64>::new(0, 5).expect("interval"),
@@ -1134,6 +1150,7 @@ mod extension_forms {
         Parent(id) <=[state]{2..*} Task(parent);
         Parent(id) <={4} Task(parent | state == 3);
         Parent(id) <={0} Task(parent | state == 9);
+        Parent(id) -> Parent;
     }
 
     #[test]
@@ -1215,13 +1232,14 @@ mod capacity_forms {
         Pool(id) <=[watts]{0..supply} Device(pool);
         Pool(id) <=[Duration(booked)]{0..720} Device(pool);
         Pool(id) <=[watts]{1..*} Device(pool);
+        Pool(id) -> Pool;
     }
 
     #[test]
     fn the_weighted_forms_lower_and_validate() {
         let descriptor = Grid.descriptor();
         assert_eq!(
-            descriptor.statements[..],
+            descriptor.statements[..3],
             [
                 StatementDescriptor::Capacity {
                     target: bumbledb::schema::Side {
@@ -1286,7 +1304,7 @@ mod capacity_forms {
         assert_eq!(caps[2].hi.to_bound(), None);
 
         let dir = crate::common::TempDir::new("macro-capacity-forms");
-        bumbledb::Db::create(dir.path(), Grid, common::work())
+        bumbledb::Db::create(dir.path(), Grid, crate::common::work())
             .expect("create")
             .expect("accepted");
     }
@@ -1313,6 +1331,7 @@ mod duration_named_field {
         }
 
         Bucket(id) <=[Duration]{0..Duration} Item(bucket);
+        Bucket(id) -> Bucket;
     }
 
     #[test]
@@ -1345,6 +1364,7 @@ mod radix_literals {
         relation Task { parent: u64 as ParentId, state: u64 }
 
         Parent(id) <={0x2..0b100} Task(parent | state == 0o17);
+        Parent(id) -> Parent;
     }
 
     #[test]
@@ -1412,7 +1432,7 @@ mod fixed_width_intervals {
     #[test]
     fn typed_writes_check_the_declared_width_and_round_trip() {
         let dir = crate::common::TempDir::new("macro-fixed-interval");
-        let db = Db::create(dir.path(), Jukebox, common::work())
+        let db = Db::create(dir.path(), Jukebox, crate::common::work())
             .expect("create")
             .expect("accepted");
         let slot = Slot {
@@ -1420,8 +1440,10 @@ mod fixed_width_intervals {
             slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
             track: 77,
         };
-        db.write(common::work(), |tx| tx.insert([&slot])).expect("write").unwrap();
-        db.read(common::work(), |snap| {
+        db.write(crate::common::work(), |tx| tx.insert([&slot]))
+            .expect("write")
+            .unwrap();
+        db.read(crate::common::work(), |snap| {
             let back: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(back, vec![slot]);
             Ok(())
@@ -1429,7 +1451,7 @@ mod fixed_width_intervals {
         .expect("scan");
 
         let err = db
-            .write(common::work(), |tx| {
+            .write(crate::common::work(), |tx| {
                 tx.insert([&Slot {
                     playlist: 1,
                     slot: SlotSpan(Interval::<u64>::new(100, 107).expect("nonempty")),
@@ -1447,11 +1469,11 @@ mod fixed_width_intervals {
     #[test]
     fn a_width_matched_ray_is_rejected_at_the_typed_boundary() {
         let dir = crate::common::TempDir::new("macro-fixed-ray");
-        let db = Db::create(dir.path(), Jukebox, common::work())
+        let db = Db::create(dir.path(), Jukebox, crate::common::work())
             .expect("create")
             .expect("accepted");
         let err = db
-            .write(common::work(), |tx| {
+            .write(crate::common::work(), |tx| {
                 tx.insert([&Slot {
                     playlist: 1,
                     slot: SlotSpan(
@@ -1471,7 +1493,7 @@ mod fixed_width_intervals {
     #[test]
     fn the_fixed_pointwise_key_rejects_overlap_and_accepts_adjacency() {
         let dir = crate::common::TempDir::new("macro-fixed-pointwise");
-        let db = Db::create(dir.path(), Jukebox, common::work())
+        let db = Db::create(dir.path(), Jukebox, crate::common::work())
             .expect("create")
             .expect("accepted");
         let slot = |playlist: u64, start: u64, track: u64| Slot {
@@ -1480,7 +1502,7 @@ mod fixed_width_intervals {
             track,
         };
 
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             tx.insert([&slot(1, 10, 1)])?;
             tx.insert([&slot(1, 15, 2)])?;
             tx.insert([&slot(2, 12, 3)])?;
@@ -1489,16 +1511,18 @@ mod fixed_width_intervals {
         .expect("adjacency and cross-group starts are legal")
         .unwrap();
 
-        let _ = crate::common::expect_rejected(db.write(common::work(), |tx| tx.insert([&slot(1, 12, 4)])));
+        let _ = crate::common::expect_rejected(
+            db.write(crate::common::work(), |tx| tx.insert([&slot(1, 12, 4)])),
+        );
     }
 
     #[test]
     fn the_key_probe_lane_finds_an_exact_fixed_tuple() {
         let dir = crate::common::TempDir::new("macro-fixed-key-probe");
-        let db = Db::create(dir.path(), Jukebox, common::work())
+        let db = Db::create(dir.path(), Jukebox, crate::common::work())
             .expect("create")
             .expect("accepted");
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             tx.insert([&Slot {
                 playlist: 1,
                 slot: SlotSpan(Interval::<u64>::fixed(10, 5).expect("in-domain")),
@@ -1527,9 +1551,13 @@ mod fixed_width_intervals {
                 conditions: vec![],
             })
         };
-        let mut hit = db.prepare(&lookup(10)).expect("prepare");
-        let mut miss = db.prepare(&lookup(11)).expect("prepare");
-        db.read(common::work(), |snap| {
+        let mut hit = db
+            .prepare(&lookup(10), crate::common::work())
+            .expect("prepare");
+        let mut miss = db
+            .prepare(&lookup(11), crate::common::work())
+            .expect("prepare");
+        db.read(crate::common::work(), |snap| {
             let answers = snap.execute_collect(&mut hit, &[] as &[bumbledb::BindValue])?;
             assert_eq!(answers.len(), 1);
             assert_eq!(answers.get(0, 0), AnswerValue::U64(77));
@@ -1591,10 +1619,10 @@ mod fixed_width_intervals {
     #[test]
     fn membership_and_allen_run_over_derived_bounds() {
         let dir = crate::common::TempDir::new("macro-fixed-kernels");
-        let db = Db::create(dir.path(), Jukebox, common::work())
+        let db = Db::create(dir.path(), Jukebox, crate::common::work())
             .expect("create")
             .expect("accepted");
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             for (start, track) in [(10u64, 1u64), (15, 2), (25, 3)] {
                 tx.insert([&Slot {
                     playlist: 1,
@@ -1608,10 +1636,16 @@ mod fixed_width_intervals {
         .unwrap();
 
         // (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`).
-        let mut covers_12 = db.prepare(&membership_query(12)).expect("prepare");
-        let mut covers_15 = db.prepare(&membership_query(15)).expect("prepare");
-        let mut covers_20 = db.prepare(&membership_query(20)).expect("prepare");
-        db.read(common::work(), |snap| {
+        let mut covers_12 = db
+            .prepare(&membership_query(12), crate::common::work())
+            .expect("prepare");
+        let mut covers_15 = db
+            .prepare(&membership_query(15), crate::common::work())
+            .expect("prepare");
+        let mut covers_20 = db
+            .prepare(&membership_query(20), crate::common::work())
+            .expect("prepare");
+        db.read(crate::common::work(), |snap| {
             let answers = snap.execute_collect(&mut covers_12, &[] as &[bumbledb::BindValue])?;
             assert_eq!(answers.len(), 1);
             assert_eq!(answers.get(0, 0), AnswerValue::U64(1));
@@ -1626,8 +1660,10 @@ mod fixed_width_intervals {
         })
         .expect("membership");
 
-        let mut meets = db.prepare(&allen_meets_query()).expect("prepare");
-        db.read(common::work(), |snap| {
+        let mut meets = db
+            .prepare(&allen_meets_query(), crate::common::work())
+            .expect("prepare");
+        db.read(crate::common::work(), |snap| {
             let answers = snap.execute_collect(&mut meets, &[] as &[bumbledb::BindValue])?;
             let mut pairs: Vec<(u64, u64)> = (0..answers.len())
                 .map(|i| {
@@ -1682,7 +1718,7 @@ mod element_domain_typing {
     }
 
     fn tile(db: &Db<Playlists>) -> PlaylistId {
-        db.write(common::work(), |tx| {
+        db.write(crate::common::work(), |tx| {
             let id = PlaylistId(1);
             tx.insert([&Playlist {
                 id,
@@ -1705,11 +1741,11 @@ mod element_domain_typing {
     #[test]
     fn the_playlist_recipe_validates_and_a_tiling_commits() {
         let dir = crate::common::TempDir::new("macro-q1-tiling");
-        let db = Db::create(dir.path(), Playlists, common::work())
+        let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("Q1: the recipe validates")
             .expect("accepted");
         let id = tile(&db);
-        db.read(common::work(), |snap| {
+        db.read(crate::common::work(), |snap| {
             let slots: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
             assert_eq!(slots.len(), 3);
             assert!(slots.iter().all(|s| s.playlist == id));
@@ -1721,10 +1757,10 @@ mod element_domain_typing {
     #[test]
     fn a_gap_delta_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-gap");
-        let db = Db::create(dir.path(), Playlists, common::work())
+        let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
-        let violations = crate::common::expect_rejected(db.write(common::work(), |tx| {
+        let violations = crate::common::expect_rejected(db.write(crate::common::work(), |tx| {
             let id = PlaylistId(1);
             tx.insert([&Playlist {
                 id,
@@ -1757,11 +1793,11 @@ mod element_domain_typing {
     #[test]
     fn an_overlap_delta_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-overlap");
-        let db = Db::create(dir.path(), Playlists, common::work())
+        let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
         let id = tile(&db);
-        let violations = crate::common::expect_rejected(db.write(common::work(), |tx| {
+        let violations = crate::common::expect_rejected(db.write(crate::common::work(), |tx| {
             tx.insert([&Slot {
                 playlist: id,
                 slot: unit(1),
@@ -1777,7 +1813,7 @@ mod element_domain_typing {
                             .descriptor()
                             .validate()
                             .expect("the test schema is valid"),
-                    ) == StatementId(2)
+                    ) == StatementId(1)
             ),
             "the pointwise key convicts the overlap, got {violations:?}"
         );
@@ -1786,11 +1822,11 @@ mod element_domain_typing {
     #[test]
     fn a_slot_past_the_span_aborts() {
         let dir = crate::common::TempDir::new("macro-q1-past-end");
-        let db = Db::create(dir.path(), Playlists, common::work())
+        let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
         let id = tile(&db);
-        let violations = crate::common::expect_rejected(db.write(common::work(), |tx| {
+        let violations = crate::common::expect_rejected(db.write(crate::common::work(), |tx| {
             tx.insert([&Slot {
                 playlist: id,
                 slot: unit(3),
@@ -1815,7 +1851,7 @@ mod element_domain_typing {
     #[test]
     fn a_mixed_width_allen_query_classifies_with_hand_answers() {
         let dir = crate::common::TempDir::new("macro-q1-allen");
-        let db = Db::create(dir.path(), Playlists, common::work())
+        let db = Db::create(dir.path(), Playlists, crate::common::work())
             .expect("create")
             .expect("accepted");
         tile(&db);
@@ -1849,8 +1885,10 @@ mod element_domain_typing {
             })
         };
         let answers = |mask: AllenMask| -> Vec<u64> {
-            let mut prepared = db.prepare(&query(mask)).expect("Q1: mixed widths classify");
-            db.read(common::work(), |snap| {
+            let mut prepared = db
+                .prepare(&query(mask), crate::common::work())
+                .expect("Q1: mixed widths classify");
+            db.read(crate::common::work(), |snap| {
                 let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
                 let mut tracks: Vec<u64> = (0..out.len())
                     .map(|i| match out.get(i, 0) {
@@ -1902,7 +1940,7 @@ mod newtype_coherence_pass {
     #[test]
     fn bare_pairs_with_bare_and_the_theory_seals() {
         let dir = crate::common::TempDir::new("m5-bare-faces");
-        bumbledb::Db::create(dir.path(), BareFaces, common::work())
+        bumbledb::Db::create(dir.path(), BareFaces, crate::common::work())
             .expect("bare faces pair with bare faces — the coherence check passes")
             .expect("accepted");
     }

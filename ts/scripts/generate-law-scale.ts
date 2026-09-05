@@ -109,7 +109,7 @@ function generate(): string {
 	lines.push(")")
 	lines.push("")
 	lines.push("// The machinery COMPUTED (never silently widened) — spot pins across the laws.")
-	lines.push('const pinChain: Equal<(typeof LawScale)["classes"]["R5"]["ref"], "R4.id"> = true')
+	lines.push('const pinChain: Equal<(typeof LawScale)["classes"]["R5"]["ref"], "R4.id" | "R5.ref"> = true')
 	lines.push('const pinVocab: Equal<(typeof LawScale)["classes"]["R9"]["kind"], "Vocab1.id"> = true')
 	lines.push("// The generator authority is deleted with fresh: an id in no law is BARE.")
 	lines.push('const pinNoGenerator: Equal<(typeof LawScale)["classes"]["R31"]["id"], undefined> = true')

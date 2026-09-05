@@ -140,7 +140,7 @@ fn power_stream(mass: Mass) -> Vec<Op> {
 fn the_power_budget_verdicts_agree_with_the_naive_model() {
     let dir = scratch("power-naive");
     let mass = Mass::unit();
-    let db = Db::create(&dir, power::PowerWorld)
+    let db = Db::create(&dir, power::PowerWorld, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     let mut naive = NaiveDb::new(&power::PowerWorld.descriptor());
@@ -158,9 +158,13 @@ fn the_power_budget_verdicts_agree_with_the_naive_model() {
 fn the_calendar_verdicts_agree_with_the_naive_model() {
     let dir = scratch("calendar-naive");
     let mass = Mass::unit();
-    let db = Db::create(&dir, calendar::CalendarCapacityWorld)
-        .expect("create")
-        .expect("accepted");
+    let db = Db::create(
+        &dir,
+        calendar::CalendarCapacityWorld,
+        crate::harness::bench_work(),
+    )
+    .expect("create")
+    .expect("accepted");
     let mut naive = NaiveDb::new(&calendar::CalendarCapacityWorld.descriptor());
     let base = mass.parents * mass.children_per_parent;
     let mut ops = seed_ops(mass, calendar_rows);
@@ -243,7 +247,7 @@ fn sqlite_verdict(conn: &rusqlite::Connection, delta: &Delta) -> bool {
 fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     let dir = scratch("power-sqlite");
     let mass = Mass::unit();
-    let db = Db::create(&dir, power::PowerWorld)
+    let db = Db::create(&dir, power::PowerWorld, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
     let conn = rusqlite::Connection::open_in_memory().expect("twin");
