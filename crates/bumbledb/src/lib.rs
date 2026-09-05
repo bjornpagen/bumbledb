@@ -87,6 +87,7 @@ pub use api::db::{
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
 };
+pub use bumbledb_theory::{F64, F64ParseError, Id128, Id128ParseError};
 pub use error::{
     Admission, Check, Committed, ConditionalWrite, Conflict, Direction, Error, ErrorFamily,
     Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,

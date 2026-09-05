@@ -461,7 +461,7 @@ The implementation of Free Join follows Wang, Willsey, and Suciu,
 with the engine's differences documented alongside the code. The paper is
 included under [`docs/free-join-paper/`](docs/free-join-paper/).
 
-The Rust engine, TypeScript package, and C ABI all use the shared schema and
+The Rust engine and TypeScript package use the shared schema and
 query definitions in this repository. [`lean/`](lean/README.md) contains an
 executable specification of values, queries, plans, and constraints. The
 checked-in examples are evaluated by the engine, a straightforward reference
@@ -501,7 +501,6 @@ crates/bumbledb-macros/        schema! macro
 crates/bumbledb-query/         Rust query API
 crates/bumbledb-query-macros/  query! macro
 crates/bumbledb-theory/        shared schema representation
-crates/bumbledb-c/             C ABI
 crates/bumbledb-bench/         verification and benchmark suite
 ts/                            TypeScript package and native bridge
 lean/                          executable specification
@@ -513,8 +512,8 @@ Green is the exit code of `scripts/battery.sh`.
 
 ## Current release
 
-Version **0.17.0** covers the Rust engine, C ABI, and
-`@bjornpagen/bumbledb` TypeScript package. The C ABI version is **4**.
+Version **0.17.0** covers the Rust engine and
+`@bjornpagen/bumbledb` TypeScript package.
 Storage format is **8**.
 
 Bumbledb uses one writer and concurrent snapshot readers. The engine owns no

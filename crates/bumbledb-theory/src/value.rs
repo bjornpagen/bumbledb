@@ -9,6 +9,7 @@ pub enum Value {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(crate::F64),
 
     String(Box<str>),
 

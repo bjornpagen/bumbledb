@@ -4,6 +4,8 @@
 
 This is the coordinated breaking-release proposal, dated 2026-09-04. It incorporates the complete existing audit, the representation-first essay, the original design intent and the owner's subsequent decisions. It is a design and implementation contract, **not a claim that the rewrite, bug fixes or release qualification have already happened**. The preserved [audit](../audit/README.md) describes the old working tree; this folder selects what replaces it.
 
+The [whole-tree checkpoint](../implementation/02-checkpoint.md) records partial implementation, the final Effect review and current failing checks. The Effect contract is specified for both packages but not implemented; the branch is not release-ready.
+
 ## The thesis, taken seriously
 
 Bumbledb's strength is not that it has many features. It is that an application's facts, identities, vocabularies, relations and laws can share one precise model. The engine judges a proposed final state, queries genuine sets and uses LMDB for durable ordered storage and snapshots. Useful proofs and aggressive tests make that small center trustworthy.

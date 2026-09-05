@@ -2,7 +2,7 @@
 //! is a prefix (`<root>/t/<tenant>`); eviction closes the replica and
 //! deletes its directory — the disposable law — and the `_shared`
 //! control-plane tenant is pinned, never evicted. A replica directory
-//! has one owner: a fenced CAS lease. `tenant` returns a live handle
+//! has one owner: the replica's kernel-held directory lock. `tenant` returns a live handle
 //! whose refcount pins eviction off until drop; a disposed handle is a
 //! distinct type with no replica, so every verb on it is a compile-time
 //! refusal.
@@ -15,10 +15,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bumbledb::Theory;
 
 use crate::replica::{Fault, OpenRefusal, Opened, Replica};
-use crate::store::fence::{DIR_TTL_MS, HeldLease, LeaseBusy, acquire_named};
 use crate::store::{
     Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result as StoreResult, StoreKey, Swap,
-    WriterId, segment_ok,
+    segment_ok,
 };
 
 /// The pinned control-plane tenant.
@@ -108,7 +107,7 @@ pub enum TenantRefusal {
     /// Tenant ids are one [`segment_ok`] path segment.
     Id,
     Open(OpenRefusal),
-    /// Another process holds the directory lease.
+    /// Another local handle/process holds the directory lock.
     Exclusive,
 }
 
@@ -122,7 +121,6 @@ pub enum Tenant<'lru, T: Theory + Clone, S: ObjectStore> {
 struct Entry<T: Theory + Clone, S: ObjectStore> {
     id: String,
     replica: Replica<T, Shared<S>>,
-    lease: HeldLease,
     pins: Arc<AtomicUsize>,
 }
 
@@ -163,10 +161,6 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
         } else {
             format!("{}/t/{id}", self.root)
         }
-    }
-
-    fn holder() -> WriterId {
-        WriterId(u64::from(std::process::id()))
     }
 
     fn add_pin(&mut self) {
@@ -215,47 +209,27 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
         if let Some(index) = self.open.iter().position(|entry| entry.id == id) {
             let entry = self.open.remove(index);
             self.open.push(entry);
-            let current = self
-                .open
-                .last()
-                .expect("pushed above")
-                .lease
-                .still_current()?;
-            if !current {
-                // Another process may own the directory. Close our
-                // replica and expire our token; do not delete the dir.
-                drop(self.open.pop().expect("pushed above"));
-                return Ok(Tenant::Refused(TenantRefusal::Exclusive));
-            }
-            self.open
-                .last()
-                .expect("pushed above")
-                .lease
-                .refresh(DIR_TTL_MS)?;
             return self.finish_live();
         }
         let local = self.dir.join(id);
-        let lease = match acquire_named(&self.dir, id, Self::holder()) {
-            Ok(lease) => lease,
-            Err(LeaseBusy::Live) => return Ok(Tenant::Refused(TenantRefusal::Exclusive)),
-            Err(LeaseBusy::Io(err)) => return Err(Fault::Io(err)),
-        };
         let replica = match Replica::open(
             self.store.clone(),
             &self.prefix(id),
             &local,
             self.theory.clone(),
-        )? {
-            Opened::Ready(replica) => *replica,
-            Opened::Refused(refusal) => {
-                drop(lease);
+        ) {
+            Ok(Opened::Ready(replica)) => *replica,
+            Ok(Opened::Refused(refusal)) => {
                 return Ok(Tenant::Refused(TenantRefusal::Open(refusal)));
             }
+            Err(Fault::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                return Ok(Tenant::Refused(TenantRefusal::Exclusive));
+            }
+            Err(err) => return Err(err),
         };
         self.open.push(Entry {
             id: id.to_string(),
             replica,
-            lease,
             pins: Arc::new(AtomicUsize::new(0)),
         });
         self.finish_live()
@@ -276,7 +250,6 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
                 return Ok(None);
             }
             let entry = self.open.remove(index);
-            drop(entry.lease);
             entry.replica.dispose()?;
             return Ok(Some(Disposed));
         }
@@ -323,7 +296,6 @@ impl<T: Theory + Clone, S: ObjectStore> Tenants<T, S> {
                 return Ok(());
             };
             let entry = self.open.remove(index);
-            drop(entry.lease);
             entry.replica.dispose()?;
         }
     }

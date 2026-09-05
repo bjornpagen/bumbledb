@@ -9,6 +9,7 @@ use bumbledb_theory::Interval;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldDecodeError {
     InvalidBool(u8),
+    NonCanonicalF64([u8; 8]),
     NonzeroFixedBytesPad([u8; 8]),
     InvalidInterval([u8; 16]),
     InvalidFixedIntervalStart([u8; 8]),
@@ -18,6 +19,7 @@ impl From<FieldDecodeError> for CorruptionError {
     fn from(err: FieldDecodeError) -> Self {
         match err {
             FieldDecodeError::InvalidBool(byte) => Self::InvalidBool(byte),
+            FieldDecodeError::NonCanonicalF64(bytes) => Self::NonCanonicalF64(bytes),
             FieldDecodeError::NonzeroFixedBytesPad(word) => Self::NonzeroFixedBytesPad(word),
             FieldDecodeError::InvalidInterval(bytes) => Self::InvalidInterval(bytes),
             FieldDecodeError::InvalidFixedIntervalStart(bytes) => {
@@ -54,6 +56,17 @@ pub const fn decode_u64(bytes: [u8; 8]) -> u64 {
 #[must_use]
 pub const fn decode_i64(bytes: [u8; 8]) -> i64 {
     (u64::from_be_bytes(bytes) ^ I64_SIGN_BIT).cast_signed()
+}
+
+/// Decodes physical total-order F64 bytes, rejecting noncanonical zero and
+/// NaN representations instead of normalizing corrupt stored data.
+/// # Errors
+/// [`CorruptionError::NonCanonicalF64`] for a noncanonical order key.
+pub const fn decode_f64(bytes: [u8; 8]) -> Result<bumbledb_theory::F64, CorruptionError> {
+    match bumbledb_theory::F64::from_order_bytes(bytes) {
+        Ok(value) => Ok(value),
+        Err(_) => Err(CorruptionError::NonCanonicalF64(bytes)),
+    }
 }
 
 /// # Errors
@@ -281,6 +294,12 @@ pub fn decode_field(
         ValueType::Bool => decode_bool_at(fact, field_idx).map(ValueRef::Bool),
         ValueType::U64 => Ok(ValueRef::U64(decode_u64(word()))),
         ValueType::I64 => Ok(ValueRef::I64(decode_i64(word()))),
+        ValueType::F64 => {
+            let bytes = word();
+            bumbledb_theory::F64::from_order_bytes(bytes)
+                .map(ValueRef::F64)
+                .map_err(|_| FieldDecodeError::NonCanonicalF64(bytes))
+        }
         ValueType::String => Ok(ValueRef::String(InternId::from_raw(decode_u64(word())))),
         ValueType::FixedBytes { .. } => decode_fixed_bytes(fact, field_idx).map(ValueRef::bytes),
         ValueType::Interval {
@@ -342,6 +361,7 @@ pub(crate) fn decode_values_keyed_into(
             ValueRef::Bool(v) => Value::Bool(v),
             ValueRef::U64(v) => Value::U64(v),
             ValueRef::I64(v) => Value::I64(v),
+            ValueRef::F64(v) => Value::F64(v),
             ValueRef::String(id) => Value::String(resolve_str(id.raw())?),
             ValueRef::Bytes(_) => {
                 panic!("bytes<N> decodes through decode_fixed_bytes")

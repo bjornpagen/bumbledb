@@ -1,6 +1,6 @@
-# The log program's CI lane (grail/40). Path-filtered like c-abi.yml:
-# this workflow owns crates/bumbledb-log and ts-log the way c-abi.yml
-# owns the leaf crate. The linux-arm64 job is the ONE builder for the
+# The log program's CI lane, including the implementation branch.
+# This workflow owns crates/bumbledb-log and ts-log.
+# The linux-arm64 job is the ONE builder for the
 # two linux artifacts (the napi .node and the duty binary): the
 # GitHub-hosted arm64 runner is the host kernel, amazonlinux:2023 is
 # the userspace, glibc 2.34 is Lambda's floor. No step on that job
@@ -12,7 +12,7 @@ name: bumbledb-log
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/bumbledb-1-0]
     paths:
       - "crates/bumbledb-log/**"
       - "crates/bumbledb/**"
@@ -40,6 +40,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  NEXTEST_PROFILE: ci
 
 jobs:
   linux-arm64:
@@ -175,7 +176,7 @@ jobs:
             exit 0
           fi
           echo "S3 smoke credentials present; running the crate's gated smoke"
-          cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture
+          cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate
 
   linux-x64:
     runs-on: ubuntu-24.04
@@ -310,7 +311,7 @@ jobs:
             exit 0
           fi
           echo "S3 smoke credentials present; running the crate's gated smoke"
-          cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture
+          cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate
 
   darwin:
     runs-on: macos-latest
@@ -394,4 +395,4 @@ jobs:
             exit 0
           fi
           echo "S3 smoke credentials present; running the crate's gated smoke"
-          cargo nextest run --workspace -E 'test(s3_smoke)' --no-capture
+          cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate

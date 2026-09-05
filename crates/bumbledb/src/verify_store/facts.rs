@@ -72,6 +72,7 @@ pub(super) fn sweep<C: CatalogRead + Copy>(
         for idx in 0..layout.field_count() {
             if let Err(error) = decode_field(layout.encoded(fact), idx) {
                 let what = match error {
+                    FieldDecodeError::NonCanonicalF64(_) => "F fact noncanonical f64",
                     FieldDecodeError::InvalidBool(_) => "F fact bool",
                     FieldDecodeError::NonzeroFixedBytesPad(_) => "F fact fixed bytes padding",
                     FieldDecodeError::InvalidInterval(_) => "F fact interval",

@@ -11,7 +11,6 @@ pub mod mem;
 pub mod s3;
 
 use std::fmt;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -25,10 +24,10 @@ pub const TEMP_NAMESPACE: &str = "~tmp";
 pub const LEASE_NAMESPACE: &str = "~lease";
 
 /// A slash-path object key, parsed once. Empty segments, dot segments,
-/// a leading or trailing slash, a segment whose first code point is in
-/// the reserved tilde family, any control, format, or separator code
-/// point (Cc, Cf, Zl, Zp, Zs), and a `.lock` suffix are unrepresentable
-/// — the verbs take the proof and never re-check.
+/// a leading or trailing slash, a segment that starts with `~`, any
+/// control, format, or separator code point (Cc, Cf, Zl, Zp, Zs), and
+/// a `.lock` suffix are unrepresentable — the verbs take the proof and
+/// never re-check.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StoreKey(String);
 
@@ -94,32 +93,7 @@ pub fn segment_ok(seg: &str) -> bool {
     {
         return false;
     }
-    let Some(first) = seg.chars().next() else {
-        return false;
-    };
-    !is_tilde_lookalike(first) && !seg.ends_with(LOCK_SUFFIX)
-}
-
-/// The reserved tilde family — ASCII `~`, its lookalikes, and the NFKC
-/// preimage of U+007E — read from the conformance table, the one fact
-/// both drivers consume.
-static TILDE_FAMILY: LazyLock<Vec<char>> = LazyLock::new(|| {
-    const TABLE: &str = include_str!("../conformance/v3/keys/tilde-family.json");
-    let list = &TABLE[TABLE.find("\"codePoints\"").expect("a codePoints array")..];
-    let family: Vec<char> = list
-        .split('"')
-        .filter_map(|token| token.strip_prefix("U+"))
-        .map(|hex| {
-            char::from_u32(u32::from_str_radix(hex, 16).expect("a hex code point"))
-                .expect("a scalar value")
-        })
-        .collect();
-    assert!(!family.is_empty(), "the tilde table names its code points");
-    family
-});
-
-fn is_tilde_lookalike(c: char) -> bool {
-    TILDE_FAMILY.contains(&c)
+    !seg.starts_with('~') && !seg.ends_with(LOCK_SUFFIX)
 }
 
 /// Unicode category Cf. A format character refuses the segment
@@ -559,16 +533,8 @@ mod tests {
         assert!(!segment_ok("~tmp"));
         assert!(!segment_ok("a/b"));
         assert!(
-            StoreKey::parse("\u{FF5E}tmp/x").is_err(),
-            "fullwidth tilde is a reserved-prefix lookalike"
-        );
-        assert!(
-            StoreKey::parse("\u{2E1E}x").is_err(),
-            "the tilde family is the conformance table's fifteen"
-        );
-        assert!(
-            StoreKey::parse("x\u{2E1E}").is_ok(),
-            "the family elsewhere in a segment is ordinary text"
+            StoreKey::parse("x~").is_ok(),
+            "a tilde elsewhere in a segment is ordinary text"
         );
         assert!(
             StoreKey::parse("manifest.lock\u{200B}").is_err(),

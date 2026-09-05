@@ -108,6 +108,12 @@ refusal_family! { batch_decode for DecodeError {
         field: 0,
         got: 2,
     },
+    DecodeError::NonCanonicalF64 { .. } => DecodeError::NonCanonicalF64 {
+        relation: RelationId(0),
+        row: 0,
+        field: 0,
+        bits: 0x8000_0000_0000_0000,
+    },
     DecodeError::InvalidUtf8 { .. } => DecodeError::InvalidUtf8 {
         relation: RelationId(0),
         row: 0,

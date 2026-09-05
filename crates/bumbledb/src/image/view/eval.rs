@@ -791,7 +791,7 @@ fn write_words_value(dst: &mut FilterPredicate, words: &[u64]) {
     reason = "the linear table or protocol is clearer kept together"
 )]
 pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
-    use crate::ir::normalize::{decoded_interval, decoded_scalar, render_const};
+    use crate::ir::normalize::{decoded_interval, render_scalar, render_const};
     use crate::ir::render::{literal, mask_names};
     let name = |field: &OperandAddr| relation.field(field.field()).name.as_ref();
     match filter {
@@ -833,13 +833,7 @@ pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &Filt
                 render_unparsed_filter(out, filter);
                 return;
             };
-            literal(
-                out,
-                &decoded_scalar(
-                    &element_type(&relation.field(field.field()).value_type),
-                    *point,
-                ),
-            );
+            render_scalar(out, &element_type(&relation.field(field.field()).value_type), *point);
             out.push_str(" in ");
             out.push_str(name(field));
         }

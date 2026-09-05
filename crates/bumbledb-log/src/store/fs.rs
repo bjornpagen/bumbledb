@@ -1,17 +1,15 @@
-//! `FsStore`: the five verbs over a local directory. Production tier —
-//! the whole backend of the local-fleet deployment and the macOS sync
-//! target — not a test double. Create-only publishes an exclusive
+//! Legacy filesystem object-store adapter and local test support. The
+//! successor's local authority is LMDB, not this object-store protocol.
+//! Create-only publishes an exclusive
 //! synced temp (under the reserved `~tmp` namespace) with link(2). The
-//! etag is the blake3 of the content. The mutation lock is a fenced
-//! CAS lease under `~lease`, broken only on expiry of its own bytes.
+//! etag is the blake3 of the content. A kernel lock under `~lease` holds
+//! the complete mutation; a paused owner cannot be overtaken on a timer.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::fence::{
-    HeldLease, acquire_mutation, sweep_reserved, sync_ancestors, sync_parent, synced_temp,
-};
+use super::fence::{HeldLock, acquire_mutation, sync_ancestors, sync_parent, synced_temp};
 use super::{
     Create, Etag, Fenced, Fetched, LEASE_NAMESPACE, Lease, ObjectStore, Poll, Result, StoreError,
     StoreKey, Swap, TEMP_NAMESPACE, WriterId,
@@ -26,30 +24,23 @@ pub fn content_etag(bytes: &[u8]) -> Etag {
 }
 
 /// A store rooted at a local directory. Keys are slash-separated paths
-/// under the root; parent directories appear as needed. Open sweeps
-/// reserved temp and expired-lease namespaces.
+/// under the root; parent directories appear as needed. Construction is
+/// read/write-free: it cannot infer abandonment from a temp file's age.
 pub struct FsStore {
     root: PathBuf,
 }
 
 impl FsStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        let root = root.into();
-        let _ = sweep_reserved(&root);
-        remint_namespaces(&root);
-        Self { root }
+        Self { root: root.into() }
     }
 
     fn object_path(&self, key: &StoreKey) -> PathBuf {
         self.root.join(key.as_str())
     }
 
-    fn holder() -> WriterId {
-        WriterId(u64::from(std::process::id()))
-    }
-
-    fn fence(&self, key: &StoreKey) -> io::Result<HeldLease> {
-        acquire_mutation(&self.root, key.as_str(), Self::holder())
+    fn fence(&self, key: &StoreKey) -> io::Result<HeldLock> {
+        acquire_mutation(&self.root, key)
     }
 
     fn generation_path(&self, key: &StoreKey) -> PathBuf {
@@ -60,10 +51,9 @@ impl FsStore {
     }
 }
 
-/// Generation sidecar under `~lease/{key}/gen`: 20's lease document,
-/// token field is the fencing generation a later swap can lose to.
-/// The filename is not a u64, so `current_lease` ignores it; `expires`
-/// is `u64::MAX` so sweep does not treat it as litter.
+/// Legacy remote-token emulation, not local ownership. This separate
+/// body/generation protocol is not crash-atomic (audit REP-010), and is
+/// not the successor's local-history durability mechanism.
 fn read_generation(path: &Path) -> u64 {
     fs::read(path)
         .ok()
@@ -145,10 +135,8 @@ fn ensure_parent(root: &Path, dest: &Path) -> io::Result<()> {
     }
 }
 
-/// Concurrent constructors share one root. `create_dir_all` returns
-/// EEXIST, ENOENT, or Darwin EINVAL when a sibling is minting or
-/// sweeping `~tmp` / `~lease`; that is occupancy of a reserved node,
-/// not a fault. Retry until the path is a directory.
+/// Concurrent mutations can create parent directories. Constructors do
+/// not remove them or sweep another mutation's temporary files.
 fn ensure_dir(path: &Path) -> io::Result<()> {
     let mut last = None;
     for _ in 0..8 {
@@ -171,14 +159,14 @@ fn ensure_dir(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Remint reserved namespaces after a sibling sweep removes them.
+/// Create reserved namespaces after a retryable parent-directory race.
 fn remint_namespaces(root: &Path) {
     let _ = ensure_dir(&root.join(TEMP_NAMESPACE));
     let _ = ensure_dir(&root.join(LEASE_NAMESPACE));
 }
 
-/// Sibling constructors race `~tmp` / `~lease` / parent dirs. POSIX
-/// `link`/`rename` reports ENOENT (2); Darwin also reports EINVAL (22).
+/// Legacy retry classification for filesystem publication and parent creation.
+/// `link`/`rename` can report ENOENT (2); Darwin also reports EINVAL (22).
 /// `create_dir_all` reports EEXIST. A synthetic `InvalidInput` (key
 /// names a directory) carries no `raw_os_error` and is not this race.
 fn sibling_create_race(err: &io::Error) -> bool {
@@ -188,8 +176,8 @@ fn sibling_create_race(err: &io::Error) -> bool {
     ) || matches!(err.raw_os_error(), Some(2 | 22))
 }
 
-/// A sibling constructor occupies the key or is racing `~tmp` /
-/// `~lease`. That is the create-or-exist sum — `Exists` when GET proves
+/// Resolve a retryable publication outcome by observing the key.
+/// That is the create-or-exist sum — `Exists` when GET proves
 /// a foreign occupant, `Created` when our bytes landed, `Ambiguous`
 /// when the key is still vacant — never infrastructure.
 fn settle_create(path: &Path, attempted: &[u8]) -> io::Result<Create> {
@@ -238,17 +226,10 @@ impl ObjectStore for FsStore {
         let generation = self.generation_path(key);
         let run = || -> io::Result<Create> {
             key_shape_fault(&path)?;
-            let lease = self.fence(key)?;
-            if !lease.still_current()? {
-                return Ok(Create::Ambiguous);
-            }
+            let _ownership = self.fence(key)?;
             key_shape_fault(&path)?;
             ensure_parent(&self.root, &path)?;
             let temp = synced_temp(&self.root, body.bytes)?;
-            if !lease.still_current()? {
-                let _ = fs::remove_file(&temp);
-                return Ok(Create::Ambiguous);
-            }
             let published = publish_link(&temp, &path);
             let _ = fs::remove_file(&temp);
             match published? {
@@ -268,9 +249,8 @@ impl ObjectStore for FsStore {
                 }
             }
         };
-        // EEXIST / ENOENT / Darwin EINVAL is the sibling constructor:
-        // it published the key or is racing `~tmp` / `~lease` / parents.
-        // That is Exists / Ambiguous / Created, never a failed put_create.
+        // Preserve the legacy create outcome resolution for retryable
+        // filesystem errors. Constructors themselves no longer do I/O.
         let mut vacant = 0_u8;
         loop {
             match run() {
@@ -306,25 +286,18 @@ impl ObjectStore for FsStore {
         let path = self.object_path(key);
         let generation = self.generation_path(key);
         let run = || -> io::Result<Swap> {
-            let lease = self.fence(key)?;
-            if !lease.still_current()? {
-                return Ok(Swap::Ambiguous);
-            }
+            let _ownership = self.fence(key)?;
             let Some(current) = read_fetched(&path)? else {
                 return Ok(Swap::Moved);
             };
             if current.etag != *etag {
                 return Ok(Swap::Moved);
             }
-            // 20: a stale holder's write is the token the CAS does not win.
+            // Legacy remote-token emulation rejects a lower generation.
             if body.token < read_generation(&generation) {
                 return Ok(Swap::Moved);
             }
             let temp = synced_temp(&self.root, body.bytes)?;
-            if !lease.still_current()? {
-                let _ = fs::remove_file(&temp);
-                return Ok(Swap::Ambiguous);
-            }
             if let Err(err) = fs::rename(&temp, &path).and_then(|()| sync_parent(&path)) {
                 let _ = fs::remove_file(&temp);
                 return Err(err);
@@ -338,10 +311,7 @@ impl ObjectStore for FsStore {
     fn delete(&self, key: &StoreKey) -> Result<()> {
         let path = self.object_path(key);
         let run = || -> io::Result<()> {
-            let lease = self.fence(key)?;
-            if !lease.still_current()? {
-                return Err(io::Error::other("delete lost the fencing token"));
-            }
+            let _ownership = self.fence(key)?;
             match fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -392,10 +362,10 @@ mod tests {
     }
 
     #[test]
-    fn sweep_leaves_an_in_flight_temp() {
+    fn constructor_leaves_an_in_flight_temp() {
         let root = scratch("sweep_live");
         let temp = crate::store::fence::synced_temp(&root, b"live").expect("temp");
-        crate::store::fence::sweep_reserved(&root).expect("sweep");
+        let _store = FsStore::new(&root);
         assert!(
             temp.exists(),
             "a constructor must not wipe a live publish temp"

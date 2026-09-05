@@ -7,6 +7,10 @@ use bumbledb_theory::schema::RelationId;
 use super::{Column, ColumnSpan, ColumnWidth};
 
 pub(super) enum Decode {
+    F64 {
+        offset: usize,
+        start: usize,
+    },
     Word {
         offset: usize,
         start: usize,
@@ -93,6 +97,10 @@ pub(super) fn decode_plan(
                         }
                     }
                 }
+                (ColumnWidth::Word, ValueType::F64) => Decode::F64 {
+                    offset,
+                    start: words_start(columns[first]),
+                },
                 (ColumnWidth::Word, _) => Decode::Word {
                     offset,
                     start: words_start(columns[first]),
@@ -172,6 +180,13 @@ pub(super) fn decode_fact(
     }
     for step in plan {
         match step {
+            Decode::F64 { offset, start } => {
+                // SAFETY: the checked fact width and schema-derived offset
+                // prove these eight bytes are in bounds, as for Decode::Word.
+                let raw = unsafe { fact_bytes.as_ptr().add(*offset).cast::<[u8; 8]>().read() };
+                let value = crate::encoding::decode_f64(raw)?;
+                words[start + position] = value.to_order_key();
+            }
             Decode::Word { offset, start } => {
                 // SAFETY: offset + 8 <= fact_width (layout-derived) and
 

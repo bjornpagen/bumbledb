@@ -42,6 +42,7 @@ pub enum ValueType {
     U64,
     I64,
     String,
+    F64,
 
     FixedBytes {
         len: u16,
@@ -64,7 +65,7 @@ impl ValueType {
     pub const fn width(self) -> usize {
         match self {
             Self::Bool => 1,
-            Self::U64 | Self::I64 | Self::String | Self::FixedInterval { .. } => 8,
+            Self::U64 | Self::I64 | Self::F64 | Self::String | Self::FixedInterval { .. } => 8,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
             Self::Interval { .. } => 16,
         }
@@ -124,6 +125,7 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
         (Value::Bool(_), ValueType::Bool)
         | (Value::U64(_), ValueType::U64)
         | (Value::I64(_), ValueType::I64)
+        | (Value::F64(_), ValueType::F64)
         | (Value::String(_), ValueType::String)
         | (
             Value::IntervalU64(_),

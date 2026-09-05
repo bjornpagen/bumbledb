@@ -197,6 +197,7 @@ fn write_value(out: &mut String, value: &Value) {
         Value::Bool(bit) => write!(out, "{bit}").expect("inspect"),
         Value::U64(n) => write!(out, "{n}").expect("inspect"),
         Value::I64(n) => write!(out, "{n}").expect("inspect"),
+        Value::F64(n) => write!(out, "f64:{:016x}", n.to_bits()).expect("inspect"),
         Value::String(text) => write!(out, "{text:?}").expect("inspect"),
         Value::FixedBytes(raw) => out.push_str(&hex_bytes(raw)),
         Value::IntervalU64(interval) => {

@@ -1,54 +1,165 @@
-//! Fenced CAS leases on the local filesystem. The lease identity is a
-//! monotonic token created with exclusive `link`; a contender mints the
-//! next token iff the current lease's own bytes are expired.
+//! Kernel-held local ownership. A paused process retains its lock; only
+//! closing the owning file (including process death) releases it. Lock
+//! files are stable namespace entries, never scratch to unlink or replace.
+//! This does not provide remote fencing or make the legacy filesystem
+//! object's separate body/generation writes crash-atomic.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::{LEASE_NAMESPACE, Lease, TEMP_NAMESPACE, WriterId, jittered, unix_ms};
+use super::{LEASE_NAMESPACE, StoreKey, TEMP_NAMESPACE};
 
-/// How long a mutation lease stays current, in milliseconds.
-const MUTATION_TTL_MS: u64 = 5_000;
-
-/// A live `synced_temp` exists only for write-then-link. Anything
-/// older than this is crash litter. Sweep deletes those files and
-/// never the whole `~tmp` tree: constructors share the root.
-const TEMP_STALE_MS: u64 = 30_000;
-
-/// How long a directory exclusivity lease stays current, in milliseconds.
-pub const DIR_TTL_MS: u64 = 300_000;
-
-/// Ceiling of the jittered wait for a live mutation lease.
-const LOCK_RETRY_MS: u64 = 10;
-
+/// A bound on waiting for an emulator mutation, NOT the owner's lifetime.
+/// Directory opens are one-shot and never wait or steal ownership.
+const MUTATION_WAIT: Duration = Duration::from_secs(5);
+const LOCK_RETRY: Duration = Duration::from_millis(5);
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// A held mutation or directory lease. Drop releases by writing an
-/// already-expired successor so the next acquirer does not wait us out.
-pub struct HeldLease {
-    root: PathBuf,
-    dir: PathBuf,
-    token: u64,
-    holder: WriterId,
-}
-
-/// Why acquire refused without waiting.
+/// Exclusive local mutation ownership, released by the file's destructor.
+/// No clone, caller-controlled unlock, renewal, expiry, or historical token exists.
 #[derive(Debug)]
-pub enum LeaseBusy {
-    Live,
-    Io(io::Error),
+pub struct HeldLock {
+    file: File,
 }
 
-impl From<io::Error> for LeaseBusy {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
+impl Drop for HeldLock {
+    fn drop(&mut self) {
+        // A concurrent std::process::Command may briefly inherit this fd
+        // between fork and exec despite CLOEXEC. Unlock on owner teardown,
+        // rather than relying on the child to close the last descriptor.
+        // The field still closes normally even if unlock reports an error.
+        let _ = self.file.unlock();
     }
 }
 
-/// Exclusive temp under `{root}/~tmp`, fsynced.
+/// Owns a directory namespace even while its materialization is absent,
+/// renamed, or removed. Declare it after native resources so it drops last.
+#[derive(Debug)]
+pub struct DirectoryLock {
+    directory: PathBuf,
+    _lock: HeldLock,
+}
+
+impl DirectoryLock {
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+fn refuse_symlink(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "local ownership path is a symlink",
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn open_lock(parent: &Path, name: &str) -> io::Result<File> {
+    refuse_symlink(parent)?;
+    fs::create_dir_all(parent)?;
+    let path = parent.join(name);
+    refuse_symlink(&path)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "lock is not a file",
+        ));
+    }
+    Ok(file)
+}
+
+fn try_hold(file: File) -> io::Result<HeldLock> {
+    match file.try_lock() {
+        Ok(()) => Ok(HeldLock { file }),
+        Err(TryLockError::WouldBlock) => Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "local directory or mutation is already owned",
+        )),
+        Err(TryLockError::Error(err)) => Err(err),
+    }
+}
+
+/// Acquire before reading recovery scratch, creating the materialization,
+/// opening LMDB, or deleting anything in it. The stable lock lives beside
+/// the directory: `parent/~lease/name/owner.lock`, not inside it. Existing
+/// filesystem case/normalization aliases therefore name the same lock too.
+/// The parent is a trusted local namespace; replacing it concurrently as
+/// the OS user is outside this advisory-lock contract.
+///
+/// # Errors
+/// Returns `WouldBlock` immediately while another handle owns the path.
+/// Symlinked materialization/lock paths and filesystem failures refuse.
+pub fn acquire_directory(directory: &Path) -> io::Result<DirectoryLock> {
+    let absolute = std::path::absolute(directory)?;
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "directory must have a name"))?;
+    if name == LEASE_NAMESPACE || name == TEMP_NAMESPACE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "directory names a reserved ownership namespace",
+        ));
+    }
+    let parent = absolute.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "directory must have a parent")
+    })?;
+    fs::create_dir_all(parent)?;
+    let parent = fs::canonicalize(parent)?;
+    let directory = parent.join(name);
+    refuse_symlink(&directory)?;
+    let namespace = parent.join(LEASE_NAMESPACE);
+    refuse_symlink(&namespace)?;
+    let file = open_lock(&namespace.join(name), "owner.lock")?;
+    Ok(DirectoryLock {
+        directory,
+        _lock: try_hold(file)?,
+    })
+}
+
+/// Hold exclusion through the entire filesystem-emulator mutation. An
+/// exhausted wait returns `WouldBlock`; it never authorizes a takeover.
+/// No routine constructor/cleanup removes this lock or its ancestors.
+///
+/// # Errors
+/// Invalid keys, lock contention and filesystem failures are explicit.
+pub fn acquire_mutation(root: &Path, key: &StoreKey) -> io::Result<HeldLock> {
+    let namespace = root.join(LEASE_NAMESPACE);
+    refuse_symlink(&namespace)?;
+    let file = open_lock(&namespace.join(key.as_str()), "mutation.lock")?;
+    let start = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(HeldLock { file }),
+            Err(TryLockError::Error(err)) => return Err(err),
+            Err(TryLockError::WouldBlock) => {
+                let Some(remaining) = MUTATION_WAIT.checked_sub(start.elapsed()) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "local mutation wait exhausted",
+                    ));
+                };
+                std::thread::sleep(remaining.min(LOCK_RETRY));
+            }
+        }
+    }
+}
+
+/// Exclusive temp under `{root}/~tmp`, fsynced. Its owner removes it;
+/// elapsed time cannot prove that another thread/process abandoned it.
 ///
 /// # Errors
 pub fn synced_temp(root: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
@@ -91,292 +202,4 @@ pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
         current = dir.parent();
     }
     Ok(())
-}
-
-/// Sweep crash litter at paths this process already names: stale
-/// `{pid}.{seq}` temps, and superseded tokens under `~lease` once
-/// `~head` names the current exclusivity token.
-///
-/// # Errors
-pub fn sweep_reserved(root: &Path) -> io::Result<()> {
-    sweep_stale_temps(&root.join(TEMP_NAMESPACE));
-    sweep_owned_predecessors(&root.join(LEASE_NAMESPACE))?;
-    Ok(())
-}
-
-fn sweep_stale_temps(dir: &Path) {
-    let stale = Duration::from_millis(TEMP_STALE_MS);
-    let pid = std::process::id();
-    let end = TEMP_SEQ.load(Ordering::Relaxed);
-    for seq in 0..end {
-        let path = dir.join(format!("{pid}.{seq}"));
-        let Ok(modified) = fs::metadata(&path).and_then(|meta| meta.modified()) else {
-            continue;
-        };
-        if modified.elapsed().is_ok_and(|age| age > stale) {
-            let _ = fs::remove_file(&path);
-        }
-    }
-}
-
-/// `~head` is not a `StoreKey`. It names the current token so a
-/// successor GETs `dir/{n}`.
-const HEAD: &str = "~head";
-
-fn head_path(dir: &Path) -> PathBuf {
-    dir.join(HEAD)
-}
-
-fn read_head(dir: &Path) -> io::Result<Option<u64>> {
-    match fs::read(head_path(dir)) {
-        Ok(bytes) => Ok(std::str::from_utf8(&bytes)
-            .ok()
-            .and_then(|text| text.trim().parse().ok())
-            .filter(|token| *token >= 1)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
-fn write_head(root: &Path, dir: &Path, token: u64) -> io::Result<()> {
-    let dest = head_path(dir);
-    let body = token.to_string();
-    let temp = synced_temp(root, body.as_bytes())?;
-    if let Err(err) = fs::rename(&temp, &dest).and_then(|()| sync_parent(&dest)) {
-        let _ = fs::remove_file(&temp);
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn sweep_owned_predecessors(dir: &Path) -> io::Result<()> {
-    let Some((token, _)) = current_lease(dir)? else {
-        return Ok(());
-    };
-    forget_predecessors(dir, token);
-    Ok(())
-}
-
-/// Removes `dir/{1..=current-1}` after `~head` names `current`.
-fn forget_predecessors(dir: &Path, current: u64) {
-    for token in (1..current).rev() {
-        let _ = fs::remove_file(token_path(dir, token));
-    }
-}
-
-fn token_path(dir: &Path, token: u64) -> PathBuf {
-    dir.join(token.to_string())
-}
-
-/// The current lease is `dir/{n}` for the token `~head` names, or the
-/// highest `dir/{n}` at or after that hint. A mint past a stale head
-/// is still visible: the probe opens `n`, `n+1`, … until a gap.
-fn current_lease(dir: &Path) -> io::Result<Option<(u64, Lease)>> {
-    let start = read_head(dir)?.unwrap_or(1);
-    Ok(match probe_from(dir, start) {
-        None if start > 1 => probe_from(dir, 1),
-        found => found,
-    })
-}
-
-fn probe_from(dir: &Path, start: u64) -> Option<(u64, Lease)> {
-    let mut best: Option<(u64, Lease)> = None;
-    let mut token = start;
-    loop {
-        let path = token_path(dir, token);
-        if path.is_dir() {
-            token = match token.checked_add(1) {
-                Some(next) => next,
-                None => break,
-            };
-            continue;
-        }
-        match fs::read(&path) {
-            Ok(bytes) => {
-                if let Some(lease) = Lease::parse(&bytes) {
-                    best = Some((token, lease));
-                }
-                token = match token.checked_add(1) {
-                    Some(next) => next,
-                    None => break,
-                };
-            }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => break,
-            Err(_) => {
-                token = match token.checked_add(1) {
-                    Some(next) => next,
-                    None => break,
-                };
-            }
-        }
-    }
-    best
-}
-
-fn try_mint(
-    root: &Path,
-    dir: &Path,
-    token: u64,
-    holder: WriterId,
-    ttl_ms: u64,
-) -> io::Result<bool> {
-    fs::create_dir_all(dir)?;
-    let body = Lease {
-        holder,
-        token,
-        expires: unix_ms().saturating_add(ttl_ms),
-    }
-    .encode();
-    let dest = token_path(dir, token);
-    let temp = synced_temp(root, &body)?;
-    match fs::hard_link(&temp, &dest) {
-        Ok(()) => {
-            let _ = fs::remove_file(&temp);
-            sync_parent(&dest)?;
-            if write_head(root, dir, token).is_ok() {
-                forget_predecessors(dir, token);
-            }
-            Ok(true)
-        }
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            let _ = fs::remove_file(&temp);
-            Ok(false)
-        }
-        Err(err) => {
-            let _ = fs::remove_file(&temp);
-            Err(err)
-        }
-    }
-}
-
-fn acquire_once(
-    root: &Path,
-    dir: &Path,
-    holder: WriterId,
-    ttl_ms: u64,
-) -> Result<Option<HeldLease>, LeaseBusy> {
-    match current_lease(dir)? {
-        None => {
-            if try_mint(root, dir, 1, holder, ttl_ms)? {
-                Ok(Some(HeldLease {
-                    root: root.to_path_buf(),
-                    dir: dir.to_path_buf(),
-                    token: 1,
-                    holder,
-                }))
-            } else {
-                Ok(None)
-            }
-        }
-        Some((_token, lease)) if !lease.breakable(unix_ms()) => Err(LeaseBusy::Live),
-        Some((token, _)) => {
-            let next = token.saturating_add(1);
-            if try_mint(root, dir, next, holder, ttl_ms)? {
-                Ok(Some(HeldLease {
-                    root: root.to_path_buf(),
-                    dir: dir.to_path_buf(),
-                    token: next,
-                    holder,
-                }))
-            } else {
-                Ok(None)
-            }
-        }
-    }
-}
-
-/// Wait out a live mutation lease; take it when expired or absent.
-///
-/// # Errors
-pub fn acquire_mutation(root: &Path, key: &str, holder: WriterId) -> io::Result<HeldLease> {
-    let dir = root.join(LEASE_NAMESPACE).join(key);
-    loop {
-        match acquire_once(root, &dir, holder, MUTATION_TTL_MS) {
-            Ok(Some(held)) => return Ok(held),
-            Ok(None) => {}
-            Err(LeaseBusy::Live) => {
-                std::thread::sleep(jittered(Duration::from_millis(LOCK_RETRY_MS)));
-            }
-            Err(LeaseBusy::Io(err)) => return Err(err),
-        }
-    }
-}
-
-/// One-shot exclusivity for a named slot under `root`. Tokens live at
-/// `{root}/~lease/{key}`, outside the disposable replica directory
-/// `{root}/{key}`. A live holder is `Live`, not waited.
-///
-/// # Errors
-pub fn acquire_named(root: &Path, key: &str, holder: WriterId) -> Result<HeldLease, LeaseBusy> {
-    let dir = root.join(LEASE_NAMESPACE).join(key);
-    loop {
-        match acquire_once(root, &dir, holder, DIR_TTL_MS) {
-            Ok(Some(held)) => return Ok(held),
-            Ok(None) => {}
-            Err(busy) => return Err(busy),
-        }
-    }
-}
-
-impl HeldLease {
-    /// The fencing token this holder's writes carry.
-    #[must_use]
-    pub const fn token(&self) -> u64 {
-        self.token
-    }
-
-    /// True iff this token is still the max — a stale holder lost the
-    /// CAS and must not publish.
-    ///
-    /// # Errors
-    pub fn still_current(&self) -> io::Result<bool> {
-        match current_lease(&self.dir)? {
-            Some((token, _)) => Ok(token == self.token),
-            None => Ok(false),
-        }
-    }
-
-    /// Push `expires` forward under the same token (directory heartbeat).
-    ///
-    /// # Errors
-    pub fn refresh(&self, ttl_ms: u64) -> io::Result<()> {
-        if !self.still_current()? {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "lease token is no longer current",
-            ));
-        }
-        let body = Lease {
-            holder: self.holder,
-            token: self.token,
-            expires: unix_ms().saturating_add(ttl_ms),
-        }
-        .encode();
-        let dest = token_path(&self.dir, self.token);
-        let temp = synced_temp(&self.root, &body)?;
-        if let Err(err) = fs::rename(&temp, &dest).and_then(|()| sync_parent(&dest)) {
-            let _ = fs::remove_file(&temp);
-            return Err(err);
-        }
-        Ok(())
-    }
-}
-
-impl Drop for HeldLease {
-    fn drop(&mut self) {
-        let body = Lease {
-            holder: self.holder,
-            token: self.token,
-            expires: 0,
-        }
-        .encode();
-        if let Ok(temp) = synced_temp(&self.root, &body) {
-            let dest = token_path(&self.dir, self.token);
-            if fs::rename(&temp, &dest).is_err() {
-                let _ = fs::remove_file(&temp);
-            } else {
-                let _ = sync_parent(&dest);
-            }
-        }
-    }
 }

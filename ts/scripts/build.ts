@@ -25,7 +25,7 @@ function build(): void {
 
 	const version = assertVersionLockstep(packageRoot)
 	console.log(
-		`bumbledb build: version ${version} (main == platform == napi crate == engine == C ABI; the platform pin injects at pack)`
+		`bumbledb build: version ${version} (main == platform == napi crate == engine; the platform pin injects at pack)`
 	)
 
 	fs.rmSync(distDir, { recursive: true, force: true })
@@ -233,7 +233,7 @@ function assertTsLogPeer(repoRoot: string, version: string): void {
  * files proves the roster lists every version-bearing manifest; `ts-log`'s
  * peer range on `@bjornpagen/bumbledb` is exactly `^<workspace version>`.
  * The FFI ABI is not semver-stable — a main package may only ever resolve
- * its own-version binary; `engineVersion` and `bdb_version` bake
+ * its own-version binary; `engineVersion` bakes
  * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
  * repo field: the repo manifest carries no `optionalDependencies`;
  * `scripts/pin.ts` injects the pin into the PACKED manifest at prepack,

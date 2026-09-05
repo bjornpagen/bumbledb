@@ -4,15 +4,13 @@
  * StoreKey is parsed here, once — the verbs take the proof and never
  * re-check. An empty prefix joins as the rest alone, so a leading
  * slash is unrepresentable. Temps and leases live under a reserved
- * tilde-family first segment no StoreKey can spell — the generated
- * table under `conformance/v3/keys/` is the set, read at module init
- * — so those namespaces stay disjoint from every honest key. Format
- * characters, line and paragraph separators, and space separators
- * cannot hide a reserved prefix or a `.lock` suffix: a segment
- * containing one is refused outright.
+ * `~` first segment no StoreKey can spell, so those namespaces stay
+ * disjoint from every honest key. Format characters, line and
+ * paragraph separators, and space separators cannot hide a reserved
+ * prefix or a `.lock` suffix: a segment containing one is refused
+ * outright.
  */
 
-import * as fs from "node:fs"
 import { internalLogParseCkptScratch, internalLogRenderCkptScratch } from "@bjornpagen/bumbledb"
 import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
@@ -27,43 +25,6 @@ const LOCK_SUFFIX = ".lock"
 const TEMP_NAMESPACE = "~tmp"
 const LEASE_NAMESPACE = "~lease"
 
-/**
- * The one tilde table both drivers consume: ASCII `~`, its lookalikes, and
- * the NFKC preimage of U+007E. The packaged copy beside this module is the
- * census-pinned byte-identical twin of the generator's output at
- * crates/bumbledb-log/conformance/v3/keys/tilde-family.json, so the read
- * never leaves the published files roster.
- */
-const TILDE_TABLE_URL = new URL("./tilde-family.json", import.meta.url)
-
-const CODE_POINT_SPELLING = regex("^U\\+[0-9A-F]{4,6}$")
-
-function loadTildeFamily(): Set<string> {
-	const raw = fs.readFileSync(TILDE_TABLE_URL, "utf8")
-	const table: unknown = JSON.parse(raw)
-	if (typeof table !== "object" || table === null || !("codePoints" in table)) {
-		throw errors.new(`tilde table is not a codePoints document: ${TILDE_TABLE_URL.pathname}`)
-	}
-	const { codePoints } = table
-	if (!Array.isArray(codePoints) || codePoints.length === 0) {
-		throw errors.new(`tilde table codePoints is not a nonempty array: ${TILDE_TABLE_URL.pathname}`)
-	}
-	const family = new Set<string>()
-	for (const spelling of codePoints) {
-		if (typeof spelling !== "string" || !CODE_POINT_SPELLING.test(spelling)) {
-			throw errors.new(`tilde table entry is not a U+XXXX code point: ${String(spelling)}`)
-		}
-		family.add(String.fromCodePoint(Number.parseInt(spelling.slice(2), 16)))
-	}
-	if (!family.has("~")) {
-		throw errors.new(`tilde table does not reserve ASCII tilde: ${TILDE_TABLE_URL.pathname}`)
-	}
-	return family
-}
-
-/** First-segment code points that spell a reserved name. The table is the set; no local spelling. */
-const TILDE_FAMILY = loadTildeFamily()
-
 const FORMAT_OR_SEPARATOR = regex("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Zs}]", "u")
 const SLASH_TRIM = regex("^/+|/+$", "g")
 
@@ -73,21 +34,6 @@ type StoreKey = string & { readonly [storeKeyBrand]: typeof storeKeyBrand }
 declare const generationBrand: unique symbol
 type Generation = bigint & { readonly [generationBrand]: typeof generationBrand }
 
-function firstCodePoint(seg: string): string | undefined {
-	for (const ch of seg) {
-		return ch
-	}
-	return undefined
-}
-
-function tildeFamilyPrefix(seg: string): boolean {
-	const first = firstCodePoint(seg)
-	if (first === undefined) {
-		return false
-	}
-	return TILDE_FAMILY.has(first)
-}
-
 /** One path segment of a key or a tenant id: the same grammar. */
 function segmentOk(seg: string): boolean {
 	if (seg.length === 0 || seg.includes("/") || seg === "." || seg === "..") {
@@ -96,7 +42,7 @@ function segmentOk(seg: string): boolean {
 	if (FORMAT_OR_SEPARATOR.test(seg)) {
 		return false
 	}
-	return !tildeFamilyPrefix(seg) && !seg.endsWith(LOCK_SUFFIX)
+	return !seg.startsWith("~") && !seg.endsWith(LOCK_SUFFIX)
 }
 
 function storeKey(raw: string): StoreKey {

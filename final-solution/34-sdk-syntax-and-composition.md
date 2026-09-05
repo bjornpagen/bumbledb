@@ -192,7 +192,7 @@ export const newAttempt = Effect.fn("newAttempt")(
 )
 ```
 
-This helper intentionally retains Scope in R: it returns a scoped ChangeSet, not a closed handle. Do not add Effect.scoped to a helper returning resources. The draft and successful result register independently in the caller's scope; finish moves native ownership and spends the draft. Ingestion effects return void and accept immutable-owned input on successful completion. Before completion the caller keeps input stable. Failure spends/drains the draft; reexecuting a mutation effect refuses. Chapter 35 fixes the late-completion/interruption and incomplete-drain cases.
+This helper intentionally retains Scope in R: it returns a scoped ChangeSet, not a closed handle. Do not add Effect.scoped to a helper returning resources. The draft and successful result register independently in the caller's scope; finish moves native ownership and spends the draft. Ingestion effects return void and accept immutable-owned input on successful completion. Before completion the caller keeps input stable. Failure spends/drains the draft. Sequential insert/delete effect reruns are ordinary executions while the draft is building; they read input and charge work again, without automatic retries or iterator replay. Concurrent/reentrant use and use after finish refuse. Chapter 35 fixes the late-completion/interruption and incomplete-drain cases.
 
 ### Core: direct local admission, no receipt ceremony
 

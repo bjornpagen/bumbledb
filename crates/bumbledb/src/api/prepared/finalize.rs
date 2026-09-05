@@ -65,7 +65,7 @@ fn fill_resolved_answers<C: CatalogRead>(
                 }
                 width
             }
-            ty => fill_fixed_column(&mut out.cells[base..], arity, col, ty, word, sink),
+            ty => fill_fixed_column(&mut out.cells[base..], arity, col, ty, word, sink)?,
         };
     }
     Ok(())
@@ -78,7 +78,7 @@ fn fill_fixed_column(
     ty: &ValueType,
     word: usize,
     sink: &ProjectionSink,
-) -> usize {
+) -> Result<usize> {
     let rows = cells.chunks_exact_mut(arity).zip(sink.answers());
     match ty {
         ValueType::Bool => {
@@ -96,11 +96,16 @@ fn fill_fixed_column(
                 slots[col] = Cell::I64((answer[word] ^ (1 << 63)).cast_signed());
             }
         }
+        ValueType::F64 => {
+            for (slots, answer) in rows {
+                slots[col] = Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?);
+            }
+        }
         ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => {
             for (slots, answer) in rows {
                 slots[col] = Answers::interval_cell(*element, answer[word], answer[word + 1]);
             }
-            return 2;
+            return Ok(2);
         }
         ValueType::String => {
             unreachable!("string columns resolve through the memo (fill_resolved_answers)")
@@ -109,7 +114,7 @@ fn fill_fixed_column(
             unreachable!("bytes<N> columns fill through the byte heap (fill_resolved_answers)")
         }
     }
-    1
+    Ok(1)
 }
 
 fn push_resolved_answer<C: CatalogRead>(
@@ -125,6 +130,7 @@ fn push_resolved_answer<C: CatalogRead>(
             ValueType::Bool => (Cell::Bool(answer[word] != 0), 1),
             ValueType::U64 => (Cell::U64(answer[word]), 1),
             ValueType::I64 => (Cell::I64((answer[word] ^ (1 << 63)).cast_signed()), 1),
+            ValueType::F64 => (Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?), 1),
             ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => (
                 Answers::interval_cell(*element, answer[word], answer[word + 1]),
                 2,

@@ -22,6 +22,7 @@ pub(crate) fn fact_operand(
     Ok(match fact.layout().field_type(usize::from(field.0)) {
         ValueType::Bool => FactOperand::Word(u64::from(bytes[0])),
         ValueType::U64 | ValueType::I64 | ValueType::String => FactOperand::Word(word_at(0)),
+        ValueType::F64 => FactOperand::Word(crate::encoding::decode_f64(word_bytes[0])?.to_order_key()),
         ValueType::FixedBytes { len } => {
             let count = crate::encoding::fixed_bytes_words(len);
             if count == 1 {

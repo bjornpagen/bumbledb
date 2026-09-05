@@ -86,6 +86,12 @@ pub trait CodecRead<S>: codec_seal::Sealed {
         ))
     }
 
+    fn decode_f64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<bumbledb_theory::F64> {
+        Ok(crate::encoding::decode_f64(
+            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
+        )?)
+    }
+
     fn decode_str_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<&str> {
         let id = InternId::from_raw(crate::encoding::decode_u64(
             crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),

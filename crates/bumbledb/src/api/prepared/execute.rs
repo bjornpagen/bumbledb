@@ -307,7 +307,7 @@ impl<S> PreparedQuery<S> {
                 ValueType::String => {
                     out.push_word(catalog, ty, word, &mut self.resolve_memo)?;
                 }
-                _ => out.cells.push(Answers::word_cell(ty, word)),
+                _ => out.cells.push(Answers::word_cell(ty, word)?),
             }
         }
         Ok(())

@@ -37,8 +37,8 @@ for tgz in \
   }
 done
 
-tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/src/tilde-family.json$' || {
-  echo "packed-import: FAIL — the ts-log tarball does not carry src/tilde-family.json; module init would read outside the package" >&2
+tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/dist/index.js$' || {
+  echo "packed-import: FAIL — the ts-log tarball does not carry dist/index.js; nitro would inline raw .ts and hosted node cannot load it" >&2
   exit 1
 }
 

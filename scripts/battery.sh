@@ -15,7 +15,7 @@ echo "==> cargo check -p bumbledb-log --no-default-features"
 cargo check -p bumbledb-log --no-default-features
 
 echo "==> cargo nextest run --workspace"
-cargo nextest --version || cargo install cargo-nextest --locked
+cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
 cargo nextest run --workspace
 
 # Lanes 1–3 are gone from scripts/check.sh.
@@ -38,6 +38,12 @@ cargo fmt --manifest-path ts/crate/Cargo.toml --check
 
 echo "==> bridge: cargo clippy --all-targets -- -D warnings (ts/crate)"
 cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
+
+echo "==> bridge: Rust tests in the parallel process pool (ts/crate)"
+cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml
+
+echo "==> bridge: Rust documentation tests (ts/crate)"
+cargo test --manifest-path ts/crate/Cargo.toml --doc
 
 echo "==> bridge: .node build (ts/scripts/build.ts)"
 (cd ts && pnpm run build)

@@ -1,16 +1,12 @@
 # Publishing @bjornpagen/bumbledb
 
-`0.20.1` is the packaging-fix release over `0.20.0` — one defect, one
-gate. `@bjornpagen/bumbledb-log@0.20.0` read its tilde table through a
-repo-relative URL that escapes the published files roster, so a
-registry install threw ENOENT at module init. The table now ships
-inside the package (`src/tilde-family.json`, census lane (o) pins it
-byte-identical to the generator's output under `conformance/v3/keys/`),
-and `scripts/packed-import.sh` — a battery lane — packs all five
-tarballs, installs them into a bare consumer, and imports them in a
-fresh node process, so an out-of-roster read can never publish again.
-The publish sequence below is unchanged; the linux binaries come from a
-green CI run of this release's commit.
+`0.20.3` ships `@bjornpagen/bumbledb-log` as JavaScript (`dist/index.js`)
+and cuts the reserved-key partition to ASCII `~`. Nitro inlines raw
+`.ts`; a hosted Node has no type-strip hook. The old tilde-lookalike
+table and its sidecar read are gone — `~tmp` / `~lease` stay
+unspellable as `StoreKey`s; lookalikes are ordinary text. The packed
+import gate still packs all five tarballs and imports them in a fresh
+node process. Linux binaries come from a green CI run of this commit.
 
 
 The owner-run release runbook. Owner-run, from the `ts/` package root, on a
@@ -53,8 +49,7 @@ design. The banner facts:
   version sniff, no migration shim. 0.19.x and 0.20.0 drivers meet only
   through the protocol bytes the one reader accepts.
 
-The C ABI stays **generation 4** (`bdb_abi_version()` is unchanged) and
-engine storage stays format **8** — existing stores open unchanged. The
+Engine storage stays format **8** — existing stores open unchanged. The
 publish order is the standing one below: both platform packages first,
 then the engine SDK, then `@bjornpagen/bumbledb-log` with peer
 `^0.20.0`.
@@ -68,8 +63,8 @@ the face tier's handle-union spelling is gone), and the judgment kernel
 (`Same`, `SameLen` in `src/judgment.ts`) carries definitional equality
 and Peano length equality for the closed-id anti-join. The face runtime
 twin compares rosters structurally (name + handle vector), matching its
-own type wall. Wire, manifest, storage format (**8**), C ABI
-(**generation 4**), and every fingerprint pin are UNTOUCHED — the
+own type wall. Wire, manifest, storage format (**8**), and every
+fingerprint pin are UNTOUCHED — the
 cross-host schema fingerprint pin replays byte-identical. The payload
 `closed` tier is spelled `closed(name, handles, columns, axioms)`; the
 bare tier is unchanged.
@@ -88,8 +83,7 @@ writer. This is the representation-first cutover shipping as one
 number.
 
 Every published package spells the same semver: the engine SDK, both
-platform binaries, and `@bjornpagen/bumbledb-log`. The C ABI stays
-**generation 4** (`bdb_abi_version()` is unchanged), engine storage
+platform binaries, and `@bjornpagen/bumbledb-log`. Engine storage
 stays format **8**, and no fingerprint pin moved. The lockstep is
 prepared unpublished in this tree; the publish command sequence is
 the standing one below, and the log package's steps follow it with
@@ -111,9 +105,8 @@ refusal delete rather than get a second fix. The shipped set is
 `{darwin-arm64, linux-arm64, linux-x64}`; both linux artifacts are built
 in `amazonlinux:2023` (glibc 2.34) — arm64 on `ubuntu-24.04-arm`, x64 on
 `ubuntu-24.04` — and placed by the owner from the CI run into
-`ts/npm/linux-arm64/` and `ts/npm/linux-x64/` before publish. Nothing else moved: the C ABI
-stays **generation 4** (`bdb_abi_version()` is unchanged — an added JS
-export is not an ABI event), storage stays format **8**, and no
+`ts/npm/linux-arm64/` and `ts/npm/linux-x64/` before publish. Nothing else moved:
+storage stays format **8**, and no
 fingerprint pin moved. The lockstep is prepared unpublished in this
 tree; the publish command sequence is the standing one below, and the
 log package's steps follow it with peer `^0.18.0`.
@@ -125,9 +118,7 @@ seam `30-engine-seams.md` blesses by name), and its consumer is
 `@bjornpagen/bumbledb-log`'s store tier: computed object etags, the
 descriptor digest, and the chain hashes all spend it, which is what
 keeps the export alive under the consumer-roster law. Nothing else
-moved: the C ABI stays **generation 4** (`bdb_abi_version()` is
-unchanged — an added JS export is not an ABI event), storage stays
-format **8**, and no fingerprint pin moved. This release exists to
+moved: storage stays format **8**, and no fingerprint pin moved. This release exists to
 unblock `@bjornpagen/bumbledb-log`'s first publish, whose
 peerDependency is `^0.17.1`; the publish command sequence is the
 standing one below, and the log package's own first-publish steps
@@ -149,9 +140,7 @@ harness-only knob (`set_derived_budget`, `admit_measured`,
 ruling and fully intact: `abandon()`, `ParamSet`/`inSet`,
 `LiteralSet::Many`, the whole interval/Allen family, and the entire TS
 type tier. The normative `docs/architecture/` set is deleted — the code
-is the spec and the census enforces the one-owner law. **The C ABI bumps to generation 4**: the
-D1 deletions renumbered `bdb_error_kind` and `bdb_find_term_kind`, so
-generation-3 hosts must recompile against the regenerated header.
+is the spec and the census enforces the one-owner law.
 Storage stays format **8** — no migration; existing stores open
 unchanged. The cross-host fingerprint lock schema gained a
 `Duration(active)` weight (its pin regenerated in lockstep on both
@@ -168,29 +157,26 @@ scan), the generic full-binding law (`match(relation, v(relation))` at every
 site), and containment target-key parity at every boundary (`schema()`
 refuses in names what the engine refuses in names-beside-ids). Storage stays
 format **8** — no migration: `count` reads a stat every format-8 store
-already maintains, so existing stores open unchanged. The C ABI stays **3**
-— `bdb_abi_version()` is unchanged; `bumbledb-c` rides the lockstep with no
-surface change. The one breaking change is TypeScript-only: `ColumnBatch`
+already maintains, so existing stores open unchanged. The one breaking change is TypeScript-only: `ColumnBatch`
 and the column write transport are removed; the replacement is the same
 `insert`/`load` call with fact objects, now the fastest path. Engine crates,
-`bumbledb-c`, the napi crate, and both npm packages share one spelling.
+the napi crate, and both npm packages share one spelling.
 
-`0.15.0` is the admitted-instance / ABI-3 / format-8 release over `0.14.0` —
+`0.15.0` is the admitted-instance / format-8 release over `0.14.0` —
 one public engine: **the store** (`Db`, leased `ReadInstance` / `WriteTx`)
 and **the value** (`OwnedInstance`, `InstanceBuilder`, `Admission`).
-Format 8 and ABI 3 are revised in place under the pre-publish rule: the
+Format 8 is revised in place under the pre-publish rule: the
 `_meta` roster is four keys (format, fingerprint, generation, dict-next);
 kind is not data; there is no theory-less open and no public instance
-trait. Snapshot-named surfaces are gone. C `bdb_abi_version()` stays 3.
+trait. Snapshot-named surfaces are gone.
 **Pre-publish format-8 stores rebuild from source** — there is no
 in-format migration for a roster revised before publish. Engine crates,
-`bumbledb-c`, the napi crate, and both npm packages share one spelling.
+the napi crate, and both npm packages share one spelling.
 
-`0.14.0` is the write-algebra / ABI-2 release over `0.12.2` — one collection
+`0.14.0` is the write-algebra release over `0.12.2` — one collection
 `insert`/`delete`/`reserve` inside `write`; empty, singleton, and many are one
-collection; ETL is a host loop of `write` (`scan` then `insert_dyn`);
-`bdb_abi_version()` is 2 (collection insert/delete, `reserve`, retirement of
-`alloc` / `bulk_load`). Engine crates, `bumbledb-c`, the napi crate, and both
+collection; ETL is a host loop of `write` (`scan` then `insert_dyn`).
+Engine crates, the napi crate, and both
 npm packages share one spelling. Wire, manifest, storage format (v7), and
 schema fingerprints are UNTOUCHED.
 
@@ -199,8 +185,8 @@ is the published identity of that algebra.
 
 `0.12.0` is the Query-sum / signature-v6 / rec-keyword / `.reach()`
 release over `0.11.0` — the public Query is `Cq | Reach`, introspection
-is `signature` at v6, the host surface spells `rec` / `.reach()`, OccBind
-and the C ABI tagged union land with it. Wire, manifest, storage format
+is `signature` at v6, the host surface spells `rec` / `.reach()`, and OccBind
+lands with it. Wire, manifest, storage format
 (v7), and schema fingerprints are UNTOUCHED.
 
 `0.11.0` is the trusted-layer representation release over `0.10.0` —
@@ -307,9 +293,7 @@ versioned manifest is a line on `scripts/version-roster.txt`. The build
 (`assertVersionLockstep` in `scripts/build.ts`) fails unless every roster
 entry equals the workspace version, a tree sweep proves the roster
 complete, and `ts-log`'s peer range is exactly `^<workspace version>`.
-`engineVersion()` and `bdb_version()` bake `CARGO_PKG_VERSION` into the
-shipped binary; `bdb_abi_version()` is layout generation, not the
-release spelling.
+`engineVersion()` bakes `CARGO_PKG_VERSION` into the shipped native binary.
 
 The platform PIN is not a repo value: `scripts/pin.ts` derives it from the
 manifest's own `version` at pack time (exact by construction), the gate
@@ -333,8 +317,6 @@ cd ts
 #    - Cargo.toml [workspace.package] version = "0.20.0" (the one writer)
 #    - every path on scripts/version-roster.txt equals 0.20.0
 #    - ts-log peerDependencies["@bjornpagen/bumbledb"] is ^0.20.0
-#    bdb_abi_version() answers 4 (unchanged: the one-core cutover moves
-#    the TS/wire tier, not the C layout).
 
 # 2. Download the linux artifacts from a green bumbledb-log.yml run
 #    (amazonlinux:2023 — the arm64 job on ubuntu-24.04-arm, the x64 job

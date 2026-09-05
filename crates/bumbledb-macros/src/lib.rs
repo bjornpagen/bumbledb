@@ -76,6 +76,8 @@ enum FieldTy {
     Bool,
     U64,
     I64,
+    F64,
+    Id128,
     Str,
 
     FixedBytes(u64),
@@ -117,6 +119,7 @@ struct ClosedRow {
 #[derive(Debug, Clone)]
 enum Literal {
     Bool(bool),
+    Float(bumbledb_theory::F64),
 
     Int {
         negative: bool,
@@ -264,12 +267,14 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
 }
 
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
-    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes<N>/interval)");
+    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/f64/id128/str/bytes<N>/interval)");
     reject_deleted_word(&ty_name);
     let ty = match ty_name.as_str() {
         "bool" => FieldTy::Bool,
         "u64" => FieldTy::U64,
         "i64" => FieldTy::I64,
+        "f64" => FieldTy::F64,
+        "id128" => FieldTy::Id128,
         "str" => FieldTy::Str,
 
         "bytes" => {
@@ -315,11 +320,13 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 field.ty,
                 FieldTy::U64
                     | FieldTy::I64
+                    | FieldTy::F64
+                    | FieldTy::Id128
                     | FieldTy::FixedBytes(_)
                     | FieldTy::Interval(_)
                     | FieldTy::FixedInterval(..)
             ),
-            "schema!: `as NewType` applies to u64/i64/bytes<N>/interval fields only"
+            "schema!: `as NewType` applies to u64/i64/f64/id128/bytes<N>/interval fields only"
         );
         field.newtype = Some(expect_ident(tokens, "a newtype name"));
     }
@@ -511,6 +518,18 @@ fn is_int_text(text: &str) -> bool {
     text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.')
 }
 
+fn float_literal(negative: bool, text: &str) -> Option<Literal> {
+    if text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b")
+        || !(text.contains(['.', 'e', 'E']) || text.ends_with("f64"))
+    {
+        return None;
+    }
+    let digits = text.strip_suffix("f64").unwrap_or(text).replace('_', "");
+    let value = digits.parse::<f64>().unwrap_or_else(|_| panic!("schema!: invalid f64 literal `{text}`"));
+    assert!(value.is_finite(), "schema!: f64 numeric literals must be finite");
+    Some(Literal::Float(bumbledb_theory::F64::from(if negative { -value } else { value })))
+}
+
 fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
     let negative = peek_punct(tokens, '-');
     if negative {
@@ -554,8 +573,15 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
             }
         }
         Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
-            let (negative, text) = parse_int(tokens, "an integer literal");
-            finish_int(tokens, negative, text)
+            tokens.next();
+            let Some(TokenTree::Literal(lit)) = tokens.next() else {
+                panic!("schema!: expected a numeric literal after `-`");
+            };
+            let text = lit.to_string();
+            float_literal(true, &text).unwrap_or_else(|| {
+                assert!(is_int_text(&text), "schema!: unsupported literal `{text}`");
+                finish_int(tokens, true, text)
+            })
         }
         Some(TokenTree::Literal(_)) => {
             let Some(TokenTree::Literal(lit)) = tokens.next() else {
@@ -566,6 +592,8 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
                 Literal::Str(text)
             } else if text.starts_with("b\"") {
                 Literal::Bytes(text)
+            } else if let Some(value) = float_literal(false, &text) {
+                value
             } else {
                 assert!(is_int_text(&text), "schema!: unsupported literal `{text}`");
                 finish_int(tokens, false, text)
@@ -1053,6 +1081,14 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
         (FieldTy::I64, Literal::Int { negative, text }) => Value::I64(
             i64_text(*negative, text).unwrap_or_else(|| literal_mismatch(relation, field)),
         ),
+        (FieldTy::F64, Literal::Float(value)) => Value::F64(*value),
+        (FieldTy::Id128, Literal::Bytes(text)) => {
+            let bytes = unescape_bytes(text);
+            if bytes.len() != 16 {
+                literal_mismatch(relation, field);
+            }
+            Value::FixedBytes(bytes.into())
+        }
         (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text)),
 
         (FieldTy::FixedBytes(len), Literal::Bytes(text)) => {
@@ -1226,6 +1262,8 @@ fn field_value_type(relation: &str, field: &Field) -> ValueType {
         FieldTy::Bool => ValueType::Bool,
         FieldTy::U64 => ValueType::U64,
         FieldTy::I64 => ValueType::I64,
+        FieldTy::F64 => ValueType::F64,
+        FieldTy::Id128 => ValueType::FixedBytes { len: 16 },
         FieldTy::Str => ValueType::String,
         FieldTy::FixedBytes(len) => ValueType::FixedBytes {
             len: u16::try_from(*len).unwrap_or_else(|_| {
@@ -1884,6 +1922,7 @@ fn value_type_tokens(value_type: &ValueType) -> String {
         ValueType::Bool => format!("{path}::Bool"),
         ValueType::U64 => format!("{path}::U64"),
         ValueType::I64 => format!("{path}::I64"),
+        ValueType::F64 => format!("{path}::F64"),
         ValueType::String => format!("{path}::String"),
         ValueType::FixedBytes { len } => format!("{path}::FixedBytes {{ len: {len} }}"),
         ValueType::Interval { element } => {
@@ -1911,6 +1950,7 @@ fn value_tokens(value: &Value) -> String {
         Value::Bool(v) => format!("{path}::Bool({v})"),
         Value::U64(v) => format!("{path}::U64({v})"),
         Value::I64(v) => format!("{path}::I64({v})"),
+        Value::F64(v) => format!("{path}::F64(::bumbledb::F64::from_bits({}u64))", v.to_bits()),
         Value::String(text) => {
             format!(
                 "{path}::String(::std::boxed::Box::from(\"{}\"))",
@@ -2208,6 +2248,8 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
             let inner = match field.ty {
                 FieldTy::U64 => ("u64".to_owned(), "u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), "i64".to_owned(), false),
+                FieldTy::F64 => ("f64".to_owned(), "::bumbledb::F64".to_owned(), false),
+                FieldTy::Id128 => ("id128".to_owned(), "::bumbledb::Id128".to_owned(), true),
                 FieldTy::FixedBytes(len) => (format!("bytes<{len}>"), format!("[u8; {len}]"), true),
                 FieldTy::Interval(element) => (
                     format!("interval<{}>", element_rust(element)),
@@ -2353,8 +2395,12 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
         Value::Bool(v) => format!("{v}"),
         Value::U64(v) => format!("{v}u64"),
         Value::I64(v) => format!("{v}i64"),
+        Value::F64(v) => format!("::bumbledb::F64::from_bits({}u64)", v.to_bits()),
         Value::String(text) => {
             format!("\"{}\"", text.escape_default())
+        }
+        Value::FixedBytes(bytes) if matches!(field.ty, FieldTy::Id128) => {
+            format!("::bumbledb::Id128::from_bytes(*b\"{}\")", bytes.escape_ascii())
         }
         Value::FixedBytes(bytes) => format!("*b\"{}\"", bytes.escape_ascii()),
         Value::IntervalU64(interval) => {
@@ -2388,6 +2434,8 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::Bool => "bool".to_owned(),
         FieldTy::U64 => "u64".to_owned(),
         FieldTy::I64 => "i64".to_owned(),
+        FieldTy::F64 => "::bumbledb::F64".to_owned(),
+        FieldTy::Id128 => "::bumbledb::Id128".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
         FieldTy::Interval(element) | FieldTy::FixedInterval(element, _) => {
@@ -2405,6 +2453,8 @@ fn value_type_expr(field: &Field) -> String {
         FieldTy::Bool => "::bumbledb::schema::ValueType::Bool".to_owned(),
         FieldTy::U64 => "::bumbledb::schema::ValueType::U64".to_owned(),
         FieldTy::I64 => "::bumbledb::schema::ValueType::I64".to_owned(),
+        FieldTy::F64 => "::bumbledb::schema::ValueType::F64".to_owned(),
+        FieldTy::Id128 => "::bumbledb::schema::ValueType::FixedBytes { len: 16 }".to_owned(),
         FieldTy::Str => "::bumbledb::schema::ValueType::String".to_owned(),
         FieldTy::FixedBytes(len) => {
             format!("::bumbledb::schema::ValueType::FixedBytes {{ len: {len} }}")
@@ -2430,6 +2480,8 @@ fn encode_value(field: &Field, idx: usize, cx: &EncodeCx<'_>, insert: bool) -> S
         FieldTy::Bool => format!("::bumbledb::__private::ValueRef::Bool({access})"),
         FieldTy::U64 => format!("::bumbledb::__private::ValueRef::U64({access})"),
         FieldTy::I64 => format!("::bumbledb::__private::ValueRef::I64({access})"),
+        FieldTy::F64 => format!("::bumbledb::__private::ValueRef::F64({access})"),
+        FieldTy::Id128 => format!("::bumbledb::__private::ValueRef::bytes({access}.as_bytes())"),
         FieldTy::Interval(element) => format!(
             "::bumbledb::__private::ValueRef::Interval{}({access})",
             element_suffix(*element)
@@ -2469,6 +2521,11 @@ fn decode_arm(field: &Field, idx: usize) -> String {
         FieldTy::Bool => decode("decode_bool_field"),
         FieldTy::U64 => wrap(&decode("decode_u64_field")),
         FieldTy::I64 => wrap(&decode("decode_i64_field")),
+        FieldTy::F64 => wrap(&decode("decode_f64_field")),
+        FieldTy::Id128 => wrap(&format!(
+            "{{ let raw = {}; let mut arr = [0u8; 16]; arr.copy_from_slice(raw); ::bumbledb::Id128::from_bytes(arr) }}",
+            decode("decode_fixed_bytes_field")
+        )),
         FieldTy::Interval(element) | FieldTy::FixedInterval(element, _) => wrap(&decode(&format!(
             "decode_interval_{}_field",
             element_rust(*element)

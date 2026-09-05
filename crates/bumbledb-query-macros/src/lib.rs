@@ -146,6 +146,7 @@ struct Int {
 enum Lit {
     Bool(bool),
     Int(Int),
+    Float(u64),
 
     Interval { start: Int, end: Int },
 
@@ -460,6 +461,9 @@ fn finish_int(tokens: &mut Tokens, start: Int) -> Parse<Lit> {
 }
 
 fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
+    if let Some(float) = parse_float(tokens)? {
+        return Ok(float);
+    }
     if peek_punct(tokens, '-') {
         let start = parse_int(tokens, "an integer literal")?;
         return finish_int(tokens, start);
@@ -491,6 +495,33 @@ fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
         ),
         None => fail(Span::call_site(), "query!: expected a literal"),
     }
+}
+
+fn parse_float(tokens: &mut Tokens) -> Parse<Option<Lit>> {
+    let mut lookahead = tokens.clone();
+    let negative = peek_punct(&mut lookahead, '-');
+    if negative {
+        lookahead.next();
+    }
+    let Some(TokenTree::Literal(lit)) = lookahead.next() else {
+        return Ok(None);
+    };
+    let text = lit.to_string();
+    if !text.starts_with(|c: char| c.is_ascii_digit())
+        || text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b")
+        || !(text.contains(['.', 'e', 'E']) || text.ends_with("f64"))
+    {
+        return Ok(None);
+    }
+    let digits = text.strip_suffix("f64").unwrap_or(&text).replace('_', "");
+    let Ok(value) = digits.parse::<f64>() else {
+        return fail(lit.span(), format!("query!: invalid f64 literal `{text}`"));
+    };
+    if !value.is_finite() {
+        return fail(lit.span(), "query!: f64 numeric literals must be finite");
+    }
+    *tokens = lookahead;
+    Ok(Some(Lit::Float((if negative { -value } else { value }).to_bits())))
 }
 
 fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
@@ -1372,6 +1403,7 @@ impl Emitter<'_> {
                 let variant = if int.signed { "I64" } else { "U64" };
                 format!("{value}::{variant}({})", int_text(int))
             }
+            Lit::Float(bits) => format!("{value}::F64(::bumbledb::F64::from_bits({bits}u64))"),
             Lit::Interval { start, end } => {
                 let (variant, ty) = if start.signed || end.signed {
                     ("IntervalI64", "i64")

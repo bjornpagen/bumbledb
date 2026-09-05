@@ -403,6 +403,7 @@ fn element_view(value: &Value) -> BindValue<'_> {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
+        Value::F64(v) => BindValue::F64(*v),
         Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
@@ -419,6 +420,7 @@ fn convert_scalar<C: CatalogRead>(
         (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
         (BindValue::U64(v), ValueType::U64) => Const::Word(v),
         (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
+        (BindValue::F64(v), ValueType::F64) => Const::Word(v.to_order_key()),
 
         (
             BindValue::IntervalU64(start, end),

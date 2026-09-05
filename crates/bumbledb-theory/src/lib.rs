@@ -8,11 +8,15 @@
 compile_error!("bumbledb targets 64-bit platforms only");
 
 pub mod allen;
+mod float;
+mod id128;
 pub mod interval;
 pub mod schema;
 pub mod value;
 
 pub use allen::{AllenMask, Basic};
+pub use float::{F64, F64ParseError};
+pub use id128::{Id128, Id128ParseError};
 pub use interval::Interval;
 pub use schema::ValueType;
 pub use value::Value;

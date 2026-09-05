@@ -30,6 +30,7 @@ enum Cell {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(bumbledb_theory::F64),
     IntervalU64(Interval<u64>),
     IntervalI64(Interval<i64>),
 
@@ -43,6 +44,7 @@ pub(super) enum CellView<'c> {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(bumbledb_theory::F64),
     IntervalU64(Interval<u64>),
     IntervalI64(Interval<i64>),
     FixedBytes(&'c [u8]),
@@ -135,6 +137,7 @@ impl AcceptedCollection {
             Cell::Bool(value) => CellView::Bool(value),
             Cell::U64(value) => CellView::U64(value),
             Cell::I64(value) => CellView::I64(value),
+            Cell::F64(value) => CellView::F64(value),
             Cell::IntervalU64(interval) => CellView::IntervalU64(interval),
             Cell::IntervalI64(interval) => CellView::IntervalI64(interval),
             Cell::FixedBytes { off, len } => CellView::FixedBytes(&self.bytes[span(off, len)]),
@@ -244,6 +247,7 @@ impl<'s> CollectionBuilder<'s> {
             Value::Bool(value) => Cell::Bool(*value),
             Value::U64(value) => Cell::U64(*value),
             Value::I64(value) => Cell::I64(*value),
+            Value::F64(value) => Cell::F64(*value),
             Value::String(text) => self.land_str(text)?,
             Value::FixedBytes(raw) => self.land_bytes(raw)?,
             Value::IntervalU64(interval) => Cell::IntervalU64(*interval),
@@ -267,6 +271,11 @@ impl<'s> CollectionBuilder<'s> {
     /// # Errors
     pub fn push_i64(&mut self, value: i64) -> Result<()> {
         self.push_scalar(&Value::I64(value), Cell::I64(value))
+    }
+
+    /// # Errors
+    pub fn push_f64(&mut self, value: bumbledb_theory::F64) -> Result<()> {
+        self.push_scalar(&Value::F64(value), Cell::F64(value))
     }
 
     /// # Errors
@@ -403,6 +412,7 @@ pub(super) fn intern_accepted_row(
             CellView::Bool(value) => ValueRef::Bool(value),
             CellView::U64(value) => ValueRef::U64(value),
             CellView::I64(value) => ValueRef::I64(value),
+            CellView::F64(value) => ValueRef::F64(value),
             CellView::IntervalU64(interval) => ValueRef::IntervalU64(interval),
             CellView::IntervalI64(interval) => ValueRef::IntervalI64(interval),
             CellView::FixedBytes(raw) => ValueRef::bytes(raw),

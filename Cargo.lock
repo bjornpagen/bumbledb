@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb"
-version = "0.20.1"
+version = "0.20.3"
 dependencies = [
  "blake3",
  "bumbledb-macros",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-bench"
-version = "0.20.1"
+version = "0.20.3"
 dependencies = [
  "bumbledb",
  "rusqlite",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-log"
-version = "0.20.1"
+version = "0.20.3"
 dependencies = [
  "blake3",
  "bumbledb",
@@ -143,14 +143,14 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-macros"
-version = "0.20.1"
+version = "0.20.3"
 dependencies = [
  "bumbledb-theory",
 ]
 
 [[package]]
 name = "bumbledb-query"
-version = "0.20.1"
+version = "0.20.3"
 dependencies = [
  "bumbledb",
  "bumbledb-query-macros",
@@ -158,11 +158,11 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-query-macros"
-version = "0.20.1"
+version = "0.20.3"
 
 [[package]]
 name = "bumbledb-theory"
-version = "0.20.1"
+version = "0.20.3"
 
 [[package]]
 name = "bumpalo"

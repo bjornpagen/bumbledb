@@ -26,6 +26,7 @@ wire_tag!(ValueTypeTag {
     FixedBytes = 5,
     Interval = 6,
     FixedInterval = 7,
+    F64 = 8,
 });
 
 wire_tag!(IntervalElementTag {

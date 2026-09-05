@@ -21,6 +21,13 @@ pub const fn encode_i64(value: i64) -> [u8; 8] {
     (value.cast_unsigned() ^ I64_SIGN_BIT).to_be_bytes()
 }
 
+/// Encodes a canonical F64 as total-order bytes for physical facts and query
+/// keys. Wire payloads instead use [`bumbledb_theory::F64::to_be_bytes`].
+#[must_use]
+pub const fn encode_f64(value: bumbledb_theory::F64) -> [u8; 8] {
+    value.to_order_bytes()
+}
+
 /// Encodes an Interval over U64 as `start ‖ end`, each half [`encode_u64`].
 /// Because each half is order-preserving, the 16 bytes sort
 /// lexicographically by `(start, end)` — load-bearing for the storage
@@ -60,6 +67,7 @@ pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
         Value::Bool(v) => ValueRef::Bool(*v),
         Value::U64(v) => ValueRef::U64(*v),
         Value::I64(v) => ValueRef::I64(*v),
+        Value::F64(v) => ValueRef::F64(*v),
         Value::FixedBytes(raw) => ValueRef::bytes(raw),
         Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
         Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
@@ -98,6 +106,9 @@ pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
         }
         ValueRef::I64(v) => {
             out.extend_from_slice(&encode_i64(v));
+        }
+        ValueRef::F64(v) => {
+            out.extend_from_slice(&encode_f64(v));
         }
         ValueRef::String(id) => {
             out.extend_from_slice(&encode_u64(id.raw()));

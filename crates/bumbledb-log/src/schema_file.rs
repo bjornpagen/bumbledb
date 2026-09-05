@@ -13,7 +13,7 @@ use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
     RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
-use bumbledb::{Interval, Value};
+use bumbledb::{F64, Interval, Value};
 
 /// Why a theory file refused to become a descriptor.
 #[derive(Debug)]
@@ -376,6 +376,7 @@ fn parse_type(json: &Json) -> Result<ValueType, TheoryFile> {
             "bool" => Ok(ValueType::Bool),
             "u64" => Ok(ValueType::U64),
             "i64" => Ok(ValueType::I64),
+            "f64" => Ok(ValueType::F64),
             "string" => Ok(ValueType::String),
             _ => Err(TheoryFile::Shape("unknown scalar type")),
         };
@@ -519,6 +520,20 @@ fn parse_value(json: &Json) -> Result<Value, TheoryFile> {
         )),
         "u64" => Ok(Value::U64(parse_u64(body)?)),
         "i64" => Ok(Value::I64(parse_i64(body)?)),
+        "$f64" => {
+            let hex = body.as_str().ok_or(TheoryFile::Shape("f64 hex"))?;
+            if hex.len() != 16
+                || !hex
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            {
+                return Err(TheoryFile::Shape("f64 hex"));
+            }
+            let bytes = unhex(hex)?;
+            F64::try_from(bytes.as_slice())
+                .map(Value::F64)
+                .map_err(|_| TheoryFile::Shape("noncanonical f64"))
+        }
         "string" => Ok(Value::String(
             body.as_str().ok_or(TheoryFile::Shape("string"))?.into(),
         )),

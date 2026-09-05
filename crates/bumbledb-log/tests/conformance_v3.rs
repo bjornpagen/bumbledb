@@ -321,7 +321,6 @@ fn inventory_is_the_v3_roster() {
 
     for (key, path) in [
         ("key_grammar", "keys/grammar.json"),
-        ("key_tilde_family", "keys/tilde-family.json"),
         ("lease_placement", "lease/placement.json"),
         ("machine_constants", "machine-constants.json"),
     ] {
@@ -684,31 +683,6 @@ fn keys_grammar_walk_accepts_and_refuses_by_name() {
         let key = entry["key"].as_str().expect("key");
         entry["why"].as_str().expect("why names the refusing rule");
         assert!(StoreKey::parse(key).is_err(), "{name}: {key:?} refuses");
-    }
-}
-
-#[test]
-fn keys_tilde_walk_derives_from_the_family_table() {
-    let family = read_json(&v3().join("keys/tilde-family.json"));
-    assert_eq!(family["surface"], "key-grammar/tilde-family");
-    let points = family["codePoints"].as_array().expect("codePoints");
-    assert_eq!(points.len(), 15, "the closed table");
-    for point in points {
-        let text = point.as_str().expect("a U+ spelling");
-        let hex = text.strip_prefix("U+").expect("U+ prefix");
-        let c = char::from_u32(u32::from_str_radix(hex, 16).expect("hex")).expect("scalar");
-        assert!(
-            StoreKey::parse(&format!("{c}x")).is_err(),
-            "{text}: a first code point in the family reserves the segment"
-        );
-        assert!(
-            StoreKey::parse(&format!("a/{c}x")).is_err(),
-            "{text}: the family reserves in every segment position"
-        );
-        assert!(
-            StoreKey::parse(&format!("x{c}")).is_ok(),
-            "{text}: elsewhere in a segment the family is ordinary text"
-        );
     }
 }
 

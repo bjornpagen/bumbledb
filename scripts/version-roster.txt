@@ -1,4 +1,3 @@
-crates/bumbledb-c/Cargo.toml
 ts-log/package.json
 ts/crate/Cargo.toml
 ts/npm/darwin-arm64/package.json

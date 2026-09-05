@@ -1,5 +1,5 @@
-//! On-disk protocol of `FsStore`: parent directories, the fenced CAS
-//! lease under `~lease`, and the computed etag that is never stored.
+//! On-disk legacy adapter: parent directories, kernel-held mutation
+//! ownership under `~lease`, and the computed etag that is never stored.
 //! Five-verb semantics that do not touch a disk live on `MemStore`.
 
 use std::path::PathBuf;
@@ -50,7 +50,7 @@ fn malformed_keys_are_refused_at_the_boundary() {
 }
 
 #[test]
-fn an_expired_lease_is_broken_by_put_swap() {
+fn old_expiry_documents_do_not_control_kernel_ownership() {
     let root = fresh_root("dead_lock");
     let store = FsStore::new(&root);
     let Create::Created(birth) = store
@@ -73,9 +73,10 @@ fn an_expired_lease_is_broken_by_put_swap() {
         .expect("swap");
     assert_eq!(swapped, Swap::Swapped(content_etag(b"v2")));
     assert!(
-        !lease_dir.join("1").exists(),
-        "the broken lease leaves no residue"
+        lease_dir.join("1").exists(),
+        "legacy token history is not inspected or swept as ownership"
     );
+    assert!(lease_dir.join("mutation.lock").is_file());
 }
 
 #[test]

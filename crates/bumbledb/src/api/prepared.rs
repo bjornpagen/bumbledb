@@ -50,6 +50,7 @@ pub enum BindValue<'a> {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(bumbledb_theory::F64),
     Str(&'a str),
     /// A `bytes<N>` value: exactly the anchored field's N bytes (any
     /// other length is a bind-time type mismatch — the length is the
@@ -155,6 +156,7 @@ pub enum AnswerValue<'a> {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(bumbledb_theory::F64),
     String(&'a str),
     /// A `bytes<N>` find: the value's N raw bytes.
     FixedBytes(&'a [u8]),
@@ -174,6 +176,7 @@ enum Cell {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(bumbledb_theory::F64),
     String { start: usize, len: usize },
     FixedBytes { start: usize, len: usize },
     IntervalU64(bumbledb_theory::Interval<u64>),

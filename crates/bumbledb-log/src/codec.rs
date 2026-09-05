@@ -8,7 +8,7 @@
 //! op refuse as trailing garbage.
 
 use bumbledb::schema::{IntervalElement, RelationId, SchemaDescriptor, ValueType};
-use bumbledb::{Interval, Value};
+use bumbledb::{F64, Interval, Value};
 
 use crate::braids::{BraidId, Braids, braids};
 
@@ -25,6 +25,10 @@ const TAG_STRING: u8 = 3;
 const TAG_FIXED_BYTES: u8 = 4;
 const TAG_INTERVAL: u8 = 5;
 const TAG_FIXED_INTERVAL: u8 = 6;
+// Log tags are a separate namespace from the core's physical ValueTypeTag.
+// Existing v3 tags retain their meanings. The successor protocol/format reset
+// is separate work; this extension carries the core's canonical payload bytes.
+const TAG_F64: u8 = 7;
 
 const OP_INSERT: u8 = 1;
 const OP_DELETE: u8 = 2;
@@ -98,6 +102,11 @@ pub(crate) fn append_value<S: ByteSink>(
         (Value::I64(v), ValueType::I64) => {
             sink.put(&[TAG_I64]);
             sink.put(&v.to_le_bytes());
+            Ok(())
+        }
+        (Value::F64(v), ValueType::F64) => {
+            sink.put(&[TAG_F64]);
+            sink.put(&v.to_be_bytes());
             Ok(())
         }
         (Value::String(s), ValueType::String) => {
@@ -178,6 +187,7 @@ const fn expected_tag(ty: ValueType) -> u8 {
         ValueType::Bool => TAG_BOOL,
         ValueType::U64 => TAG_U64,
         ValueType::I64 => TAG_I64,
+        ValueType::F64 => TAG_F64,
         ValueType::String => TAG_STRING,
         ValueType::FixedBytes { .. } => TAG_FIXED_BYTES,
         ValueType::Interval { .. } => TAG_INTERVAL,
@@ -344,6 +354,14 @@ pub enum DecodeError {
         field: u16,
         got: u8,
     },
+    /// Negative zero or an alternate NaN payload is invalid wire data;
+    /// host normalization must happen before sealing a command.
+    NonCanonicalF64 {
+        relation: RelationId,
+        row: usize,
+        field: u16,
+        bits: u64,
+    },
     InvalidUtf8 {
         relation: RelationId,
         row: usize,
@@ -381,6 +399,7 @@ impl DecodeError {
             Self::OpRelationOutsideBraid { .. } => "OpRelationOutsideBraid",
             Self::TagMismatch { .. } => "TagMismatch",
             Self::BoolByte { .. } => "BoolByte",
+            Self::NonCanonicalF64 { .. } => "NonCanonicalF64",
             Self::InvalidUtf8 { .. } => "InvalidUtf8",
             Self::EmptyInterval { .. } => "EmptyInterval",
             Self::IntervalOverflow { .. } => "IntervalOverflow",
@@ -799,6 +818,18 @@ fn decode_value(
         },
         ValueType::U64 => Ok(Value::U64(cur.u64()?)),
         ValueType::I64 => Ok(Value::I64(cur.i64()?)),
+        ValueType::F64 => {
+            let mut raw = [0; 8];
+            raw.copy_from_slice(cur.take(8)?);
+            F64::from_canonical_be_bytes(raw)
+                .map(Value::F64)
+                .map_err(|_| DecodeError::NonCanonicalF64 {
+                    relation,
+                    row,
+                    field,
+                    bits: u64::from_be_bytes(raw),
+                })
+        }
         ValueType::String => {
             let len = cur.u32()?;
             let bytes = cur.take(usize::try_from(len).expect("u32 fits usize"))?;

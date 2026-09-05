@@ -50,6 +50,7 @@ impl Answers {
             Cell::Bool(v) => AnswerValue::Bool(v),
             Cell::U64(v) => AnswerValue::U64(v),
             Cell::I64(v) => AnswerValue::I64(v),
+            Cell::F64(v) => AnswerValue::F64(v),
 
             Cell::String { start, len } => AnswerValue::String(&self.text[start..start + len]),
             Cell::FixedBytes { start, len } => {
@@ -68,11 +69,12 @@ impl Answers {
     }
 
     /// invariant. The point fast lane's per-cell decode; the finalize
-    pub(super) fn word_cell(ty: &ValueType, word: u64) -> Cell {
-        match ty {
+    pub(super) fn word_cell(ty: &ValueType, word: u64) -> Result<Cell> {
+        Ok(match ty {
             ValueType::Bool => Cell::Bool(word != 0),
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
+            ValueType::F64 => Cell::F64(crate::encoding::decode_f64(word.to_be_bytes())?),
             ValueType::String => {
                 unreachable!("interned finds take the resolving path")
             }
@@ -82,7 +84,7 @@ impl Answers {
             ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")
             }
-        }
+        })
     }
 
     pub(super) fn fixed_bytes_cell(&mut self, len: u16, words: &[u64]) -> Cell {
@@ -129,6 +131,7 @@ impl Answers {
             ValueType::Bool => Cell::Bool(word != 0),
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
+            ValueType::F64 => Cell::F64(crate::encoding::decode_f64(word.to_be_bytes())?),
             ValueType::String => {
                 let (start, len) = memo.resolve(catalog, word, self)?;
                 Cell::String { start, len }

@@ -26,6 +26,7 @@ use crate::manifest::{
     manifest_key,
 };
 use crate::sidecar::{CHAIN_FILE, Chain, ChainEntry, SidecarRead};
+use crate::store::fence::{DirectoryLock, acquire_directory};
 use crate::store::{Etag, LEASE_NAMESPACE, ObjectStore, Poll, StoreError, TEMP_NAMESPACE};
 
 pub use crate::vector::{CheckpointOrder, Overflow, Vector};
@@ -309,6 +310,9 @@ pub struct Replica<T: Theory + Clone, S: ObjectStore> {
     passes: u64,
     heartbeat_every: u64,
     wedged: BTreeMap<BraidId, Corruption>,
+    // Last field: the native environment and all other resources drop
+    // before the stable directory namespace can admit a successor.
+    ownership: DirectoryLock,
 }
 
 impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
@@ -325,10 +329,11 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             Ok(derived) => derived,
             Err(refusal) => return Ok(Opened::Refused(refusal)),
         };
+        let ownership = acquire_directory(dir)?;
         let mut replica = Self {
             store,
             prefix: prefix.to_string(),
-            dir: dir.to_path_buf(),
+            dir: ownership.directory().to_path_buf(),
             theory,
             codec,
             fingerprint,
@@ -344,8 +349,9 @@ impl<T: Theory + Clone, S: ObjectStore> Replica<T, S> {
             passes: 0,
             heartbeat_every: HEARTBEAT_EVERY,
             wedged: BTreeMap::new(),
+            ownership,
         };
-        sweep_at_open(&replica.store, &replica.prefix, &replica.dir)?;
+        sweep_owned_at_open(&replica.store, &replica.prefix, &replica.ownership)?;
         match replica.establish()? {
             None => Ok(Opened::Ready(Box::new(replica))),
             Some(refusal) => Ok(Opened::Refused(refusal)),
@@ -1050,6 +1056,18 @@ pub fn reclaim_orphan<S: ObjectStore>(
 ///
 /// # Errors
 pub fn sweep_at_open<S: ObjectStore>(store: &S, prefix: &str, dir: &Path) -> Result<(), Fault> {
+    let ownership = acquire_directory(dir)?;
+    sweep_owned_at_open(store, prefix, &ownership)
+}
+
+/// Recovery reached by a live owner uses its existing capability. The
+/// capability supplies the path, so cleanup cannot target another owner.
+pub(crate) fn sweep_owned_at_open<S: ObjectStore>(
+    store: &S,
+    prefix: &str,
+    ownership: &DirectoryLock,
+) -> Result<(), Fault> {
+    let dir = ownership.directory();
     sweep_ckpt_scratch(store, prefix, dir)?;
     sweep_local_litter(dir)?;
     Ok(())

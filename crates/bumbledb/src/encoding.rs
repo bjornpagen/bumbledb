@@ -13,11 +13,11 @@ mod tests;
 pub(crate) use decode::FieldDecodeError;
 pub use decode::{
     decode_bool, decode_bool_at, decode_field, decode_fixed_bytes, decode_fixed_interval_start,
-    decode_i64, decode_interval_i64, decode_interval_u64, decode_u64, field_bytes,
+    decode_f64, decode_i64, decode_interval_i64, decode_interval_u64, decode_u64, field_bytes,
     field_word_bytes,
 };
 pub(crate) use decode::{decode_values, decode_values_keyed_into, interval_words, split_halves};
-pub use encode::{append_field, encode_bool, encode_fact, encode_i64, encode_literal, encode_u64};
+pub use encode::{append_field, encode_bool, encode_f64, encode_fact, encode_i64, encode_literal, encode_u64};
 
 #[cfg(test)]
 pub(crate) use encode::encode_interval_u64;
@@ -107,6 +107,7 @@ pub enum ValueRef {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(bumbledb_theory::F64),
 
     String(InternId),
 

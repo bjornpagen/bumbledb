@@ -12,7 +12,7 @@ use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
     RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
-use bumbledb::{Interval, Value};
+use bumbledb::{F64, Interval, Value};
 use bumbledb_log::codec::{Batch, BatchHeader, Op, OpKind};
 use serde_json::Value as Json;
 
@@ -112,6 +112,7 @@ fn parse_type(json: &Json) -> ValueType {
             "bool" => ValueType::Bool,
             "u64" => ValueType::U64,
             "i64" => ValueType::I64,
+            "f64" => ValueType::F64,
             "string" => ValueType::String,
             other => panic!("unknown scalar type {other}"),
         };
@@ -268,6 +269,10 @@ pub fn parse_value(json: &Json) -> Value {
         "bool" => Value::Bool(body.as_bool().expect("bool")),
         "u64" => Value::U64(parse_u64(body)),
         "i64" => Value::I64(parse_i64(body)),
+        "$f64" => Value::F64(
+            F64::try_from(unhex(body.as_str().expect("f64 hex")).as_slice())
+                .expect("canonical f64 payload"),
+        ),
         "string" => Value::String(body.as_str().expect("string").into()),
         "fixedBytes" => Value::FixedBytes(unhex(body.as_str().expect("hex")).into_boxed_slice()),
         "intervalU64" => {
@@ -291,6 +296,7 @@ pub fn render_value(value: &Value) -> Json {
         Value::Bool(b) => serde_json::json!({ "bool": b }),
         Value::U64(v) => serde_json::json!({ "u64": v.to_string() }),
         Value::I64(v) => serde_json::json!({ "i64": v.to_string() }),
+        Value::F64(v) => serde_json::json!({ "$f64": hex(&v.to_be_bytes()) }),
         Value::String(s) => serde_json::json!({ "string": s }),
         Value::FixedBytes(raw) => serde_json::json!({ "fixedBytes": hex(raw) }),
         Value::IntervalU64(interval) => serde_json::json!({

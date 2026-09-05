@@ -40,13 +40,9 @@
 name: ci
 
 on:
-  # Scoped to main + PRs (the cleanup-0.5.0 packet, PRD U4): a WIP push
-  # to a PR-less worktree branch no longer burns five macOS lanes.
-  # (The explicit worktree-cleanup-050 entry that once lived here — the
-  # workaround for a conflicted-but-open PR getting no pull_request
-  # runs — died on schedule when PR #11 merged, per its own drop rule.)
+  # Qualify every successor implementation push, without publishing it.
   push:
-    branches: [main]
+    branches: [main, codex/bumbledb-1-0]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -55,6 +51,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  NEXTEST_PROFILE: ci
 
 jobs:
   # Lane 1 — the workspace gate: env plus scripts/battery.sh.
@@ -311,4 +308,7 @@ jobs:
         # unsafe_op_in_unsafe_fn, the engine's clippy all+pedantic set).
         run: cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
       - name: the Rust half of the lock (fingerprint_lock.rs)
-        run: cargo test --manifest-path ts/crate/Cargo.toml
+        run: |
+          cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
+          cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml
+          cargo test --manifest-path ts/crate/Cargo.toml --doc

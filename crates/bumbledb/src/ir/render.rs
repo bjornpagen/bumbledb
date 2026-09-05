@@ -390,6 +390,9 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
         Value::I64(v) => {
             let _ = write!(out, "{v}");
         }
+        Value::F64(v) => {
+            let _ = write!(out, "{:?}f64", v.to_f64());
+        }
         Value::IntervalU64(interval) => {
             let _ = write!(out, "{}..{}", interval.start(), interval.end());
         }

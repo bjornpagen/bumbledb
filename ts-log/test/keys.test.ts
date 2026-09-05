@@ -19,13 +19,7 @@ describe("the StoreKey grammar", function suite() {
 		})
 	})
 
-	test("tilde-family, lock-suffix, and format/separator attacks are unrepresentable", function attacks() {
-		assert.throws(function fullwidthTmp() {
-			storeKey("\uFF5Etmp/x")
-		})
-		assert.throws(function fullwidthLease() {
-			storeKey("\uFF5Elease/manifest")
-		})
+	test("reserved ~, lock-suffix, and format/separator attacks are unrepresentable", function attacks() {
 		assert.throws(function lockZwsp() {
 			storeKey("manifest.lock\u200B")
 		})

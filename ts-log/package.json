@@ -1,26 +1,32 @@
 {
 	"name": "@bjornpagen/bumbledb-log",
-	"version": "0.20.1",
+	"version": "0.20.3",
 	"description": "Braided object-store replication for bumbledb: the command codec, theory-derived braids, and replica/writer over five store verbs",
 	"type": "module",
 	"exports": {
 		".": {
-			"types": "./src/index.ts",
-			"default": "./src/index.ts"
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
 		}
 	},
 	"imports": {
 		"#test/*.ts": "./test/*.ts",
-		"#*.ts": "./src/*.ts"
+		"#*.ts": {
+			"bumbledb-src": "./src/*.ts",
+			"types": "./dist/*.d.ts",
+			"default": "./dist/*.js"
+		}
 	},
 	"files": [
-		"src",
+		"dist",
 		"README.md"
 	],
 	"scripts": {
+		"build": "node scripts/build.ts",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
-		"test": "node --test 'test/**/*.test.ts'"
+		"test": "pnpm run build && node --test 'test/**/*.test.ts'",
+		"prepublishOnly": "pnpm run build"
 	},
 	"keywords": [
 		"database",
@@ -42,7 +48,7 @@
 		"arkregex": "^0.0.8"
 	},
 	"peerDependencies": {
-		"@bjornpagen/bumbledb": "^0.20.1"
+		"@bjornpagen/bumbledb": "^0.20.3"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",

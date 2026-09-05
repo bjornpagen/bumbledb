@@ -8,7 +8,18 @@
 [profile.default]
 # One thread per CPU. The win is the shared pool across binaries.
 test-threads = "num-cpus"
+# Run all selected tests, and never convert a flaky first failure into green.
+fail-fast = false
+retries = 0
 
 # Multiprocess lanes sit on disk; they outlast nextest's default 60s
 # slow mark. Warn, do not terminate.
 slow-timeout = { period = "180s" }
+
+[profile.ci]
+# Each test has its own process; allocator/FPU/global-state checks do not
+# require serializing unrelated tests. Terminate a genuinely stuck process.
+slow-timeout = { period = "180s", terminate-after = 5 }
+
+[profile.ci.junit]
+path = "junit.xml"

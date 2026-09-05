@@ -13,6 +13,7 @@
 		"moduleDetection": "force",
 		"isolatedModules": true,
 		"verbatimModuleSyntax": true,
+		"customConditions": ["bumbledb-src"],
 		"strict": true,
 		"exactOptionalPropertyTypes": true,
 		"noEmit": true,
@@ -25,6 +26,6 @@
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true
 	},
-	"include": ["src", "test"],
-	"exclude": ["node_modules"]
+	"include": ["src", "scripts", "test"],
+	"exclude": ["dist", "node_modules"]
 }

@@ -13,6 +13,7 @@
     "OpRelationOutsideBraid",
     "TagMismatch",
     "BoolByte",
+    "NonCanonicalF64",
     "InvalidUtf8",
     "EmptyInterval",
     "IntervalOverflow",

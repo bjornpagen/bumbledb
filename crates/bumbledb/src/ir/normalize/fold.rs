@@ -360,12 +360,26 @@ fn emit(
     }
 }
 
-pub(crate) fn decoded_scalar(value_type: &ValueType, word: u64) -> Value {
-    match value_type {
+pub(crate) fn render_scalar(out: &mut String, value_type: &ValueType, word: u64) {
+    if *value_type == ValueType::F64 {
+        match bumbledb_theory::F64::from_order_key(word) {
+            Ok(value) => literal(out, &Value::F64(value)),
+            Err(_) => {
+                // Range-fold diagnostics may contain the open domain's
+                // synthetic integer boundaries, which are not F64 values.
+                // Never turn those keys into fabricated canonical values.
+                use std::fmt::Write as _;
+                let _ = write!(out, "f64-order-boundary(0x{word:016x})");
+            }
+        }
+        return;
+    }
+    let value = match value_type {
         ValueType::I64 => Value::I64(decode_i64(word.to_be_bytes())),
         ValueType::Bool => Value::Bool(word != 0),
         _ => Value::U64(word),
-    }
+    };
+    literal(out, &value);
 }
 
 pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Value {
@@ -392,7 +406,7 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
 
 pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Const) {
     match value {
-        Const::Word(word) => literal(out, &decoded_scalar(value_type, *word)),
+        Const::Word(word) => render_scalar(out, value_type, *word),
         Const::Byte(byte) => literal(out, &Value::Bool(*byte != 0)),
         Const::Interval { start, end } => {
             literal(out, &decoded_interval(value_type, (*start, *end)));
@@ -419,7 +433,7 @@ pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Con
                 if index > 0 {
                     out.push_str(", ");
                 }
-                literal(out, &decoded_scalar(value_type, *word));
+                render_scalar(out, value_type, *word);
             }
             out.push('}');
         }
@@ -472,7 +486,7 @@ fn order_filters_picture(
             WordCmp::Ge => " >= ",
             _ => unreachable!("constant_order_bound admits order operators only"),
         });
-        literal(&mut out, &decoded_scalar(&descriptor.value_type, word));
+        render_scalar(&mut out, &descriptor.value_type, word);
     }
     out
 }
@@ -485,19 +499,13 @@ fn eq_outside_picture(
 ) -> String {
     let descriptor = relation.field(field);
     let mut out = format!("{}: {} ∈ [", relation.name(), descriptor.name);
-    literal(
-        &mut out,
-        &decoded_scalar(&descriptor.value_type, summary.lo),
-    );
+    render_scalar(&mut out, &descriptor.value_type, summary.lo);
     out.push_str(", ");
-    literal(
-        &mut out,
-        &decoded_scalar(&descriptor.value_type, summary.hi),
-    );
+    render_scalar(&mut out, &descriptor.value_type, summary.hi);
     out.push_str("] ∧ ");
     out.push_str(&descriptor.name);
     out.push_str(" == ");
-    literal(&mut out, &decoded_scalar(&descriptor.value_type, eq_word));
+    render_scalar(&mut out, &descriptor.value_type, eq_word);
     out
 }
 
@@ -568,7 +576,7 @@ fn point_in_picture(relation: &Relation, field: FieldId, pin: (u64, u64), point:
     let mut out = format!("{}: {} == ", relation.name(), descriptor.name);
     literal(&mut out, &decoded_interval(&descriptor.value_type, pin));
     out.push_str(" ∧ ");
-    literal(&mut out, &decoded_scalar(&element_type, point));
+    render_scalar(&mut out, &element_type, point);
     out.push_str(" in ");
     out.push_str(&descriptor.name);
     out
@@ -589,7 +597,7 @@ fn field_within_picture(
         },
     };
     let mut out = format!("{}: {} == ", relation.name(), descriptor.name);
-    literal(&mut out, &decoded_scalar(&descriptor.value_type, point));
+    render_scalar(&mut out, &descriptor.value_type, point);
     out.push_str(" ∧ ");
     out.push_str(&descriptor.name);
     out.push_str(" in ");

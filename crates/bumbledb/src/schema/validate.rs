@@ -392,12 +392,14 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             Value::FixedBytes(_) => 4,
             Value::IntervalU64(_) => 5,
             Value::IntervalI64(_) => 6,
+            Value::F64(_) => 7,
         }
     }
     match (a, b) {
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
+        (Value::F64(x), Value::F64(y)) => x.cmp(y),
         (Value::String(x), Value::String(y)) => x.cmp(y),
         (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
         (Value::IntervalU64(x), Value::IntervalU64(y)) => {

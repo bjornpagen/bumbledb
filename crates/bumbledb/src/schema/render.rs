@@ -617,6 +617,7 @@ fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
         Value::Bool(v) => write!(f, "{v}"),
         Value::U64(v) => write!(f, "{v}"),
         Value::I64(v) => write!(f, "{v}"),
+        Value::F64(v) => write!(f, "{:?}f64", v.to_f64()),
         Value::IntervalU64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
         Value::IntervalI64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
         Value::String(text) => {

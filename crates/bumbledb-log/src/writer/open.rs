@@ -11,7 +11,8 @@ use crate::apply::{Applied, apply};
 use crate::braids::BraidId;
 use crate::manifest::{Checkpoint, Manifest, log_key, manifest_key};
 use crate::replica::{
-    Corruption, Fault, OpenRefusal, fetch_checkpoint_bytes, sweep_at_open, write_checkpoint_bytes,
+    Corruption, Fault, OpenRefusal, fetch_checkpoint_bytes, sweep_owned_at_open,
+    write_checkpoint_bytes,
 };
 use crate::sidecar::{Chain, ChainEntry, Pending, SidecarRead};
 
@@ -57,7 +58,8 @@ where
         self: &Arc<Self>,
         core: &mut Core<T>,
     ) -> Result<Option<OpenRefusal>> {
-        sweep_at_open(self.store.as_ref(), &self.prefix, &self.dir).map_err(Error::Fault)?;
+        sweep_owned_at_open(self.store.as_ref(), &self.prefix, &self.ownership)
+            .map_err(Error::Fault)?;
         loop {
             match self.read_floor()? {
                 Ok(floor) => core.floor = floor,

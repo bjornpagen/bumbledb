@@ -34,14 +34,6 @@
       "key": "x~"
     },
     {
-      "name": "wave_mid",
-      "key": "a\u301Cb"
-    },
-    {
-      "name": "lookalike_last",
-      "key": "x\uFF5E"
-    },
-    {
       "name": "lock_longer",
       "key": "a.lockx"
     },
@@ -150,42 +142,17 @@
     {
       "name": "tilde_only",
       "key": "~",
-      "why": "lookalike"
+      "why": "reserved"
     },
     {
       "name": "tilde_first",
       "key": "~x",
-      "why": "lookalike"
+      "why": "reserved"
     },
     {
       "name": "tilde_later_segment",
       "key": "a/~x",
-      "why": "lookalike"
-    },
-    {
-      "name": "lookalike_small_tilde",
-      "key": "\u02DCtmp/x",
-      "why": "lookalike"
-    },
-    {
-      "name": "lookalike_fullwidth",
-      "key": "\uFF5Elease/manifest",
-      "why": "lookalike"
-    },
-    {
-      "name": "lookalike_wave",
-      "key": "\u301Cx",
-      "why": "lookalike"
-    },
-    {
-      "name": "lookalike_2e1e",
-      "key": "\u2E1Ex",
-      "why": "lookalike"
-    },
-    {
-      "name": "lookalike_fe4f",
-      "key": "\uFE4Fx",
-      "why": "lookalike"
+      "why": "reserved"
     },
     {
       "name": "lock",

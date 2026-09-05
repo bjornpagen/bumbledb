@@ -174,6 +174,7 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         ValueType::Bool => out.push(ValueTypeTag::Bool.tag()),
         ValueType::U64 => out.push(ValueTypeTag::U64.tag()),
         ValueType::I64 => out.push(ValueTypeTag::I64.tag()),
+        ValueType::F64 => out.push(ValueTypeTag::F64.tag()),
         ValueType::String => out.push(ValueTypeTag::String.tag()),
         ValueType::FixedBytes { len } => {
             out.push(ValueTypeTag::FixedBytes.tag());

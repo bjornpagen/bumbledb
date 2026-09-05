@@ -16,7 +16,7 @@ Root: `crates/bumbledb-log/conformance/v3/`.
 | `lease/` | `LEASE/1` lease-body goldens, plus `placement.json` — the fs-lock placement table (`~lease/{key}/{n}` tokens, `~head` pointer, TTL constants). |
 | `counter/` | id-lease counter body goldens: canonical decimal ASCII u64 in, typed `Counter` refusal otherwise. |
 | `scratch/` | ckpt-scratch body goldens: version byte `3` + 32-byte digest; any other body parses to nothing on both drivers. |
-| `keys/` | Key-grammar tables: `grammar.json` (named accept/refuse spellings) and `tilde-family.json` (the 15-point reserved tilde set, NFKC-closed). |
+| `keys/` | Key-grammar table: `grammar.json` (named accept/refuse spellings). A segment that starts with ASCII `~` is reserved. |
 | `machine-constants.json` | Protocol constants both machines assert, one value per fact (`wait_for_poll_ms`, `heartbeat_every`, `loss_bound`, `lease_width`). |
 | `fuzz/` | Materialised truncations and hostile splices, plus `storm.json` — the Rust mutation lane (`f9_fuzz.rs`) as a recipe the TS codec replays. |
 | `inventory.json` | The case roster. |
@@ -36,6 +36,30 @@ Root: `crates/bumbledb-log/conformance/v3/`.
 - **Lease bodies are strict-canonical.** `Lease::parse` accepts exactly the `LEASE/1\n{holder}\n{token}\n{expires}\n` bytes `encode` renders: a body missing its final newline (`r_no_final_newline`), a CRLF-terminated body (`r_crlf`), or a non-canonical decimal refuses.
 
 ## Sidecar JSON
+
+### In-progress scalar F64 extension
+
+The Rust codec now assigns previously unused value tag `7` to scalar `F64`.
+Its payload is exactly eight **big-endian canonical binary64 payload bytes**,
+using the core `F64` codec. These are not the core's sortable fact/index words;
+the core `ValueTypeTag` is also a separate tag namespace. Existing value tags
+`0` through `6`, their little-endian integer payloads, and wire version `3`
+retain their meanings. Negative zero and every NaN encoding except
+`0x7ff8000000000000` refuse as `NonCanonicalF64`, naming relation, row, field,
+and offending bits. Host normalization occurs before encoding, never silently
+while decoding a sealed command.
+
+Theory files name the scalar type `"f64"` and spell literals as
+`{"$f64":"<16 lowercase hex payload digits>"}`. They do not carry floats as JSON
+numbers or decimal strings, which cannot preserve every required special value.
+The dedicated `tests/float_codec.rs` suite pins boundary bytes, strict refusals,
+full-parse-before-apply, real LMDB replay/reopen/delete, and textual inspection.
+
+This is an implementation-stage extension, **not** a frozen successor format or
+a claim that the existing cross-language fixture roster qualifies F64. The
+successor's format/domain reset, complete cross-language corpus, float intervals,
+and numerical execution remain separate required work. No existing fixture or
+tag is reinterpreted to make the extension fit.
 
 Ok batch:
 

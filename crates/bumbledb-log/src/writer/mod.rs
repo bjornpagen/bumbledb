@@ -50,6 +50,7 @@ use crate::manifest::{Checkpoint, Manifest, create_manifest, manifest_key};
 use crate::replica::{Corruption, Fault, OpenRefusal, Vector, derive_codec};
 use crate::sidecar::Chain;
 pub(crate) use crate::store::ObjectStore;
+use crate::store::fence::{DirectoryLock, acquire_directory};
 
 /// Consecutive losses — each one race at the then-tip — before
 /// `Err::Contention`.
@@ -336,6 +337,9 @@ pub(crate) struct Inner<T: Theory + Clone, S: ObjectStore, H: StepHook> {
     pub(crate) queues: BTreeMap<BraidId, Mutex<VecDeque<Request>>>,
     pub(crate) core: Mutex<Core<T>>,
     pub(crate) threads: Mutex<Vec<JoinHandle<()>>>,
+    // Shared with every background task through Inner's Arc; drops after
+    // the engine/core and tasks, never on a lease timer or before cleanup.
+    pub(crate) ownership: DirectoryLock,
 }
 
 /// Outcome of `Writer::open`.
@@ -454,6 +458,8 @@ where
             Ok(derived) => derived,
             Err(refusal) => return Ok(WriterOpened::Refused(refusal)),
         };
+        // No store birth or scratch recovery by a competing local opener.
+        let ownership = acquire_directory(dir).map_err(Fault::Io)?;
         let descriptor: SchemaDescriptor = theory.clone().descriptor();
         let maps = schema_maps(&descriptor);
         let store = Arc::new(store);
@@ -473,7 +479,7 @@ where
         let inner = Arc::new(Inner {
             store,
             prefix: prefix.to_string(),
-            dir: dir.to_path_buf(),
+            dir: ownership.directory().to_path_buf(),
             theory,
             codec,
             schema,
@@ -502,6 +508,7 @@ where
                 duty_busy: false,
             }),
             threads: Mutex::new(Vec::new()),
+            ownership,
         });
 
         {

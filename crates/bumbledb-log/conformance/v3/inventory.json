@@ -116,7 +116,6 @@
   "fuzz_storm": "fuzz/storm.json",
   "identities": "identities.json",
   "key_grammar": "keys/grammar.json",
-  "key_tilde_family": "keys/tilde-family.json",
   "lease": [
     "ok_expired",
     "ok_generation_sidecar",

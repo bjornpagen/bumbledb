@@ -1,4 +1,4 @@
-use crate::encoding::{encode_bool, encode_i64};
+use crate::encoding::{encode_bool, encode_f64, encode_i64};
 use crate::image::view::Const;
 use crate::ir::Value;
 
@@ -7,6 +7,7 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
         Value::Bool(b) => Const::Byte(encode_bool(*b)),
         Value::U64(v) => Const::Word(*v),
         Value::I64(v) => Const::Word(i64_word(*v)),
+        Value::F64(v) => Const::Word(u64::from_be_bytes(encode_f64(*v))),
         Value::String(text) => Const::PendingIntern {
             bytes: Box::from(text.as_bytes()),
         },

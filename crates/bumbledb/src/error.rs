@@ -85,6 +85,9 @@ pub struct TargetKeyCandidate {
 pub enum CorruptionError {
     InvalidBool(u8),
 
+    /// Physical total-order bytes representing a noncanonical F64.
+    NonCanonicalF64([u8; 8]),
+
     InvalidInterval([u8; 16]),
 
     InvalidFixedIntervalStart([u8; 8]),
@@ -1219,8 +1222,8 @@ impl From<std::io::Error> for IoFailure {
     }
 }
 
-/// Concrete bridge decline. Maps to [`ErrorFamily::Io`] so the C ABI
-/// kind table does not grow. Only [`Error::hatch`] mints it; only
+/// Concrete bridge decline. Maps to the shared [`ErrorFamily::Io`]
+/// classification. Only [`Error::hatch`] mints it; only
 /// [`Error::is_hatch`] matches it. Unforgeable from real I/O.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[doc(hidden)]
