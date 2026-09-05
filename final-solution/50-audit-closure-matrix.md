@@ -58,14 +58,14 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | --- | --- | --- |
 | SDK-001 | One Rust machine owns immutable unresolved attempts; a new command cannot overwrite them | Failure then next command on the same live handle preserves correct local state and resolvable outcome. G07/G09 |
 | SDK-002 | Shared lifecycle authority checked inside queued operations; close revokes admission | Retained writers and queued requests cannot dispatch new publications after closure. G07/G11 |
-| SDK-003 | Core ChangeSet owns/normalizes inputs before asynchronous work; log seals only its history envelope around that same value | Caller buffer mutation and escaped builders cannot change persisted/applied command meaning; no duplicate log recorder or scalar codec. G02/G07/G14 |
+| SDK-003 | Core ChangeSet owns/normalizes inputs during bounded Effect ingestion; success establishes acceptance; log seals only its history envelope around that same value | Caller buffer mutation and escaped builders cannot change persisted/applied command meaning; no duplicate log recorder or scalar codec. G02/G07/G14 |
 | SDK-004 | Every acquisition returns a distinct generation-bound idempotent borrow; borrow disposal returns that borrow | Double/stale release cannot consume another borrow or close the shared owner. G11 |
 | SDK-005 | Owner/pool close accounts for opening operations as real owned work | An in-flight open cannot outlive shutdown and return an unowned live replica/timer. G11 |
 | SDK-006 | Remove expiring directory renewal from ownership; process-lifetime OS lock and explicit capability revocation | Missing stale token can never be interpreted as successful ownership renewal; paused owner remains fenced by real exclusion. G08/G11 |
 | SDK-007 | Deterministic native owner close, with explicit outstanding operation/snapshot policy | Eviction releases actual environment/lock/resources, not just a JS wrapper. G11/G12 |
 | SDK-008 | Same root fix as REP-016: published read capability without raw writable Db | Direct accepted unlogged writes cannot disappear on refresh because that capability is absent. G01/G07/G11 |
 | SDK-009 | No arbitrary async callback under the serialized commit gate; submission takes sealed data | Nested await cannot wait on a gate held by the same user callback. G01/G07/G11 |
-| SDK-010 | Same root fix as REP-015: finite targets and propagated WorkContext | Deadline/cancellation reaches actual native/I/O work, not just Promise waiting. G07/G12 |
+| SDK-010 | Same root fix as REP-015: finite targets and propagated WorkContext | Deadline/cancellation reaches actual native/I/O work, not just fiber waiting; interruption cleanup joins or records incomplete native drain. G07/G12 |
 | SDK-011 | Cache/query budgets account for real resources; pressure uses LMDB, concurrent admission reserves actual work | No DB-size/RAM hard boundary; no uncounted opening storm or native-memory exemption. G05/G11/G12 |
 | SDK-012 | Same root fix as REP-012: no lifetime lease-token chain | Repeated use does not accumulate quadratic cleanup work. G11/G12 |
 | SDK-013 | Delete the entire public C API and its callback/tombstone mechanism; preserve the ownership property at Rust/Node boundaries | Affirmative crate/header/export/workflow/consumer removal checks; Node close/drain releases the engine/lock and long operation history has bounded resources. G00/G11/G13; FFI-* |
@@ -103,7 +103,7 @@ Gate IDs refer to [70 — Test and release gates](70-test-and-release-gates.md);
 | PERF-002 | Distinguish map size, file size, resident cache, plans/results and work; deterministic release and LMDB-backed scratch | >RAM and >32 GiB fixtures, tenant churn, retained result/plan/native owner accounting. G05/G11/G12/G15 |
 | PERF-003 | Count complete named-decision path, retries and checkpoint costs, not one winning PUT | Requests/bytes/time per terminal outcome at single/multiple writers; no old footprint speed claim. G15 |
 | PERF-004 | Coherent streamed checkpoint with validated suffix and bounded progress | Continuous-write checkpoint success, cancellation, peak disk/RAM and catch-up tests. G06/G10/G15 |
-| PERF-005 | Small bounded worker adapter for hosted native calls; explicit blocking embedded API | Event-loop/cross-tenant progress and cancellation under slow workloads. G11/G12/G15 |
+| PERF-005 | One bounded worker adapter for all core/log TypeScript work through Effect; only Rust keeps blocking calls | Event-loop/cross-tenant progress and cancellation under slow workloads. G11/G12/G15 |
 | ASS-001 | Rewrite actual semantic proof premises; old braid theorem is not used to certify the new log | Closed vocabulary/mutable-support model tests; real correspondence obligations in chapter 13. G03/G07 |
 | ASS-002 | Independent history model, deterministic failures and real process/backend tests | G07/G08/G10 with client-visible traces, not only final bytes |
 | ASS-003 | Rewrite current docs/examples for selected contract; label historical research | Compiled downstream examples and source/artifact compatibility matrix. G01/G13 |
@@ -120,7 +120,7 @@ These were discussed in the audit without separate implementation IDs. They are 
 | Source tests can use stale installed native output | Fresh-build and tarball-isolated consumer gates, artifact provenance; G01/G13/G16 |
 | Linux package label broader than its actual libc/CPU floor | Declare and run the exact minimum runtime matrix; G13 |
 | Semver peer compatibility is not protocol compatibility | Version-family and supported cross-release reopen/replay/mismatch fixtures; G02/G10/G13 |
-| Synchronous native calls can block unrelated JS work | Hosted async worker boundary; explicit embedded blocking contract; G11/G12 |
+| Synchronous native calls can block unrelated JS work | Core/log Effect worker boundary, bounded host conversion; blocking remains Rust-only; G11/G12 |
 | HTTP example ignores base64/event/method distinctions | Minimal correct request decoding/validation tests; no new web framework; G13/G14 |
 | Example lacks an application authorization boundary | Host-supplied trusted tenant resolver required/documented and tested; no invented built-in auth platform; G14 |
 | Example's intended IAM role is not necessarily attached; captured credentials can expire | Inspect deployed function role and authentication policy; rotate actual credentials during native operations. G08/G13/G14; RUN-13, S3-03 and chapter 33 deployment tests |

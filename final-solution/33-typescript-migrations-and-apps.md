@@ -13,7 +13,7 @@ schema.ts  →  canonical schema value  →  generated diff-plan data  →  nati
 authoring     existing typed lowering    checked repo artifacts      freeze/build/validate/cutover
 ~~~
 
-Generation evaluates the schema SDK's ordinary values; the migration runner loads only inert generated plan/snapshot data. Normal compiled app modules can import/construct schema and query values, as they do today—this is not a runtime TypeScript compiler or permission to run migration logic on open. “No parser” means no SQL/schema/query source-language parser; bounded canonical data decoding remains mandatory at storage and transport boundaries.
+Generation evaluates the schema SDK's ordinary values; the migration runner loads only inert generated plan/snapshot data. Normal compiled app modules can synchronously import/construct small schema, query and intent metadata values, as they do today—this is not a runtime TypeScript compiler or permission to run migration logic on open. Database/data operations, canonical generation/validation/hashing and resource cleanup are Effect-only, with scoped ownership; no metadata constructor hides that work. “No parser” means no SQL/schema/query source-language parser; bounded canonical data decoding remains mandatory at storage and transport boundaries.
 
 ## Build on the existing AST-first SDK
 
@@ -48,7 +48,7 @@ The high-level schema module is shared by generation and ordinary application qu
 
 Two ordinary commands are enough for authorship:
 
-1. A proposed bumbledb-log generate command loads schema.ts using the normal TypeScript build tool, compares its canonical schema against the last checked snapshot, and emits the new plan/manifest/snapshot files and small runtime expectation. Structural inference is automatic; ambiguity is reported with the exact typed intent required. A generation-time generateMigrations({ schema, hints }) API is the same operation with repository configuration supplying the prior checked snapshot.
+1. A proposed bumbledb-log generate command loads schema.ts using the normal TypeScript build tool, compares its canonical schema against the last checked snapshot, and emits the new plan/manifest/snapshot files and small runtime expectation. Structural inference is automatic; ambiguity is reported with the exact typed intent required. A generation-time yield* generateMigrations({ schema, hints, ...repositoryOptions }) API is the same bounded Effect operation with repository configuration supplying the prior checked snapshot.
 2. A proposed bumbledb-log check command repeats canonical generation in memory and compares outputs without changing files. CI rejects source/generated drift and edits to previously recorded plan identities.
 
 Use the existing TypeScript/bundler toolchain, not a custom compiler, parser, import-closure security framework or JavaScript purity checker. Generation may fail if authoring code cannot be evaluated; deployment never tries to evaluate it as a recovery strategy. Normal package integrity and release provenance still apply, but there is no separate executable migration bundle/source-helper hash/production transform launcher.
@@ -90,7 +90,7 @@ Application code imports App/Note from the ordinary schema module. Runtime queri
 | Data-only change | Generate from explicit typed declarative data intent; a schema diff cannot invent business meaning |
 | Unsupported transform | Refuse generation with a finite explanation; do not fall back to a handwritten callback or general scripting runtime |
 
-Typed rename/drop/backfill/seed intent is metadata or expression AST attached to the schema-evolution input. It is not an imperative migration file under another name. Fixed seed facts are canonical checked data, with explicitly supplied application IDs where needed. A migration cannot call an ID generator per row; any necessary mapping must be explicit and representable by the supported deterministic plan or generation refuses.
+Typed rename/drop/backfill/seed intent is metadata or expression AST attached to the schema-evolution input. It is not an imperative migration file under another name. Fixed seed facts become canonical checked data during bounded asynchronous generation, with explicitly supplied application IDs where needed; creating metadata does not synchronously ingest an unbounded seed dataset. Caller-owned generation input stays stable until the operation settles, with individual-cell/row and total limits as in chapters 30–32. A migration cannot call an ID generator per row; any necessary mapping must be explicit and representable by the supported deterministic plan or generation refuses.
 
 Generation checks complete source/target coverage internally and includes it in the plan. Removing handwritten coverage does not permit forgotten relations to disappear. Ambiguous ID remapping must cover every reference; ordinary changes preserve Id128 bytes. Changes in history incarnation never invalidate application IDs.
 
@@ -163,9 +163,11 @@ Before target publication, interruption restarts the incomplete operation from i
 
 ~~~ts
 // scripts/migrate.ts — proposed admin API, no migration logic here
+import { Effect } from "effect"
+import { NativeRuntime } from "@bjornpagen/bumbledb"
 import { migrate, migrationStatus } from "@bjornpagen/bumbledb-log/migrations"
 import plans from "../bumbledb/migrations"
-import { loadAdminBinding, loadStableOperationId, migrationPolicy } from "./admin-config"
+import { loadAdminBinding, loadStableOperationId, migrationPolicy, runtimePolicy, saveAdminOutcome } from "./admin-config"
 
 const binding = loadAdminBinding()
 const options = {
@@ -173,10 +175,15 @@ const options = {
   to: "0001-note-pinned",
   ...migrationPolicy
 }
-const status = await migrationStatus(binding, plans, options)
-const outcome = await migrate(binding, plans, options)
-// Persist the structured result in the restricted deployment job.
-// ReadyToSwitch contains deploymentBinding + activationRef; it does not activate.
+const program = Effect.gen(function*() {
+  const status = yield* migrationStatus(binding, plans, options)
+  const outcome = yield* migrate(binding, plans, options)
+  yield* saveAdminOutcome({ status, outcome })
+  return outcome
+})
+await Effect.runPromise(program.pipe(Effect.provide(NativeRuntime.layer(runtimePolicy))))
+// The retained operation ID is available even if the fiber is interrupted.
+// completed(ReadyToSwitch) contains binding + activationRef; it does not activate.
 ~~~
 
 The configuration helpers/policy are application-owned. The runner consumes generated data and calls the native executor; it does not load schema.ts or any migration callback. migrationStatus is bounded/read-only. Deployment never runs generation against whatever files happen to exist on the server.
@@ -189,7 +196,7 @@ The configuration helpers/policy are application-owned. The runner consumes gene
 
 Activation persists its one-time marker with the authority change. A lost response resolves by activationRef; repeated activation returns the recorded outcome/current access mode without thawing a subsequently Frozen or Deleted target. Applied/activation history does not expire with ordinary command receipts.
 
-Status distinguishes UpToDate, Pending, InProgress/Paused, ReadyToSwitch, Activated, Aborted, OutcomeUnknown and typed drift/refusal. Unknown publication is never resolved by assuming a timeout means failure. Same operation with a different plan/source refuses.
+Status distinguishes UpToDate, Pending, InProgress/Paused, ReadyToSwitch, Activated, Aborted, OutcomeUnknown and typed drift/refusal. Chapter 35 fixes their Effect signatures: read-only status has typed errors in E; mutating admin calls preserve completed/not-started/outcome-unknown certainty in A, with a retained operation reference across fiber interruption. Completed work may be a paused/refused report, not permission to cut over. Unknown publication is never resolved by assuming a timeout means failure. Same operation with a different plan/source refuses.
 
 Before activation, explicit abort first durably fences the planned target with a terminal cancellation under that target's publication authority, **then** thaws the matching frozen source. This races atomically against activation or delayed genesis, including when the target is absent; a read of NotActivated is not enough. Unknown cancellation leaves the source frozen, activation winning forbids automatic thaw, and a cancelled operation cannot resume. Chapter 22 specifies the existing S3 CAS/local namespace-lock mechanism and crash ordering. After activation, do not auto-rollback: even unchanged data state can have new receipts and external effects. Require an explicit decision/effect audit and reverse/repair plan or documented loss acceptance.
 
@@ -200,17 +207,33 @@ The application supplies its existing authenticated tenant-binding registry or o
 Use the same Node integration on local Apple Silicon, AWS Graviton or qualified Vercel Node x64. Schema/query values come from the ordinary typed SDK. A process-local bounded cache keeps independent request borrows; it is not a tenant discovery service or durable authority.
 
 ~~~ts
-// src/db/server.ts — proposed API; runtimePolicy is app-owned measured configuration
+// src/db/server.ts — proposal, using the installed Effect 4 idioms
 import "server-only"
+import { Context, Layer, ManagedRuntime } from "effect"
+import { NativeRuntime } from "@bjornpagen/bumbledb"
 import { TenantCache } from "@bjornpagen/bumbledb-log"
+import { App } from "./schema"
 import contract from "./runtime-contract.json"
 import { runtimePolicy } from "./runtime-policy"
 
+export class Databases extends Context.Service<Databases, TenantCache<typeof App>>()(
+  "app/Databases"
+) {
+  static readonly layer = Layer.effect(
+    Databases,
+    TenantCache.make(App, { ...runtimePolicy.cache, expected: contract })
+  )
+}
+
+const appLayer = Databases.layer.pipe(
+  Layer.provideMerge(NativeRuntime.layer(runtimePolicy.native))
+)
+const makeRuntime = () => ManagedRuntime.make(appLayer)
 const state = globalThis as typeof globalThis & {
   __bumbledb?: {
     policy: typeof runtimePolicy
     expected: typeof contract
-    cache: TenantCache
+    runtime: ReturnType<typeof makeRuntime>
   }
 }
 if (state.__bumbledb && (
@@ -218,53 +241,56 @@ if (state.__bumbledb && (
 )) {
   throw new Error("Database runtime settings changed; restart the development server")
 }
-state.__bumbledb ??= {
-  policy: runtimePolicy,
-  expected: contract,
-  cache: new TenantCache({ ...runtimePolicy, expected: contract })
-}
-export const databases = state.__bumbledb.cache
+state.__bumbledb ??= { policy: runtimePolicy, expected: contract, runtime: makeRuntime() }
+export const appRuntime = state.__bumbledb.runtime
 ~~~
 
-Construction is inert; acquisition opens a trusted binding. The policy declares cache directory, owner/operation limits, memory/disk/output/work budgets and refreshable credential source. Treat the imported policy descriptor, its nested static configuration and generated contract as immutable: configuration changes replace those values. The global slot compares those exact imported references, not a freshly spread options object or a serialization of callbacks/providers. A changed reference conservatively requires a full development-server restart, even if semantically equal. The same configured provider may refresh its internal credentials normally; live credential state is not static configuration. No manual revision counter or generic configuration-identity framework is needed. Platform/request policy numbers are measured settings, not new hard-coded engine size limits.
+Effect's ManagedRuntime is the framework boundary, not another Bumbledb runtime. Constructing it/layer descriptions opens nothing; running the first request builds the layer once. The app owns this process-lifetime runtime and disposes it at supported process shutdown using its disposeEffect (or the framework-boundary Promise dispose). There is no per-request ManagedRuntime or new runtime per tenant. Hot reload reuses the slot only for the identical immutable policy/contract references; changed configuration requires restart, never silently replacing live native owners. Runtime shutdown drains before replacement. A provider may refresh its credentials without replacing static configuration. Hard process death uses normal database recovery, not a claimed finalizer guarantee.
 
 ~~~ts
-// app/api/notes/[id]/route.ts — proposed Bumbledb API
-import { databases } from "@/src/db/server"
+// app/api/notes/[id]/route.ts — external Promise boundary only
+import { Effect } from "effect"
+import { encodeRows, Id128 } from "@bjornpagen/bumbledb"
+import { appRuntime, Databases } from "@/src/db/server"
 import { noteById } from "@/src/db/queries"
-import { requirePrincipal, bindingFor, parseId128 } from "@/src/auth"
+import { requirePrincipal, bindingFor } from "@/src/auth"
 import { requestPolicy } from "@/src/db/runtime-policy"
-import { encodeRows } from "@bjornpagen/bumbledb"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-export async function GET(request: Request, context: {
-  params: Promise<{ id: string }>
-}) {
-  const principal = await requirePrincipal(request)
-  const binding = await bindingFor(principal)
-  const id = parseId128((await context.params).id)
-  const work = requestPolicy(request)
-  await using db = await databases.acquire(binding, work)
-  await using snapshot = await db.snapshot({ ...work, consistency: { kind: "latest" } })
-  await using result = await snapshot.execute(noteById, { id }, work)
-  const rows = await result.collect({ maxBytes: work.outputBytes })
-  return Response.json(encodeRows(noteById.outputSchema, rows), {
-    headers: { "Cache-Control": "private, no-store" }
-  })
+const readNote = Effect.fn("readNote")(
+  function*(request: Request, rawId: string) {
+    const principal = yield* requirePrincipal(request)
+    const binding = yield* bindingFor(principal)
+    const id = yield* Effect.fromResult(Id128.fromHex(rawId))
+    const work = requestPolicy(request)
+    const databases = yield* Databases
+    const db = yield* databases.acquire(binding, work)
+    const snapshot = yield* db.snapshot({ ...work, consistency: { kind: "latest" } })
+    const result = yield* snapshot.execute(noteById, { id }, work)
+    const rows = yield* result.collect({ maxBytes: work.outputBytes })
+    const body = yield* encodeRows(noteById.outputSchema, rows, work)
+    return Response.json(body, { headers: { "Cache-Control": "private, no-store" } })
+  },
+  Effect.scoped
+)
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params
+  return appRuntime.runPromise(readNote(request, id), { signal: request.signal })
 }
 ~~~
 
-Auth, binding resolution, ID parsing and deadline policy are application-owned helpers, not invented SDK authentication. The policy includes request/platform cancellation and a cleanup margin. Match actual host cancellation behavior; an HTTP abort never undoes a published command.
+Auth/binding functions are application-owned Effects here, not SDK authentication. App code maps their typed errors to HTTP status before its run boundary; the abbreviated read example does not implement that policy. NativeRuntime is retained in the provided layer output for core codec work. The request signal enters only at ManagedRuntime.runPromise, producing fiber interruption, not a second database cancellation API. requestPolicy supplies measured byte/work limits, finite timeout and cleanup margin; framework serialization of the already-bounded body is measured separately. A write interrupted by client disconnect may already be published. Stable command reference and typed certainty/Cause handling belong in the app response/job layer.
 
-Writes construct the core's `ChangeSet`, then the log's `Command.seal({ scope, id, changes, precondition, result }, policy)` wraps that exact immutable native value. `ChangeSet`, schema/query/parameter/result values, `ExecutionPolicy`, errors and row codecs come from the core, not duplicate log exports or remarshal loops. Only identity/precondition/durable result metadata and publication controls belong to the log. Chapter 34 shows the complete insert/read/witnessed-correction examples.
+Writes use Effect-scoped ChangeSet.builder, yielded insert/delete/finish, then Command.seal wrapping the exact same native change. Inputs remain stable during execution until successful acceptance, not at effect construction. Core owns changes, schemas/queries/parameters/results, errors, policy, codecs and NativeRuntime; log never remarshals them. Scope finalizers drain or report incomplete native cleanup. Chapter 34 shows core/log usage, and chapter 35 fixes signatures, interruption, retries and the V8 batch/page conversion discipline. No database-owned application transaction callback is introduced.
 
 Application-owned Id128 values are generated once before the original request/command is sealed and retained with its stable request ID. A helper can use 16 cryptographically random bytes; UUIDv4 is also a 128-bit representation but has 122 random bits because of version/variant fields. Neither promises absolute uniqueness. Ordinary schema keys/references handle conflicts. No allocator, FreshRef or generated-ID receipt exists.
 
 Do not share tenant rows, snapshots or owners through Next/React/CDN caches keyed only by query text. Keep dynamic authenticated requests as the default; explicit app caching needs identity/schema/parameters/published-stamp keys and an invalidation policy. Writes also need the app's CSRF/origin/session protections and typed decided/unknown-outcome handling.
 
-CompleteResult/intoCursor provide bounded delivery after full execution, not early ordered feed pagination. Current exact-key get/internal range probes do not establish a public seek/order/limit API. Measure intended small per-student/per-user queries; do not add a lazy general query language or claim a giant result can yield its first ordered page cheaply.
+CompleteResult.collect is an Effect; CompleteResult.pages is the sole TS paged-delivery Stream after complete execution, not early ordered-feed pagination. First execution moves backing to a private scoped cursor; there is no public cursor/AsyncIterable twin. Early termination/interruption cleans up that cursor. Current exact-key get/internal range probes do not establish a public seek/order/limit API. Measure intended small per-student/per-user queries; do not add a lazy general query language or claim a giant result can yield its first ordered page cheaply.
 
 ## Native packaging on AWS and Vercel
 
@@ -357,10 +383,10 @@ These rows replace the earlier callback/purity/artifact-closure obligations unde
 | TS-MIG-07 Fusion semantics | Fused pending suffix equals ordered reference-plan evaluation, including intermediate errors/laws, seeds, f64 sum/mean and deterministic output. Five simple maps use one final materialization/publication; genuinely required private passes are explained/measured. |
 | TS-MIG-08 Concurrency/ambiguity | Same/different operations, changed planSetDigest, lost freeze/genesis replies and competing staging owners resolve to matching authority or typed refusal. No duplicate lineage or silent source substitution. |
 | TS-MIG-09 Cutover | Final target frozen until explicit activation; old writers fenced; activation marker survives receipt retirement. Same reference cannot thaw later Frozen/Deleted state. Race abort against activation/delayed genesis: durable target cancellation precedes source thaw, uncertain cancellation stays frozen, and cancelled operations cannot resume. No automatic rollback after activation/receipts/effects. |
-| TS-MIG-10 Tooling boundary | User writes schema/typed intent only; migration runner consumes generated plans/index without source paths/authoring/compiler. Ordinary app schema/query inference remains direct SDK use, with no mandatory runtime-type codegen. Generated expressions reuse the core IR/evaluator with the same grouped/projection/rounding/error semantics; no log/migration query DSL or handwritten callback/helper-purity framework/parser. CLI/direct API identical native outcomes; app bundle excludes admin plans. |
+| TS-MIG-10 Tooling boundary | User writes synchronous schema/typed intent metadata only; migration runner consumes generated plans/index without source paths/authoring/compiler. Ordinary app schema/query inference remains direct SDK use, with no mandatory runtime-type codegen. Generation/validation/hash/seed ingestion and migration execution are bounded Effect operations, not hidden metadata-constructor work. Generated expressions reuse the core IR/evaluator with the same grouped/projection/rounding/error semantics; no log/migration query DSL or handwritten callback/helper-purity framework/parser. CLI/direct API identical native outcomes; app bundle excludes admin plans. |
 | APP-01 Server boundary | Dev/build/production app imports can construct typed schema/query values but perform no opens/migrations/schema generation. Native/admin artifacts never enter client/Edge/public bundles. Ordinary schema imports preserve AST-first inference. |
 | APP-02 Auth/isolation | Anonymous/forged tenant/binding/stamp/direct-origin calls refuse before open. Concurrent per-user databases and Next/CDN caching never cross identity; writes demonstrate CSRF/auth and stable command/Id128 retry semantics. |
-| APP-03 Request ownership | Warm/cold/concurrent invocations, HMR, abort/deadline, owner fault and process death. Independent borrows release, result conversion stays bounded, no stale forever-cached writer or hidden native work. |
+| APP-03 Request ownership | Warm/cold/concurrent invocations, HMR, abort/deadline, owner fault and process death. Independent borrows release through Effect scopes; exact A/E/R, interrupted acquisition, request abort, finalizer Cause and retained command/admin references are tested; input acceptance, result/row conversion, finalization/hash and failed-draft drain stay bounded with measured event-loop delay. No Promise/sync/disposal twins, per-call runtime/layer, stale forever-cached writer or hidden native work. Both packages share NativeRuntime and V8-aware batch/page conversion. Metadata/schema/query construction remains inert and synchronous. |
 | APP-04 Actual targets | Packed native packages run on Apple Silicon, AWS Graviton and deployed Vercel Node x64 through pinned framework packaging. Verify .node/ABI/libc/CPU, tracing, optional deps and wrong-target rejection. No unsupported Node-version claim. |
 | APP-05 Real credentials/IAM | Actual AWS server role/bucket policy and separately configured Vercel credential path work and refresh. Cross-prefix/admin/list/delete denial and protected HEAD tested. Missing deployment access or unattached intended role is incomplete. |
 | APP-06 Host envelope | Measure full cold materialization, warm reuse, tenant churn, shared FDs/concurrency, disk/memory/output/deadline budgets and cleanup on actual hosts. Insufficient disk refuses; no ephemeral LocalHistory durability or network-filesystem escape claim. |

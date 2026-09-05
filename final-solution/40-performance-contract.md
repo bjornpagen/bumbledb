@@ -112,6 +112,10 @@ Set product latency budgets from these operations, including x86 serverless cold
 
 ## 7. Method and release discipline
 
+The Effect-only decision applies to **both** TypeScript packages. Chapter 35's V8 cost contract is binding: one Effect per native operation/page, one core-owned runtime, stable schema-shaped row objects, bounded owned conversion, no per-tuple fibers/spans/proxies, duplicate full-batch validation or log remarshal. Scope, Stream and Schema are chosen for their responsibilities, not treated as automatic performance optimizations.
+
+Add a matched direct-native/bridge versus Effect versus full-application measurement to the existing APP-PERF/FFI/API workload gates. This diagnostic baseline is not a second public SDK. Report JIT warmup, shape polymorphism, allocation/GC and external-memory retention, bytes copied, queue/native/conversion time and event-loop tail delay under core/local-log/hosted-log traffic. Test cancellation/noisy neighbors during both large ingestion and output conversion. Pure AST construction cannot hash/admit native schemas at import. A scheduler yield must demonstrably let timers/sockets run; microtask churn is not a fairness pass. Traced/untraced paths retain identical semantics. No numerical overhead claim is made before those measurements.
+
 1. Verify complete result sets, errors and final states against the independent oracle before timing. Share schemas/data, not the production algorithm that computes expected outcomes. Floats compare canonical bits, not epsilon; float intervals use the dense endpoint oracle.
 2. Bind the result to source, binary, dependency/toolchain, schema, dataset and configuration digests. Record CPU model/generation, OS, page size, memory/disk, Node version, enabled ISA and actual durability mode.
 3. Serialize **performance measurements** per machine. Independent code/test work may run in parallel; a pile of benchmark agents sharing the fabric does not produce several independent latency measurements.

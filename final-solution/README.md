@@ -18,12 +18,12 @@ The desired ordinary experience is simple: declare the theory, open the tenant, 
 | --- | --- | --- |
 | `bumbledb` | Canonical values, facts/laws, final-state admission, queries, LMDB transactions/snapshots | Rust and TypeScript; entire public C API deleted |
 | Internal Rust log implementation | Command/receipt machine, LocalHistory or HostedHistory authority, materialization, checkpoint/retention/recovery | Internal implementation, not a supported public Rust/C log SDK |
-| `bumbledb-log` TypeScript package | Owned command ergonomics, async lifecycle, repo-local migrations, backup/restore operations and server integration | TypeScript/Node only in 1.0 |
+| `bumbledb-log` TypeScript package | Owned command ergonomics, Effect-scoped lifecycle, repo-local migrations, backup/restore operations and server integration | TypeScript/Node only in 1.0 |
 | Application + Alchemy example | Authentication-to-tenant mapping, ordinary infrastructure configuration, explicit migration/cutover, business effects | A small working integration, not a fleet platform |
 
 The core never depends on the log. TypeScript does not implement a second durability protocol. Backup, restore and migration stay at the log layer. A few generic native storage primitives let the log atomically attach its own records without teaching the core about receipts or schema migrations.
 
-The API boundary is deliberately porous: the log imports the core's schemas, IDs/scalars, query templates, parameters, sealed `ChangeSet`, canonical codecs, read interface and results. It adds a command envelope and published-history metadata, not a second way to describe facts or query them. Both TypeScript packages use one native runtime; the Rust core remains log/AWS-independent. [34](34-sdk-syntax-and-composition.md) is the side-by-side Rust/core-TS/log-TS syntax review.
+The API boundary is deliberately porous: the log imports the core's schemas, IDs/scalars, query templates, parameters, sealed `ChangeSet`, canonical codecs, read interface and results. It adds a command envelope and published-history metadata, not a second way to describe facts or query them. Both TypeScript packages require Effect 4 and use one core-owned native runtime; the Rust core remains log/AWS-independent. [34](34-sdk-syntax-and-composition.md) is the side-by-side Rust/core-TS/log-TS syntax review.
 
 ### Local and hosted both stay small
 
@@ -45,6 +45,7 @@ This chooses tenant-wide atomicity and one recoverable order over braid vectors 
 - **Receipts resolve business uncertainty.** Commit, no-change, precondition failure and invariant rejection are named terminal outcomes. Timeouts after dispatch can be unknown. Retained receipt epochs support exact retries; expired IDs permanently refuse re-execution instead of becoming new requests.
 - **Entity IDs are ordinary data.** Application-owned 128-bit IDs replace FreshRef placeholders and 28-byte issued IDs. Generate once before sealing and retain the bytes across retries. Uniqueness has the usual UUID probability model, not a database issuance theorem; keys still enforce schema laws.
 - **C is gone from the product.** Hard-delete the C crate, public ABI, headers, examples and release machinery during implementation. Rust ownership and the internal Node bridge remain fully tested; native safety does not disappear with a public language surface.
+- **Effect is the only TypeScript execution API.** Pure schema/query/intent values stay synchronous; all work returns lazy Effects, all native resources are scoped, and completed answers deliver bounded page Streams. Both packages share core types/runtime, typed errors and V8-aware batch conversion. No Promise/sync/disposal twin or wrapper package. [35](35-effect-typescript-contract.md) fixes signatures, interruption, finalizers, dependency pins and consumer cutover.
 - **Ownership actually releases resources.** One owner, independent borrows, bounded workers and bounded managed handles replace GC-owned environments and shared-release mistakes. Legal Rust page borrows are never revoked underneath the caller.
 - **Retention is explicit.** Current recoverable state plus named restore points; hosted deletion uses epoch-qualified objects and a real publication barrier. No default 90-day/PITR clock promise. Independent backups are separate verified bytes under separate policy.
 - **Users write schemas, not migrations.** The TypeScript SDK builds schema/query AST directly. The schema generator emits canonical migration plans and checked repo-local history; the log executes them. No handwritten migration callbacks, SQL parser, coverage lists or helper-purity framework. Ambiguous rename/backfill/data-loss intent requires declarative input rather than a guess.
@@ -68,11 +69,11 @@ No replacement for LMDB, remote page-tree engine, analytics warehouse, public C 
 
 Semilattice laws are used where they apply: set deduplication/union, monotone frontiers and proved incremental reasoning. Keys and upper capacities are not generally union-closed; deletes and read-dependent intentions need more than union. Exact numeric accumulator merge is associative/commutative over disjoint binding partitions, **not idempotent**. [02](02-concurrency-and-semilattices.md) spells out the boundary and counterexamples.
 
-These scope cuts are the point. The test suite may be extensive; the production mechanisms should remain few. The final scope also defers snapshot compression/native snapshot-image acceleration, auxiliary large-command objects, async bulk-command ingestion, blocking TypeScript adapters and background cache warming. LocalHistory persists receipts/current state without a duplicate command-body log. None is needed to deliver the selected application contract.
+These scope cuts are the point. The test suite may be extensive; the production mechanisms should remain few. The final scope also defers snapshot compression/native snapshot-image acceleration, auxiliary large-command objects, separate bulk-command protocols and background cache warming. Ordinary bounded Effect ingestion is required. Promise/blocking TypeScript adapters are deleted from scope, not deferred. LocalHistory persists receipts/current state without a duplicate command-body log. None is needed to deliver the selected application contract.
 
 ## Read the proposal
 
-For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 34 → 60 → 70**. Chapter 34 is the owner's syntax checkpoint before implementation; the other chapters specify the exact subsystem contracts.
+For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 34 → 35 → 60 → 70**. Chapter 34 is the owner's syntax checkpoint before implementation; the other chapters specify the exact subsystem contracts.
 
 | Document | Contents |
 | --- | --- |
@@ -91,6 +92,7 @@ For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 34 → 6
 | [32 — FFI and packaging](32-ffi-and-release-packaging.md) | Complete C deletion, internal Node safety, platform matrix and clean release staging |
 | [33 — TypeScript migrations and apps](33-typescript-migrations-and-apps.md) | Schema-generated migration plans and Next.js/Alchemy/Vercel integration |
 | [34 — SDK syntax and composition](34-sdk-syntax-and-composition.md) | Side-by-side Rust core, TypeScript core and TypeScript log examples; literal primitive reuse and shared read helpers |
+| [35 — Effect TypeScript contract](35-effect-typescript-contract.md) | Complete Effect 4 core/log API, scoped lifetimes, typed errors, streams, interruption, V8 cost rules and actual consumer cutover |
 | [40 — Performance contract](40-performance-contract.md) | M2 Max evidence, application workload matrix and portable target qualification |
 | [41 — Storage and hashing](41-storage-and-hashing.md) | Indexed-SQLite storage gap, physical byte accounting, TigerBeetle AEGIS and right-sized hashes |
 | [50 — Audit closure matrix](50-audit-closure-matrix.md) | Every indexed bug/limitation plus architecture, operations, performance and assurance disposition |
@@ -112,8 +114,8 @@ This proposal is ambitious about quality and conservative about mechanism count.
 
 ## Final consistency verdict
 
-**GO for implementation; not yet qualified for release.** The final cross-review reconciled migration abort versus activation/genesis, terminal deletion versus GC roots, receipt lookup versus new-command admission, shared-worker costs, and client health/ownership. The corrections use the existing authority, transaction and ownership mechanisms; they do not introduce another service or protocol. Existing gate families now explicitly exercise those edges.
+**Effect API contract review before implementation resumes; not qualified for release.** The final cross-review reconciled migration abort versus activation/genesis, terminal deletion versus GC roots, receipt lookup versus new-command admission, shared-worker costs, and client health/ownership. The corrections use the existing authority, transaction and ownership mechanisms; they do not introduce another service or protocol. Existing gate families now explicitly exercise those edges.
 
 The owner's subsequent measure/query-composition decisions are integrated, and chapter 34 presents proposed SDK syntax for owner review before proceeding. That review does not claim these names already compile against 0.x. No source rewrite begins as part of this documentation phase.
 
-Start with one end-to-end slice: canonical facts → final-state judgment → LMDB → Free Join/query → TypeScript → reopen, followed by LocalHistory named retry and hosted lost-response recovery. Force the disk path against the warm path early. The remaining uncertainty is implementation/proof/performance evidence—not an invitation to expand the feature list. A new production mechanism must displace existing machinery or satisfy a selected contract that the existing mechanisms cannot; another paragraph or test family is not sufficient justification.
+Start with one end-to-end slice: canonical facts → final-state judgment → LMDB → Free Join/query → TypeScript → reopen, followed by LocalHistory named retry and hosted lost-response recovery. Force the disk path against the warm path early. The Effect-only API in chapters 34–35 is the current syntax checkpoint. The remaining uncertainty is implementation/proof/performance evidence—not an invitation to expand the feature list. A new production mechanism must displace existing machinery or satisfy a selected contract that the existing mechanisms cannot; another paragraph or test family is not sufficient justification.

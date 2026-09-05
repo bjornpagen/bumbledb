@@ -4,7 +4,9 @@ Status: **proposed 1.0 syntax, not current compile-tested exports**. These are t
 
 The aesthetic is deliberate: recognizable `schema!`/`query!` in Rust; ordinary `relation`/`schema` and `query(...).rule(...)` values in TypeScript; one small core change builder. The log adds a durable envelope around that change. It does not make the developer learn a second database API.
 
-TypeScript keeps ordinary values, promises and explicit disposal; neither package requires Effect or implements its own effect system. An Effect application can use its normal scoped acquisition and cancellation adapters around the same owners and operations. That is application composition, not a second database SDK or a promise that interruption undoes publication.
+TypeScript uses Effect 4 exclusively for work and Scope for resource ownership. No Promise/disposal twin or optional adapter survives. Plain schema/query/scalar descriptions remain ordinary values; Rust remains blocking/RAII. [35](35-effect-typescript-contract.md) fixes the complete signature, dependency, interruption and finalizer contract, grounded in version-matched Effect 4 docs and the actual explanation-store consumer.
+
+TypeScript is **async-only for database/data work**: ingestion/finalization, command sealing/hashing, storage, reads/queries/sessions, row codecs, result/cursor operations, inspect, maintenance and resource close/disposal. There are no synchronous twins. Small schema/query/scalar/intent constructors, inert layer/effect construction and reads of already-owned identity/witness/stamp metadata remain ordinary synchronous expressions with no hidden native data work. Rust retains its native blocking/RAII interface. This does not introduce sync or async application transaction callbacks.
 
 ## One home for each concept
 
@@ -17,7 +19,7 @@ TypeScript keeps ordinary values, promises and explicit disposal; neither packag
 | `ExecutionPolicy`, `DbError`, `Violations`, core apply outcomes | Publication certainty, receipts, remote policy and protocol errors |
 | Local `Db`, coherent snapshot, core-local witness | `LocalHistory`, `HostedHistory`, explicit generated migrations/backup/restore |
 
-`ChangeSet` is the public name of the engine's checked immutable delta, not an extra copy beside `CheckedDelta`. `Command.seal` retains that native value, checks its schema against the command scope and adds bounded log fields. The change grammar/normalization/value codec is core-owned; command envelope framing/digest is log-owned. No row-by-row JS re-marshaling occurs when a core change enters the log. Request idempotency and durable result metadata never leak into a core change.
+`ChangeSet` is the public name of the engine's checked immutable delta, not an extra copy beside `CheckedDelta`. Asynchronous `Command.seal` retains that native value, checks its schema against the command scope and adds bounded log fields. The change grammar/normalization/value codec is core-owned; command envelope framing/digest is log-owned and computed on the bounded native worker. No row-by-row JS re-marshaling occurs when a core change enters the log. Request idempotency and durable result metadata never leak into a core change.
 
 Rust examples import the query macro from `bumbledb` too. This is a direct re-export of the query proc-macro implementation, not a dependency on the existing `bumbledb-query` facade that already depends on the core. Macro packaging must preserve an acyclic crate graph. Rust core stays independent of log/AWS dependencies. The two TypeScript packages use chapter 32's one exact-version native artifact/loader; the core's public exports still contain no log internals.
 
@@ -133,140 +135,156 @@ The proposed `use stats = &attempt_stats;` clause binds an existing schema-bound
 
 All query templates are named ordinary variables and reusable across matching-schema core/log snapshots. Parameters are supplied at execution; no store-specific `prepare` object is required just to retain a schema-level template. Reusable execution sessions remain available for measured warm workloads, separately owned and snapshot-bound as in chapter 30.
 
-## One TypeScript read helper for core and log
+## One Effect read helper for core and log
+
+The following is proposed syntax, to be compiled against the successor packages. Imports named from local app modules are app-owned values/policies, not extra Bumbledb helpers. All database work is yielded; no generic adapter is needed.
 
 ```ts
-// reads.ts — imports only the core and the application's typed declarations
+// reads.ts
+import { Effect } from "effect"
 import type { ExecutionPolicy, Id128, QueryReader } from "@bjornpagen/bumbledb"
 import { attemptsFor } from "./queries"
 import { Learning } from "./schema"
 
-export async function readAttempts(
-  snapshot: QueryReader<typeof Learning>,
-  student: Id128,
-  work: ExecutionPolicy
-) {
-  await using result = await snapshot.execute(attemptsFor, { student }, work)
-  return await result.collect({ maxBytes: work.outputBytes })
-}
+export const readAttempts = Effect.fn("readAttempts")(
+  function*(reader: QueryReader<typeof Learning>, student: Id128, work: ExecutionPolicy) {
+    const result = yield* reader.execute(attemptsFor, { student }, work)
+    return yield* result.collect({ maxBytes: work.outputBytes })
+  },
+  Effect.scoped
+)
 ```
 
-`QueryReader<S>` is just the core's read-only `get`/`execute` interface with their inferred keys, parameters and results. It is not a database-supertype/capability framework. Core and log snapshots directly satisfy it, so this helper needs no overload, adapter or log import. `return await` finishes conversion before `await using` disposes the result.
+The function infers Effect of owned rows, core DbError, and no additional services. Its inner scope closes the completed result; it does not close the supplied reader. Core and log snapshots satisfy the exact same QueryReader. A log snapshot adds copied history stamps, never a writable Db escape. Missing exact-key reads return Effect Option, not nullable rows.
 
-Complete results are the same core owners in every mode. Execution finishes before delivery; `collect` returns a bounded owned array, while `intoCursor` transfers the sealed backing to one paged cursor. Neither is an early ordered-feed/top-k API. The helper's returned rows outlive the snapshot safely. A log snapshot adds `identity`, `decisionStamp`, `stateStamp` and freshness outside the `QueryReader` interface; it does not offer a writable core `Db` or a raw transaction.
+Large completed answers use the same core result through Effect Stream:
+
+```ts
+import { Stream } from "effect"
+
+// Inside a generator with a live snapshot; consume within its enclosing scope.
+const result = yield* snapshot.execute(attemptsFor, { student: studentId }, work)
+yield* result.pages({ pageBytes: pageBudget }).pipe(
+  Stream.runForEach(consumeOwnedPage)
+)
+```
+
+pageBudget and consumeOwnedPage are app inputs. Each emitted item is a bounded owned page array. The first stream run consumes the sealed result into a private scoped cursor; a second run refuses. Early termination/failure/interruption drains its backing. The entire query finishes before any page is delivered. This replaces the public TS cursor API, not the complete-result semantics or Rust consuming cursor. No Effect per tuple is needed.
 
 ## One TypeScript change, usable by either product
 
 ```ts
-import { ChangeSet, Id128, span } from "@bjornpagen/bumbledb"
+// changes.ts
+import { Effect } from "effect"
+import { ChangeSet, type Id128, type ExecutionPolicy, span } from "@bjornpagen/bumbledb"
 import { Attempt, Learning, Student } from "./schema"
 
-// Run once for the original app intent; retain these values across retries.
-const studentId = Id128.random()
-const attemptId = Id128.random()
-using changes = ChangeSet.builder(Learning, work)
-  .insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
-  .insert(Attempt, [{
-    id: attemptId, student: studentId, score: 0.9,
-    units: 1n, active: span(0n, 60n)
-  }])
-  .finish()
+export const newAttempt = Effect.fn("newAttempt")(
+  function*(studentId: Id128, attemptId: Id128, work: ExecutionPolicy) {
+    const draft = yield* ChangeSet.builder(Learning, work)
+    const active = yield* Effect.fromResult(span(0n, 60n))
+    yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
+    yield* draft.insert(Attempt, [{
+      id: attemptId, student: studentId, score: 0.9, units: 1n, active
+    }])
+    return yield* draft.finish()
+  }
+)
 ```
 
-`work` is the app's core `ExecutionPolicy`, including finite input/work/memory/output limits and cancellation/deadline. The builder is synchronous and database-free; it copies/checks values and normalizes add/remove once. Chain methods return that same owned builder; `finish` spends it. Any construction/ingestion/finalization failure also spends it and releases accumulated native buffers when the call unwinds, including getter exceptions; there is no partially reusable builder or GC-dependent failed-chain cleanup. Reentrant use refuses before mutation. Application IDs are generated before sealing, not substituted on conflict. The displayed relative seconds and random IDs are example data, not a database clock or uniqueness guarantee.
+This helper intentionally retains Scope in R: it returns a scoped ChangeSet, not a closed handle. Do not add Effect.scoped to a helper returning resources. The draft and successful result register independently in the caller's scope; finish moves native ownership and spends the draft. Ingestion effects return void and accept immutable-owned input on successful completion. Before completion the caller keeps input stable. Failure spends/drains the draft; reexecuting a mutation effect refuses. Chapter 35 fixes the late-completion/interruption and incomplete-drain cases.
 
-### TypeScript core: ordinary insert, read, witnessed replacement
+### Core: direct local admission, no receipt ceremony
 
 ```ts
-import { Db } from "@bjornpagen/bumbledb"
+import { Effect } from "effect"
+import { Db, Id128, NativeRuntime } from "@bjornpagen/bumbledb"
+import { Learning } from "./schema"
+import { newAttempt } from "./changes"
 import { readAttempts } from "./reads"
+import { localPath, runtimePolicy, work } from "./runtime-policy"
 
-await using db = await Db.create(localPath, Learning, work)
-const inserted = await db.apply(changes, { ...work, expected: { kind: "any" } })
-if (inserted.kind !== "accepted" && inserted.kind !== "no-change") {
-  throw new Error(`Insert refused: ${inserted.kind}`)
-}
+const program = Effect.scoped(Effect.gen(function*() {
+  const db = yield* Db.open(localPath, Learning, work)
+  const studentId = yield* Id128.random()
+  const attemptId = yield* Id128.random()
+  const changes = yield* newAttempt(studentId, attemptId, work)
+  const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+  if (outcome.kind !== "accepted" && outcome.kind !== "no-change") return outcome
+  const snapshot = yield* db.snapshot(work)
+  return { outcome, rows: yield* readAttempts(snapshot, studentId, work) }
+}))
 
-await using snapshot = await db.snapshot(work)
-const rows = await readAttempts(snapshot, studentId, work)
-const previous = await snapshot.get(Attempt, { id: attemptId }, work)
-if (!previous) throw new Error("Attempt is missing")
-
-using correction = ChangeSet.builder(Learning, work)
-  .delete(Attempt, [previous])
-  .insert(Attempt, [{ ...previous, score: 0.95 }])
-  .finish()
-const expected = snapshot.witness
-await snapshot.close()
-const corrected = await db.apply(correction, {
-  ...work, expected: { kind: "exact", at: expected }
-})
+// One boundary for this script; an Effect app supplies this layer in its app graph.
+await Effect.runPromise(program.pipe(Effect.provide(NativeRuntime.layer(runtimePolicy))))
 ```
 
-`Db.create` is explicit and refuses an existing store; `Db.open(localPath, Learning, work)` opens an existing one without creating on failure. Both are asynchronous in TypeScript. `apply` returns `accepted`, `no-change`, `invariant-rejected` with core `Violations`, or `moved`; operational failures reject with typed core `DbError`. The example rejects domain failure explicitly instead of pretending `await` implies admission. It finishes the owned correction and copies the witness, then closes the snapshot before writing to avoid needless reader/map-growth pressure; later `await using` disposal is idempotent. `corrected.kind === "moved"` means the core-local observation is stale, so read again before deciding a new correction. Neither result is a named receipt or a promise of retry deduplication after process failure.
+Db.open never creates on missing/error; Db.create is the explicit constructor. Id128.random is effectful entropy, not a pure constant. The example is a single original local intent, not a retry loop. Core apply returns semantic refusal in A and operational DbError in E. Production intent IDs live in the app's request/job record when cross-process retries matter; raw core apply has no log receipt guarantee.
 
-### TypeScript log: only the durable envelope changes
+### Log: only the durable envelope changes
 
 ```ts
-import { Command, LocalHistory, HostedHistory, RequestId } from "@bjornpagen/bumbledb-log"
+import { Effect } from "effect"
+import { Command, HostedHistory } from "@bjornpagen/bumbledb-log"
+import { Learning } from "./schema"
+import { newAttempt } from "./changes"
+import { hostedBinding, hostedOptions, submitOptions, work } from "./runtime-policy"
+import { intent, rememberCommandRef, rememberSubmitOutcome } from "./request-state"
 
-// Choose one constructor; bindings were explicitly initialized by the plan runner.
-await using history = await HostedHistory.open(hostedBinding, Learning, hostedOptions)
-// Local alternative: await using history = await LocalHistory.open(localBinding, Learning, localOptions)
-
-const requestId = RequestId.from(Id128.random()) // Generate/retain once for this intent.
-using command = Command.seal({
-  scope: history.identity,
-  id: { receiptEpoch: history.receiptEpoch, requestId },
-  changes,
-  precondition: { kind: "blind" },
-  result: { attempt: attemptId }
-}, work)
-const submitted = await history.submit(command, submitOptions)
-
-switch (submitted.kind) {
-  case "decided":
-    // Inspect receipt.outcome.kind: committed/no-change or a durable rejection.
-    console.log(submitted.receipt.outcome.kind, submitted.localHealth.kind)
-    break
-  case "not-submitted":
-  case "outcome-unknown":
-    // Persist/report this original reference; resolve or retry the SAME command.
-    console.log(submitted.kind, submitted.error.code)
-    break
-}
+const submitAttempt = Effect.scoped(Effect.gen(function*() {
+  const history = yield* HostedHistory.open(hostedBinding, Learning, hostedOptions)
+  // Local alternative: LocalHistory.open(localBinding, Learning, localOptions).
+  const changes = yield* newAttempt(intent.studentId, intent.attemptId, work)
+  const command = yield* Command.seal({
+    scope: history.identity,
+    id: intent.commandId,
+    changes,
+    precondition: { kind: "blind" },
+    result: { attempt: intent.attemptId }
+  }, work)
+  yield* rememberCommandRef(command.ref)
+  const outcome = yield* history.submit(command, submitOptions)
+  yield* rememberSubmitOutcome(outcome)
+  return outcome
+}))
 ```
 
-The constructor is the deployment choice; the rest is unchanged, not a dual-write recipe. `localOptions`/`hostedOptions` share the core execution policy and exact generated schema/history expectation; only hosted binding/transport/cache settings differ. The snapshot/read/submit calls have the same spelling on either history owner. `RequestId` is the log's nominal request role, explicitly constructed from the core's 128-bit value and retained for this original intent. It is not implicitly interchangeable with an entity ID and adds no allocator or second scalar codec. `submitOptions` extends the core policy only with log retry/admission/publication controls. `LogError` is simply core `DbError` or a log-only `ProtocolError`; core failures retain their original type/codes. A `decided` submission is not necessarily committed: inspect its terminal outcome. Its separate local health cannot change that outcome. The example logs tags/codes, not fact/violation/result payloads; retaining an unresolved command reference is a separate explicit application action.
+The app-owned intent already contains stable entity IDs and commandId (receiptEpoch plus RequestId). The two remember functions represent existing request/job persistence, not SDK hooks or required new services. A stored ref permits resolution; retain canonical Command.encode bytes too if the application must resubmit after process loss without rebuilding meaning. Do not replace the epoch or generate IDs on a retry. In the same scope, submit the same sealed command again when appropriate; never retry this whole construction program automatically.
 
-After a committed/no-change receipt, the read and read-dependent correction still use the same core helper and change builder:
+Submit is Effect<SubmitOutcome, never>, but interruption/defects can prevent delivery of A. Its decided/not-submitted/outcome-unknown cases retain the chapter 30 distinction. Decided includes committed/no-change **or durable rejection**. Later local/close failure cannot change that receipt. The retained ref remains available if scope finalization fails; no whole-request uninterruptible block is needed. Log imports the same core changes, QueryReader, policies, errors and codecs.
+
+### Witnessed correction: keep the read scope short
 
 ```ts
-await using snapshot = await history.snapshot({
-  ...work, consistency: { kind: "latest" }
-})
-const rows = await readAttempts(snapshot, studentId, work)
-const previous = await snapshot.get(Attempt, { id: attemptId }, work)
-if (!previous) throw new Error("Attempt is missing")
+import { Effect, Option, Schema } from "effect"
+import { ChangeSet } from "@bjornpagen/bumbledb"
+import { Command } from "@bjornpagen/bumbledb-log"
+import { Attempt, Learning } from "./schema"
 
-using correction = ChangeSet.builder(Learning, work)
-  .delete(Attempt, [previous])
-  .insert(Attempt, [{ ...previous, score: 0.95 }])
-  .finish()
-const expected = snapshot.stateStamp
-await snapshot.close()
-const correctionRequestId = RequestId.from(Id128.random()) // Retain for this new intent.
-using correctionCommand = Command.seal({
-  scope: history.identity,
-  id: { receiptEpoch: history.receiptEpoch, requestId: correctionRequestId },
-  changes: correction,
-  precondition: { kind: "exact-state", at: expected },
-  result: { attempt: attemptId }
+class AttemptMissing extends Schema.TaggedError<AttemptMissing>()("AttemptMissing", {}) {}
+
+// Inside a generator holding history, intent, and the app's work policy.
+const observed = yield* Effect.scoped(Effect.gen(function*() {
+  const snapshot = yield* history.snapshot({ ...work, consistency: { kind: "latest" } })
+  const previous = yield* snapshot.get(Attempt, { id: intent.attemptId }, work)
+  if (Option.isNone(previous)) return yield* new AttemptMissing({})
+  return { previous: previous.value, at: snapshot.stateStamp }
+}))
+
+const draft = yield* ChangeSet.builder(Learning, work)
+yield* draft.delete(Attempt, [observed.previous])
+yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.95 }])
+const changes = yield* draft.finish()
+const command = yield* Command.seal({
+  scope: history.identity, id: intent.correctionCommandId, changes,
+  precondition: { kind: "exact-state", at: observed.at },
+  result: { attempt: intent.attemptId }
 }, work)
-const corrected = await history.submit(correctionCommand, submitOptions)
+yield* rememberCommandRef(command.ref)
+const corrected = yield* history.submit(command, submitOptions)
 ```
 
-`correctionRequestId` is retained for this new app intent before dispatch. The owned correction and copied log stamp survive explicit snapshot close; no reader pin is held during remote publication. Inspect `corrected` using the same certainty/terminal-outcome distinction above. Do not substitute a core `snapshot.witness`, core generation or `DecisionStamp` for the log witness. State movement records a durable `precondition-failed` receipt. Reading again and changing the correction requires a new command ID; resolving uncertainty retries the original scope/ID/digest/change instead. There is no command-row builder or replayed application callback.
+The inner scope returns owned data and a copied stamp, not a native resource, and closes before publication. A new correction intent has its own retained command ID. A stale witness becomes a durable precondition-failed receipt; rereading/revising requires a new intent/ID. Core uses the same pattern with snapshot.witness and db.apply's exact expected generation instead of log StateStamp. No ambient transaction, callback replay, reserve/refill or silent mutable replica access remains.
 
 ## Rust core: local operations and ordinary RAII
 
@@ -341,4 +359,4 @@ The same core expression IR is available to the schema-generation planner's expl
 
 API-02/07/08/12 and PKG-03 must compile/typecheck and execute these examples from exact staged packages: same schema identity across Rust/TS, inferred keys/parameters/results, direct `QueryReader` reuse, same core change admitted through core/local/hosted variants, and no second native representation. Include compile-fail/untyped attacks on foreign-schema queries, Rust nominal entity-ID misuse, TS foreign field-variable domains, entity/request-role confusion, mutation through a read capability, a spent change/command and handles from another native runtime instance. Do not falsely assert separate TS entity brands that the schema did not declare. Equal package version alone does not establish shared native ownership.
 
-API-04/06 cover stable entity/request IDs and lost replies; core schema/query/value tests cover F64 and capacity/composition equivalence; TS-MIG-04/07/10 cover reused core IR and preserved intermediate semantics. Creation/open/migration examples use exactly these constructors and imports. Source scans alone are not passes, and no new SDK framework or gate family is needed.
+API-01/10 and FFI-05/07 additionally require successful Effect ingestion acceptance, mutation after completion, hostile mutation/detachment during yielded copying, oversized cells, getter/iterator exceptions, overlapping/reentrant calls, failed-draft native drain with GC disabled, and event-loop delay under large admitted ingestion/finalization/hash/row conversion. The declaration/export gate requires Effect-only work, scoped owners and completed-result page Streams, forbids Promise/sync/disposal twins, and preserves ordinary metadata constructors. Chapter 35 adds exact A/E/R, interruption, finalizer-Cause and reexecution obligations. API-04/06 cover stable entity/request IDs and lost replies; core schema/query/value tests cover F64 and capacity/composition equivalence; TS-MIG-04/07/10 cover reused core IR and preserved intermediate semantics. Creation/open/migration examples use exactly these constructors and imports. Source scans alone are not passes, and no new SDK framework or gate family is needed.

@@ -13,7 +13,7 @@ Status: proposed successor, 2026-09-04. This folder specifies implementation wor
 7. Backup, restore, and migration belong to **`bumbledb-log`**, not the core `bumbledb` engine. A consistent snapshot or admitted-state construction primitive is not a migration framework.
 8. Nightly Rust is welcome when it materially improves representation or the machine. Pin and test the compiler; do not add an unstable feature merely to advertise it.
 9. Every known audit issue gets an explicit successor disposition and regression obligation. All required release gates must pass before 1.0. A proposal, skipped test, or narrowed comment is not a fix.
-10. This phase writes and reviews the complete proposal, then commits and pushes the documentation before implementation begins.
+10. This resumed phase updates/reviews the proposal before further implementation. Preserve already-started implementation changes without extending them; commit/push only the reviewed documentation, never release/tag/publish from this phase.
 11. Rust and TypeScript are the only public languages. Hard-delete the entire C API, not merely deprecate it. The public log product is TypeScript-only; its authoritative implementation remains Rust internally. Internal Node native-boundary safety remains required.
 12. Users declare schemas/types, not migrations. A high-level TypeScript schema SDK generates canonical migration plans and repo-local history, in the same AST-first style as the query SDK. No SQL/textual query parser, authored migration callbacks, arbitrary JavaScript transformation runner, or new compiler framework.
 13. This is a per-student/per-user application database, not an analytics warehouse. Preserve excellent warm Free Join execution. Apple Silicon is the first optimization target; ARM Graviton and x86 Vercel are canonical portable targets, with specialized tuning deferred. The M2 Max ledger in `../bumblebench` supplies regime-specific evidence and methodology, not constants valid on every chip.
@@ -22,6 +22,9 @@ Status: proposed successor, 2026-09-04. This folder specifies implementation wor
 16. Keep exact grouped-measure constraints: count is unit weight, not a separate weighted-relation semantics. Normalize harmless supported spellings instead of policing them across languages. Preserve nonnegative exact measures, scalar grouping and meaningful domain restrictions; do not add time-varying occupancy, arbitrary query assertions or a weighted-bag engine.
 17. Queries produce typed relations that compose, including nonrecursive aggregate outputs used by later queries. Names do not mandate materialization. Preserve distinctness, group, rounding and error boundaries; retain only the positive finite-active-domain linear recursive fragment, with no value creation, negation or aggregation through its cycle.
 18. The usage layers are porous by reuse, not by bypassing authority. The log imports the core's values, schema/query/change types, canonical codecs, read interface, results and execution policy. It adds history identity and publication, never a parallel fact/query/change API. Rust and TypeScript syntax receive a side-by-side review before implementation.
+
+19. Both TypeScript packages are Effect 4-only, using the inspected exact RC dependency. Pure schema/query/intent metadata stays synchronous; database/codec/ingestion/hash work is bounded and off the event loop. Scope owns resources, completed answers use bounded page Streams, core primitives/runtime are shared by log. No Promise/sync/disposal compatibility twin or optional Effect adapter.
+20. Be idiomatic Effect and performance-aware together: operation/page granularity, stable V8 record shapes and bounded conversion; no per-row fibers/spans, redundant validation, layer-per-tenant workers or second cache. Measure overhead on the actual app workload.
 
 The two supplied copies of the representation-first essay are byte-identical (SHA-256 `a931bb20a66d732fa66961fac6e1e249f1fee1166f920f313ce46b943fd663c3`). Its principle is the design method here. Its historical quotations are user-supplied reference material, not newly verified scholarship.
 
@@ -77,6 +80,7 @@ These decisions coordinate the detailed chapters. They are proposed requirements
 | Retention | Current recoverable state and explicit retained restore points | No default time-window PITR claim or clock-driven deletion policy in the small 1.0 core |
 | Migration | Schema SDK → canonical schema diff → generated plan/history → log-layer staged execution and explicit cutover | No user-authored migration code; one final destination per pending batch, with necessary intermediate validation but no needless intermediate publication |
 | Public log surface | TypeScript only; one internal Rust machine | No public Rust/C log compatibility burden; core language surfaces remain independently qualified |
+| TypeScript execution | Exact Effect 4 dependency, core NativeRuntime service, scoped capabilities, completed-result page Streams | No manual wrapper layer, Promise/sync/AsyncDisposable twin or ambient transaction; schemas stay pure, native work stays bounded |
 | SDK reuse | Core primitives imported by log; one shared native Node artifact/runtime per supported platform/version | No log row builder, scalar codec, query dialect, result class or second addon engine; Rust core remains log/AWS-independent |
 
 Detailed algorithms, edge conditions, cost, and proof obligations belong to the corresponding chapters; this table does not prove them. In particular, a single HEAD alone does not solve garbage collection, uncertain publication, or receipt retention. Those need the precise restrictions in [20](20-durable-protocol.md) and [21](21-storage-and-retention.md).
@@ -93,6 +97,7 @@ An engine snapshot has its own local store identity and coherent local generatio
 
 The redesign earns its complexity budget by removing mechanisms:
 
+- Promise/synchronous TS data APIs, AsyncDisposable ownership, generic consumer Effect wrappers, separate TS cursor classes and duplicated cancellation channels disappear. The Effect runtime is supplied by the app; the native runtime still owns actual resources/work.
 - Per-braid vacant-slot arbitration, retired-slot recreation, scalar vector-sum checkpoint ordering, and split-commit result handling disappear from the public 1.0 log contract.
 - The independent TypeScript protocol machine disappears; the binding transports data and lifecycle operations to the Rust owner.
 - The entire public C product disappears: crate, headers, exports, examples, packaging and dedicated release workflow. Public Rust log bindings also disappear; internal Rust remains tested. TypeScript owns schema authoring and generated migration ergonomics, not another durability algorithm.

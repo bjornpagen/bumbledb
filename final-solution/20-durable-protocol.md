@@ -117,7 +117,7 @@ Core support is narrow: a checked prepared LMDB write, an owned read snapshot, a
 
 ## Commands and durable results
 
-A command is **owned canonical data**, sealed before asynchronous work. The core builder first owns, checks and normalizes its `ChangeSet`; log sealing retains that same immutable value and binds identity scope, schema, precondition and bounded declared result. It does not copy caller-owned mutable rows later, renormalize through another builder, or invent `LogFact`/`LogValue` primitives. The command digest includes the exact versioned core change encoding. No ordinary command callback is rerun, retained inside a lock, or replayed on another host. Repository migration assets are likewise canonical data: the TypeScript schema library generates a checked plan AST that the log's native executor applies in an explicit offline workflow, as specified in chapters 22 and 33. There is no arbitrary TypeScript transformation callback in either replay path.
+A command is **owned canonical data**, sealed before submission. Bounded Effect ingestion/finalization first owns, checks and normalizes the core `ChangeSet`; log sealing retains that same immutable value and binds identity scope, schema, precondition and bounded declared result. It does not copy caller-owned mutable rows later, renormalize through another builder, or invent `LogFact`/`LogValue` primitives. The command digest includes the exact versioned core change encoding. No ordinary command callback is rerun, retained inside a lock, or replayed on another host. Repository migration assets are likewise canonical data: the TypeScript schema library generates a checked plan AST that the log's native executor applies in an explicit offline workflow, as specified in chapters 22 and 33. There is no arbitrary TypeScript transformation callback in either replay path.
 
 Use the core's exact per-command normalization: additions A and removals D become `(A, D \ A)`, producing `(S \ D) ∪ A`. Repeated effects deduplicate; spelling the same fact in both sets means addition wins **within that one command**, independent of iteration order. This is not an add-wins merge rule between concurrent commands; their authoritative order is still the tenant head/LMDB transaction order.
 
@@ -178,6 +178,8 @@ The exact steps are:
 The prepared writer and any in-memory indexes must respect the same isolation. Merely hiding `Db::write` does not solve dirty reads. Cancellation after step 7 cannot unpublish a decision. Close revokes admission immediately, cancels bounded work, and settles or records uncertainty for dispatched attempts.
 
 ## Ambiguity: what a GET does and does not prove
+
+The public TypeScript operation is an Effect, not a Promise. Its returned certainty union describes what native execution established **if the fiber receives a value**. Fiber interruption/Effect timeout can instead produce Cause without a SubmitOutcome; no adapter may invent NotSubmitted from that fact. Copy/retain CommandRef before dispatch, cancel/join or explicitly account for incomplete native work, and resolve through the original authority after reopen. A finalizer failure cannot alter an observed terminal receipt. Chapter 35 owns this language-boundary contract; it adds no protocol authority or receipt type.
 
 | Observation | Correct conclusion |
 |---|---|

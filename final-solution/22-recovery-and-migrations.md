@@ -6,6 +6,8 @@ The boundary is explicit: `bumbledb` provides an owned consistent snapshot, chec
 
 ## Recovery has a small number of states
 
+All public TypeScript core/log work uses chapter 35's Effect/Scope contract. Recovery/admin orchestration is interruptible; only native ownership handshakes are masked. Preserve the original operation identity through interrupted freeze, build, publication, activation and abort. Scope cleanup releases resources, never implicitly thaws or activates history. An interrupted fiber's Cause is not proof an authority transition failed. Read-only status/verification and named durable outcomes retain the distinctions below.
+
 ```text
 Closed
   -> OwnedDirectory

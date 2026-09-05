@@ -178,6 +178,10 @@ There is no default time-window PITR guarantee in the selected 1.0 contract. Rem
 
 ## G11–G12 — Ownership, resource use and cancellation
 
+Both TypeScript packages implement chapter 35's exact Effect 4 contract. Extend existing API-01/04/07/10/12, RUN-01/02/04/10 and FFI-05/07/08 with lazy construction, one-shot mutation reruns, interrupted acquire/late native completion, scope/finalizer-installation races, explicit CloseReport versus CloseFailure defects, and known receipt followed by scope failure. A fiber's Cause.Interrupt is never a fabricated NotSubmitted; the pre-dispatch retained ref resolves after reopen. Full drain or explicitly retained Closing ownership is required, not listener removal. Use Effect 4 TestClock for JS time and real/injected native clocks for native deadlines; do not confuse them.
+
+Completed-result page Streams replace the public TS cursor API. Test first-run consuming transfer, second-run refusal, early take, downstream failure/interruption, EOF, oversized row, escaped scope, close/collect races and scratch reclamation with GC disabled. All rows are complete before page delivery. No per-row Effect work is required. Native workers and OS locks are tested independently of JS wrappers.
+
 Run borrowed-owner state sequences as finite model tests and through real Rust/Node handles. Include double release, stale release after reopen, close while opening, close with queued/in-flight requests, retained writer after close, foreign database/plan, use after callback scope, repeated dispose, leaked client borrow, registry slot reuse and generation exhaustion where relevant.
 
 Verify native environments and locks actually release after the last authorized operation drains—not merely that a wrapper throws `closed`. Repeated open/read/query/close cycles must reach a stable resource envelope. Track file descriptors, mapped files, native owners, temporary LMDBs, timers, threads and memory, not just JavaScript heap. Internal Node diagnostics must not retain payloads with historical operation count.
@@ -192,6 +196,8 @@ Include two-tenant noisy-neighbor tests: one slow/large request must not indefin
 
 ## G13–G14 — The artifact and public boundary are the product
 
+Packed TypeScript consumers must infer exact Effect A/E/R, Scope acquisitions, Option get results and typed core/log errors using the required **4.0.0-rc.112** peer dependency. Compile chapters 33–35 against fresh packages. Assert no Promise/sync/AsyncDisposable twin or `/effect` adapter, no core log import, and direct core QueryReader/ChangeSet/page Stream/codec/NativeRuntime reuse by log. Test the app's one ManagedRuntime with concurrent requests and abort at its outer framework boundary; no layer-per-call or second tenant cache. Generation/admin interruption tests use the original stable operation identity. These strengthen existing PKG-03, TS-MIG-10 and APP-03/08, not a parallel release system.
+
 Build exact native packages for the declared darwin-arm64, linux-arm64 and linux-x64 roster (or a deliberately revised prequalified roster). Exercise the oldest declared Node runtime as well as the current supported runtime. Linux artifacts run against their documented libc floor, not just any container with the word Linux on it.
 
 Pack from staging manifests. Install tarballs into empty consumers without workspace links/dev dependencies; import core and log separately; run create/write/read/query/reopen/close and hosted test-backend commands; typecheck downstream declarations and verify no public C artifact/export survives. Assert SDK/native ABI/format compatibility at load. Check mismatched artifacts refuse rather than calling the wrong export layout.
@@ -205,6 +211,8 @@ The Next.js/Alchemy and x86 Vercel Node examples are release consumers: producti
 Chapter 34's proposed Rust/core-TS/log-TS syntax becomes executable consumer fixtures during implementation. The same core schema, scalar/ID, ChangeSet, query template, typed parameters, QueryReader helper, CompleteResult and value codec must work across the applicable surfaces without application adapters or duplicate brands. Log-only identity/receipt/freshness remains outside core exports; a shared read helper gains no write capability. Generated migration plans invoke the same core query operators and stage semantics. API-12, FFI-08, PKG-03 and TS-MIG-04/07/10 own this evidence; no new SDK testing framework is required.
 
 ## G15 — Earn the performance claims without turning them into superstition
+
+Include the shared core/log Effect/V8 envelope from chapters 35/40: native/bridge/Effect/full-app decomposition, warmup, allocation/GC/external-memory plateau, bytes copied, stable versus polymorphic row shapes, event-loop tail delay, bounded page pull and cancellation under saturation. No per-tuple fibers/spans or duplicate log conversion. Correctness plus an Effect return type is not evidence that the main thread stays responsive.
 
 Use actual intended application schemas where available. Cover booking/capacity, knowledge/graph metadata, and event/ledger identity; report each schema's coordination domain and unsupported query shapes.
 
