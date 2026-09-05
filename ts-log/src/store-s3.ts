@@ -9,11 +9,10 @@
  * writes are not retried by the client: a re-sent PUT is an unproved
  * outcome. Body-stream failures wrap ErrStore.
  */
-
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { bytesEqual } from "#bytes.ts"
-import { wrapStore } from "#errors.ts"
+import { LogInputError, wrapStore } from "#errors.ts"
 import type { StoreKey } from "#keys.ts"
 import { parsePrefix } from "#keys.ts"
 import type { Create, Etag, Fetched, ObjectStore, Swap } from "#store.ts"
@@ -23,10 +22,8 @@ interface StaticKeys {
 	readonly secretAccessKey: string
 	readonly sessionToken?: string
 }
-
 /** Static keys, or a caller-owned refresh the store invokes before each signed request. */
 type S3Credentials = StaticKeys | (() => StaticKeys | Promise<StaticKeys>)
-
 interface S3Config {
 	readonly endpoint?: string
 	readonly region: string
@@ -34,26 +31,21 @@ interface S3Config {
 	readonly credentials: S3Credentials
 	readonly prefix?: string
 }
-
 const READ_ATTEMPTS = 6
 const READ_BASE_MS = 50
-const READ_CAP_MS = 2_000
-
+const READ_CAP_MS = 2000
 function asEtag(raw: string): Etag {
 	return raw as Etag
 }
-
 function joinPrefix(prefix: string, key: string): string {
 	return prefix.length === 0 ? key : `${prefix}/${key}`
 }
-
 async function resolveKeys(credentials: S3Credentials): Promise<StaticKeys> {
 	if (typeof credentials === "function") {
 		return await credentials()
 	}
 	return credentials
 }
-
 function httpStatus(error: unknown): number | undefined {
 	if (error === null || typeof error !== "object" || !("$metadata" in error)) {
 		return undefined
@@ -65,21 +57,12 @@ function httpStatus(error: unknown): number | undefined {
 	const status = metadata.httpStatusCode
 	return typeof status === "number" ? status : undefined
 }
-
-function asError(error: unknown): Error {
-	if (error instanceof Error) {
-		return error
-	}
-	return errors.new(String(error))
-}
-
 function etagOf(raw: string | undefined, op: string, key: StoreKey): Etag {
 	if (raw === undefined || raw.length === 0) {
-		throw wrapStore(errors.new("vendor omitted ETag"), `${op} ${key}`)
+		throw wrapStore(new LogInputError({ message: "vendor omitted ETag" }), `${op} ${key}`)
 	}
 	return asEtag(raw)
 }
-
 function isTransientName(error: unknown): boolean {
 	if (error === null || typeof error !== "object" || !("name" in error)) {
 		return true
@@ -95,7 +78,6 @@ function isTransientName(error: unknown): boolean {
 		name === undefined
 	)
 }
-
 /** 409 Conflict is Ambiguous, never a proved Exists or Moved. */
 function isUnprovedWrite(error: unknown): boolean {
 	const status = httpStatus(error)
@@ -110,7 +92,6 @@ function isUnprovedWrite(error: unknown): boolean {
 	}
 	return isTransientName(error)
 }
-
 function isRetryableRead(error: unknown): boolean {
 	const status = httpStatus(error)
 	if (status !== undefined) {
@@ -118,39 +99,37 @@ function isRetryableRead(error: unknown): boolean {
 	}
 	return isTransientName(error)
 }
-
 async function sleep(ms: number): Promise<void> {
 	await new Promise(function later(resolve) {
 		setTimeout(resolve, ms)
 	})
 }
-
 function jitteredMs(ceiling: number): number {
 	return Math.floor(Math.random() * (ceiling + 1))
 }
-
 async function bodyBytes(body: unknown, op: string, key: StoreKey): Promise<Uint8Array> {
-	const ran = await errors.try(
+	const ran = await Promise.resolve(
 		(async function consume() {
 			if (body === null || typeof body !== "object") {
-				throw errors.new("vendor omitted body stream")
+				throw new LogInputError({ message: "vendor omitted body stream" })
 			}
-			const stream = body as { transformToByteArray?: () => Promise<Uint8Array> }
+			const stream = body as {
+				transformToByteArray?: () => Promise<Uint8Array>
+			}
 			if (typeof stream.transformToByteArray !== "function") {
-				throw errors.new("vendor omitted body stream")
+				throw new LogInputError({ message: "vendor omitted body stream" })
 			}
 			return await stream.transformToByteArray()
 		})()
-	)
-	if (ran.error) {
-		throw wrapStore(ran.error, `${op} ${key}`)
+	).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+	if (Result.isFailure(ran)) {
+		throw wrapStore(ran.failure, `${op} ${key}`)
 	}
-	return ran.data
+	return ran.success
 }
-
 function s3Store(config: S3Config): ObjectStore {
 	if (config.region === "auto" && config.endpoint === undefined) {
-		throw errors.new("region auto needs an endpoint")
+		throw new LogInputError({ message: "region auto needs an endpoint" })
 	}
 	const prefix = parsePrefix(config.prefix ?? "")
 	const client = new S3Client({
@@ -168,51 +147,60 @@ function s3Store(config: S3Config): ObjectStore {
 		responseChecksumValidation: "WHEN_REQUIRED",
 		...(config.endpoint === undefined ? {} : { endpoint: config.endpoint, forcePathStyle: true })
 	})
-
 	function objectKey(key: StoreKey): string {
 		return joinPrefix(prefix, key)
 	}
-
 	type Load =
-		| { readonly tag: "hit"; readonly fetched: Fetched }
-		| { readonly tag: "miss" }
-		| { readonly tag: "retry"; readonly error: Error }
-		| { readonly tag: "fail"; readonly error: Error }
-
+		| {
+				readonly tag: "hit"
+				readonly fetched: Fetched
+		  }
+		| {
+				readonly tag: "miss"
+		  }
+		| {
+				readonly tag: "retry"
+				readonly error: unknown
+		  }
+		| {
+				readonly tag: "fail"
+				readonly error: unknown
+		  }
 	async function load(key: StoreKey): Promise<Load> {
-		const ran = await errors.try(
+		const ran = await Promise.resolve(
 			client.send(
 				new GetObjectCommand({
 					Bucket: config.bucket,
 					Key: objectKey(key)
 				})
 			)
-		)
-		if (ran.error) {
-			if (httpStatus(ran.error) === 404) {
+		).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		if (Result.isFailure(ran)) {
+			if (httpStatus(ran.failure) === 404) {
 				return { tag: "miss" }
 			}
-			const error = wrapStore(asError(ran.error), `get ${key}`)
-			return isRetryableRead(ran.error) ? { tag: "retry", error } : { tag: "fail", error }
+			const error = wrapStore(ran.failure, `get ${key}`)
+			return isRetryableRead(ran.failure) ? { tag: "retry", error } : { tag: "fail", error }
 		}
-		if (ran.data.Body === undefined) {
-			return { tag: "fail", error: wrapStore(errors.new("vendor omitted body"), `get ${key}`) }
+		if (ran.success.Body === undefined) {
+			return { tag: "fail", error: wrapStore(new LogInputError({ message: "vendor omitted body" }), `get ${key}`) }
 		}
-		const body = await errors.try(bodyBytes(ran.data.Body, "get", key))
-		if (body.error) {
-			return { tag: "retry", error: body.error }
-		}
-		const tag = await errors.try(
-			(async function etag() {
-				return etagOf(ran.data.ETag, "get", key)
-			})()
+		const body = await Promise.resolve(bodyBytes(ran.success.Body, "get", key)).then(Result.succeed, (cause: unknown) =>
+			Result.fail(cause)
 		)
-		if (tag.error) {
-			return { tag: "fail", error: tag.error }
+		if (Result.isFailure(body)) {
+			return { tag: "retry", error: body.failure }
 		}
-		return { tag: "hit", fetched: { bytes: body.data, etag: tag.data } }
+		const tag = await Promise.resolve(
+			(async function etag() {
+				return etagOf(ran.success.ETag, "get", key)
+			})()
+		).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		if (Result.isFailure(tag)) {
+			return { tag: "fail", error: tag.failure }
+		}
+		return { tag: "hit", fetched: { bytes: body.success, etag: tag.success } }
 	}
-
 	async function getOnce(key: StoreKey): Promise<Fetched | null> {
 		const step = await load(key)
 		if (step.tag === "hit") {
@@ -223,7 +211,6 @@ function s3Store(config: S3Config): ObjectStore {
 		}
 		throw step.error
 	}
-
 	async function retryGet(key: StoreKey): Promise<Fetched | null> {
 		let attempt = 0
 		for (;;) {
@@ -245,7 +232,6 @@ function s3Store(config: S3Config): ObjectStore {
 			await sleep(jitteredMs(ceiling))
 		}
 	}
-
 	async function proveCreate(key: StoreKey, attempted: Uint8Array): Promise<Create> {
 		const fetched = await retryGet(key)
 		if (fetched === null) {
@@ -256,7 +242,6 @@ function s3Store(config: S3Config): ObjectStore {
 		}
 		return { tag: "exists" }
 	}
-
 	async function proveSwap(key: StoreKey, attempted: Uint8Array): Promise<Swap> {
 		const fetched = await retryGet(key)
 		if (fetched === null) {
@@ -267,14 +252,12 @@ function s3Store(config: S3Config): ObjectStore {
 		}
 		return { tag: "moved" }
 	}
-
 	return {
 		async get(key) {
 			return await getOnce(key)
 		},
-
 		async getIfChanged(key, etag) {
-			const ran = await errors.try(
+			const ran = await Promise.resolve(
 				client.send(
 					new GetObjectCommand({
 						Bucket: config.bucket,
@@ -282,27 +265,26 @@ function s3Store(config: S3Config): ObjectStore {
 						IfNoneMatch: etag
 					})
 				)
-			)
-			if (ran.error) {
-				if (httpStatus(ran.error) === 304) {
+			).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+			if (Result.isFailure(ran)) {
+				if (httpStatus(ran.failure) === 304) {
 					return { tag: "unchanged" }
 				}
-				throw wrapStore(asError(ran.error), `getIfChanged ${key}`)
+				throw wrapStore(ran.failure, `getIfChanged ${key}`)
 			}
-			if (ran.data.Body === undefined) {
-				throw wrapStore(errors.new("vendor omitted body"), `getIfChanged ${key}`)
+			if (ran.success.Body === undefined) {
+				throw wrapStore(new LogInputError({ message: "vendor omitted body" }), `getIfChanged ${key}`)
 			}
 			return {
 				tag: "changed",
 				fetched: {
-					bytes: await bodyBytes(ran.data.Body, "getIfChanged", key),
-					etag: etagOf(ran.data.ETag, "getIfChanged", key)
+					bytes: await bodyBytes(ran.success.Body, "getIfChanged", key),
+					etag: etagOf(ran.success.ETag, "getIfChanged", key)
 				}
 			}
 		},
-
 		async putCreate(key, bytes) {
-			const ran = await errors.try(
+			const ran = await Promise.resolve(
 				client.send(
 					new PutObjectCommand({
 						Bucket: config.bucket,
@@ -311,24 +293,23 @@ function s3Store(config: S3Config): ObjectStore {
 						IfNoneMatch: "*"
 					})
 				)
-			)
-			if (ran.error) {
-				if (httpStatus(ran.error) === 412) {
+			).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+			if (Result.isFailure(ran)) {
+				if (httpStatus(ran.failure) === 412) {
 					return { tag: "exists" }
 				}
-				if (isUnprovedWrite(ran.error)) {
+				if (isUnprovedWrite(ran.failure)) {
 					return await proveCreate(key, bytes)
 				}
-				throw wrapStore(asError(ran.error), `putCreate ${key}`)
+				throw wrapStore(ran.failure, `putCreate ${key}`)
 			}
-			if (ran.data.ETag === undefined || ran.data.ETag.length === 0) {
+			if (ran.success.ETag === undefined || ran.success.ETag.length === 0) {
 				return await proveCreate(key, bytes)
 			}
-			return { tag: "created", etag: asEtag(ran.data.ETag) }
+			return { tag: "created", etag: asEtag(ran.success.ETag) }
 		},
-
 		async putSwap(key, bytes, etag) {
-			const ran = await errors.try(
+			const ran = await Promise.resolve(
 				client.send(
 					new PutObjectCommand({
 						Bucket: config.bucket,
@@ -337,37 +318,36 @@ function s3Store(config: S3Config): ObjectStore {
 						IfMatch: etag
 					})
 				)
-			)
-			if (ran.error) {
-				const status = httpStatus(ran.error)
+			).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+			if (Result.isFailure(ran)) {
+				const status = httpStatus(ran.failure)
 				if (status === 412 || status === 404) {
 					return { tag: "moved" }
 				}
-				if (isUnprovedWrite(ran.error)) {
+				if (isUnprovedWrite(ran.failure)) {
 					return await proveSwap(key, bytes)
 				}
-				throw wrapStore(asError(ran.error), `putSwap ${key}`)
+				throw wrapStore(ran.failure, `putSwap ${key}`)
 			}
-			if (ran.data.ETag === undefined || ran.data.ETag.length === 0) {
+			if (ran.success.ETag === undefined || ran.success.ETag.length === 0) {
 				return await proveSwap(key, bytes)
 			}
-			return { tag: "swapped", etag: asEtag(ran.data.ETag) }
+			return { tag: "swapped", etag: asEtag(ran.success.ETag) }
 		},
-
 		async delete(key) {
-			const ran = await errors.try(
+			const ran = await Promise.resolve(
 				client.send(
 					new DeleteObjectCommand({
 						Bucket: config.bucket,
 						Key: objectKey(key)
 					})
 				)
-			)
-			if (ran.error) {
-				if (httpStatus(ran.error) === 404) {
+			).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+			if (Result.isFailure(ran)) {
+				if (httpStatus(ran.failure) === 404) {
 					return
 				}
-				throw wrapStore(asError(ran.error), `delete ${key}`)
+				throw wrapStore(ran.failure, `delete ${key}`)
 			}
 		}
 	}

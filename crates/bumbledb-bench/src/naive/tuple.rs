@@ -28,6 +28,7 @@ fn rank(value: &Value) -> u8 {
         Value::Bool(_) => 0,
         Value::U64(_) => 1,
         Value::I64(_) => 2,
+        Value::F64(_) => 7,
         Value::String(_) => 3,
         Value::FixedBytes(_) => 4,
         Value::IntervalU64(..) => 5,
@@ -40,6 +41,7 @@ pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
+        (Value::F64(x), Value::F64(y)) => crate::float::compare(*x, *y),
         (Value::String(x), Value::String(y)) => x.cmp(y),
         (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
         (Value::IntervalU64(x), Value::IntervalU64(y)) => {

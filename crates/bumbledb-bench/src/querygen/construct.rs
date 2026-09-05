@@ -54,6 +54,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::GroundFold => ground_fold(&mut b, rng),
         Shape::Pack => pack(&mut b, rng),
         Shape::Measure => measure(&mut b, rng, cfg, domains),
+        Shape::ScalarFloat => scalar_float(&mut b, rng),
         Shape::Rules => unreachable!("multi-rule queries assemble their own query"),
     }
 
@@ -61,13 +62,51 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
 
     if !matches!(
         shape,
-        Shape::ExistenceWalk | Shape::DuWalk | Shape::ClosedJoin | Shape::GroundFold
+        Shape::ExistenceWalk
+            | Shape::DuWalk
+            | Shape::ClosedJoin
+            | Shape::GroundFold
+            | Shape::ScalarFloat
     ) {
         dress(&mut b, rng, cfg, domains);
 
         negate(&mut b, rng);
     }
     b
+}
+
+fn scalar_float(b: &mut Builder, rng: &mut Rng) {
+    use bumbledb::{CmpOp, Comparison, F64, FieldId, Term, Value};
+    let atom = b.add_atom(ids::FLOAT_VALUE);
+    let id = b.bind_var(atom, FieldId(0));
+    let value = b.bind_var(atom, FieldId(1));
+    let ops = [
+        CmpOp::Eq,
+        CmpOp::Ne,
+        CmpOp::Lt,
+        CmpOp::Le,
+        CmpOp::Gt,
+        CmpOp::Ge,
+    ];
+    let op = ops[usize::try_from(rng.range(ops.len() as u64)).expect("six comparisons")];
+    let rhs = if op == CmpOp::Eq && rng.chance(1, 3) {
+        Term::ParamSet(b.fresh_param())
+    } else if rng.chance(1, 2) {
+        Term::Param(b.fresh_param())
+    } else {
+        let bits = super::target::FLOAT_BITS[usize::try_from(
+            rng.range(super::target::FLOAT_BITS.len() as u64),
+        )
+        .expect("small vocabulary")];
+        Term::Literal(Value::F64(F64::from_bits(bits)))
+    };
+    b.conditions.push(Comparison {
+        op,
+        lhs: Term::Var(value),
+        rhs,
+    });
+    b.find_var(id);
+    b.find_var(value);
 }
 
 pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shape, GenTags) {

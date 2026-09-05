@@ -36,7 +36,7 @@ pub enum ArityExpectation {
 pub struct ArityCoverage {
     pub arity: usize,
     pub width: usize,
-    pub type_counts: [usize; 5],
+    pub type_counts: [usize; 6],
     pub selection: SelectionPlacement,
     pub equality: bool,
     pub reordered_key: bool,
@@ -308,6 +308,7 @@ fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
         ValueType::Bool => Value::Bool(salt & 1 == 0),
         ValueType::U64 => Value::U64(salt),
         ValueType::I64 => Value::I64(i64::try_from(salt).expect("small generated value")),
+        ValueType::F64 => Value::F64(bumbledb::F64::from_bits(salt)),
         ValueType::String => Value::String(format!("arity-{salt}").into()),
         ValueType::FixedBytes { len } => {
             Value::FixedBytes(vec![salt.to_le_bytes()[0]; usize::from(*len)].into())
@@ -332,8 +333,8 @@ fn mixed_type(index: usize) -> ValueType {
     }
 }
 
-fn type_counts(types: &[ValueType]) -> [usize; 5] {
-    let mut counts = [0; 5];
+fn type_counts(types: &[ValueType]) -> [usize; 6] {
+    let mut counts = [0; 6];
     for value_type in types {
         let index = match value_type {
             ValueType::U64 => 0,
@@ -341,6 +342,7 @@ fn type_counts(types: &[ValueType]) -> [usize; 5] {
             ValueType::Bool => 2,
             ValueType::String => 3,
             ValueType::FixedBytes { .. } => 4,
+            ValueType::F64 => 5,
             ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("the arity mix is scalar")
             }

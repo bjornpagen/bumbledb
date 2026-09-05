@@ -1,5 +1,5 @@
-import * as errors from "@superbuilders/errors"
 import { sealedFieldsOf } from "#closed.ts"
+import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { assertDeclarationOrderKey, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
@@ -429,9 +429,9 @@ interface ResolvedBindings {
  */
 function mintSlotOf(context: ChainContext, ref: AnyVar): ClassedField {
 	if (context.theory.relations[ref.owner.name] !== ref.owner) {
-		throw errors.new(
-			`the variable ${ref.label} was minted from a relation schema ${context.theory.name} does not declare — mint variables with v() from the schema's own relations`
-		)
+		throw new AuthoringError({
+			message: `the variable ${ref.label} was minted from a relation schema ${context.theory.name} does not declare — mint variables with v() from the schema's own relations`
+		})
 	}
 	return { field: ref.field, class: context.classes[ref.owner.name]?.[ref.column] }
 }
@@ -443,17 +443,19 @@ function membershipSet(
 ): { readonly name: string; readonly members: readonly string[] } {
 	const roster = rosterOf(field)
 	if (roster === undefined) {
-		throw errors.new(
-			`${context}: a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param (r.inSet)`
-		)
+		throw new AuthoringError({
+			message: `${context}: a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param (r.inSet)`
+		})
 	}
 	if (value.length === 0) {
-		throw errors.new(`${context}: an empty membership array selects nothing — write the query you mean`)
+		throw new AuthoringError({
+			message: `${context}: an empty membership array selects nothing — write the query you mean`
+		})
 	}
 	if (value.length === 1) {
-		throw errors.new(
-			`${context}: a one-element membership array is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
-		)
+		throw new AuthoringError({
+			message: `${context}: a one-element membership array is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
+		})
 	}
 	const seen = new Set<string>()
 	const members = value.map(function memberName(member) {
@@ -461,9 +463,9 @@ function membershipSet(
 			throw literalShapeError(context, `a ${roster.name} handle name (string)`, member)
 		}
 		if (seen.has(member)) {
-			throw errors.new(
-				`${context}: the membership array spells ${member} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
-			)
+			throw new AuthoringError({
+				message: `${context}: the membership array spells ${member} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
+			})
 		}
 		seen.add(member)
 		return member
@@ -492,7 +494,7 @@ function resolveBindings(
 			return candidate.name === fieldName
 		})
 		if (declared === undefined) {
-			throw errors.new(`${label} has no field ${fieldName}`)
+			throw new AuthoringError({ message: `${label} has no field ${fieldName}` })
 		}
 		const fieldClass = relationClasses?.[fieldName]
 		let bound: BindingEntry["term"]
@@ -503,9 +505,9 @@ function resolveBindings(
 					const mint = mintSlotOf(context, ref)
 					const positionSlot: ClassedField = { field: declared.field, class: fieldClass }
 					if (!joins(mint, positionSlot)) {
-						throw errors.new(
-							`${label}: the variable ${ref.label} joins domain-unequal fields — minted at ${renderFieldKind(mint)}, reused at ${renderFieldKind(positionSlot)} (a var joins only class-equal slots; bare pairs only with bare)`
-						)
+						throw new AuthoringError({
+							message: `${label}: the variable ${ref.label} joins domain-unequal fields — minted at ${renderFieldKind(mint)}, reused at ${renderFieldKind(positionSlot)} (a var joins only class-equal slots; bare pairs only with bare)`
+						})
 					}
 					bound = Object.freeze({ kind: "var" as const, ref })
 					vars.push(ref)
@@ -615,7 +617,9 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 		if (cond.op === "allen") {
 			const maskValue = cond.mask
 			if (typeof maskValue !== "number") {
-				throw errors.new("allen: the mask position takes a 13-bit mask number built from the ALLEN constants")
+				throw new AuthoringError({
+					message: "allen: the mask position takes a 13-bit mask number built from the ALLEN constants"
+				})
 			}
 			return Object.freeze({
 				kind: "cmp" as const,
@@ -632,14 +636,14 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 		})
 		return Object.freeze({ kind: "tree" as const, op: cond.op, children: Object.freeze(children) })
 	}
-	throw errors.new(
-		"a negated atom is not a condition-tree node — pass not(...) to where() directly, never inside and()/or()"
-	)
+	throw new AuthoringError({
+		message: "a negated atom is not a condition-tree node — pass not(...) to where() directly, never inside and()/or()"
+	})
 }
 
 function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCond): RuleBuildState {
 	if (typeof cond !== "object" || cond === null || !("cond" in cond)) {
-		throw errors.new("where() takes a comparison, an and()/or() tree, or a negated atom")
+		throw new AuthoringError({ message: "where() takes a comparison, an and()/or() tree, or a negated atom" })
 	}
 	if (cond.cond === "notInterior") {
 		const bindings: Readonly<Record<string, unknown>> = Object.fromEntries(
@@ -684,9 +688,9 @@ function advanceInterior(
 			continue
 		}
 		if (!isTerm(value) || value[term] !== "var") {
-			throw errors.new(
-				`interior ${target.name}: position ${key} takes a variable — bind literals and params through where()/match()`
-			)
+			throw new AuthoringError({
+				message: `interior ${target.name}: position ${key} takes a variable — bind literals and params through where()/match()`
+			})
 		}
 		resolved.push(Object.freeze({ key, ref: value }))
 	}
@@ -712,7 +716,7 @@ function asVarTerm(context: string, value: unknown): AnyVar {
 	if (isTerm(value) && value[term] === "var") {
 		return value
 	}
-	throw errors.new(`${context}: expected a variable`)
+	throw new AuthoringError({ message: `${context}: expected a variable` })
 }
 
 function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: unknown }): AggData {
@@ -727,12 +731,12 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 			if (isTerm(over) && over[term] === "var") {
 				return Object.freeze({ op: "fold" as const, fold: entry.agg, over })
 			}
-			throw errors.new(`find ${name} (${entry.agg}): takes a variable`)
+			throw new AuthoringError({ message: `find ${name} (${entry.agg}): takes a variable` })
 		}
 		case "pack":
 			return Object.freeze({ op: "pack" as const, over: asVarTerm(`find ${name} (pack)`, over) })
 		default:
-			throw errors.new(`find ${name}: unknown aggregate ${entry.agg}`)
+			throw new AuthoringError({ message: `find ${name}: unknown aggregate ${entry.agg}` })
 	}
 }
 
@@ -746,7 +750,9 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 				slot: undefined
 			})
 		}
-		throw errors.new(`find ${name}: a ${entry[term]} is not projectable — find takes variables or aggregates`)
+		throw new AuthoringError({
+			message: `find ${name}: a ${entry[term]} is not projectable — find takes variables or aggregates`
+		})
 	}
 	if (isAggregateEntry(entry)) {
 		return Object.freeze({
@@ -756,7 +762,7 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 			slot: undefined
 		})
 	}
-	throw errors.new(`find ${name}: not a find entry — find takes variables or aggregates`)
+	throw new AuthoringError({ message: `find ${name}: not a find entry — find takes variables or aggregates` })
 }
 
 /**
@@ -764,9 +770,9 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
  * § orderability): a closed reference is equality-and-membership only.
  */
 function closedOrderError(context: string, position: string, vocabulary: string): Error {
-	return errors.new(
-		`${context}: ${position} is a ${vocabulary} reference — declaration order is an accident, not semantics: vocabularies do not order (equality, membership, and counting remain)`
-	)
+	return new AuthoringError({
+		message: `${context}: ${position} is a ${vocabulary} reference — declaration order is an accident, not semantics: vocabularies do not order (equality, membership, and counting remain)`
+	})
 }
 
 function isOrderOp(op: CmpKind | "binding"): op is "lt" | "le" | "gt" | "ge" | "pointIn" {
@@ -775,15 +781,17 @@ function isOrderOp(op: CmpKind | "binding"): op is "lt" | "le" | "gt" | "ge" | "
 
 function assertBound(where: string, bound: ReadonlySet<AnyVar>, ref: AnyVar): void {
 	if (!bound.has(ref)) {
-		throw errors.new(`${where}: the variable ${ref.label} is not bound by a relation atom of the rule`)
+		throw new AuthoringError({
+			message: `${where}: the variable ${ref.label} is not bound by a relation atom of the rule`
+		})
 	}
 }
 
 function assertInterval(where: string, ref: AnyVar): void {
 	if (ref.field.kind !== "interval") {
-		throw errors.new(
-			`${where}: ${ref.label} is not interval-typed — the measure is defined over interval-typed variables only`
-		)
+		throw new AuthoringError({
+			message: `${where}: ${ref.label} is not interval-typed — the measure is defined over interval-typed variables only`
+		})
 	}
 }
 
@@ -796,7 +804,9 @@ function assertNotClosed(where: string, position: string, ref: AnyVar): void {
 
 function assertNumeric(where: string, position: string, ref: AnyVar): void {
 	if (ref.field.kind !== "u64" && ref.field.kind !== "i64") {
-		throw errors.new(`${where}: ${position} ${ref.label} is ${ref.field.kind}, not numeric — a fold reads u64/i64 only`)
+		throw new AuthoringError({
+			message: `${where}: ${position} ${ref.label} is ${ref.field.kind}, not numeric — a fold reads u64/i64 only`
+		})
 	}
 }
 
@@ -850,9 +860,9 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 			const lhs = mintSlotOf(context, cond.lhs.ref)
 			const rhs = mintSlotOf(context, cond.rhs.ref)
 			if (!fieldJoins(lhs, rhs)) {
-				throw errors.new(
-					`${label}: ${cond.op.kind}(${cond.lhs.ref.label}, ${cond.rhs.ref.label}) unifies domain-unequal fields — ${cond.lhs.ref.label} bound at ${renderFieldKind(lhs)}, ${cond.rhs.ref.label} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
-				)
+				throw new AuthoringError({
+					message: `${label}: ${cond.op.kind}(${cond.lhs.ref.label}, ${cond.rhs.ref.label}) unifies domain-unequal fields — ${cond.lhs.ref.label} bound at ${renderFieldKind(lhs)}, ${cond.rhs.ref.label} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
+				})
 			}
 		}
 		return
@@ -882,23 +892,23 @@ function validateInterior(
 	})
 	for (const key of keys) {
 		if (!headNames.includes(key)) {
-			throw errors.new(
-				`${label}: interior ${item.target.name} binds ${key}, not a head column of ${item.target.name} (head columns: ${headNames.join(", ")})`
-			)
+			throw new AuthoringError({
+				message: `${label}: interior ${item.target.name} binds ${key}, not a head column of ${item.target.name} (head columns: ${headNames.join(", ")})`
+			})
 		}
 	}
 	for (const name of headNames) {
 		if (!keys.includes(name)) {
-			throw errors.new(
-				`${label}: interior ${item.target.name} omits the head column ${name} — an interior join binds every head column of ${item.target.name}`
-			)
+			throw new AuthoringError({
+				message: `${label}: interior ${item.target.name} omits the head column ${name} — an interior join binds every head column of ${item.target.name}`
+			})
 		}
 	}
 	for (const binding of item.bindings) {
 		if (item.kind === "negatedInterior" && !bound.has(binding.ref)) {
-			throw errors.new(
-				`${label}: negated interior ${item.target.name} names the variable ${binding.ref.label}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
-			)
+			throw new AuthoringError({
+				message: `${label}: negated interior ${item.target.name} names the variable ${binding.ref.label}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
+			})
 		}
 		const headColumn = headColumns.find(function byName(column) {
 			return column.name === binding.key
@@ -908,9 +918,9 @@ function validateInterior(
 		}
 		const mint = mintSlotOf(context, binding.ref)
 		if (!fieldJoins(headColumn.slot, mint)) {
-			throw errors.new(
-				`${label}: interior ${item.target.name} joins the variable ${binding.ref.label} (${renderFieldKind(mint)}) at head column ${binding.key} (${renderFieldKind(headColumn.slot)}) — a var joins only class-equal slots; bare pairs only with bare`
-			)
+			throw new AuthoringError({
+				message: `${label}: interior ${item.target.name} joins the variable ${binding.ref.label} (${renderFieldKind(mint)}) at head column ${binding.key} (${renderFieldKind(headColumn.slot)}) — a var joins only class-equal slots; bare pairs only with bare`
+			})
 		}
 	}
 }
@@ -918,7 +928,7 @@ function validateInterior(
 function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: readonly FindColumn[]): RuleData {
 	const label = contextLabel(context)
 	if (rawColumns.length === 0) {
-		throw errors.new(`${label}: a find needs at least one entry`)
+		throw new AuthoringError({ message: `${label}: a find needs at least one entry` })
 	}
 	const columns = rawColumns.map(function enrichColumn(column): FindColumn {
 		assertDeclarationOrderKey(`${label} find column`, column.name)
@@ -930,9 +940,9 @@ function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: 
 		if (item.kind === "negated") {
 			for (const binding of item.atom.bindings) {
 				if (binding.term.kind === "var" && !state.bound.has(binding.term.ref)) {
-					throw errors.new(
-						`${label}: negated ${item.atom.relation.name} atom binds the variable ${binding.term.ref.label} at position ${binding.field}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
-					)
+					throw new AuthoringError({
+						message: `${label}: negated ${item.atom.relation.name} atom binds the variable ${binding.term.ref.label} at position ${binding.field}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
+					})
 				}
 			}
 		}
@@ -997,26 +1007,30 @@ function lookupDerived(context: ChainContext, name: string): DerivedTable {
 	})
 	if (interior !== undefined) {
 		if (context.kind === "interior" && name === context.self) {
-			throw errors.new(
-				`interior ${name}: an interior does not read itself — declaration order is topological (a self-read is InteriorNotPrior)`
-			)
+			throw new AuthoringError({
+				message: `interior ${name}: an interior does not read itself — declaration order is topological (a self-read is InteriorNotPrior)`
+			})
 		}
 		return interior
 	}
 	const rec = "rec" in context ? context.rec : undefined
 	if (rec !== undefined && rec.name === name) {
 		if (context.kind === "interior") {
-			throw errors.new(`interior ${context.self}: interiors cannot read the rec — this cut's interiors are a prefix`)
+			throw new AuthoringError({
+				message: `interior ${context.self}: interiors cannot read the rec — this cut's interiors are a prefix`
+			})
 		}
 		if (context.kind === "rec-base") {
-			throw errors.new(`rec ${rec.name}: a base arm does not read the rec — self-atoms belong on rec arms`)
+			throw new AuthoringError({
+				message: `rec ${rec.name}: a base arm does not read the rec — self-atoms belong on rec arms`
+			})
 		}
 		if (!isRecHead(rec)) {
-			throw errors.new(`rec ${rec.name}: rec arms resolve the rec head after base arms seal it`)
+			throw new AuthoringError({ message: `rec ${rec.name}: rec arms resolve the rec head after base arms seal it` })
 		}
 		return rec
 	}
-	throw errors.new(`${contextLabel(context)}: no derived table named ${name} is in scope`)
+	throw new AuthoringError({ message: `${contextLabel(context)}: no derived table named ${name} is in scope` })
 }
 
 function interiorAdvance(
@@ -1035,9 +1049,9 @@ function notInteriorAdvance(
 	bindings: Readonly<Record<string, unknown>>
 ): RuleBuildState {
 	if (context.kind === "rec-base" || context.kind === "rec-arm") {
-		throw errors.new(
-			`rec ${context.self.name}: a rec rule negates no table — self-negation is negation through the cycle (a finished set is what keeps the operator monotone), and a finished table's fold belongs in the main rules`
-		)
+		throw new AuthoringError({
+			message: `rec ${context.self.name}: a rec rule negates no table — self-negation is negation through the cycle (a finished set is what keeps the operator monotone), and a finished table's fold belongs in the main rules`
+		})
 	}
 	return advanceInterior(state, lookupDerived(context, name), bindings, "negatedInterior")
 }
@@ -1051,9 +1065,9 @@ function findColumns(context: ChainContext, entries: Readonly<Record<string, unk
 		}
 		if (derivedHead && !(isTerm(entry) && entry[term] === "var")) {
 			const who = context.kind === "interior" ? `interior ${context.self}` : `rec ${context.self.name}`
-			throw errors.new(
-				`${who}: a rec head projects bound variables only — aggregates and the measure read finished sets (unwritable here)`
-			)
+			throw new AuthoringError({
+				message: `${who}: a rec head projects bound variables only — aggregates and the measure read finished sets (unwritable here)`
+			})
 		}
 		columns.push(findColumnOf(name, entry))
 	}
@@ -1112,7 +1126,7 @@ function makeQueryRuleScope<Rels extends SchemaRelations, Classes extends Schema
 ): QueryRuleScope<Rels, Classes> {
 	const raw = makeRawScope({ kind: "query", classes: theory.classes, theory, ...env })
 	if (!isTypedScope<QueryRuleScope<Rels, Classes>>(raw)) {
-		throw errors.new("query rule builder construction incomplete")
+		throw new SdkInvariantError({ message: "query rule builder construction incomplete" })
 	}
 	return raw
 }
@@ -1124,7 +1138,7 @@ function makeInteriorRuleScope<Rels extends SchemaRelations, Classes extends Sch
 ): InteriorRuleScope<Rels, Classes> {
 	const raw = makeRawScope({ kind: "interior", self, classes: theory.classes, theory, ...env })
 	if (!isTypedScope<InteriorRuleScope<Rels, Classes>>(raw)) {
-		throw errors.new("interior rule builder construction incomplete")
+		throw new SdkInvariantError({ message: "interior rule builder construction incomplete" })
 	}
 	return raw
 }
@@ -1164,7 +1178,7 @@ function makeRecRuleScope<Rels extends SchemaRelations, Classes extends SchemaCl
 					...env
 				})
 	if (!isTypedScope<RecRuleScope<Rels, Classes>>(raw)) {
-		throw errors.new("rec rule builder construction incomplete")
+		throw new SdkInvariantError({ message: "rec rule builder construction incomplete" })
 	}
 	return raw
 }
@@ -1230,22 +1244,22 @@ function paramRegistryOf(
 				continue
 			}
 			if ((existing.members === undefined) !== (use.members === undefined)) {
-				throw errors.new(
-					`query param ${use.name} collides with a membership array's registry entry — name the param differently`
-				)
+				throw new AuthoringError({
+					message: `query param ${use.name} collides with a membership array's registry entry — name the param differently`
+				})
 			}
 			if (existing.shape !== use.shape) {
-				throw errors.new(
-					`query param ${use.name} is used both as a ${existing.shape} param and a ${use.shape} param — one name, one shape`
-				)
+				throw new AuthoringError({
+					message: `query param ${use.name} is used both as a ${existing.shape} param and a ${use.shape} param — one name, one shape`
+				})
 			}
 			if (existing.anchor !== undefined && use.anchor !== undefined) {
 				const registered = rosterOf(existing.anchor)
 				const anchored = rosterOf(use.anchor)
 				if (registered !== anchored) {
-					throw errors.new(
-						`query param ${use.name} is anchored at ${renderParamAnchor(registered)} and at ${renderParamAnchor(anchored)} — a closed-anchored param translates handle names through ONE roster (one name, one domain); name the params differently`
-					)
+					throw new AuthoringError({
+						message: `query param ${use.name} is anchored at ${renderParamAnchor(registered)} and at ${renderParamAnchor(anchored)} — a closed-anchored param translates handle names through ONE roster (one name, one domain); name the params differently`
+					})
 				}
 			}
 			if (existing.anchor === undefined && use.anchor !== undefined) {
@@ -1274,14 +1288,14 @@ function paramRegistryOf(
 		order.map(function entryOf(name): ParamEntry {
 			const entry = byName.get(name)
 			if (entry === undefined) {
-				throw errors.new(`query param ${name} lost its registry entry`)
+				throw new AuthoringError({ message: `query param ${name} lost its registry entry` })
 			}
 
 			let membership: QueryParam | undefined
 			if (entry.members !== undefined) {
 				const anchor = entry.anchor
 				if (anchor === undefined) {
-					throw errors.new(`query param ${name} lost its membership anchor`)
+					throw new AuthoringError({ message: `query param ${name} lost its membership anchor` })
 				}
 				membership = Object.freeze({
 					kind: "set" as const,
@@ -1316,30 +1330,30 @@ interface RawQuery {
 function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly FindColumn[] {
 	const first = rules[0]
 	if (first === undefined) {
-		throw errors.new(`${label} needs at least one rule`)
+		throw new AuthoringError({ message: `${label} needs at least one rule` })
 	}
 	const signature = first.finds.map(headSignature).join(", ")
 	rules.forEach(function verifyHead(rule, index) {
 		const candidate = rule.finds.map(headSignature).join(", ")
 		if (candidate !== signature) {
-			throw errors.new(
-				`every rule of ${label} derives the same head — rule 0 finds (${signature}), rule ${index} finds (${candidate})`
-			)
+			throw new AuthoringError({
+				message: `every rule of ${label} derives the same head — rule 0 finds (${signature}), rule ${index} finds (${candidate})`
+			})
 		}
 		rule.finds.forEach(function verifyClosedSlice(column, position) {
 			const lead = first.finds[position]
 			if (lead !== undefined && column.closed !== lead.closed) {
-				throw errors.new(
-					`every rule of ${label} derives the same head — the head column ${lead.name} is ${renderClosedSlice(lead.closed)} in rule 0 but ${renderClosedSlice(column.closed)} in rule ${index} (one column decodes through one roster)`
-				)
+				throw new AuthoringError({
+					message: `every rule of ${label} derives the same head — the head column ${lead.name} is ${renderClosedSlice(lead.closed)} in rule 0 but ${renderClosedSlice(column.closed)} in rule ${index} (one column decodes through one roster)`
+				})
 			}
 			if (lead === undefined) {
 				return
 			}
 			if (lead.slot !== undefined && column.slot !== undefined && !headFieldJoins(lead.slot, column.slot)) {
-				throw errors.new(
-					`every rule of ${label} derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(lead.slot)} in rule 0 but at ${renderFieldKind(column.slot)} in rule ${index} (a head column joins class-equal slots; same-wire u64 admits a bare side, and the merged head is bare)`
-				)
+				throw new AuthoringError({
+					message: `every rule of ${label} derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(lead.slot)} in rule 0 but at ${renderFieldKind(column.slot)} in rule ${index} (a head column joins class-equal slots; same-wire u64 admits a bare side, and the merged head is bare)`
+				})
 			}
 		})
 	})
@@ -1366,9 +1380,9 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 }
 
 function afterMainError(what: string): Error {
-	return errors.new(
-		`query: ${what} after a main rule is unwritable — declaration order is interiors, then rec, then main`
-	)
+	return new AuthoringError({
+		message: `query: ${what} after a main rule is unwritable — declaration order is interiors, then rec, then main`
+	})
 }
 
 function makeRawQuery(
@@ -1380,7 +1394,7 @@ function makeRawQuery(
 	const mergedFinds = alignedHeadOf("a query", rules)
 	const first = rules[0]
 	if (first === undefined) {
-		throw errors.new("a query needs at least one rule")
+		throw new AuthoringError({ message: "a query needs at least one rule" })
 	}
 	const env: DerivedEnv = rec === undefined ? { interiors } : { interiors, rec }
 	const frozenInteriors = Object.freeze([...interiors])
@@ -1437,7 +1451,7 @@ function collectInterior<Rels extends SchemaRelations, Classes extends SchemaCla
 	builds: readonly InteriorBuild<Rels, Classes>[]
 ): InteriorData {
 	if (builds.length === 0) {
-		throw errors.new(`query: interior ${name} needs at least one rule`)
+		throw new AuthoringError({ message: `query: interior ${name} needs at least one rule` })
 	}
 	const rules = builds.map(function buildRule(buildOne) {
 		return buildOne(makeInteriorRuleScope<Rels, Classes>(theory, env, name)).rule
@@ -1454,10 +1468,10 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	recBuilds: readonly RecBuild<Rels, Classes>[]
 ): RecData {
 	if (baseBuilds.length === 0) {
-		throw errors.new(`query: rec ${name} has no base arms`)
+		throw new AuthoringError({ message: `query: rec ${name} has no base arms` })
 	}
 	if (recBuilds.length === 0) {
-		throw errors.new(`query: rec ${name} has no rec arms`)
+		throw new AuthoringError({ message: `query: rec ${name} has no rec arms` })
 	}
 	const handle: RecHandle = Object.freeze({ name })
 	const baseEnv: DerivedEnv = { interiors, rec: handle }
@@ -1467,11 +1481,11 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	const baseFinds = alignedHeadOf(`rec ${name}`, base)
 	const first = base[0]
 	if (first === undefined) {
-		throw errors.new(`query: rec ${name} has no base arms`)
+		throw new AuthoringError({ message: `query: rec ${name} has no base arms` })
 	}
 	const firstFind = baseFinds[0]
 	if (firstFind === undefined) {
-		throw errors.new(`query: rec ${name} has no head`)
+		throw new AuthoringError({ message: `query: rec ${name} has no head` })
 	}
 	const finds: RecHead["finds"] = [firstFind, ...baseFinds.slice(1)]
 	const head: RecHead = Object.freeze({ name, finds })
@@ -1482,12 +1496,12 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	const mergedAll = alignedHeadOf(`rec ${name}`, [...base, ...rec])
 	const mergedFirst = mergedAll[0]
 	if (mergedFirst === undefined) {
-		throw errors.new(`query: rec ${name} has no head`)
+		throw new AuthoringError({ message: `query: rec ${name} has no head` })
 	}
 	const sealedFinds: RecHead["finds"] = [mergedFirst, ...mergedAll.slice(1)]
 	const firstRec = rec[0]
 	if (firstRec === undefined) {
-		throw errors.new(`query: rec ${name} has no rec arms`)
+		throw new AuthoringError({ message: `query: rec ${name} has no rec arms` })
 	}
 	const sealedBase: RecData["base"] = [first, ...base.slice(1)]
 	const sealedRec: RecData["rec"] = [firstRec, ...rec.slice(1)]
@@ -1515,10 +1529,10 @@ function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClas
 					return interior.name === name
 				})
 			) {
-				throw errors.new(`query: interior ${name} is already declared — names are unique`)
+				throw new AuthoringError({ message: `query: interior ${name} is already declared — names are unique` })
 			}
 			if (name.length === 0) {
-				throw errors.new("query: an interior needs a name")
+				throw new AuthoringError({ message: "query: an interior needs a name" })
 			}
 			const data = collectInterior(theory, env, name, builds)
 			return makeQueryStart<Rels, Classes, Flatten<P & BuildsParams<Builds>>>(theory, [...interiors, data])
@@ -1532,10 +1546,10 @@ function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClas
 					return interior.name === name
 				})
 			) {
-				throw errors.new(`query: interior and rec share the name ${name}`)
+				throw new AuthoringError({ message: `query: interior and rec share the name ${name}` })
 			}
 			if (name.length === 0) {
-				throw errors.new("query: reach needs a name")
+				throw new AuthoringError({ message: "query: reach needs a name" })
 			}
 			const data = collectRec(theory, interiors, name, arms.base, arms.rec)
 			return makeQueryReachStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>>(
@@ -1589,9 +1603,9 @@ function taggedHandleId(
 	}
 	const id = closed.handles.indexOf(value)
 	if (id < 0) {
-		throw errors.new(
-			`${context}: "${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
-		)
+		throw new AuthoringError({
+			message: `${context}: "${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
+		})
 	}
 	return { kind: "u64", value: BigInt(id) }
 }
@@ -1710,7 +1724,7 @@ function freshVarIds(): VarIds {
 function paramIdOf(ctx: LowerContext, name: string): number {
 	const id = ctx.paramIds.get(name)
 	if (id === undefined) {
-		throw errors.new(`query lowering: param ${name} is not in the query's registry`)
+		throw new AuthoringError({ message: `query lowering: param ${name} is not in the query's registry` })
 	}
 	return id
 }
@@ -1718,13 +1732,13 @@ function paramIdOf(ctx: LowerContext, name: string): number {
 function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	const member = ctx.theory.relations[atom.relation.name]
 	if (member !== atom.relation) {
-		throw errors.new(
-			`query lowering: relation ${atom.relation.name} is not the relation value schema ${ctx.theory.name} declares`
-		)
+		throw new AuthoringError({
+			message: `query lowering: relation ${atom.relation.name} is not the relation value schema ${ctx.theory.name} declares`
+		})
 	}
 	const relationId = ctx.relationIds.get(atom.relation.name)
 	if (relationId === undefined) {
-		throw errors.new(`query lowering: relation ${atom.relation.name} has no ordinal`)
+		throw new AuthoringError({ message: `query lowering: relation ${atom.relation.name} has no ordinal` })
 	}
 	const ordered = sealedFieldsOf(atom.relation)
 	const bindings: Array<readonly [number, TermIr]> = atom.bindings.map(function lowerBinding(binding) {
@@ -1732,7 +1746,9 @@ function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 			return candidate.name === binding.field
 		})
 		if (ordinal < 0) {
-			throw errors.new(`query lowering: relation ${atom.relation.name} has no field ${binding.field}`)
+			throw new AuthoringError({
+				message: `query lowering: relation ${atom.relation.name} has no field ${binding.field}`
+			})
 		}
 		return [ordinal, lowerBindingTerm(ctx, `${atom.relation.name}.${binding.field}`, binding, ids)] as const
 	})
@@ -1769,17 +1785,17 @@ function lowerInteriorAtom(
 ): AtomIr {
 	const interior = ctx.interiorIds.get(target.name)
 	if (interior === undefined) {
-		throw errors.new(`query lowering: derived table ${target.name} was not declared on this query`)
+		throw new AuthoringError({ message: `query lowering: derived table ${target.name} was not declared on this query` })
 	}
 	if (target.finds.length === 0) {
-		throw errors.new(`query lowering: derived table ${target.name} has no head`)
+		throw new AuthoringError({ message: `query lowering: derived table ${target.name} has no head` })
 	}
 	const irBindings: Array<readonly [number, TermIr]> = target.finds.map(function lowerPosition(column, position) {
 		const binding = bindings.find(function byKey(candidate) {
 			return candidate.key === column.name
 		})
 		if (binding === undefined) {
-			throw errors.new(`query lowering: interior ${target.name} omits head column ${column.name}`)
+			throw new AuthoringError({ message: `query lowering: interior ${target.name} omits head column ${column.name}` })
 		}
 		return [position, { kind: "var", var: ids.of(binding.ref) } as const] as const
 	})
@@ -1797,9 +1813,9 @@ function lowerCmpTerm(ctx: LowerContext, side: CmpTermData, sibling: CmpTermData
 		case "literal": {
 			const anchor = cmpAnchorOf(ctx, sibling)
 			if (anchor === undefined) {
-				throw errors.new(
-					"query lowering: a comparison literal needs a bound-variable or anchored-param sibling to type it"
-				)
+				throw new AuthoringError({
+					message: "query lowering: a comparison literal needs a bound-variable or anchored-param sibling to type it"
+				})
 			}
 			return { kind: "literal", value: taggedCmpLiteral("comparison literal", anchor, side.value, op) }
 		}
@@ -1933,9 +1949,9 @@ function lowerQuery(q: AnyQuery): ParsedQuery {
 	const params = new Map<string, ParamEntry>()
 	q.data.params.forEach(function assignParamId(entry, index) {
 		if (entry.anchor === undefined) {
-			throw errors.new(
-				`query param ${entry.name} has no field-anchored use — bind it in an atom or compare it against a bound variable`
-			)
+			throw new AuthoringError({
+				message: `query param ${entry.name} has no field-anchored use — bind it in an atom or compare it against a bound variable`
+			})
 		}
 		paramIds.set(entry.name, index)
 		params.set(entry.name, entry)

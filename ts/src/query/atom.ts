@@ -1,4 +1,4 @@
-import * as errors from "@superbuilders/errors"
+import { AuthoringError } from "#errors.ts"
 import type { AnyClosedRoster, AnyField, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
@@ -236,9 +236,9 @@ function isVariableSide(value: unknown): boolean {
 
 function assertTermSide(op: string, lhs: unknown, rhs: unknown): void {
 	if (!isVariableSide(lhs) && !isVariableSide(rhs)) {
-		throw errors.new(
-			`${op}: a comparison without a variable side is constant-valued (a parameter is a constant at execution) — write the query you mean`
-		)
+		throw new AuthoringError({
+			message: `${op}: a comparison without a variable side is constant-valued (a parameter is a constant at execution) — write the query you mean`
+		})
 	}
 }
 
@@ -313,9 +313,9 @@ function allen<const A extends IntervalSide, const B extends IntervalSide>(
 ): Cmp<"allen", A, B, number> {
 	assertTermSide("allen", left, right)
 	if (!Number.isInteger(mask) || mask < 0 || mask > ALLEN_ALL_BITS) {
-		throw errors.new(
-			`allen mask ${mask} is not a 13-bit mask — build masks from the ALLEN constants (bumbledb allen.rs: bits above the low 13 are unrepresentable)`
-		)
+		throw new AuthoringError({
+			message: `allen mask ${mask} is not a 13-bit mask — build masks from the ALLEN constants (bumbledb allen.rs: bits above the low 13 are unrepresentable)`
+		})
 	}
 	return comparison("allen", left, right, mask)
 }

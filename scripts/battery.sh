@@ -4,6 +4,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "==> release-evidence checker regressions (not release qualification)"
+node --test scripts/release-results.test.mjs
+
 echo "==> cargo fmt --all --check"
 cargo fmt --all --check
 

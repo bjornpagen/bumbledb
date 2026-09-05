@@ -4,8 +4,9 @@ import { createRequire } from "node:module"
 import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
+import { ScriptError } from "./errors.ts"
 import {
 	deriveDevTwinManifest,
 	isPublishPlatform,
@@ -36,20 +37,20 @@ function build(): void {
 		stdio: "inherit"
 	})
 	if (clean.error) {
-		throw errors.wrap(clean.error, "spawn cargo clean")
+		throw new ScriptError({ message: "spawn cargo clean", cause: clean.error })
 	}
 	if (clean.status !== 0) {
-		throw errors.new(`cargo clean exited with status ${clean.status}`)
+		throw new ScriptError({ message: `cargo clean exited with status ${clean.status}` })
 	}
 
 	const cargo = spawnSync("cargo", ["build", "--release", "--manifest-path", crateManifest], {
 		stdio: "inherit"
 	})
 	if (cargo.error) {
-		throw errors.wrap(cargo.error, "spawn cargo")
+		throw new ScriptError({ message: "spawn cargo", cause: cargo.error })
 	}
 	if (cargo.status !== 0) {
-		throw errors.new(`cargo build exited with status ${cargo.status}`)
+		throw new ScriptError({ message: `cargo build exited with status ${cargo.status}` })
 	}
 
 	ensureLocalPlatformPackage(shapePackageDir, localPackageDir)
@@ -66,10 +67,10 @@ function build(): void {
 		cwd: packageRoot
 	})
 	if (tsc.error) {
-		throw errors.wrap(tsc.error, "spawn tsc")
+		throw new ScriptError({ message: "spawn tsc", cause: tsc.error })
 	}
 	if (tsc.status !== 0) {
-		throw errors.new(`tsc exited with status ${tsc.status}`)
+		throw new ScriptError({ message: `tsc exited with status ${tsc.status}` })
 	}
 
 	rewriteDeclarationImports(distDir)
@@ -82,29 +83,29 @@ const VERSION_ROSTER = "scripts/version-roster.txt"
 
 function workspacePackageVersion(repoRoot: string): string {
 	const manifestPath = path.join(repoRoot, "Cargo.toml")
-	const crate = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
-	if (crate.error) {
-		throw errors.wrap(crate.error, `read ${manifestPath}`)
+	const crate = Result.try(() => fs.readFileSync(manifestPath, "utf8"))
+	if (Result.isFailure(crate)) {
+		throw new ScriptError({ message: `read ${manifestPath}`, cause: crate.failure })
 	}
-	const block = /\[workspace\.package\]\s*([\s\S]*?)(?:\n\[|$)/.exec(crate.data)
+	const block = /\[workspace\.package\]\s*([\s\S]*?)(?:\n\[|$)/.exec(crate.success)
 	if (block === null || typeof block[1] !== "string") {
-		throw errors.new(`${manifestPath} is missing [workspace.package]`)
+		throw new ScriptError({ message: `${manifestPath} is missing [workspace.package]` })
 	}
 	const version = /^version = "([^"]+)"$/m.exec(block[1])?.[1]
 	if (typeof version !== "string" || version === "") {
-		throw errors.new(`${manifestPath} [workspace.package] is missing a version`)
+		throw new ScriptError({ message: `${manifestPath} [workspace.package] is missing a version` })
 	}
 	return version
 }
 
 function cargoPackageVersion(manifestPath: string): string {
-	const crate = errors.trySync(() => fs.readFileSync(manifestPath, "utf8"))
-	if (crate.error) {
-		throw errors.wrap(crate.error, `read ${manifestPath}`)
+	const crate = Result.try(() => fs.readFileSync(manifestPath, "utf8"))
+	if (Result.isFailure(crate)) {
+		throw new ScriptError({ message: `read ${manifestPath}`, cause: crate.failure })
 	}
-	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.data)?.[1]
+	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.success)?.[1]
 	if (typeof crateVersion !== "string" || crateVersion === "") {
-		throw errors.new(`${manifestPath} is missing a package version`)
+		throw new ScriptError({ message: `${manifestPath} is missing a package version` })
 	}
 	return crateVersion
 }
@@ -113,7 +114,7 @@ function npmPackageVersion(manifestPath: string): string {
 	const manifest = readJson(manifestPath)
 	const version = manifest.version
 	if (typeof version !== "string" || version === "") {
-		throw errors.new(`${manifestPath} is missing a string version`)
+		throw new ScriptError({ message: `${manifestPath} is missing a string version` })
 	}
 	return version
 }
@@ -126,26 +127,26 @@ function manifestVersion(repoRoot: string, relPath: string): string {
 	if (relPath.endsWith("package.json")) {
 		return npmPackageVersion(abs)
 	}
-	throw errors.new(`${relPath} is not a versioned manifest`)
+	throw new ScriptError({ message: `${relPath} is not a versioned manifest` })
 }
 
 function readVersionRoster(repoRoot: string): string[] {
 	const rosterPath = path.join(repoRoot, VERSION_ROSTER)
-	const text = errors.trySync(() => fs.readFileSync(rosterPath, "utf8"))
-	if (text.error) {
-		throw errors.wrap(text.error, `read ${rosterPath}`)
+	const text = Result.try(() => fs.readFileSync(rosterPath, "utf8"))
+	if (Result.isFailure(text)) {
+		throw new ScriptError({ message: `read ${rosterPath}`, cause: text.failure })
 	}
-	const paths = text.data.split("\n").flatMap((line) => {
+	const paths = text.success.split("\n").flatMap((line) => {
 		const trimmed = line.trim()
 		return trimmed === "" || trimmed.startsWith("#") ? [] : [trimmed]
 	})
 	if (paths.length === 0) {
-		throw errors.new(`${VERSION_ROSTER} is empty`)
+		throw new ScriptError({ message: `${VERSION_ROSTER} is empty` })
 	}
 	const seen = new Set<string>()
 	for (const rel of paths) {
 		if (seen.has(rel)) {
-			throw errors.new(`${VERSION_ROSTER} lists ${rel} twice`)
+			throw new ScriptError({ message: `${VERSION_ROSTER} lists ${rel} twice` })
 		}
 		seen.add(rel)
 	}
@@ -156,11 +157,11 @@ function isVersionBearing(repoRoot: string, relPath: string): boolean {
 	const abs = path.join(repoRoot, relPath)
 	const base = path.basename(relPath)
 	if (base === "Cargo.toml") {
-		const text = errors.trySync(() => fs.readFileSync(abs, "utf8"))
-		if (text.error) {
-			throw errors.wrap(text.error, `read ${abs}`)
+		const text = Result.try(() => fs.readFileSync(abs, "utf8"))
+		if (Result.isFailure(text)) {
+			throw new ScriptError({ message: `read ${abs}`, cause: text.failure })
 		}
-		return /\[package\]/.test(text.data) && /^version = "/m.test(text.data)
+		return /\[package\]/.test(text.success) && /^version = "/m.test(text.success)
 	}
 	if (base === "package.json") {
 		const manifest = readJson(abs)
@@ -175,10 +176,10 @@ function trackedManifests(repoRoot: string): string[] {
 	// docker, odd mounts) without writing the user's global gitconfig.
 	const listed = spawnSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, "ls-files", "-z"])
 	if (listed.error) {
-		throw errors.wrap(listed.error, "spawn git ls-files")
+		throw new ScriptError({ message: "spawn git ls-files", cause: listed.error })
 	}
 	if (listed.status !== 0) {
-		throw errors.new(`git ls-files exited with status ${listed.status}: ${listed.stderr.toString()}`)
+		throw new ScriptError({ message: `git ls-files exited with status ${listed.status}: ${listed.stderr.toString()}` })
 	}
 	return listed.stdout
 		.toString("utf8")
@@ -198,13 +199,15 @@ function assertRosterComplete(repoRoot: string, roster: readonly string[]): void
 	const rosterSet = new Set(roster)
 	const extra = found.filter((rel) => !rosterSet.has(rel))
 	if (extra.length > 0) {
-		throw errors.new(`version lockstep broken: version-bearing manifest off-roster: ${extra.join(", ")}`)
+		throw new ScriptError({
+			message: `version lockstep broken: version-bearing manifest off-roster: ${extra.join(", ")}`
+		})
 	}
 	const missing = roster.filter((rel) => !found.includes(rel))
 	if (missing.length > 0) {
-		throw errors.new(
-			`version lockstep broken: roster names a manifest the tree sweep did not find: ${missing.join(", ")}`
-		)
+		throw new ScriptError({
+			message: `version lockstep broken: roster names a manifest the tree sweep did not find: ${missing.join(", ")}`
+		})
 	}
 }
 
@@ -215,14 +218,14 @@ function assertTsLogPeer(repoRoot: string, version: string): void {
 			? (manifest.peerDependencies as Record<string, unknown>)
 			: undefined
 	if (peers === undefined) {
-		throw errors.new("ts-log/package.json is missing peerDependencies")
+		throw new ScriptError({ message: "ts-log/package.json is missing peerDependencies" })
 	}
 	const peer = peers["@bjornpagen/bumbledb"]
-	const expected = `^${version}`
+	const expected = version
 	if (peer !== expected) {
-		throw errors.new(
-			`version lockstep broken: ts-log peerDependencies["@bjornpagen/bumbledb"] is ${String(peer)}, expected ${expected}`
-		)
+		throw new ScriptError({
+			message: `version lockstep broken: ts-log peerDependencies["@bjornpagen/bumbledb"] is ${String(peer)}, expected ${expected}`
+		})
 	}
 }
 
@@ -231,7 +234,8 @@ function assertTsLogPeer(repoRoot: string, version: string): void {
  * writer. Every path on `scripts/version-roster.txt` carries that
  * version exactly; a sweep of tracked `Cargo.toml` and `package.json`
  * files proves the roster lists every version-bearing manifest; `ts-log`'s
- * peer range on `@bjornpagen/bumbledb` is exactly `^<workspace version>`.
+ * peer on `@bjornpagen/bumbledb` is exactly `<workspace version>`: a log
+ * package cannot silently select a different native command/runtime contract.
  * The FFI ABI is not semver-stable — a main package may only ever resolve
  * its own-version binary; `engineVersion` bakes
  * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
@@ -247,15 +251,16 @@ function assertVersionLockstep(packageRoot: string): string {
 	const version = workspacePackageVersion(repoRoot)
 	const main = readJson(path.join(packageRoot, "package.json"))
 	if ("optionalDependencies" in main) {
-		throw errors.new(
-			"the repo package.json carries optionalDependencies — the platform pin lives only in the PACKED manifest (scripts/pin.ts injects it at prepack; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
-		)
+		throw new ScriptError({
+			message:
+				"the repo package.json carries optionalDependencies — the platform pin lives only in the PACKED manifest (scripts/pin.ts injects it at prepack; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
+		})
 	}
 	const roster = readVersionRoster(repoRoot)
 	for (const rel of roster) {
 		const got = manifestVersion(repoRoot, rel)
 		if (got !== version) {
-			throw errors.new(`version lockstep broken: workspace is ${version} but ${rel} is ${got}`)
+			throw new ScriptError({ message: `version lockstep broken: workspace is ${version} but ${rel} is ${got}` })
 		}
 	}
 	assertRosterComplete(repoRoot, roster)
@@ -264,7 +269,9 @@ function assertVersionLockstep(packageRoot: string): string {
 		const platformName = `@bjornpagen/bumbledb-${platform}`
 		const manifest = readJson(path.join(packageRoot, "npm", platform, "package.json"))
 		if (manifest.name !== platformName) {
-			throw errors.new(`platform package.json name is ${String(manifest.name)}, expected ${platformName}`)
+			throw new ScriptError({
+				message: `platform package.json name is ${String(manifest.name)}, expected ${platformName}`
+			})
 		}
 	}
 	return version
@@ -272,15 +279,15 @@ function assertVersionLockstep(packageRoot: string): string {
 
 /** Reads and parses a JSON file, wrapping either failure. */
 function readJson(file: string): Record<string, unknown> {
-	const text = errors.trySync(() => fs.readFileSync(file, "utf8"))
-	if (text.error) {
-		throw errors.wrap(text.error, `read ${file}`)
+	const text = Result.try(() => fs.readFileSync(file, "utf8"))
+	if (Result.isFailure(text)) {
+		throw new ScriptError({ message: `read ${file}`, cause: text.failure })
 	}
-	const parsed = errors.trySync(() => JSON.parse(text.data) as Record<string, unknown>)
-	if (parsed.error) {
-		throw errors.wrap(parsed.error, `parse ${file}`)
+	const parsed = Result.try(() => JSON.parse(text.success) as Record<string, unknown>)
+	if (Result.isFailure(parsed)) {
+		throw new ScriptError({ message: `parse ${file}`, cause: parsed.failure })
 	}
-	return parsed.data
+	return parsed.success
 }
 
 /**
@@ -336,19 +343,22 @@ function linkPlatformPackage(packageRoot: string, localPackageDir: string): void
 function smokeLoad(packageRoot: string, release: string): void {
 	const requireNative = createRequire(path.join(packageRoot, "scripts", "build.ts"))
 	const platformPackage = `@bjornpagen/bumbledb-${LOCAL_PLATFORM}`
-	const loaded = errors.trySync(() => requireNative(platformPackage))
-	if (loaded.error) {
-		throw errors.wrap(loaded.error, `smoke-load ${platformPackage} through the by-name loader path`)
+	const loaded = Result.try(() => requireNative(platformPackage))
+	if (Result.isFailure(loaded)) {
+		throw new ScriptError({
+			message: `smoke-load ${platformPackage} through the by-name loader path`,
+			cause: loaded.failure
+		})
 	}
-	const binding: { engineVersion(): string } = loaded.data
-	const version = errors.trySync(() => binding.engineVersion())
-	if (version.error) {
-		throw errors.wrap(version.error, "smoke call engineVersion()")
+	const binding: { engineVersion(): string } = loaded.success
+	const version = Result.try(() => binding.engineVersion())
+	if (Result.isFailure(version)) {
+		throw new ScriptError({ message: "smoke call engineVersion()", cause: version.failure })
 	}
-	if (typeof version.data !== "string" || !version.data.includes(release)) {
-		throw errors.new(
-			`smoke assertion failed: engineVersion() must carry the release version ${release}, got ${String(version.data)}`
-		)
+	if (typeof version.success !== "string" || !version.success.includes(release)) {
+		throw new ScriptError({
+			message: `smoke assertion failed: engineVersion() must carry the release version ${release}, got ${String(version.success)}`
+		})
 	}
 }
 
@@ -356,21 +366,21 @@ function verifyPack(packageRoot: string, localPackageDir: string, version: strin
 	const mainFiles = packDryRun(packageRoot)
 	const binary = mainFiles.find((file) => file.endsWith(".node"))
 	if (binary !== undefined) {
-		throw errors.new(`main package tarball must carry no native binary, found ${binary}`)
+		throw new ScriptError({ message: `main package tarball must carry no native binary, found ${binary}` })
 	}
 	if (!mainFiles.includes("package.json")) {
-		throw errors.new("main package tarball is missing package.json")
+		throw new ScriptError({ message: "main package tarball is missing package.json" })
 	}
 	if (!mainFiles.some((file) => file.startsWith("dist/"))) {
-		throw errors.new("main package tarball carries no dist/ output")
+		throw new ScriptError({ message: "main package tarball carries no dist/ output" })
 	}
 
 	const platformFiles = packDryRun(localPackageDir).toSorted()
 	const expected = ["LICENSE", "bumbledb.node", "package.json"]
 	if (JSON.stringify(platformFiles) !== JSON.stringify(expected)) {
-		throw errors.new(
-			`platform package tarball must contain exactly ${JSON.stringify(expected)}, found ${JSON.stringify(platformFiles)}`
-		)
+		throw new ScriptError({
+			message: `platform package tarball must contain exactly ${JSON.stringify(expected)}, found ${JSON.stringify(platformFiles)}`
+		})
 	}
 
 	verifyInjectedPin(packageRoot, version)
@@ -386,62 +396,61 @@ function verifyInjectedPin(packageRoot: string, version: string): void {
 		const tarball = path.join(scratch, "main.tgz")
 		const pack = spawnSync("pnpm", ["pack", "--out", tarball], { cwd: packageRoot })
 		if (pack.error) {
-			throw errors.wrap(pack.error, "spawn pnpm pack")
+			throw new ScriptError({ message: "spawn pnpm pack", cause: pack.error })
 		}
 		if (pack.status !== 0) {
-			throw errors.new(`pnpm pack exited with status ${pack.status}: ${pack.stderr.toString()}`)
+			throw new ScriptError({ message: `pnpm pack exited with status ${pack.status}: ${pack.stderr.toString()}` })
 		}
 		const extract = spawnSync("tar", ["-xzOf", tarball, "package/package.json"], { cwd: scratch })
 		if (extract.error) {
-			throw errors.wrap(extract.error, "spawn tar")
+			throw new ScriptError({ message: "spawn tar", cause: extract.error })
 		}
 		if (extract.status !== 0) {
-			throw errors.new(`tar exited with status ${extract.status}: ${extract.stderr.toString()}`)
+			throw new ScriptError({ message: `tar exited with status ${extract.status}: ${extract.stderr.toString()}` })
 		}
-		const packed = errors.trySync(() => JSON.parse(extract.stdout.toString()) as Record<string, unknown>)
-		if (packed.error) {
-			throw errors.wrap(packed.error, "parse the packed package.json")
+		const packed = Result.try(() => JSON.parse(extract.stdout.toString()) as Record<string, unknown>)
+		if (Result.isFailure(packed)) {
+			throw new ScriptError({ message: "parse the packed package.json", cause: packed.failure })
 		}
 		const optional =
-			typeof packed.data.optionalDependencies === "object" && packed.data.optionalDependencies !== null
-				? (packed.data.optionalDependencies as Record<string, unknown>)
+			typeof packed.success.optionalDependencies === "object" && packed.success.optionalDependencies !== null
+				? (packed.success.optionalDependencies as Record<string, unknown>)
 				: {}
 		for (const platform of PUBLISH_PLATFORMS) {
 			const platformName = `@bjornpagen/bumbledb-${platform}`
 			const pin = optional[platformName]
 			if (pin !== version) {
-				throw errors.new(
-					`the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
-				)
+				throw new ScriptError({
+					message: `the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
+				})
 			}
 		}
-		assertPackedImports(packed.data)
+		assertPackedImports(packed.success)
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })
 	}
 	const repo = readJson(path.join(packageRoot, "package.json"))
 	if ("optionalDependencies" in repo) {
-		throw errors.new(
-			"the repo package.json still carries optionalDependencies after pack — postpack's restore failed (the committed manifest must stay pin-free)"
-		)
+		throw new ScriptError({
+			message:
+				"the repo package.json still carries optionalDependencies after pack — postpack's restore failed (the committed manifest must stay pin-free)"
+		})
 	}
 }
 
 function packDryRun(dir: string): string[] {
 	const result = spawnSync("pnpm", ["pack", "--dry-run", "--json"], { cwd: dir })
 	if (result.error) {
-		throw errors.wrap(result.error, "spawn pnpm pack")
+		throw new ScriptError({ message: "spawn pnpm pack", cause: result.error })
 	}
 	if (result.status !== 0) {
-		throw errors.new(`pnpm pack exited with status ${result.status}: ${result.stderr.toString()}`)
+		throw new ScriptError({ message: `pnpm pack exited with status ${result.status}: ${result.stderr.toString()}` })
 	}
-	const parsed = errors.trySync(
-		() => JSON.parse(result.stdout.toString()) as { files: ReadonlyArray<{ path: string }> }
-	)
-	if (parsed.error) {
-		throw errors.wrap(parsed.error, "parse pnpm pack --json output")
+	const parsed = Result.try(() => JSON.parse(result.stdout.toString()) as { files: ReadonlyArray<{ path: string }> })
+	if (Result.isFailure(parsed)) {
+		throw new ScriptError({ message: "parse pnpm pack --json output", cause: parsed.failure })
 	}
-	return parsed.data.files.map((file) => file.path)
+	return parsed.success.files.map((file) => file.path)
 }
 
 build()

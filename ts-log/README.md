@@ -113,15 +113,15 @@ of the object file and its parent directory.
 
 ## Error identity
 
-Exported sentinel values on the SDK idiom, checked with `errors.is`,
+Exported Effect `Data.TaggedError` classes, checked with `instanceof` or `_tag`,
 never by message strings: `ErrRefused` (typed per cause — batch shape,
 version, fingerprint, manifest shape, checkpoint braid-set drift),
 `ErrManifestMissing` (a replica found no manifest; only the writer
 births a store), `ErrSpanningCommit`, `ErrGapDetected`, `ErrReplayDiverged`,
 `ErrChainMismatch` (cause `"prev" | "slot" |
 "timestamp"`), `ErrContention` (cause `hot-key` or `slot-race`),
-`ErrStore` (the vendor channel, present in every wrapped store
-failure's cause chain so the `errors.is` match is by identity). There
+`ErrStore` (the vendor channel; its readonly `cause` retains the original
+provider failure, including non-Error values). Diagnostic payloads live on the error, not in side tables. There
 is deliberately no
 `ErrAlreadyApplied`: the state it would name is absorbed by idempotent
 replay and never surfaces.

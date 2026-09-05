@@ -2,8 +2,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import * as process from "node:process"
-import * as errors from "@superbuilders/errors"
 import { contained, Db, InstanceBuilder, i64, on, relation, schema, str, u64 } from "#index.ts"
+import { ScriptError } from "./errors.ts"
 
 const R0 = relation("R0", { id: u64.fresh, label: str })
 const R1 = relation("R1", { id: u64.fresh, parent: u64, label: str, score: i64 })
@@ -54,15 +54,15 @@ function parseFacts(argv: string[]): bigint {
 	for (let i = 0; i < argv.length; i += 1) {
 		const flag = argv[i]
 		if (flag !== "--facts") {
-			throw errors.new(`unknown flag ${flag} (the harness takes --facts N)`)
+			throw new ScriptError({ message: `unknown flag ${flag} (the harness takes --facts N)` })
 		}
 		const raw = argv[i + 1]
 		if (raw === undefined) {
-			throw errors.new("--facts needs a value")
+			throw new ScriptError({ message: "--facts needs a value" })
 		}
 		facts = BigInt(raw)
 		if (facts <= 0n) {
-			throw errors.new("--facts rejects 0 — the harness measures facts")
+			throw new ScriptError({ message: "--facts rejects 0 — the harness measures facts" })
 		}
 		i += 1
 	}
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
 	})
 	const [n0, n1, n2] = counts
 	if (n0 === undefined || n1 === undefined || n2 === undefined) {
-		throw errors.new("three relations, three counts")
+		throw new ScriptError({ message: "three relations, three counts" })
 	}
 	const phases: Phase[] = []
 	const total = n0 + n1 + n2
@@ -154,7 +154,7 @@ async function main(): Promise<void> {
 		return builder.admit()
 	})
 	if (admission.tag !== "accepted") {
-		throw errors.new(`primerlane admission rejected: ${admission.violations.length} violations`)
+		throw new ScriptError({ message: `primerlane admission rejected: ${admission.violations.length} violations` })
 	}
 	const instance = admission.value
 	const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-primerlane-ts-"))
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
 		return Db.fromInstance(path.join(storeRoot, "store"), instance)
 	})
 	if (db === undefined) {
-		throw errors.new("fromInstance returned no handle")
+		throw new ScriptError({ message: "fromInstance returned no handle" })
 	}
 
 	console.log(`primerlane (ts): facts ${total} (${n0}/${n1}/${n2}), seed 1\n`)

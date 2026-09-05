@@ -37,9 +37,11 @@ coalescing fold (`pack` — `pack_canonical`/`pack_extensional`), Allen masks
 classify through the DEFINED classifier (`classifyRefined`), and the
 measure poisons on rays (`Value.measure?` reads `none` — the lane's
 corpus excludes engine-error executions, so a `none` here is a
-disagreement, never a silent drop). Order keys compare as encoded
-words (`Value.orderWord` — the order embeddings make word order value
-order). The multi-rule aggregate head folds the union of the rules'
+disagreement, never a silent drop). Scalar comparisons use
+`Value.orderWord`: integers and bool use proved order embeddings;
+F64 uses an independent exact integer interpretation of the payload,
+not the physical sortable key; `Float64/Order.lean` proves their order
+equivalence. The multi-rule aggregate head folds the union of the rules'
 head-projected binding sets — the HAND-WRITTEN multi-rule law the
 executor's spanning seen-set realizes (`union_regime_agg_heads`,
 `Exec/Dedup.lean` — the aggregate-head coverage; `evalUnion` below is
@@ -96,6 +98,12 @@ open Lean (Json)
 
 /-! ## Canonical rendering — the serializer's byte format, mirrored -/
 
+/-- Exactly sixteen lowercase payload hex digits; no host float formatting. -/
+def renderF64 (value : F64) : String :=
+  String.ofList ((List.range 16).reverse.map fun position =>
+    let digit := value.val / 16 ^ position % 16
+    Char.ofNat (if digit < 10 then 48 + digit else 87 + digit))
+
 /-- One value in the tagged compact form (the interchange format's
 value spelling; `lean/conformance/README.md`). -/
 def renderValue : Value → String
@@ -103,6 +111,7 @@ def renderValue : Value → String
     "{\"bool\":" ++ cond b "true" "false" ++ "}"
   | { type := .u64, val := x } => "{\"u64\":" ++ toString x.val ++ "}"
   | { type := .i64, val := x } => "{\"i64\":" ++ toString x.val ++ "}"
+  | { type := .f64, val := x } => "{\"f64\":\"" ++ renderF64 x ++ "\"}"
   | { type := .str, val := s } => "{\"str\":" ++ toString s.id ++ "}"
   | { type := .fixedBytes _, val := bs } =>
     "{\"bytes\":[" ++
@@ -228,6 +237,43 @@ def decodeI64 (x : Int) : Except String I64 :=
   if h : -(2 ^ 63) ≤ x ∧ x < 2 ^ 63 then .ok ⟨x, h⟩
   else .error "i64 out of range"
 
+/-- Conformance's tagged f64 payload is strict canonical 16-lowercase-hex.
+The external command JSON wrapper is separately named `$f64`; this is the
+existing three-way conformance vocabulary, not a second command codec. -/
+def decodeF64 (text : String) : Except String F64 := do
+  if text.length != 16 then throw "f64 expects sixteen lowercase hex digits"
+  let bits ← text.toList.foldlM (init := 0) fun value digit => do
+    let n := digit.toNat
+    let nibble ← if 48 ≤ n ∧ n ≤ 57 then pure (n - 48)
+                 else if 97 ≤ n ∧ n ≤ 102 then pure (n - 87)
+                 else throw "f64 expects lowercase ASCII hex"
+    pure (value * 16 + nibble)
+  match F64.parse bits with
+  | some value => pure value
+  | none => throw "noncanonical f64 payload"
+
+/-! F64 boundary locks include both smallest subnormals, infinities,
+canonical NaN, and exact canonical rendering. Wire decoding is strict:
+it never silently performs host-style zero/NaN normalization. -/
+#guard (decodeF64 "0000000000000000").isOk
+#guard (decodeF64 "0000000000000001").isOk
+#guard (decodeF64 "8000000000000001").isOk
+#guard (decodeF64 "7ff0000000000000").isOk
+#guard (decodeF64 "fff0000000000000").isOk
+#guard (decodeF64 "7ff8000000000000").isOk
+#guard !(decodeF64 "8000000000000000").isOk
+#guard !(decodeF64 "7ff0000000000001").isOk
+#guard !(decodeF64 "7ff8000000000001").isOk
+#guard !(decodeF64 "fff8000000000000").isOk
+#guard !(decodeF64 "7FF8000000000000").isOk
+#guard !(decodeF64 "000000000000000").isOk
+#guard !(decodeF64 "00000000000000000").isOk
+#guard !(decodeF64 "000000000000000g").isOk
+#guard (decodeF64 (renderF64 (F64.ofBits 0))).toOption = some (F64.ofBits 0)
+#guard (decodeF64 (renderF64 (F64.ofBits 0x8000000000000001))).toOption =
+  some (F64.ofBits 0x8000000000000001)
+#guard (decodeF64 (renderF64 (F64.ofBits F64.nan))).toOption = some (F64.ofBits F64.nan)
+
 def decodeIntervalU64 (j : Json) : Except String (Interval U64) := do
   match (← j.getArr?).toList with
   | [s, e] =>
@@ -252,6 +298,8 @@ def decodeValue (j : Json) : Except String Value := do
     return ⟨.u64, ← decodeU64 (← n.getNat?)⟩
   if let some n := objKey? j "i64" then
     return ⟨.i64, ← decodeI64 (← n.getInt?)⟩
+  if let some n := objKey? j "f64" then
+    return ⟨.f64, ← decodeF64 (← n.getStr?)⟩
   if let some n := objKey? j "str" then
     return ⟨.str, ⟨← n.getNat?⟩⟩
   if let some bs := objKey? j "bytes" then
@@ -481,6 +529,7 @@ def typeOfName (s : String) : Except String ValueType :=
   | "bool" => .ok .bool
   | "u64" => .ok .u64
   | "i64" => .ok .i64
+  | "f64" => .ok .f64
   | "str" => .ok .str
   | "interval_u64" => .ok (.interval .u64)
   | "interval_i64" => .ok (.interval .i64)
@@ -703,8 +752,8 @@ def measureVal (v : Value) : Except String Value :=
   | some m => .ok m
   | none => .error "MeasureOfRay: a ray reached a measure position"
 
-/-- The encoded order word (order keys compare as words — the order
-embeddings make word order value order). -/
+/-- Scalar order rank: the proved integer/bool embeddings and F64's
+independent exact numerical rank, not F64's physical sortable key. -/
 def orderKey (v : Value) : Except String Nat :=
   match v.orderWord with
   | some (_, w) => .ok w
@@ -1035,4 +1084,3 @@ def checkCase (text : String) :
 
 end Conformance
 end Bumbledb
-

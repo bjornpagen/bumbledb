@@ -2,18 +2,24 @@
 //! disjoint blocks, `Moved` retries unbounded, ids ride in commands as
 //! plain values, and the counter object is the failover floor an
 //! adopting writer reads. Cross-process disjointness runs against real
-//! child processes, in the lane-B tradition.
+//! child processes, in the lane-B tradition. Bounded local lock contention
+//! is not a promise of per-process fairness: every attempted lease is
+//! accounted as either drawn or the exact pre-mutation wait exhaustion.
+//! There are no retries of failed calls or relaxed disjointness assertions.
 
 mod lane_e_support;
 
+use std::collections::BTreeSet;
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use bumbledb::schema::FieldId;
 use bumbledb::{Admission, SchemaDescriptor, Value};
 use bumbledb_log::lease::{LEASE_WIDTH, LeaseRefusal, Leased, ids_key, lease_block};
-use bumbledb_log::store::ObjectStore;
 use bumbledb_log::store::fs::FsStore;
+use bumbledb_log::store::{ObjectStore, StoreError, StoreKey};
 use bumbledb_log::writer::{Error, Options, Slotted, Writer, WriterOpened};
 use lane_e_support::{NOTE, codec, note_braid, temp_dir, theory};
 
@@ -22,6 +28,7 @@ const BASE_ENV: &str = "LANE_E_BASE_DIR";
 const ID_ENV: &str = "LANE_E_CHILD_ID";
 const CHILDREN: u64 = 6;
 const BLOCKS_PER_CHILD: u64 = 8;
+const CHILD_EXIT_WAIT: Duration = Duration::from_secs(60);
 
 fn ready<S: bumbledb_log::store::ObjectStore + 'static>(
     opened: WriterOpened<SchemaDescriptor, S>,
@@ -211,15 +218,170 @@ fn child_env() -> Option<(String, PathBuf, u64)> {
 
 fn run_lease_child(base: &Path, id: u64) {
     let store = FsStore::new(base.join("store"));
-    for _ in 0..BLOCKS_PER_CHILD {
-        match lease_block(&store, "", NOTE, FieldId(0), 0, 1).expect("lease") {
-            Leased::Drawn { range, .. } => {
+    let key = ids_key("", NOTE, FieldId(0));
+    let mut start = String::new();
+    assert!(
+        io::stdin().read_line(&mut start).unwrap() > 0,
+        "parent start gate"
+    );
+    assert_eq!(start, "go\n");
+    for attempt in 0..BLOCKS_PER_CHILD {
+        match lease_block(&store, "", NOTE, FieldId(0), 0, 1) {
+            Ok(Leased::Drawn { range, .. }) => {
                 println!(
-                    "LANE_E lease id={id} start={} end={}",
+                    "LANE_E attempt id={id} attempt={attempt} drawn={}..{}",
                     range.start, range.end
                 );
             }
-            Leased::Refused(refusal) => panic!("lease refused: {refusal:?}"),
+            Err(error) if mutation_wait_exhausted(&error, &key) => {
+                println!("LANE_E attempt id={id} attempt={attempt} busy");
+            }
+            Err(error) => panic!("lease failed: {error:?}"),
+            Ok(Leased::Refused(refusal)) => panic!("lease refused: {refusal:?}"),
+        }
+    }
+}
+
+// Only this local adapter's known pre-mutation lock refusal is admissible.
+// Other WouldBlock errors, infrastructure failures, and protocol refusals must
+// still fail the test. No ambiguous write is relabeled as an empty attempt.
+fn mutation_wait_exhausted(error: &StoreError, key: &StoreKey) -> bool {
+    matches!(error.op, "put_create" | "put_swap")
+        && error.key == key.as_str()
+        && error.source.kind() == io::ErrorKind::WouldBlock
+        && error.source.to_string() == "local mutation wait exhausted"
+}
+
+#[test]
+fn contention_classification_does_not_hide_other_store_failures() {
+    let key = ids_key("", NOTE, FieldId(0));
+    let error = |op, key: &str, kind, message| StoreError {
+        op,
+        key: key.to_string(),
+        source: io::Error::new(kind, message),
+    };
+    for op in ["put_create", "put_swap"] {
+        assert!(mutation_wait_exhausted(
+            &error(
+                op,
+                key.as_str(),
+                io::ErrorKind::WouldBlock,
+                "local mutation wait exhausted"
+            ),
+            &key
+        ));
+    }
+    for (op, name, kind, message) in [
+        (
+            "get",
+            key.as_str(),
+            io::ErrorKind::WouldBlock,
+            "local mutation wait exhausted",
+        ),
+        (
+            "put_swap",
+            "other/key",
+            io::ErrorKind::WouldBlock,
+            "local mutation wait exhausted",
+        ),
+        (
+            "put_swap",
+            key.as_str(),
+            io::ErrorKind::PermissionDenied,
+            "local mutation wait exhausted",
+        ),
+        (
+            "put_swap",
+            key.as_str(),
+            io::ErrorKind::WouldBlock,
+            "unclassified storage failure",
+        ),
+    ] {
+        assert!(!mutation_wait_exhausted(
+            &error(op, name, kind, message),
+            &key
+        ));
+    }
+}
+
+struct LeaseChildren(Vec<Child>);
+
+impl LeaseChildren {
+    fn reap_all(&mut self) {
+        let started = Instant::now();
+        loop {
+            let mut exited = true;
+            for child in &mut self.0 {
+                exited &= child.try_wait().expect("poll owned child").is_some();
+            }
+            if exited {
+                return;
+            }
+            assert!(
+                started.elapsed() < CHILD_EXIT_WAIT,
+                "lease children did not exit"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for LeaseChildren {
+    fn drop(&mut self) {
+        // Kill all before waiting: a failed spawn/assertion must not orphan
+        // a sibling holding the mutation lock or captured output handles.
+        for child in &mut self.0 {
+            let _ = child.kill();
+        }
+        for child in &mut self.0 {
+            let _ = child.wait();
+        }
+    }
+}
+
+fn read_attempts(
+    stdout: &str,
+    id: usize,
+    attempts: &mut BTreeSet<(u64, u64)>,
+    ranges: &mut Vec<(u64, u64)>,
+    busy: &mut u64,
+) {
+    for line in stdout.lines() {
+        let Some(at) = line.find("LANE_E attempt ") else {
+            continue;
+        };
+        let event: Vec<_> = line[at + "LANE_E attempt ".len()..]
+            .split_whitespace()
+            .collect();
+        assert_eq!(event.len(), 3, "malformed event {line}");
+        let reporter = event[0]
+            .strip_prefix("id=")
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert_eq!(
+            reporter, id as u64,
+            "a child cannot report another's attempt"
+        );
+        let attempt = event[1]
+            .strip_prefix("attempt=")
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert!(attempt < BLOCKS_PER_CHILD);
+        assert!(
+            attempts.insert((reporter, attempt)),
+            "duplicate attempt {line}"
+        );
+        if event[2] == "busy" {
+            *busy += 1;
+        } else {
+            let (start, end) = event[2]
+                .strip_prefix("drawn=")
+                .unwrap()
+                .split_once("..")
+                .unwrap();
+            ranges.push((start.parse().unwrap(), end.parse().unwrap()));
         }
     }
 }
@@ -235,7 +397,7 @@ fn leases_are_disjoint_across_processes() {
 
     let base = temp_dir("mp");
     let exe = std::env::current_exe().expect("current test binary");
-    let mut children: Vec<Child> = Vec::new();
+    let mut children = LeaseChildren(Vec::new());
     for id in 0..CHILDREN {
         let child = Command::new(&exe)
             .args([
@@ -247,57 +409,84 @@ fn leases_are_disjoint_across_processes() {
             .env(ROLE_ENV, "lease")
             .env(BASE_ENV, base.as_os_str())
             .env(ID_ENV, id.to_string())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn child");
-        children.push(child);
+        children.0.push(child);
     }
+    // All six processes are spawned before any may attempt an allocation.
+    for child in &mut children.0 {
+        child.stdin.take().unwrap().write_all(b"go\n").unwrap();
+    }
+    children.reap_all();
 
     let mut ranges: Vec<(u64, u64)> = Vec::new();
-    for child in children {
-        let out = child.wait_with_output().expect("child exit");
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut attempts = BTreeSet::new();
+    let mut busy = 0_u64;
+    for (id, child) in children.0.iter_mut().enumerate() {
+        // Each child emits at most eight short events. All children have been
+        // reaped before reading/checking output or attempting the final lease.
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut stderr)
+            .unwrap();
         assert!(
-            out.status.success(),
-            "child failed: {stdout}\n{}",
-            String::from_utf8_lossy(&out.stderr)
+            child.wait().unwrap().success(),
+            "child failed: {stdout}\n{stderr}"
         );
-        for line in stdout.lines() {
-            let Some(at) = line.find("LANE_E lease ") else {
-                continue;
-            };
-            let mut start = None;
-            let mut end = None;
-            for token in line[at..].split_whitespace() {
-                if let Some(v) = token.strip_prefix("start=") {
-                    start = Some(v.parse::<u64>().expect("start"));
-                }
-                if let Some(v) = token.strip_prefix("end=") {
-                    end = Some(v.parse::<u64>().expect("end"));
-                }
-            }
-            ranges.push((start.expect("start"), end.expect("end")));
-        }
+        read_attempts(&stdout, id, &mut attempts, &mut ranges, &mut busy);
     }
-    assert_eq!(ranges.len() as u64, CHILDREN * BLOCKS_PER_CHILD);
+    drop(children);
+    assert_eq!(attempts.len() as u64, CHILDREN * BLOCKS_PER_CHILD);
+    assert_eq!(ranges.len() as u64 + busy, CHILDREN * BLOCKS_PER_CHILD);
+    assert!(
+        !ranges.is_empty(),
+        "contended allocations must not be vacuous"
+    );
+    println!(
+        "LANE_E accounted: {} drawn, {busy} bounded contention",
+        ranges.len()
+    );
     ranges.sort_unstable();
-    for pair in ranges.windows(2) {
-        assert!(
-            pair[0].1 <= pair[1].0,
-            "cross-writer collision is structurally impossible: {pair:?}"
+    for (index, &(start, end)) in ranges.iter().enumerate() {
+        assert_eq!(
+            start,
+            index as u64 * LEASE_WIDTH,
+            "no gap or overlapping lease"
+        );
+        assert_eq!(
+            end,
+            start + LEASE_WIDTH,
+            "every successful lease has exact width"
         );
     }
     let store = FsStore::new(base.join("store"));
+    let Leased::Drawn { range: tail, .. } =
+        lease_block(&store, "", NOTE, FieldId(0), 0, 1).expect("uncontended tail lease")
+    else {
+        panic!("uncontended tail refused");
+    };
+    assert_eq!(tail.start, ranges.len() as u64 * LEASE_WIDTH);
+    assert_eq!(tail.end, tail.start + LEASE_WIDTH);
     let counter = store
         .get(&ids_key("", NOTE, FieldId(0)))
         .expect("get")
         .expect("counter");
     assert_eq!(
         counter.bytes,
-        (CHILDREN * BLOCKS_PER_CHILD * LEASE_WIDTH)
-            .to_string()
-            .into_bytes(),
-        "every block is accounted"
+        tail.end.to_string().into_bytes(),
+        "every successful block including the uncontended tail is accounted; busy never allocates"
     );
 }

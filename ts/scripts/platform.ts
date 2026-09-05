@@ -1,4 +1,4 @@
-import * as errors from "@superbuilders/errors"
+import { ScriptError } from "./errors.ts"
 
 /**
  * The platforms this release PUBLISHES; each package dir is
@@ -47,7 +47,7 @@ const NATIVE_ARTIFACT: Record<"darwin" | "linux", string> = {
 
 function assertSupported(platform: string): asserts platform is keyof typeof NATIVE_ARTIFACT {
 	if (!Object.hasOwn(NATIVE_ARTIFACT, platform)) {
-		throw errors.new(`unsupported platform for the bumbledb native build: ${platform}`)
+		throw new ScriptError({ message: `unsupported platform for the bumbledb native build: ${platform}` })
 	}
 }
 

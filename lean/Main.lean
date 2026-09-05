@@ -1,4 +1,5 @@
 import Bumbledb.Conformance
+import Bumbledb.Float64.Conformance
 import Bumbledb.Decide
 import Bumbledb.Exec.Reach
 
@@ -80,6 +81,7 @@ def typeOfName (s : String) : Except String ValueType :=
   | "bool" => .ok .bool
   | "u64" => .ok .u64
   | "i64" => .ok .i64
+  | "f64" => .ok .f64
   | "str" => .ok .str
   | "interval_u64" => .ok (.interval .u64)
   | "interval_i64" => .ok (.interval .i64)

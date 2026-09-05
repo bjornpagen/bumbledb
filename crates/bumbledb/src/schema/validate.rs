@@ -234,14 +234,19 @@ impl ValidateDescriptor for SchemaDescriptor {
             }
         }
 
-        Ok(Schema {
+        let schema = Schema {
+            identity: std::sync::OnceLock::new(),
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
             capacities: capacities.into_boxed_slice(),
             order: order.into_boxed_slice(),
             dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
-        })
+        };
+        // Compile identity once with the schema; change ingestion and command
+        // sealing must not repeatedly allocate/hash its complete descriptor.
+        let _ = super::fingerprint::fingerprint(&schema);
+        Ok(schema)
     }
 }
 

@@ -7,25 +7,23 @@
  * are marshal walks over the sealed codec handle; the file IO half
  * lives here. The content address is blake3 of the rendered bytes.
  */
-
 import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import type { LogChain, LogCodecHandle, LogSidecarKind } from "@bjornpagen/bumbledb"
 import { internalLogParseSidecar, internalLogRenderSidecar } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import type { Digest32 } from "#bytes.ts"
 import { digest32, saturatingAddU64, U64_MAX } from "#bytes.ts"
 import type { Braid } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
-import { refuse } from "#errors.ts"
+import { LogOperationError, refuse } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
 import { Vector } from "#vector.ts"
 
 /** The sidecar's file name inside a replica directory. */
 const CHAIN_FILE = "chain"
-
 /** One braid's chain coordinate: the applied count, the applied
  *  batch's content address, its timestamp. */
 interface ChainEntry {
@@ -33,49 +31,67 @@ interface ChainEntry {
 	readonly prev: Digest32
 	readonly ts: bigint
 }
-
 interface Pending {
 	readonly braid: Braid
 	readonly slot: Generation
 	readonly bytes: Uint8Array
 }
-
 type Chain =
-	| { readonly tag: "settled"; readonly entries: ReadonlyMap<Braid, ChainEntry> }
-	| { readonly tag: "pending"; readonly entries: ReadonlyMap<Braid, ChainEntry>; readonly batch: Pending }
-
+	| {
+			readonly tag: "settled"
+			readonly entries: ReadonlyMap<Braid, ChainEntry>
+	  }
+	| {
+			readonly tag: "pending"
+			readonly entries: ReadonlyMap<Braid, ChainEntry>
+			readonly batch: Pending
+	  }
 type SidecarRead =
-	| { readonly tag: "absent" }
-	| { readonly tag: "fault"; readonly io: Error }
-	| { readonly tag: "corrupt"; readonly parse: Error }
-	| { readonly tag: "read"; readonly chain: Chain }
-
-function codeOf(error: Error): string | undefined {
-	return (error as NodeJS.ErrnoException).code
+	| {
+			readonly tag: "absent"
+	  }
+	| {
+			readonly tag: "fault"
+			readonly io: unknown
+	  }
+	| {
+			readonly tag: "corrupt"
+			readonly parse: unknown
+	  }
+	| {
+			readonly tag: "read"
+			readonly chain: Chain
+	  }
+function codeOf(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+		? error.code
+		: undefined
 }
-
 function braidIdOf(id: Braid): number {
 	return Number.parseInt(id.slice(1), 16)
 }
-
-function vectorOf(entries: ReadonlyMap<Braid, { readonly g: bigint }>): Vector {
+function vectorOf(
+	entries: ReadonlyMap<
+		Braid,
+		{
+			readonly g: bigint
+		}
+	>
+): Vector {
 	const counts = new Map<Braid, bigint>()
 	for (const [braid, entry] of entries) {
 		counts.set(braid, entry.g)
 	}
 	return Vector.from(counts)
 }
-
 function chainSum(chain: Chain): bigint {
 	const sum = vectorOf(chain.entries).sum()
 	return typeof sum === "bigint" ? sum : U64_MAX
 }
-
 function chainGeneration(chain: Chain): bigint {
 	const sum = chainSum(chain)
 	return chain.tag === "settled" ? sum : saturatingAddU64(sum, 1n)
 }
-
 /**
  * Remints a bridge refusal row as the driver's typed refusal. The
  * boundary carries `{ kind, message }` only: the kind is the log
@@ -96,7 +112,6 @@ function refuseBridged(kind: LogSidecarKind, message: string, bytes: Uint8Array)
 			return refuse({ kind: "Malformed", at: bytes.length }, message)
 	}
 }
-
 function renderSidecar(codec: LogCodecHandle, chain: Chain): Uint8Array {
 	const entries = [...chain.entries.entries()]
 		.sort(function ascending(a, b) {
@@ -114,7 +129,6 @@ function renderSidecar(codec: LogCodecHandle, chain: Chain): Uint8Array {
 				}
 	return internalLogRenderSidecar(codec, doc)
 }
-
 function parseSidecar(codec: LogCodecHandle, bytes: Uint8Array): Chain {
 	const parsed = internalLogParseSidecar(codec, bytes)
 	if (!parsed.ok) {
@@ -134,46 +148,44 @@ function parseSidecar(codec: LogCodecHandle, bytes: Uint8Array): Chain {
 		batch: { braid: braidHex(pending.braid), slot: generation(pending.slot), bytes: pending.bytes }
 	}
 }
-
 async function readSidecar(codec: LogCodecHandle, file: string): Promise<SidecarRead> {
-	const read = await errors.try(fs.readFile(file))
-	if (read.error) {
-		if (codeOf(read.error) === "ENOENT") {
+	const read = await Promise.resolve(fs.readFile(file)).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+	if (Result.isFailure(read)) {
+		if (codeOf(read.failure) === "ENOENT") {
 			return { tag: "absent" }
 		}
-		return { tag: "fault", io: read.error }
+		return { tag: "fault", io: read.failure }
 	}
-	const parsed = errors.trySync(function parse() {
-		return parseSidecar(codec, read.data)
+	const parsed = Result.try(function parse() {
+		return parseSidecar(codec, read.success)
 	})
-	if (parsed.error) {
-		return { tag: "corrupt", parse: parsed.error }
+	if (Result.isFailure(parsed)) {
+		return { tag: "corrupt", parse: parsed.failure }
 	}
-	return { tag: "read", chain: parsed.data }
+	return { tag: "read", chain: parsed.success }
 }
-
 async function writeSidecar(codec: LogCodecHandle, file: string, chain: Chain): Promise<void> {
 	const dir = path.dirname(file)
 	await fs.mkdir(dir, { recursive: true })
 	const temp = path.join(dir, `.chain-${process.pid}-${crypto.randomBytes(4).toString("hex")}`)
 	const handle = await fs.open(temp, "wx")
-	const written = await errors.try(
+	const written = await Promise.resolve(
 		(async function writeAll() {
 			await handle.writeFile(renderSidecar(codec, chain))
 			await handle.sync()
 		})()
-	)
+	).then(Result.succeed, (cause: unknown) => Result.fail(cause))
 	await handle.close()
-	if (written.error) {
+	if (Result.isFailure(written)) {
 		await fs.rm(temp, { force: true })
-		throw errors.wrap(written.error, `write sidecar ${file}`)
+		throw new LogOperationError({ message: `write sidecar ${file}`, cause: written.failure })
 	}
 	await fs.rename(temp, file)
 	const dirHandle = await fs.open(dir, "r")
-	const synced = await errors.try(dirHandle.sync())
+	const synced = await Promise.resolve(dirHandle.sync()).then(Result.succeed, (cause: unknown) => Result.fail(cause))
 	await dirHandle.close()
-	if (synced.error) {
-		throw errors.wrap(synced.error, `fsync sidecar directory ${dir}`)
+	if (Result.isFailure(synced)) {
+		throw new LogOperationError({ message: `fsync sidecar directory ${dir}`, cause: synced.failure })
 	}
 }
 

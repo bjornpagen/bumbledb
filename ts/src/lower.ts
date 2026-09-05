@@ -1,3 +1,4 @@
+import { AuthoringError } from "#errors.ts"
 /**
  * Descriptor lowering: SDK values down to the PRD-01 `SchemaSpec` plain
  * data (`#spec.ts`), which the napi bridge marshals verbatim. Lowering is
@@ -12,7 +13,6 @@
  * so serialization is deterministic (byte-stable).
  */
 
-import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember } from "#closed.ts"
 import type { FaceData } from "#face.ts"
@@ -113,7 +113,9 @@ function lowerClosed(member: AnyClosed, classes: RelationClasses): RelationSpec 
 	})
 	const newtype = classes.id
 	if (newtype === undefined) {
-		throw errors.new(`closed relation ${member.name}: the id's generator class is missing from the class map`)
+		throw new AuthoringError({
+			message: `closed relation ${member.name}: the id's generator class is missing from the class map`
+		})
 	}
 	return { name: member.name, fields, closed: { newtype, rows } }
 }

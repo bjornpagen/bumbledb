@@ -4,7 +4,6 @@
  * shapes the engine seal refuses. Theories enter through descriptorOf;
  * this module serves only the corpus tests and never ships.
  */
-
 import type {
 	FactValue,
 	LiteralSetSpec,
@@ -20,18 +19,16 @@ import type {
 	ValueSpec
 } from "@bjornpagen/bumbledb"
 import { internalLogBraidsOf, internalLogCodec } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import { fromHex } from "#bytes.ts"
 import type { Braid, Descriptor, FieldInfo, RelationInfo } from "#descriptor.ts"
 import { braidHex, serialAtFrom } from "#descriptor.ts"
+import { LogInputError } from "#errors.ts"
 
 const ID_CLASS = regex("^(.*)\\.id$")
-
 function refuseShape(why: string): never {
-	throw errors.new(`theory: ${why}`)
+	throw new LogInputError({ message: `theory: ${why}` })
 }
-
 /** `{name}.id` — the closed relation's generator class. */
 function idClassOwner(newtype: string): string | undefined {
 	const match = ID_CLASS.exec(newtype)
@@ -41,8 +38,13 @@ function idClassOwner(newtype: string): string | undefined {
 	}
 	return owner
 }
-
-function fieldNamed(relation: RelationInfo, name: string): { readonly ordinal: number; readonly field: FieldInfo } {
+function fieldNamed(
+	relation: RelationInfo,
+	name: string
+): {
+	readonly ordinal: number
+	readonly field: FieldInfo
+} {
 	let ordinal = 0
 	for (const field of relation.fields) {
 		if (field.name === name) {
@@ -52,13 +54,13 @@ function fieldNamed(relation: RelationInfo, name: string): { readonly ordinal: n
 	}
 	refuseShape(`relation ${relation.name} has no field ${name}`)
 }
-
 function rawValue(value: ValueSpec): FactValue {
 	switch (value.kind) {
 		case "bool":
 			return value.value
 		case "u64":
 		case "i64":
+		case "f64":
 			return value.value
 		case "string":
 			return value.value
@@ -69,13 +71,11 @@ function rawValue(value: ValueSpec): FactValue {
 			return { start: value.start, end: value.end }
 	}
 }
-
 interface SpecTables {
 	readonly spec: SchemaSpec
 	readonly byName: Map<string, RelationInfo>
 	readonly byId: Map<number, RelationInfo>
 }
-
 function zipClosedPayload(
 	relation: RelationInfo,
 	handle: string,
@@ -106,9 +106,14 @@ function zipClosedPayload(
 	}
 	return pairs
 }
-
 function fieldsOf(
-	tables: Map<string, { closed: boolean; handles: readonly string[] }>,
+	tables: Map<
+		string,
+		{
+			closed: boolean
+			handles: readonly string[]
+		}
+	>,
 	relation: SchemaSpec["relations"][number]
 ): FieldInfo[] {
 	const fields: FieldInfo[] = []
@@ -133,7 +138,6 @@ function fieldsOf(
 	}
 	return fields
 }
-
 function resolveLiteral(tables: SpecTables, relation: RelationInfo, field: FieldInfo, literal: LiteralSpec): FactValue {
 	if (literal.kind === "value") {
 		return rawValue(literal.value)
@@ -151,7 +155,6 @@ function resolveLiteral(tables: SpecTables, relation: RelationInfo, field: Field
 	}
 	return BigInt(id)
 }
-
 function literalSetOf(tables: SpecTables, relation: RelationInfo, field: FieldInfo, set: LiteralSetSpec): FactValue[] {
 	if (set.kind === "one") {
 		return [resolveLiteral(tables, relation, field, set.literal)]
@@ -160,11 +163,9 @@ function literalSetOf(tables: SpecTables, relation: RelationInfo, field: FieldIn
 		return resolveLiteral(tables, relation, field, literal)
 	})
 }
-
 function fieldOrdinal(relation: RelationInfo, name: string): number {
 	return fieldNamed(relation, name).ordinal
 }
-
 function specSideOf(tables: SpecTables, side: SideSpec): SealedSide {
 	const relation = tables.byName.get(side.relation)
 	if (relation === undefined) {
@@ -179,18 +180,31 @@ function specSideOf(tables: SpecTables, side: SideSpec): SealedSide {
 	})
 	return { relation: relation.id, projection, selection }
 }
-
-function boundValue(context: string, bound: { readonly kind: string }): bigint {
+function boundValue(
+	context: string,
+	bound: {
+		readonly kind: string
+	}
+): bigint {
 	if (bound.kind !== "lit") {
 		refuseShape(`${context}: dependent floors are refused by the schema grammar`)
 	}
-	return (bound as { readonly kind: "lit"; readonly value: bigint }).value
+	return (
+		bound as {
+			readonly kind: "lit"
+			readonly value: bigint
+		}
+	).value
 }
-
 function capacityOf(
 	tables: SpecTables,
 	id: number,
-	statement: Extract<StatementSpec, { kind: "capacity" }>
+	statement: Extract<
+		StatementSpec,
+		{
+			kind: "capacity"
+		}
+	>
 ): SealedStatement {
 	const target = specSideOf(tables, statement.target)
 	const source = specSideOf(tables, statement.source)
@@ -249,9 +263,14 @@ function capacityOf(
 	}
 	return { id, kind: "capacity", target, weight, lo, hi, source }
 }
-
 function assembleFromSpec(spec: SchemaSpec): Descriptor {
-	const prepass = new Map<string, { closed: boolean; handles: readonly string[] }>()
+	const prepass = new Map<
+		string,
+		{
+			closed: boolean
+			handles: readonly string[]
+		}
+	>()
 	for (const relation of spec.relations) {
 		if (prepass.has(relation.name)) {
 			refuseShape(`duplicate relation ${relation.name}`)
@@ -261,7 +280,6 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 			handles: relation.closed === undefined ? [] : relation.closed.rows.map((row) => row.handle)
 		})
 	}
-
 	const byName = new Map<string, RelationInfo>()
 	const byId = new Map<number, RelationInfo>()
 	let nextId = 0
@@ -282,9 +300,7 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 		byName.set(relation.name, info)
 		byId.set(info.id, info)
 	}
-
 	const tables: SpecTables = { spec, byName, byId }
-
 	for (const relation of spec.relations) {
 		if (relation.closed === undefined) {
 			continue
@@ -304,9 +320,7 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 		byName.set(relation.name, updated)
 		byId.set(info.id, updated)
 	}
-
 	const relations = [...byId.values()]
-
 	const statements: SealedStatement[] = []
 	relations.forEach(function freshKeys(relation) {
 		relation.fields.forEach(function freshKey(field, ordinal) {
@@ -352,7 +366,6 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 			}
 		}
 	}
-
 	const fingerprint = "00".repeat(32)
 	// The shadow wire: exactly what the bridge's descriptor walker reads
 	// — names, layouts, fresh flags, extension PRESENCE, the assembled
@@ -381,7 +394,6 @@ function assembleFromSpec(spec: SchemaSpec): Descriptor {
 		}
 	}
 	const serialAtStatements = serialAtFrom(braids.serialAt, statements, braidOfRelation)
-
 	return {
 		relations,
 		relationByName: byName,

@@ -63,6 +63,7 @@ pub mod ids {
     /// closed vocabulary for corpus id-stability; loaded by its own
     /// loader beside the `0..TARGET_RELATIONS` sweep.
     pub const LANE: RelationId = RelationId(16);
+    pub const FLOAT_VALUE: RelationId = RelationId(17);
 
     pub mod holder {
         use super::FieldId;
@@ -179,6 +180,24 @@ fn closed(name: &str, handles: &[&str]) -> RelationDescriptor {
         fields: vec![],
     }
 }
+
+/// A finite vocabulary exercises total float order, signed finite values,
+/// subnormal/normal boundaries and canonical nonfinite values in every lane.
+pub(crate) const FLOAT_BITS: [u64; 13] = [
+    0xfff0_0000_0000_0000,
+    0xffef_ffff_ffff_ffff,
+    0xbff0_0000_0000_0000,
+    0x8010_0000_0000_0000,
+    0x8000_0000_0000_0001,
+    0,
+    1,
+    0x000f_ffff_ffff_ffff,
+    0x0010_0000_0000_0000,
+    0x3ff0_0000_0000_0000,
+    0x7fef_ffff_ffff_ffff,
+    0x7ff0_0000_0000_0000,
+    0x7ff8_0000_0000_0000,
+];
 
 /// The target ledger, sealed — relations for the query grammar's typing
 /// walk, and the statements the grounding shapes need: the ledger's nine
@@ -432,6 +451,20 @@ pub fn descriptor() -> SchemaDescriptor {
                         field("tag", ValueType::U64),
                     ],
                 },
+                RelationDescriptor {
+                    name: "FloatValue".into(),
+                    fields: vec![field("value", ValueType::F64)],
+                    extension: Some(
+                        FLOAT_BITS
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, bits)| Row {
+                                handle: format!("Float{index}").into(),
+                                values: Box::new([Value::F64(bumbledb::F64::from_bits(bits))]),
+                            })
+                            .collect(),
+                    ),
+                },
             ],
             statements: statements(),
         }
@@ -578,24 +611,24 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
 }
 
 /// The closed-relation statement ids, pinned (materialized order: seven
-/// fresh auto-keys, three closed auto-keys, then the declared list —
+/// fresh auto-keys, four closed auto-keys (including `FloatValue`), then the declared list —
 /// asserted by `the_closed_statement_pins_hold`).
-pub const VOCAB_CURRENCY: bumbledb::StatementId = bumbledb::StatementId(23);
+pub const VOCAB_CURRENCY: bumbledb::StatementId = bumbledb::StatementId(24);
 /// `JournalEntry(source) <= Source(id)`.
-pub const VOCAB_SOURCE: bumbledb::StatementId = bumbledb::StatementId(24);
+pub const VOCAB_SOURCE: bumbledb::StatementId = bumbledb::StatementId(25);
 /// `CurrencyBacking(currency) -> CurrencyBacking` — the declared key.
-pub const BACKING_KEY: bumbledb::StatementId = bumbledb::StatementId(26);
+pub const BACKING_KEY: bumbledb::StatementId = bumbledb::StatementId(27);
 /// `CurrencyBacking(currency) <= Currency(id)`.
-pub const BACKING_VALID: bumbledb::StatementId = bumbledb::StatementId(27);
+pub const BACKING_VALID: bumbledb::StatementId = bumbledb::StatementId(28);
 /// `Currency(id) <= CurrencyBacking(currency)` — domain quantification.
-pub const CURRENCY_BACKED: bumbledb::StatementId = bumbledb::StatementId(28);
+pub const CURRENCY_BACKED: bumbledb::StatementId = bumbledb::StatementId(29);
 /// `CashRounding(currency) <= Currency(id | minor_units == 0)` — the
 /// ψ-sub-vocabulary.
-pub const CASH_ROUNDING_SUBSET: bumbledb::StatementId = bumbledb::StatementId(29);
+pub const CASH_ROUNDING_SUBSET: bumbledb::StatementId = bumbledb::StatementId(30);
 /// `Posting(id) <=[tag]{0..3} PostingTag(posting)` — the capacity
 /// ledger entry (C13), the weighted tag budget the corpus satisfies by
 /// construction.
-pub const TAG_BUDGET: bumbledb::StatementId = bumbledb::StatementId(30);
+pub const TAG_BUDGET: bumbledb::StatementId = bumbledb::StatementId(31);
 
 /// The one ψ-member of the cash-rounding sub-vocabulary (`Gbp`, the
 /// zero-decimal row).
@@ -1018,7 +1051,7 @@ mod tests {
     }
 
     /// The closed-relation statement pins: materialized order is seven
-    /// fresh auto-keys, the three closed auto-keys, then the declared
+    /// fresh auto-keys, the four closed auto-keys, then the declared
     /// list — re-derived here so the differential's typed verdicts name
     /// real statements, never guessed ids.
     #[test]

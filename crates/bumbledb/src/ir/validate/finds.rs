@@ -76,9 +76,11 @@ impl Context {
                     if group_key.contains(over) {
                         return Err(ValidationError::AggregateOverGroupKey { find });
                     }
-                    let admitted = matches!(self.resolved_var_type(*over), ValueType::U64 | ValueType::I64)
-                        || (*self.resolved_var_type(*over) == ValueType::F64
-                            && matches!(op, FoldOp::Min | FoldOp::Max));
+                    let admitted = matches!(
+                        self.resolved_var_type(*over),
+                        ValueType::U64 | ValueType::I64
+                    ) || (*self.resolved_var_type(*over) == ValueType::F64
+                        && matches!(op, FoldOp::Min | FoldOp::Max));
                     if !admitted {
                         return Err(ValidationError::AggregateInputType { find });
                     }

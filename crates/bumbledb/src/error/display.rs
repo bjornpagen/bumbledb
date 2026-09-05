@@ -220,7 +220,9 @@ impl fmt::Display for CorruptionError {
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NonCanonicalF64(bytes) => write!(f, "noncanonical stored F64 order bytes: {bytes:02x?}"),
+            Self::NonCanonicalF64(bytes) => {
+                write!(f, "noncanonical stored F64 order bytes: {bytes:02x?}")
+            }
             Self::InvalidBool(byte) => write!(f, "invalid Bool byte {byte:#04x}"),
             Self::InvalidInterval(bytes) => {
                 write!(f, "interval bytes {bytes:02x?}: start >= end")

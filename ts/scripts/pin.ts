@@ -1,7 +1,8 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
+import { ScriptError } from "./errors.ts"
 import { PUBLISH_PLATFORMS } from "./platform.ts"
 
 /**
@@ -30,15 +31,15 @@ import { PUBLISH_PLATFORMS } from "./platform.ts"
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url))
 
 function readManifest(file: string): Record<string, unknown> {
-	const text = errors.trySync(() => fs.readFileSync(file, "utf8"))
-	if (text.error) {
-		throw errors.wrap(text.error, `read ${file}`)
+	const text = Result.try(() => fs.readFileSync(file, "utf8"))
+	if (Result.isFailure(text)) {
+		throw new ScriptError({ message: `read ${file}`, cause: text.failure })
 	}
-	const parsed = errors.trySync(() => JSON.parse(text.data) as Record<string, unknown>)
-	if (parsed.error) {
-		throw errors.wrap(parsed.error, `parse ${file}`)
+	const parsed = Result.try(() => JSON.parse(text.success) as Record<string, unknown>)
+	if (Result.isFailure(parsed)) {
+		throw new ScriptError({ message: `parse ${file}`, cause: parsed.failure })
 	}
-	return parsed.data
+	return parsed.success
 }
 
 function writeManifest(file: string, manifest: Record<string, unknown>): void {
@@ -49,7 +50,7 @@ function inject(file: string): void {
 	const manifest = readManifest(file)
 	const version = manifest.version
 	if (typeof version !== "string" || version === "") {
-		throw errors.new(`${file} is missing a string version`)
+		throw new ScriptError({ message: `${file} is missing a string version` })
 	}
 	const pins: Record<string, string> = {}
 	for (const platform of PUBLISH_PLATFORMS) {
@@ -79,7 +80,7 @@ function main(): void {
 			restore(file)
 			return
 		default:
-			throw errors.new(`pin.ts: unknown command ${String(command)} (inject | restore)`)
+			throw new ScriptError({ message: `pin.ts: unknown command ${String(command)} (inject | restore)` })
 	}
 }
 

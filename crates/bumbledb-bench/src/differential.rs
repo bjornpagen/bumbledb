@@ -280,6 +280,7 @@ fn owned_value(value: AnswerValue<'_>) -> Value {
         AnswerValue::Bool(v) => Value::Bool(v),
         AnswerValue::U64(v) => Value::U64(v),
         AnswerValue::I64(v) => Value::I64(v),
+        AnswerValue::F64(v) => Value::F64(v),
         AnswerValue::String(v) => Value::String(v.into()),
         AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
         AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),

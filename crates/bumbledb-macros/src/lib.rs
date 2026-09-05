@@ -267,7 +267,10 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
 }
 
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
-    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/f64/id128/str/bytes<N>/interval)");
+    let ty_name = expect_ident(
+        tokens,
+        "a type (bool/u64/i64/f64/id128/str/bytes<N>/interval)",
+    );
     reject_deleted_word(&ty_name);
     let ty = match ty_name.as_str() {
         "bool" => FieldTy::Bool,
@@ -519,15 +522,26 @@ fn is_int_text(text: &str) -> bool {
 }
 
 fn float_literal(negative: bool, text: &str) -> Option<Literal> {
-    if text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b")
+    if text.starts_with("0x")
+        || text.starts_with("0o")
+        || text.starts_with("0b")
         || !(text.contains(['.', 'e', 'E']) || text.ends_with("f64"))
     {
         return None;
     }
     let digits = text.strip_suffix("f64").unwrap_or(text).replace('_', "");
-    let value = digits.parse::<f64>().unwrap_or_else(|_| panic!("schema!: invalid f64 literal `{text}`"));
-    assert!(value.is_finite(), "schema!: f64 numeric literals must be finite");
-    Some(Literal::Float(bumbledb_theory::F64::from(if negative { -value } else { value })))
+    let value = digits
+        .parse::<f64>()
+        .unwrap_or_else(|_| panic!("schema!: invalid f64 literal `{text}`"));
+    assert!(
+        value.is_finite(),
+        "schema!: f64 numeric literals must be finite"
+    );
+    Some(Literal::Float(bumbledb_theory::F64::from(if negative {
+        -value
+    } else {
+        value
+    })))
 }
 
 fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
@@ -1950,7 +1964,10 @@ fn value_tokens(value: &Value) -> String {
         Value::Bool(v) => format!("{path}::Bool({v})"),
         Value::U64(v) => format!("{path}::U64({v})"),
         Value::I64(v) => format!("{path}::I64({v})"),
-        Value::F64(v) => format!("{path}::F64(::bumbledb::F64::from_bits({}u64))", v.to_bits()),
+        Value::F64(v) => format!(
+            "{path}::F64(::bumbledb::F64::from_bits({}u64))",
+            v.to_bits()
+        ),
         Value::String(text) => {
             format!(
                 "{path}::String(::std::boxed::Box::from(\"{}\"))",
@@ -2400,16 +2417,25 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
             format!("\"{}\"", text.escape_default())
         }
         Value::FixedBytes(bytes) if matches!(field.ty, FieldTy::Id128) => {
-            format!("::bumbledb::Id128::from_bytes(*b\"{}\")", bytes.escape_ascii())
+            format!(
+                "::bumbledb::Id128::from_bytes(*b\"{}\")",
+                bytes.escape_ascii()
+            )
         }
         Value::FixedBytes(bytes) => format!("*b\"{}\"", bytes.escape_ascii()),
         Value::IntervalU64(interval) => {
             let (start, end) = interval.bounds();
-            format!("::bumbledb::Interval::<u64>::__ground_axiom({start}, {end})")
+            format!(
+                "::bumbledb::Interval::<u64>::const_new({start}, {end})\
+                 .expect(\"nonempty interval ground axiom\")"
+            )
         }
         Value::IntervalI64(interval) => {
             let (start, end) = interval.bounds();
-            format!("::bumbledb::Interval::<i64>::__ground_axiom({start}, {end})")
+            format!(
+                "::bumbledb::Interval::<i64>::const_new({start}, {end})\
+                 .expect(\"nonempty interval ground axiom\")"
+            )
         }
     };
     match &field.newtype {

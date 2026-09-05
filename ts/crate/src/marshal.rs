@@ -12,7 +12,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AcceptedCollection, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp,
-    CollectionBuilder, Comparison, ConditionTree, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm,
+    CollectionBuilder, Comparison, ConditionTree, F64, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm,
     Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId, ProjectionRule, Query, Rec,
     RecRule, RecStep, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
     StatementId, StatementKind, Term, Value, VarId,
@@ -238,6 +238,12 @@ fn schema_value(
                 ctx,
             )?))
         }
+        ValueType::F64 => {
+            if got != JsType::Number {
+                return Err(mismatch("number (f64)"));
+            }
+            Ok(Value::F64(F64::from(unsafe { value.cast::<f64>()? })))
+        }
         ValueType::String => {
             if got != JsType::String {
                 return Err(mismatch("string"));
@@ -439,6 +445,12 @@ fn push_cell(
             }
             builder.push_i64(i64_in(&unsafe { value.cast::<BigInt>()? }, ctx)?)
         }
+        ValueType::F64 => {
+            if got != JsType::Number {
+                return Err(cell_mismatch(ctx, "number (f64)", got));
+            }
+            builder.push_f64(F64::from(unsafe { value.cast::<f64>()? }))
+        }
         ValueType::String => {
             if got != JsType::String {
                 return Err(cell_mismatch(ctx, "string", got));
@@ -557,6 +569,11 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
             &req::<BigInt>(obj, "value", "i64 value")?,
             "i64 value",
         )?)),
+        tags::value::F64 => Ok(Value::F64(F64::from(req::<f64>(
+            obj,
+            "value",
+            "f64 value",
+        )?))),
         tags::value::STRING => Ok(Value::String(
             req::<String>(obj, "value", "string value")?.into(),
         )),
@@ -604,6 +621,7 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
         tags::value_type::BOOL => Ok(ValueType::Bool),
         tags::value_type::U64 => Ok(ValueType::U64),
         tags::value_type::I64 => Ok(ValueType::I64),
+        tags::value_type::F64 => Ok(ValueType::F64),
         tags::value_type::STRING => Ok(ValueType::String),
         tags::value_type::FIXED_BYTES => {
             let len = ordinal(req::<f64>(obj, "len", "fixedBytes type")?, "bytes width")?;
@@ -1234,6 +1252,7 @@ pub enum ValueOut {
     Bool(bool),
     U64(u64),
     I64(i64),
+    F64(F64),
     Text(String),
     Bytes(Vec<u8>),
     IntervalU64 { start: u64, end: u64 },
@@ -1253,6 +1272,7 @@ impl ValueOut {
             Value::Bool(v) => Self::Bool(v),
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
+            Value::F64(v) => Self::F64(v),
             Value::String(text) => Self::Text(text.into()),
             Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
             Value::IntervalU64(interval) => Self::IntervalU64 {
@@ -1281,6 +1301,7 @@ impl ToNapiValue for ValueOut {
             Self::Bool(v) => unsafe { bool::to_napi_value(env, v) },
             Self::U64(v) => unsafe { u64::to_napi_value(env, v) },
             Self::I64(v) => unsafe { i64n::to_napi_value(env, i64n(v)) },
+            Self::F64(v) => unsafe { f64::to_napi_value(env, v.to_f64()) },
             Self::Text(v) => unsafe { String::to_napi_value(env, v) },
             Self::Bytes(v) => unsafe { Uint8Array::to_napi_value(env, Uint8Array::new(v)) },
             Self::IntervalU64 { start, end } => {
@@ -1315,6 +1336,7 @@ pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
                     AnswerValue::Bool(v) => ValueOut::Bool(v),
                     AnswerValue::U64(v) => ValueOut::U64(v),
                     AnswerValue::I64(v) => ValueOut::I64(v),
+                    AnswerValue::F64(v) => ValueOut::F64(v),
                     AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
                     AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_vec()),
                     AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
@@ -1348,7 +1370,7 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
     // payload attributes are matched here.
     obj.set("kind", tags::value_type::tag(ty))?;
     match ty {
-        ValueType::Bool | ValueType::U64 | ValueType::I64 | ValueType::String => {}
+        ValueType::Bool | ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => {}
         ValueType::FixedBytes { len } => {
             obj.set("len", u32::from(*len))?;
         }

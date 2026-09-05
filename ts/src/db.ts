@@ -1,3 +1,18 @@
+import { Result } from "effect"
+import {
+	AuthoringError,
+	ErrAsyncCallback,
+	ErrFingerprintMismatch,
+	ErrForeignPrepared,
+	ErrForeignWitness,
+	ErrIrError,
+	ErrNewtypeMismatch,
+	ErrSchemaError,
+	ErrSpentHandle,
+	ErrUseAfterScope,
+	NativeOperationError,
+	SdkInvariantError
+} from "#errors.ts"
 /**
  * `Db` — the living half of the SDK (PRD-07): open/create a store from a
  * `Schema`, write typed facts through delta transactions with race-free
@@ -26,11 +41,10 @@
  * carrying {@link Violation} values. A moved generation on
  * {@link Db.writeFrom} is the `{ tag: "moved" }` arm, not an exception.
  * Genuine failures — I/O, used-after-scope, spent handle, marshal shape —
- * throw `@superbuilders/errors` wrapped errors instead.
+ * throw named Effect tagged errors with structured fields and causes instead.
  */
 
 import * as path from "node:path"
-import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import { rosterOf } from "#fields.ts"
@@ -102,7 +116,7 @@ function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): F
 		for (const declared of data.fields) {
 			const value = record[declared.name]
 			if (value === undefined) {
-				throw errors.new(`relation ${data.name}: fact is missing field ${declared.name}`)
+				throw new AuthoringError({ message: `relation ${data.name}: fact is missing field ${declared.name}` })
 			}
 			cells.push(cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value))
 		}
@@ -288,7 +302,7 @@ function abandonedOutcome<Rels extends SchemaRelations, R>(
 ): WriteOutcome<Rels, R> {
 	const outcome = Object.freeze({ tag: "abandoned" as const, abandoned: sentinel.payload })
 	if (!isAbandonedOutcome<Rels, R>(outcome, sentinel)) {
-		throw errors.new("bumbledb abandon outcome construction incomplete")
+		throw new SdkInvariantError({ message: "bumbledb abandon outcome construction incomplete" })
 	}
 	return outcome
 }
@@ -450,7 +464,9 @@ function violationFromEntry<Rels extends SchemaRelations>(
 	}
 	if (entry.kind === "capacity") {
 		if (wire.kind !== "capacity") {
-			throw errors.new(`bumbledb violation ${wire.statementId} is a capacity slot without a measure`)
+			throw new SdkInvariantError({
+				message: `bumbledb violation ${wire.statementId} is a capacity slot without a measure`
+			})
 		}
 		return Object.freeze({
 			kind: "capacity",
@@ -461,7 +477,9 @@ function violationFromEntry<Rels extends SchemaRelations>(
 		})
 	}
 	if (wire.kind !== "containment") {
-		throw errors.new(`bumbledb violation ${wire.statementId} is a containment slot without a direction`)
+		throw new SdkInvariantError({
+			message: `bumbledb violation ${wire.statementId} is a containment slot without a direction`
+		})
 	}
 	if (entry.kind === "mirrors") {
 		return Object.freeze({
@@ -570,12 +588,14 @@ function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
 ): T {
 	if (declaredKey !== undefined) {
 		if (!isStatementValue(keyOrStatement)) {
-			throw errors.new("keyed get takes a key() statement value as its second argument")
+			throw new AuthoringError({ message: "keyed get takes a key() statement value as its second argument" })
 		}
 		return byStatement(keyOrStatement, declaredKey)
 	}
 	if (isStatementValue(keyOrStatement)) {
-		throw errors.new("keyed get with a statement selector also takes the key object — get(relation, keyStatement, key)")
+		throw new AuthoringError({
+			message: "keyed get with a statement selector also takes the key object — get(relation, keyStatement, key)"
+		})
 	}
 	return byPrimary(keyOrStatement)
 }
@@ -588,29 +608,31 @@ interface Tables {
 function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 	const entries = materializedEntries(theory)
 	if (entries.length !== manifest.statements.length) {
-		throw errors.new(
-			`bumbledb manifest drift: the SDK lowering yields ${entries.length} materialized statements, the engine reports ${manifest.statements.length}`
-		)
+		throw new SdkInvariantError({
+			message: `bumbledb manifest drift: the SDK lowering yields ${entries.length} materialized statements, the engine reports ${manifest.statements.length}`
+		})
 	}
 	manifest.statements.forEach(function verifySlot(statement, index) {
 		const entry = entries[index]
 		if (entry === undefined || statement.id !== index) {
-			throw errors.new(
-				`bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${entry?.kind}`
-			)
+			throw new SdkInvariantError({
+				message: `bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${entry?.kind}`
+			})
 		}
 		const engineKind = entry.kind === "mirrors" ? "containment" : entry.kind
 		if (engineKind !== statement.kind) {
-			throw errors.new(
-				`bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${engineKind}`
-			)
+			throw new SdkInvariantError({
+				message: `bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${engineKind}`
+			})
 		}
 	})
 	const relations = new Map<string, RelationEntry>()
 	for (const relation of manifest.relations) {
 		const member = theory.relations[relation.name]
 		if (member === undefined) {
-			throw errors.new(`bumbledb manifest drift: relation ${relation.name} is not in schema ${theory.name}`)
+			throw new SdkInvariantError({
+				message: `bumbledb manifest drift: relation ${relation.name} is not in schema ${theory.name}`
+			})
 		}
 		const fieldIds = new Map<string, number>()
 		for (const field of relation.fields) {
@@ -618,9 +640,9 @@ function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 		}
 		sealedFieldsOf(member).forEach(function verifyField(declared, fieldOrdinal) {
 			if (fieldIds.get(declared.name) !== fieldOrdinal) {
-				throw errors.new(
-					`bumbledb manifest drift: ${relation.name}.${declared.name} has engine field id ${fieldIds.get(declared.name)}, its sealed ordinal is ${fieldOrdinal}`
-				)
+				throw new SdkInvariantError({
+					message: `bumbledb manifest drift: ${relation.name}.${declared.name} has engine field id ${fieldIds.get(declared.name)}, its sealed ordinal is ${fieldOrdinal}`
+				})
 			}
 		})
 		let primaryKey: PrimaryKey | undefined
@@ -634,12 +656,14 @@ function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 	Object.keys(theory.relations).forEach(function verifyRelation(name, ordinal) {
 		const entry = relations.get(name)
 		if (entry === undefined) {
-			throw errors.new(`bumbledb manifest drift: schema relation ${name} is not in the manifest`)
+			throw new SdkInvariantError({
+				message: `bumbledb manifest drift: schema relation ${name} is not in the manifest`
+			})
 		}
 		if (entry.id !== ordinal) {
-			throw errors.new(
-				`bumbledb manifest drift: relation ${name} has engine id ${entry.id}, its declaration ordinal is ${ordinal} — query lowering depends on declaration order = ids`
-			)
+			throw new SdkInvariantError({
+				message: `bumbledb manifest drift: relation ${name} has engine id ${entry.id}, its declaration ordinal is ${ordinal} — query lowering depends on declaration order = ids`
+			})
 		}
 	})
 	return Object.freeze({ relations, statements: Object.freeze(entries) })
@@ -651,7 +675,7 @@ function tablesFromTheory(theory: AnySchema): Tables {
 	Object.keys(theory.relations).forEach(function byOrdinal(name, ordinal) {
 		const member = theory.relations[name]
 		if (member === undefined) {
-			throw errors.new(`bumbledb theory has no relation ${name}`)
+			throw new SdkInvariantError({ message: `bumbledb theory has no relation ${name}` })
 		}
 		const fieldIds = new Map<string, number>()
 		sealedFieldsOf(member).forEach(function byField(declared, fieldOrdinal) {
@@ -690,10 +714,10 @@ interface WitnessState {
 const witnessStates = new WeakMap<object, WitnessState>()
 
 const witnessReclaimer = new FinalizationRegistry<WitnessHandle>(function reclaimWitness(handle) {
-	const closed = errors.trySync(function closeWitness() {
+	const closed = Result.try(function closeWitness() {
 		native.witnessClose(handle)
 	})
-	if (closed.error) {
+	if (Result.isFailure(closed)) {
 		return
 	}
 })
@@ -708,23 +732,13 @@ interface PreparedPlan {
 const preparedPlans = new WeakMap<object, PreparedPlan>()
 
 const planReclaimer = new FinalizationRegistry<PreparedHandle>(function reclaimPlan(handle) {
-	const closed = errors.trySync(function closePlan() {
+	const closed = Result.try(function closePlan() {
 		native.preparedClose(handle)
 	})
-	if (closed.error) {
+	if (Result.isFailure(closed)) {
 		return
 	}
 })
-
-const ErrAsyncCallback = errors.new(
-	"bumbledb asyncCallback: a read or write callback returned a thenable — the callback is synchronous"
-)
-const ErrSpentHandle = errors.new("bumbledb spentHandle: a consumed builder, instance, or witness was used")
-const ErrUseAfterScope = errors.new(
-	"bumbledb useAfterScope: a stashed read instance or write transaction was used after its callback returned"
-)
-const ErrForeignPrepared = errors.new("bumbledb foreignPrepared: a prepared query met a foreign instance")
-const ErrForeignWitness = errors.new("bumbledb foreignWitness: a witness met a foreign store")
 
 interface CatalogNative {
 	scan(relationId: number): FactValue[][]
@@ -745,13 +759,16 @@ function catalogMethods<Rels extends SchemaRelations>(
 	function planOf(prepared: object): PreparedPlan {
 		const plan = preparedPlans.get(prepared)
 		if (plan === undefined) {
-			throw errors.wrap(ErrForeignPrepared, "bumbledb execute target is not a prepared value of this SDK")
+			throw new ErrForeignPrepared({
+				reason: "notPrepared",
+				message: "bumbledb execute target is not a prepared value of this SDK"
+			})
 		}
 		if (plan.owner !== owner) {
-			throw errors.wrap(
-				ErrForeignPrepared,
-				`bumbledb prepared value was prepared by a different store than this one (schema ${theory.name})`
-			)
+			throw new ErrForeignPrepared({
+				reason: "foreignStore",
+				message: `bumbledb prepared value was prepared by a different store than this one (schema ${theory.name})`
+			})
 		}
 		return plan
 	}
@@ -782,9 +799,9 @@ function catalogMethods<Rels extends SchemaRelations>(
 			function byPrimary(key) {
 				const primaryKey = entry.primaryKey
 				if (primaryKey === undefined) {
-					throw errors.new(
-						`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-					)
+					throw new AuthoringError({
+						message: `relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
+					})
 				}
 				const row = bridged("bumbledb instance get", function readGet() {
 					return ops.get(
@@ -826,9 +843,9 @@ function catalogMethods<Rels extends SchemaRelations>(
 	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
 		assertLive()
 		if (q.schema !== theory) {
-			throw errors.new(
-				`query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
-			)
+			throw new AuthoringError({
+				message: `query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
+			})
 		}
 		const queryIr = lowerQuery(q)
 		const outcome = bridged("prepare bumbledb query", function callPrepare() {
@@ -856,12 +873,12 @@ function catalogMethods<Rels extends SchemaRelations>(
 function ordinaryEntry(tables: Tables, theory: AnySchema, relation: AnyRelation): RelationEntry {
 	const entry = tables.relations.get(relation.name)
 	if (entry === undefined || entry.member !== relation) {
-		throw errors.new(`relation ${relation.name} is not a member of schema ${theory.name}`)
+		throw new AuthoringError({ message: `relation ${relation.name} is not a member of schema ${theory.name}` })
 	}
 	if (isClosedMember(relation)) {
-		throw errors.new(
-			`relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
-		)
+		throw new AuthoringError({
+			message: `relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
+		})
 	}
 	return entry
 }
@@ -872,17 +889,19 @@ function declaredKeyOf(tables: Tables, theory: AnySchema, relation: AnyRelation,
 	})
 	const entry = tables.statements[statementId]
 	if (entry === undefined) {
-		throw errors.new(
-			`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
-		)
+		throw new AuthoringError({
+			message: `keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
+		})
 	}
 	if (entry.kind !== "functionality") {
-		throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
+		throw new AuthoringError({
+			message: "keyed get takes a key() statement — containments and capacity statements key nothing"
+		})
 	}
 	if (entry.owner !== relation.name) {
-		throw errors.new(
-			`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
-		)
+		throw new AuthoringError({
+			message: `keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
+		})
 	}
 	return Object.freeze({ statementId, projection: entry.projection })
 }
@@ -932,9 +951,9 @@ function overlayMethods<Rels extends SchemaRelations>(
 			function byPrimary(key) {
 				const primaryKey = entry.primaryKey
 				if (primaryKey === undefined) {
-					throw errors.new(
-						`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-					)
+					throw new AuthoringError({
+						message: `relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
+					})
 				}
 				return readThroughKey(relation, entry, primaryKey, recordOf(key))
 			}
@@ -952,10 +971,10 @@ function createReadInstance<Rels extends SchemaRelations>(
 	const state: InstanceState = { handle: nativeHandle, live: true, owner }
 	function assertLive(): void {
 		if (!state.live) {
-			throw errors.wrap(
-				ErrUseAfterScope,
-				"bumbledb read instance is invalidated — its owning callback already returned"
-			)
+			throw new ErrUseAfterScope({
+				handle: "readInstance",
+				message: "bumbledb read instance is invalidated — its owning callback already returned"
+			})
 		}
 	}
 	const methods = catalogMethods(theory, tables, owner, assertLive, {
@@ -1003,13 +1022,13 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	function violationOf(wire: WireViolation): Violation<Rels> {
 		const entry = tables.statements[wire.statementId]
 		if (entry === undefined) {
-			throw errors.new(`bumbledb violation cites unknown statement id ${wire.statementId}`)
+			throw new SdkInvariantError({ message: `bumbledb violation cites unknown statement id ${wire.statementId}` })
 		}
 		const facts = Object.freeze(
 			wire.facts.map(function offending(fact) {
 				const rel = tables.relations.get(fact.relation)
 				if (rel === undefined || !isMemberName(fact.relation)) {
-					throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
+					throw new SdkInvariantError({ message: `bumbledb violation cites unknown relation ${fact.relation}` })
 				}
 				return decodeOffendingFact<Rels>(rel.member, fact.relation, fact)
 			})
@@ -1058,9 +1077,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				function byPrimary(key) {
 					const primaryKey = entry.primaryKey
 					if (primaryKey === undefined) {
-						throw errors.new(
-							`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-						)
+						throw new AuthoringError({
+							message: `relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
+						})
 					}
 					return readThroughKey(relation, entry, primaryKey, recordOf(key))
 				}
@@ -1121,7 +1140,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 					state.live = false
 				}
 				if (isThenable(value)) {
-					throw errors.wrap(ErrAsyncCallback, "bumbledb read callback returned a thenable")
+					throw new ErrAsyncCallback({ scope: "read", message: "bumbledb read callback returned a thenable" })
 				}
 				captured = value
 				return value
@@ -1134,7 +1153,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		const txState = { spent: false }
 		function assertLive(): void {
 			if (txState.spent) {
-				throw errors.wrap(ErrUseAfterScope, "bumbledb write transaction is spent")
+				throw new ErrUseAfterScope({ handle: "writeTransaction", message: "bumbledb write transaction is spent" })
 			}
 		}
 		const reads = pointReadsOf(assertLive, {
@@ -1182,11 +1201,13 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				return candidate.name === field
 			})
 			if (declared === undefined || !isFreshField(declared.field)) {
-				throw errors.new(`relation ${relation.name}: field ${field} is not a fresh cell`)
+				throw new AuthoringError({ message: `relation ${relation.name}: field ${field} is not a fresh cell` })
 			}
 			const fieldId = entry.fieldIds.get(field)
 			if (fieldId === undefined) {
-				throw errors.new(`bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`)
+				throw new SdkInvariantError({
+					message: `bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`
+				})
 			}
 			const txHandle = resolveTx()
 			const range = bridged("bumbledb tx reserve", function mint() {
@@ -1223,7 +1244,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		}
 		if (nativeOutcome.tag === "abandoned") {
 			if (built === undefined || !isAbandon(built)) {
-				throw errors.new("bumbledb write abandoned without an abandon sentinel")
+				throw new SdkInvariantError({ message: "bumbledb write abandoned without an abandon sentinel" })
 			}
 			return abandonedOutcome<Rels, R>(built)
 		}
@@ -1246,18 +1267,18 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				const made = makeTx(function resolveTx() {
 					return txHandle
 				})
-				const result = errors.trySync(function buildDelta() {
+				const result = Result.try(function buildDelta() {
 					return fn(made.tx)
 				})
 				made.spend()
-				if (result.error) {
-					throw errors.wrap(result.error, "build write delta")
+				if (Result.isFailure(result)) {
+					throw new NativeOperationError({ operation: "build write delta", cause: result.failure })
 				}
-				if (isThenable(result.data)) {
-					throw errors.wrap(ErrAsyncCallback, "bumbledb write callback returned a thenable")
+				if (isThenable(result.success)) {
+					throw new ErrAsyncCallback({ scope: "write", message: "bumbledb write callback returned a thenable" })
 				}
-				built = result.data
-				return !isAbandon(result.data)
+				built = result.success
+				return !isAbandon(result.success)
 			})
 		})
 		return mapNativeWrite(nativeOutcome, built)
@@ -1268,7 +1289,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			return native.dbWrite(handle, callback)
 		}, fn)
 		if (outcome.tag === "moved") {
-			throw errors.new("bumbledb write reported moved — unconditional writes cannot move")
+			throw new SdkInvariantError({ message: "bumbledb write reported moved — unconditional writes cannot move" })
 		}
 		return outcome
 	}
@@ -1279,16 +1300,23 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	): WriteFromOutcome<Rels, SyncResult<R>> {
 		const state = witnessStates.get(witness)
 		if (state === undefined) {
-			throw errors.wrap(ErrForeignWitness, "bumbledb writeFrom witness is not a witness of this SDK")
+			throw new ErrForeignWitness({
+				reason: "notWitness",
+				message: "bumbledb writeFrom witness is not a witness of this SDK"
+			})
 		}
 		if (state.owner !== owner) {
-			throw errors.wrap(
-				ErrForeignWitness,
-				`bumbledb writeFrom witness belongs to a different store (schema ${theory.name})`
-			)
+			throw new ErrForeignWitness({
+				reason: "foreignStore",
+				message: `bumbledb writeFrom witness belongs to a different store (schema ${theory.name})`
+			})
 		}
 		if (state.spent) {
-			throw errors.wrap(ErrSpentHandle, "bumbledb writeFrom witness has been disposed")
+			throw new ErrSpentHandle({
+				handle: "witness",
+				state: "disposed",
+				message: "bumbledb writeFrom witness has been disposed"
+			})
 		}
 		return runWrite(function invoke(callback) {
 			return native.dbWriteFrom(handle, state.handle, callback)
@@ -1303,9 +1331,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 
 	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
 		if (q.schema !== theory) {
-			throw errors.new(
-				`query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
-			)
+			throw new AuthoringError({
+				message: `query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
+			})
 		}
 		const queryIr = lowerQuery(q)
 		const outcome = bridged("prepare bumbledb query", function callPrepare() {
@@ -1327,13 +1355,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	})
 }
 
-const ErrNewtypeMismatch = errors.new(
-	"bumbledb newtypeMismatch: a statement pairs faces whose newtypes disagree — the faces of a dependency agree on their newtype, or neither carries one"
-)
-const ErrSchemaError = errors.new("bumbledb schemaError: the declaration failed validation")
-const ErrFingerprintMismatch = errors.new("bumbledb fingerprintMismatch: the store's schema does not match this theory")
-const ErrIrError = errors.new("bumbledb irError: the query failed validation")
-
 function throwOpenRefusal(
 	verb: string,
 	canonical: string,
@@ -1342,16 +1363,16 @@ function throwOpenRefusal(
 ): never {
 	const detail = `${verb} ${canonical}: ${message}`
 	if (kind === "newtypeMismatch") {
-		throw errors.wrap(ErrNewtypeMismatch, detail)
+		throw new ErrNewtypeMismatch({ operation: verb, path: canonical, message: detail })
 	}
 	if (kind === "schemaError") {
-		throw errors.wrap(ErrSchemaError, detail)
+		throw new ErrSchemaError({ operation: verb, path: canonical, message: detail })
 	}
-	throw errors.wrap(ErrFingerprintMismatch, detail)
+	throw new ErrFingerprintMismatch({ operation: verb, path: canonical, message: detail })
 }
 
 function throwPrepareRefusal(message: string): never {
-	throw errors.wrap(ErrIrError, `prepare: ${message}`)
+	throw new ErrIrError({ operation: "prepare", message: `prepare: ${message}` })
 }
 
 function openFromHandle<Rels extends SchemaRelations>(dbHandle: DbHandle, theory: Schema<Rels>): Db<Rels> {
@@ -1393,13 +1414,13 @@ function mapViolationWithoutStore<Rels extends SchemaRelations>(
 	const entries = materializedEntries(theory)
 	const entry = entries[wire.statementId]
 	if (entry === undefined) {
-		throw errors.new(`bumbledb violation cites unknown statement id ${wire.statementId}`)
+		throw new SdkInvariantError({ message: `bumbledb violation cites unknown statement id ${wire.statementId}` })
 	}
 	const facts = Object.freeze(
 		wire.facts.map(function offending(fact) {
 			const member = theory.relations[fact.relation]
 			if (member === undefined || !(fact.relation in theory.relations)) {
-				throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
+				throw new SdkInvariantError({ message: `bumbledb violation cites unknown relation ${fact.relation}` })
 			}
 			return decodeOffendingFact<Rels>(member, fact.relation as keyof Rels & string, fact)
 		})
@@ -1453,19 +1474,19 @@ const ownedRecords = new WeakMap<object, { handle: OwnedHandle; theory: AnySchem
 const builderRecords = new WeakMap<object, { handle: BuilderHandle; theory: AnySchema; spent: boolean }>()
 
 const ownedReclaimer = new FinalizationRegistry<OwnedHandle>(function reclaimOwned(handle) {
-	const closed = errors.trySync(function closeOwned() {
+	const closed = Result.try(function closeOwned() {
 		native.ownedInstanceClose(handle)
 	})
-	if (closed.error) {
+	if (Result.isFailure(closed)) {
 		return
 	}
 })
 
 const builderReclaimer = new FinalizationRegistry<BuilderHandle>(function reclaimBuilder(handle) {
-	const closed = errors.trySync(function closeBuilder() {
+	const closed = Result.try(function closeBuilder() {
 		native.instanceBuilderClose(handle)
 	})
-	if (closed.error) {
+	if (Result.isFailure(closed)) {
 		return
 	}
 })
@@ -1476,7 +1497,11 @@ function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theo
 	const tables = tablesFromTheory(theory)
 	function assertLive(): void {
 		if (rec.spent) {
-			throw errors.wrap(ErrSpentHandle, "bumbledb owned instance has been disposed")
+			throw new ErrSpentHandle({
+				handle: "ownedInstance",
+				state: "disposed",
+				message: "bumbledb owned instance has been disposed"
+			})
 		}
 	}
 	const methods = catalogMethods(theory, tables, owner, assertLive, {
@@ -1510,9 +1535,14 @@ function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theo
 			} catch (caught) {
 				const error = errorFromThrow(caught)
 				if (LEASED_FOR_PUBLISH.test(error.message)) {
-					throw errors.wrap(ErrSpentHandle, "bumbledb owned instance is leased for publish")
+					throw new ErrSpentHandle({
+						handle: "ownedInstance",
+						state: "leasedForPublish",
+						message: "bumbledb owned instance is leased for publish",
+						cause: caught
+					})
 				}
-				throw errors.wrap(error, "close bumbledb owned instance")
+				throw new NativeOperationError({ operation: "close bumbledb owned instance", cause: caught })
 			}
 			rec.spent = true
 			ownedReclaimer.unregister(instance)
@@ -1531,7 +1561,11 @@ function wrapBuilder<Rels extends SchemaRelations>(
 	const tables = tablesFromTheory(theory)
 	function assertLive(): void {
 		if (rec.spent) {
-			throw errors.wrap(ErrSpentHandle, "bumbledb instance builder has been spent")
+			throw new ErrSpentHandle({
+				handle: "instanceBuilder",
+				state: "spent",
+				message: "bumbledb instance builder has been spent"
+			})
 		}
 	}
 	const overlay = overlayMethods(theory, tables, assertLive, {
@@ -1572,11 +1606,13 @@ function wrapBuilder<Rels extends SchemaRelations>(
 				return candidate.name === field
 			})
 			if (declared === undefined || !isFreshField(declared.field)) {
-				throw errors.new(`relation ${relation.name}: field ${field} is not a fresh cell`)
+				throw new AuthoringError({ message: `relation ${relation.name}: field ${field} is not a fresh cell` })
 			}
 			const fieldId = entry.fieldIds.get(field)
 			if (fieldId === undefined) {
-				throw errors.new(`bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`)
+				throw new SdkInvariantError({
+					message: `bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`
+				})
 			}
 			const range = bridged("bumbledb builder reserve", function mint() {
 				return native.instanceBuilderReserve(nativeHandle, entry.id, fieldId, count)
@@ -1587,7 +1623,11 @@ function wrapBuilder<Rels extends SchemaRelations>(
 		get: overlay.get,
 		async admit(): Promise<Admission<Rels, OwnedInstance<Rels>>> {
 			if (rec.spent) {
-				throw errors.wrap(ErrSpentHandle, "bumbledb instance builder has been spent")
+				throw new ErrSpentHandle({
+					handle: "instanceBuilder",
+					state: "spent",
+					message: "bumbledb instance builder has been spent"
+				})
 			}
 			rec.spent = true
 			builderReclaimer.unregister(builder)
@@ -1595,7 +1635,7 @@ function wrapBuilder<Rels extends SchemaRelations>(
 			try {
 				outcome = await native.instanceBuilderAdmit(nativeHandle)
 			} catch (caught) {
-				throw errors.wrap(errorFromThrow(caught), "admit bumbledb instance")
+				throw new NativeOperationError({ operation: "admit bumbledb instance", cause: caught })
 			}
 			if (outcome.tag === "rejected") {
 				return Object.freeze({
@@ -1664,10 +1704,18 @@ const Db = Object.freeze({
 	): Promise<Db<Rels>> {
 		const rec = ownedRecords.get(instance)
 		if (rec === undefined) {
-			throw errors.wrap(ErrSpentHandle, "bumbledb fromInstance target is not an owned instance of this SDK")
+			throw new ErrSpentHandle({
+				handle: "ownedInstance",
+				state: "foreign",
+				message: "bumbledb fromInstance target is not an owned instance of this SDK"
+			})
 		}
 		if (rec.spent) {
-			throw errors.wrap(ErrSpentHandle, "bumbledb fromInstance target has been disposed")
+			throw new ErrSpentHandle({
+				handle: "ownedInstance",
+				state: "disposed",
+				message: "bumbledb fromInstance target has been disposed"
+			})
 		}
 		const canonical = path.resolve(storePath)
 		const dbHandle = await bridgedAsync(`publish bumbledb instance at ${canonical}`, function publish() {

@@ -12,6 +12,7 @@ pub fn translate_query(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     refuse_interval_columns(query, schema)?;
+    refuse_float_arithmetic(query, schema)?;
     match query {
         Query {
             interiors,
@@ -26,6 +27,66 @@ pub fn translate_query(
             ..
         } => translate_reach(interiors, rec, rules, schema, sets),
     }
+}
+
+/// The lossless F64 mirror stores ordered BLOBs. SQLite SUM would silently
+/// coerce those bytes to unrelated numbers; it is never an arithmetic oracle.
+pub(super) fn refuse_float_arithmetic(query: &Query, schema: &Schema) -> Result<(), String> {
+    let mut float_columns: Vec<Vec<bool>> = Vec::new();
+    for interior in &query.interiors {
+        float_columns.push(float_head(
+            &interior.rules[0].to_rule(),
+            schema,
+            &float_columns,
+        ));
+    }
+    if let Some(rec) = &query.rec {
+        float_columns.push(float_head(&rec.base[0].to_rule(), schema, &float_columns));
+    }
+    for rule in &query.rules {
+        for find in &rule.finds {
+            if let FindTerm::Aggregate {
+                op: bumbledb::FoldOp::Sum,
+                over,
+            } = find
+                && float_var(*over, rule, schema, &float_columns)
+            {
+                return Err(
+                    "F64 arithmetic requires an exact numerical oracle, not SQLite BLOB SUM".into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn float_head(rule: &Rule, schema: &Schema, prior: &[Vec<bool>]) -> Vec<bool> {
+    rule.finds
+        .iter()
+        .map(|find| match find {
+            FindTerm::Var(var) => float_var(*var, rule, schema, prior),
+            _ => false,
+        })
+        .collect()
+}
+
+fn float_var(var: bumbledb::VarId, rule: &Rule, schema: &Schema, prior: &[Vec<bool>]) -> bool {
+    rule.atoms.iter().any(|atom| {
+        atom.bindings.iter().any(|(field, term)| {
+            matches!(term, Term::Var(v) if *v == var)
+                && match atom.source {
+                    AtomSource::Edb(relation) => {
+                        schema.relation(relation).field(*field).value_type
+                            == bumbledb::schema::ValueType::F64
+                    }
+                    AtomSource::Interior(InteriorId(id)) => prior
+                        .get(id as usize)
+                        .and_then(|row| row.get(usize::from(field.0)))
+                        .copied()
+                        .unwrap_or(false),
+                }
+        })
+    })
 }
 
 fn translate_cq(

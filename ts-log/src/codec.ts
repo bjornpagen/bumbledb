@@ -10,7 +10,6 @@
  * (`verifyChain`) is pure slot algebra over decoded headers and stays
  * host-side; no byte grammar lives here.
  */
-
 import type {
 	FactValue,
 	LogBatchDecodeKind,
@@ -20,13 +19,12 @@ import type {
 	ValueTypeSpec
 } from "@bjornpagen/bumbledb"
 import { internalLogDecodeBatch, internalLogEncodeBatch } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
 import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, digest32 } from "#bytes.ts"
 import type { ChainEntry } from "#chain.ts"
 import type { Braid, Descriptor, Theory } from "#descriptor.ts"
 import { braidHex, descriptorOf } from "#descriptor.ts"
-import { refuse, refuseChain } from "#errors.ts"
+import { LogInputError, refuse, refuseChain } from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import { generation } from "#keys.ts"
 
@@ -35,7 +33,6 @@ interface Op {
 	readonly relation: string
 	readonly rows: ReadonlyArray<readonly FactValue[]>
 }
-
 interface BatchHeader {
 	readonly fingerprint: Digest32
 	readonly braid: Braid
@@ -44,7 +41,6 @@ interface BatchHeader {
 	readonly writer: bigint
 	readonly timestamp: bigint
 }
-
 /**
  * Encode input. The handle is the fingerprint authority, so no
  * fingerprint field exists here — encode fills the wire's from the
@@ -59,28 +55,23 @@ interface EncodeHeader {
 	readonly writer: bigint
 	readonly timestamp: bigint
 }
-
 interface DecodedBatch {
 	readonly header: BatchHeader
 	readonly ops: readonly Op[]
 }
-
 function braidIdOf(id: Braid): number {
 	return Number.parseInt(id.slice(1), 16)
 }
-
 function asDigest(bytes: Uint8Array, at: string): Digest32 {
 	if (bytes.length !== 32) {
 		refuse({ kind: "DigestWidth" }, `${at} is not 32 bytes`)
 	}
 	return digest32(bytes)
 }
-
 /** A bridge refusal row surfaces as `ErrRefused` carrying the core's identity kind. */
 function refuseBridge(kind: LogBatchDecodeKind | LogBatchEncodeKind, message: string): never {
 	refuse({ kind }, message)
 }
-
 /**
  * Tags one raw cell by the field's declared layout — the bridge's
  * inbound spelling. Only the JS shape is judged here (the tag must be
@@ -91,40 +82,46 @@ function taggedCell(where: string, type: ValueTypeSpec, value: FactValue): Value
 	switch (type.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
-				throw errors.new(`${where}: expected boolean`)
+				throw new LogInputError({ message: `${where}: expected boolean` })
 			}
 			return { kind: "bool", value }
 		}
 		case "u64": {
 			if (typeof value !== "bigint") {
-				throw errors.new(`${where}: expected u64 bigint`)
+				throw new LogInputError({ message: `${where}: expected u64 bigint` })
 			}
 			return { kind: "u64", value }
 		}
 		case "i64": {
 			if (typeof value !== "bigint") {
-				throw errors.new(`${where}: expected i64 bigint`)
+				throw new LogInputError({ message: `${where}: expected i64 bigint` })
 			}
 			return { kind: "i64", value }
 		}
+		case "f64": {
+			if (typeof value !== "number") {
+				throw new LogInputError({ message: `${where}: expected f64 number` })
+			}
+			return { kind: "f64", value }
+		}
 		case "string": {
 			if (typeof value !== "string") {
-				throw errors.new(`${where}: expected well-formed string`)
+				throw new LogInputError({ message: `${where}: expected well-formed string` })
 			}
 			if (!value.isWellFormed()) {
-				throw errors.new(`${where}: string cell is not well-formed UTF-8`)
+				throw new LogInputError({ message: `${where}: string cell is not well-formed UTF-8` })
 			}
 			return { kind: "string", value }
 		}
 		case "fixedBytes": {
 			if (!(value instanceof Uint8Array)) {
-				throw errors.new(`${where}: expected ${type.len}-byte Uint8Array`)
+				throw new LogInputError({ message: `${where}: expected ${type.len}-byte Uint8Array` })
 			}
 			return { kind: "fixedBytes", value }
 		}
 		case "interval": {
 			if (typeof value !== "object" || value instanceof Uint8Array) {
-				throw errors.new(`${where}: expected interval value`)
+				throw new LogInputError({ message: `${where}: expected interval value` })
 			}
 			return type.element === "u64"
 				? { kind: "intervalU64", start: value.start, end: value.end }
@@ -132,7 +129,6 @@ function taggedCell(where: string, type: ValueTypeSpec, value: FactValue): Value
 		}
 	}
 }
-
 /**
  * Ops to the bridge's spelling: relation names resolve through the
  * descriptor's vocabulary (the core never sees a name), cells tag by
@@ -143,7 +139,7 @@ function opsIn(descriptor: Descriptor, ops: readonly Op[]): LogOpIn[] {
 	return ops.map(function opIn(op, opIndex) {
 		const relation = descriptor.relationByName.get(op.relation)
 		if (relation === undefined) {
-			throw errors.new(`op cites unknown relation ${op.relation}`)
+			throw new LogInputError({ message: `op cites unknown relation ${op.relation}` })
 		}
 		const rows = op.rows.map(function rowIn(row, rowIndex) {
 			return row.map(function cellIn(value, ordinal) {
@@ -160,7 +156,6 @@ function opsIn(descriptor: Descriptor, ops: readonly Op[]): LogOpIn[] {
 		return { kind: op.op, relation: relation.id, rows }
 	})
 }
-
 /**
  * Encodes one batch through the sealed codec. The handle is the
  * fingerprint authority: encode fills the wire's fingerprint from the
@@ -188,7 +183,6 @@ function encodeBatch(theory: Theory, header: EncodeHeader, ops: readonly Op[]): 
 	}
 	return outcome.value
 }
-
 /** Full parse of a batch object by the one grammar; refusals cross typed, never partial reads. */
 function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	const descriptor = descriptorOf(theory)
@@ -200,7 +194,7 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 	const ops = batch.ops.map(function opOut(op) {
 		const relation = descriptor.relations[op.relation]
 		if (relation === undefined) {
-			throw errors.new(`decoded op cites relation ${op.relation} outside the descriptor`)
+			throw new LogInputError({ message: `decoded op cites relation ${op.relation} outside the descriptor` })
 		}
 		return { op: op.kind, relation: relation.name, rows: op.rows }
 	})
@@ -218,7 +212,6 @@ function decodeBatch(theory: Theory, bytes: Uint8Array): DecodedBatch {
 		ops
 	}
 }
-
 /**
  * The chain discipline (20 apply, step 1): one identity, three proved
  * causes — the header's slot identity (braid and generation, both

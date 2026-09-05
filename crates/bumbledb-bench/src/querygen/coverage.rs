@@ -13,7 +13,7 @@ use crate::walk;
 pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
     match op_idx {
         0 | 1 => true,
-        2..=5 => type_idx < 2,
+        2..=5 => type_idx < 2 || type_idx == 6,
         _ => type_idx == 5,
     }
 }
@@ -35,6 +35,7 @@ fn type_index(ty: &ValueType) -> usize {
     match ty {
         ValueType::U64 => 0,
         ValueType::I64 => 1,
+        ValueType::F64 => 6,
         ValueType::Bool => 2,
         ValueType::String => 3,
         ValueType::FixedBytes { .. } => 4,
@@ -225,6 +226,7 @@ impl Coverage {
             Shape::GroundFold => self.ground_fold += 1,
             Shape::Pack => self.pack += 1,
             Shape::Measure => self.measure += 1,
+            Shape::ScalarFloat => self.scalar_float += 1,
         }
     }
 

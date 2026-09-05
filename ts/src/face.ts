@@ -1,5 +1,5 @@
-import * as errors from "@superbuilders/errors"
 import type { AnyClosed, AnySelectedClosed, PayloadField } from "#closed.ts"
+import { AuthoringError } from "#errors.ts"
 import type { AnyField, SignatureOf } from "#fields.ts"
 import type { Same } from "#judgment.ts"
 import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
@@ -121,7 +121,7 @@ function on<S extends FaceSource>(source: S, fields: string | readonly string[])
 	})
 	const value = Object.freeze({ source, projection, data })
 	if (!faceMinted<S, readonly string[]>(value, source, projection)) {
-		throw errors.new(`face over ${parts.owner.name}: face construction incomplete`)
+		throw new AuthoringError({ message: `face over ${parts.owner.name}: face construction incomplete` })
 	}
 	return value
 }

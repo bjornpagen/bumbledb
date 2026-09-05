@@ -7,7 +7,6 @@
  * projected here into the driver's branded shapes. Cached per theory
  * value.
  */
-
 import type {
 	AnySchema,
 	FactValue,
@@ -18,9 +17,9 @@ import type {
 	ValueTypeSpec
 } from "@bjornpagen/bumbledb"
 import { internalDescriptor, internalLogBraidsOf, internalLogCodec, lower } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
 import { fromHex } from "#bytes.ts"
+import { LogInputError } from "#errors.ts"
 
 interface FieldInfo {
 	readonly name: string
@@ -29,7 +28,6 @@ interface FieldInfo {
 	/** Set when the field's newtype names a closed relation's id class. */
 	readonly closedRef: string | undefined
 }
-
 interface RelationInfo {
 	readonly id: number
 	readonly name: string
@@ -40,28 +38,24 @@ interface RelationInfo {
 	/** Closed ground axioms in sealed order (id first), resolved values. */
 	readonly rows: ReadonlyArray<readonly FactValue[]>
 }
-
 declare const braidBrand: unique symbol
-type Braid = string & { readonly [braidBrand]: typeof braidBrand }
-
+type Braid = string & {
+	readonly [braidBrand]: typeof braidBrand
+}
 const BRAID_ID = regex("^c[0-9a-f]{8}$")
-
 function braid(raw: string): Braid {
 	if (!BRAID_ID.test(raw)) {
-		throw errors.new(`not a braid id: ${raw}`)
+		throw new LogInputError({ message: `not a braid id: ${raw}` })
 	}
 	return raw as Braid
 }
-
 function refuseShape(why: string): never {
-	throw errors.new(`theory: ${why}`)
+	throw new LogInputError({ message: `theory: ${why}` })
 }
-
 interface SerialStatement {
 	readonly statement: number
 	readonly braid: Braid
 }
-
 /** The braids seat names serial-at statements by id; the braid tag is a
  *  projection join through the statement's own relation. */
 function serialAtFrom(
@@ -89,7 +83,6 @@ function serialAtFrom(
 		return { statement: id, braid }
 	})
 }
-
 interface Descriptor {
 	readonly relations: readonly RelationInfo[]
 	readonly relationByName: ReadonlyMap<string, RelationInfo>
@@ -105,20 +98,15 @@ interface Descriptor {
 	readonly fingerprint: string
 	readonly fingerprintBytes: Uint8Array
 }
-
 /** The pure trio's input: the theory value, its lowered spec, or an already-parsed descriptor. */
 type Theory = AnySchema | SchemaSpec | Descriptor
-
 function isDescriptor(theory: Theory): theory is Descriptor {
 	return "braidMembers" in theory
 }
-
 function isSpec(theory: Theory): theory is SchemaSpec {
 	return Array.isArray((theory as SchemaSpec).relations)
 }
-
 const cache = new WeakMap<object, Descriptor>()
-
 function descriptorOf(theory: Theory): Descriptor {
 	if (isDescriptor(theory)) {
 		return theory
@@ -133,14 +121,11 @@ function descriptorOf(theory: Theory): Descriptor {
 	cache.set(spec, parsed)
 	return parsed
 }
-
 function braidHex(relationId: number): Braid {
 	return braid(`c${relationId.toString(16).padStart(8, "0")}`)
 }
-
 function fromSealed(spec: SchemaSpec): Descriptor {
 	const sealed: SealedDescriptor = internalDescriptor(spec)
-
 	/** Handle newtype (`{name}.id`, off each closed relation's sealed id slot) → roster name. */
 	const ownerOfIdClass = new Map<string, string>()
 	for (const relation of sealed.relations) {
@@ -156,7 +141,6 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 		}
 		ownerOfIdClass.set(handleClass, relation.name)
 	}
-
 	const relations: RelationInfo[] = sealed.relations.map(function relationOf(relation) {
 		const fields: FieldInfo[] = relation.fields.map(function fieldOf(field) {
 			return {
@@ -200,7 +184,6 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 			rows
 		}
 	})
-
 	const byName = new Map<string, RelationInfo>()
 	for (const relation of relations) {
 		if (byName.has(relation.name)) {
@@ -208,7 +191,6 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 		}
 		byName.set(relation.name, relation)
 	}
-
 	const statements = sealed.statements
 	const braids = internalLogBraidsOf(sealed)
 	const braidOfRelation = new Map<number, Braid>()
@@ -221,7 +203,6 @@ function fromSealed(spec: SchemaSpec): Descriptor {
 		}
 	}
 	const serialAtStatements = serialAtFrom(braids.serialAt, statements, braidOfRelation)
-
 	const fingerprint = sealed.fingerprint
 	return {
 		relations,

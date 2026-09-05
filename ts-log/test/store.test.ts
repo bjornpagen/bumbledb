@@ -4,7 +4,6 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3 } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
 import { toHex } from "#bytes.ts"
 import { ErrStore } from "#errors.ts"
 import { storeKey } from "#keys.ts"
@@ -24,37 +23,32 @@ import { joinPrefix, s3Store } from "#store-s3.ts"
 
 const SLOT = storeKey("log/c00000000/0000000000000001")
 const MANIFEST = storeKey("manifest")
-
 const leaseCorpus = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/v3/lease")
-
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-store-"))
-
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
-
 const encoder = new TextEncoder()
-
 function leaseFixture(name: string): Uint8Array {
 	return new Uint8Array(fs.readFileSync(path.join(leaseCorpus, `${name}.bin`)))
 }
-
 interface LeaseSidecar {
 	readonly kind: string
 	readonly expect: "ok" | "refusal"
-	readonly value?: { readonly holder: string; readonly token: string; readonly expires: string }
+	readonly value?: {
+		readonly holder: string
+		readonly token: string
+		readonly expires: string
+	}
 	readonly hex: string
 }
-
 function leaseSidecar(name: string): LeaseSidecar {
 	return JSON.parse(fs.readFileSync(path.join(leaseCorpus, `${name}.json`), "utf8"))
 }
-
 describe("the five verbs over a process map", function suite() {
 	test("get on an absent key is null, not an error", async function absent() {
 		assert.equal(await memStore().get(SLOT), null)
 	})
-
 	test("putCreate is create-only: the second writer sees exists", async function createOnly() {
 		const store = memStore()
 		const first = await store.putCreate(SLOT, encoder.encode("one"))
@@ -64,7 +58,6 @@ describe("the five verbs over a process map", function suite() {
 		const fetched = await store.get(SLOT)
 		assert.equal(new TextDecoder().decode(fetched?.bytes), "one")
 	})
-
 	test("putSwap is CAS: a stale etag is moved, a fresh one swaps", async function cas() {
 		const store = memStore()
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
@@ -76,7 +69,6 @@ describe("the five verbs over a process map", function suite() {
 		const fetched = await store.get(MANIFEST)
 		assert.equal(new TextDecoder().decode(fetched?.bytes), "v2")
 	})
-
 	test("getIfChanged is the cheap poll: unchanged on the same etag, changed after a swap", async function poll() {
 		const store = memStore()
 		const created = await store.putCreate(MANIFEST, encoder.encode("v1"))
@@ -89,7 +81,6 @@ describe("the five verbs over a process map", function suite() {
 		assert.ok(changed.tag === "changed")
 		assert.equal(new TextDecoder().decode(changed.fetched.bytes), "v2")
 	})
-
 	test("delete is unconditional and a later create succeeds", async function remove() {
 		const store = memStore()
 		await store.putCreate(SLOT, encoder.encode("one"))
@@ -98,7 +89,6 @@ describe("the five verbs over a process map", function suite() {
 		const again = await store.putCreate(SLOT, encoder.encode("two"))
 		assert.equal(again.tag, "created")
 	})
-
 	test("the etag is the blake3 of the content", async function etags() {
 		const store = memStore()
 		const body = encoder.encode("the judged content")
@@ -108,7 +98,6 @@ describe("the five verbs over a process map", function suite() {
 		const fetched = await store.get(MANIFEST)
 		assert.equal(fetched?.etag, created.etag)
 	})
-
 	test("contending writers on one slot: exactly one creates", async function contended() {
 		const store = memStore()
 		const outcomes = await Promise.all(
@@ -119,7 +108,6 @@ describe("the five verbs over a process map", function suite() {
 		assert.equal(outcomes.filter((outcome) => outcome.tag === "created").length, 1)
 		assert.equal(outcomes.filter((outcome) => outcome.tag === "exists").length, 7)
 	})
-
 	test("get returns a fresh buffer: mutating the fetch leaves the store intact", async function fresh() {
 		const store = memStore()
 		const created = await store.putCreate(MANIFEST, encoder.encode("keep"))
@@ -137,7 +125,6 @@ describe("the five verbs over a process map", function suite() {
 		const third = await store.get(MANIFEST)
 		assert.equal(new TextDecoder().decode(third?.bytes), "keep")
 	})
-
 	test("GET-verify names landed, lost, and absent", async function verify() {
 		const store = memStore()
 		const body = encoder.encode("ours")
@@ -155,7 +142,6 @@ describe("the five verbs over a process map", function suite() {
 		assert.equal(swapped.tag, "landed")
 	})
 })
-
 describe("the LEASE/1 corpus goldens", function suite() {
 	const okCases = ["ok_mutation", "ok_released", "ok_generation_sidecar", "ok_unexpired", "ok_expired"]
 	const refusalCases = [
@@ -166,7 +152,6 @@ describe("the LEASE/1 corpus goldens", function suite() {
 		"r_expires_overflow",
 		"r_missing_expires"
 	]
-
 	test("every ok body parses to its sidecar value and re-encodes byte-identically", function round() {
 		for (const name of okCases) {
 			const bytes = leaseFixture(name)
@@ -182,7 +167,6 @@ describe("the LEASE/1 corpus goldens", function suite() {
 			assert.deepEqual(encodeLease(lease), bytes, name)
 		}
 	})
-
 	test("every refusal body parses to null: not a lease, never breakable", function refuse() {
 		for (const name of refusalCases) {
 			const bytes = leaseFixture(name)
@@ -192,7 +176,6 @@ describe("the LEASE/1 corpus goldens", function suite() {
 			assert.equal(parseLease(new TextDecoder().decode(bytes)), null, name)
 		}
 	})
-
 	test("the placement table names the constants this driver runs", function placement() {
 		const table = JSON.parse(fs.readFileSync(path.join(leaseCorpus, "placement.json"), "utf8"))
 		assert.equal(table.body_magic, "LEASE/1")
@@ -202,7 +185,6 @@ describe("the LEASE/1 corpus goldens", function suite() {
 		assert.equal(table.constants.mutation_ttl_ms, String(MUTATION_TTL_MS))
 		assert.equal(table.constants.lock_retry_ms, "10")
 	})
-
 	test("a Rust-spelled unexpired lease refuses to break; its expiry mints the next token", async function crossPin() {
 		const root = path.join(tmpRoot, "rust-lease")
 		const dir = path.join(root, "~lease", "manifest")
@@ -227,7 +209,6 @@ describe("the LEASE/1 corpus goldens", function suite() {
 		assert.equal(released.expires, 0n, "release rewrites the held token with an already-expired body")
 	})
 })
-
 describe("the five verbs over a directory", function suite() {
 	test("an expired lease under ~lease/{key} is broken by putSwap", async function leases() {
 		const root = path.join(tmpRoot, "s6")
@@ -243,7 +224,6 @@ describe("the five verbs over a directory", function suite() {
 		assert.ok(current !== null)
 		assert.equal(current.expires, 0n, "the verb's own lease is released after the swap")
 	})
-
 	test("the etag is the blake3 of the content, computed and never stored", async function etags() {
 		const root = path.join(tmpRoot, "s8")
 		const store = fsStore(root)
@@ -260,7 +240,6 @@ describe("the five verbs over a directory", function suite() {
 		const visible = fs.readdirSync(root).filter((name) => !name.startsWith("~"))
 		assert.deepEqual(visible, [MANIFEST], "no sidecar and no lease residue beside the object")
 	})
-
 	test("open sweeps stale temps under ~tmp and spares fresh ones", async function sweep() {
 		const root = path.join(tmpRoot, "sweep")
 		const temps = path.join(root, "~tmp")
@@ -269,14 +248,13 @@ describe("the five verbs over a directory", function suite() {
 		const fresh = path.join(temps, "999.2")
 		fs.writeFileSync(stale, "litter")
 		fs.writeFileSync(fresh, "mid-link")
-		const aged = new Date(Date.now() - 60_000)
+		const aged = new Date(Date.now() - 60000)
 		fs.utimesSync(stale, aged, aged)
 		const store = fsStore(root)
 		assert.equal(await store.get(MANIFEST), null)
 		assert.equal(fs.existsSync(stale), false)
 		assert.equal(fs.existsSync(fresh), true)
 	})
-
 	test("putCreate against a directory is a key-shape fault, not exists", async function directory() {
 		const root = path.join(tmpRoot, "isdir")
 		fs.mkdirSync(path.join(root, "manifest"), { recursive: true })
@@ -286,11 +264,10 @@ describe("the five verbs over a directory", function suite() {
 				return store.putCreate(MANIFEST, encoder.encode("no"))
 			},
 			function isStore(error: unknown) {
-				return error instanceof Error && errors.is(error, ErrStore)
+				return error instanceof Error && error instanceof ErrStore
 			}
 		)
 	})
-
 	test("contending writers on one slot: exactly one creates", async function contended() {
 		const store = fsStore(path.join(tmpRoot, "s7"))
 		const outcomes = await Promise.all(
@@ -307,13 +284,11 @@ describe("the five verbs over a directory", function suite() {
 		assert.equal(fetched.etag, winner.etag)
 	})
 })
-
 describe("s3Store construction", function suite() {
 	test("an empty prefix joins as the key alone", function emptyPrefix() {
 		assert.equal(joinPrefix("", "manifest"), "manifest")
 		assert.equal(joinPrefix("smoke/run", "log/c00000000/1"), "smoke/run/log/c00000000/1")
 	})
-
 	test("region auto without an endpoint is refused at construction", function autoNeedsEndpoint() {
 		assert.throws(function missing() {
 			s3Store({
@@ -323,7 +298,6 @@ describe("s3Store construction", function suite() {
 			})
 		})
 	})
-
 	test("the constructor accepts a refresh without calling it", function refreshArm() {
 		let called = false
 		const store = s3Store({
@@ -337,7 +311,6 @@ describe("s3Store construction", function suite() {
 		assert.equal(typeof store.get, "function")
 		assert.equal(called, false)
 	})
-
 	test("the constructor builds without touching the network", function constructs() {
 		const store = s3Store({
 			region: "us-east-1",

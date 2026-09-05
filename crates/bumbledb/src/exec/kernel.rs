@@ -11,6 +11,7 @@ mod compact;
 mod filter;
 mod fold;
 mod gather;
+pub mod numeric;
 mod prefetch;
 
 /// The reference twins: the differential oracle the property tests

@@ -3,7 +3,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import * as errors from "@superbuilders/errors"
 import { Db, ErrSpentHandle, InstanceBuilder, relation, schema, str, u64 } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
 
@@ -200,7 +199,7 @@ describe("TS builder verb set", function suite() {
 		builder.load(Holder, [{ id: 1n, name: "ada" }])
 		builder[Symbol.dispose]()
 		function isSpent(error: unknown): boolean {
-			return error instanceof Error && errors.is(error, ErrSpentHandle)
+			return error instanceof Error && error instanceof ErrSpentHandle
 		}
 		assert.throws(function loadSpent() {
 			builder.load(Holder, [{ id: 2n, name: "grace" }])

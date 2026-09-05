@@ -32,6 +32,7 @@ carry rec. Reach carries `rec` by value. Atoms spell `edb` / `interior`.
 | `bool` | `{"bool":true}` | |
 | `u64` | `{"u64":18446744073709551615}` | full range, exact |
 | `i64` | `{"i64":-3}` | |
+| `f64` | `{"f64":"3ff0000000000000"}` | canonical binary64 payload: exactly 16 lowercase hex digits; negative zero and all noncanonical NaNs refuse |
 | `str` | `{"str":2}` | a per-case intern id (see `strings`) |
 | `bytes` | `{"bytes":[7,0,255]}` | `bytes<N>`, N = the array length |
 | `interval_u64` | `{"interval_u64":[3,10]}` | half-open `[start, end)` |
@@ -42,6 +43,13 @@ carry rec. Reach carries `rec` by value. Atoms spell `edb` / `interior`.
 Rays need no special spelling: an interval whose `end` is the element
 domain's ceiling (`2^64−1` for u64, `2^63−1` for i64) is the ray, on
 both sides of the lane (`Interval.isRay`).
+
+The conformance-only `f64` tag is not the external command JSON wrapper
+`$f64`. Float comparison independently interprets exponent/significand as
+exact integer multiples of 2^-1074, with `-Infinity < finite < +Infinity < NaN`.
+`Bumbledb/Float64/Order.lean` proves agreement with physical key order.
+`Bumbledb/Float64/Conformance.lean` adds literal full-query boundary checks
+beside the generated cases; it does not create a second corpus family.
 
 ## One annotated example
 

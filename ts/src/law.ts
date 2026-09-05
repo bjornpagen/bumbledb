@@ -1,3 +1,4 @@
+import { AuthoringError } from "#errors.ts"
 /**
  * The law-typing engine (owner ruling 2026-07-18, "option 2, zero debate"):
  * THE LAWS TYPE THE COLUMNS. Domains are declared nowhere — `schema`
@@ -54,7 +55,6 @@
  * silently widened.
  */
 
-import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import type { FaceData } from "#face.ts"
@@ -520,9 +520,9 @@ function computeClasses(name: string, relations: SchemaRelations, statements: re
 			const root = uf.union(coordA, coordB)
 			const gens = uf.generatorsOf(root)
 			if (gens.length > 1) {
-				throw errors.new(
-					`schema ${name}: the statements unify two generators into one class — ${gens.join(" and ")} (two mints cannot share a carrier) — ${renderStatement(statement)}`
-				)
+				throw new AuthoringError({
+					message: `schema ${name}: the statements unify two generators into one class — ${gens.join(" and ")} (two mints cannot share a carrier) — ${renderStatement(statement)}`
+				})
 			}
 		})
 	}

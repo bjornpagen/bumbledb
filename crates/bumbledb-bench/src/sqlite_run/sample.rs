@@ -55,7 +55,7 @@ pub(crate) fn drain_typed(
                     std::hint::black_box(value.as_str()?);
                     column += 1;
                 }
-                ValueType::FixedBytes { .. } => {
+                ValueType::FixedBytes { .. } | ValueType::F64 => {
                     let value = row.get_ref(column)?;
                     std::hint::black_box(value.as_blob()?);
                     column += 1;

@@ -3,6 +3,9 @@ pub mod braids;
 pub mod checkpointer;
 pub mod codec;
 pub mod gc;
+/// Internal successor implementation, not a supported public Rust log SDK.
+#[doc(hidden)]
+pub mod history;
 pub mod identities;
 pub mod inspect;
 pub mod lease;

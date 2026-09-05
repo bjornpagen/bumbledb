@@ -38,23 +38,22 @@ function missingRequired(): string[] {
 	})
 }
 
+const missing = missingRequired()
+const smokeOptions = { skip: missing.length > 0 ? `S3 qualification not run: missing ${missing.join(" ")}` : false }
+
 function uniquePrefix(tag: string): string {
 	prefixSeq += 1
 	return `smoke/${process.pid}/${prefixSeq}/${tag}`
 }
 
-function smokeStore(tag: string): ObjectStore | null {
-	const missing = missingRequired()
-	if (missing.length > 0) {
-		console.error(`SKIPPED S3 smoke: credential-gated lane not run (missing ${missing.join(" ")})`)
-		return null
-	}
+function smokeStore(tag: string): ObjectStore {
 	const bucket = process.env.BUMBLEDB_S3_SMOKE_BUCKET
 	const accessKeyId = process.env.AWS_ACCESS_KEY_ID
 	const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-	if (bucket === undefined || accessKeyId === undefined || secretAccessKey === undefined) {
-		return null
-	}
+	assert.ok(
+		bucket !== undefined && accessKeyId !== undefined && secretAccessKey !== undefined,
+		"S3 configuration disappeared after test admission"
+	)
 	const region = process.env.BUMBLEDB_S3_SMOKE_REGION ?? "us-east-1"
 	const endpoint = process.env.BUMBLEDB_S3_SMOKE_ENDPOINT
 	const sessionToken = process.env.AWS_SESSION_TOKEN
@@ -72,20 +71,12 @@ function smokeStore(tag: string): ObjectStore | null {
 }
 
 describe("s3 smoke", function suite() {
-	test("s3_smoke skips loudly without credentials", function skipLoud() {
-		const missing = missingRequired()
-		if (missing.length === 0) {
-			console.error("S3 smoke credentials present; the s3 smoke verbs run against the bucket")
-		} else {
-			console.error(`SKIPPED S3 smoke: credential-gated lane not run (missing ${missing.join(" ")})`)
-		}
+	test("s3_smoke configuration is present", smokeOptions, function configuration() {
+		assert.deepEqual(missingRequired(), [])
 	})
 
-	test("s3_smoke create-only race", async function createOnly() {
+	test("s3_smoke create-only race", smokeOptions, async function createOnly() {
 		const store = smokeStore("create")
-		if (store === null) {
-			return
-		}
 		const [left, right] = await Promise.all([
 			store.putCreate(SLOT, new TextEncoder().encode("alpha")),
 			store.putCreate(SLOT, new TextEncoder().encode("beta"))
@@ -99,11 +90,8 @@ describe("s3 smoke", function suite() {
 		await store.delete(SLOT)
 	})
 
-	test("s3_smoke CAS linearizes", async function cas() {
+	test("s3_smoke CAS linearizes", smokeOptions, async function cas() {
 		const store = smokeStore("cas")
-		if (store === null) {
-			return
-		}
 		const birth = await store.putCreate(MANIFEST, new TextEncoder().encode("0"))
 		assert.equal(birth.tag, "created")
 		const workers = [0, 1].map(async function worker() {
@@ -126,11 +114,8 @@ describe("s3 smoke", function suite() {
 		await store.delete(MANIFEST)
 	})
 
-	test("s3_smoke 304 poll", async function poll() {
+	test("s3_smoke 304 poll", smokeOptions, async function poll() {
 		const store = smokeStore("poll")
-		if (store === null) {
-			return
-		}
 		const created = await store.putCreate(MANIFEST, new TextEncoder().encode('{"v":1}'))
 		assert.ok(created.tag === "created")
 		const same = await store.getIfChanged(MANIFEST, created.etag)
@@ -138,11 +123,8 @@ describe("s3 smoke", function suite() {
 		await store.delete(MANIFEST)
 	})
 
-	test("s3_smoke GET-before-PUT", async function negcache() {
+	test("s3_smoke GET-before-PUT", smokeOptions, async function negcache() {
 		const store = smokeStore("negcache")
-		if (store === null) {
-			return
-		}
 		assert.equal(await store.get(PROBE), null)
 		const created = await store.putCreate(PROBE, new TextEncoder().encode("after-miss"))
 		assert.equal(created.tag, "created")
@@ -151,11 +133,8 @@ describe("s3 smoke", function suite() {
 		await store.delete(PROBE)
 	})
 
-	test("s3_smoke replica writer round-trip", async function roundTrip() {
+	test("s3_smoke replica writer round-trip", smokeOptions, async function roundTrip() {
 		const store = smokeStore("roundtrip")
-		if (store === null) {
-			return
-		}
 		const dir = path.join(tmpRoot, `roundtrip-${prefixSeq}`)
 		const writer = await openWriter({ store, prefix: "", dir: path.join(dir, "a"), theory: Ledger })
 		const a = writer.replica

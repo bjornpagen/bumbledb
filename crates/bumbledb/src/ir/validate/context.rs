@@ -835,7 +835,10 @@ impl Context {
                     self.screen_order_closed(index, *var)?;
                 }
                 let lhs_type = *self.resolved_var_type(*lhs);
-                if !matches!(lhs_type, ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::Bool) {
+                if !matches!(
+                    lhs_type,
+                    ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::Bool
+                ) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 if *self.resolved_var_type(*rhs) != lhs_type {
@@ -865,7 +868,10 @@ impl Context {
                 }
                 self.screen_order_closed(index, *var)?;
                 let var_type = *self.resolved_var_type(*var);
-                if !matches!(var_type, ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::Bool) {
+                if !matches!(
+                    var_type,
+                    ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::Bool
+                ) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 let value = self.check_const(index, constant, &var_type)?;

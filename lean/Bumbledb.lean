@@ -23,6 +23,7 @@ import Bumbledb.Admission
 import Bumbledb.Bridge
 import Bumbledb.Countermodels
 import Bumbledb.Conformance
+import Bumbledb.Float64.Conformance
 
 /-!
 # Bumbledb — the formal specification

@@ -30,7 +30,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
-import * as errors from "@superbuilders/errors"
 import type { Db as DbValue, Fact, Violation, WriteOutcome } from "#index.ts"
 import { Db } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
@@ -100,7 +99,7 @@ function spawnChild(mode: "create" | "hold", dir: string): Promise<{ report: Chi
 		let err = ""
 		const timer = setTimeout(function timeout() {
 			child.kill("SIGKILL")
-			reject(errors.new(`reopen child (${mode}) timed out; stderr: ${err}`))
+			reject(new Error(`reopen child (${mode}) timed out; stderr: ${err}`))
 		}, 30000)
 		child.stdout.on("data", function collect(chunk: Buffer) {
 			out += chunk.toString()
@@ -116,7 +115,7 @@ function spawnChild(mode: "create" | "hold", dir: string): Promise<{ report: Chi
 		child.on("exit", function exited(code) {
 			if (out.indexOf("\n") < 0) {
 				clearTimeout(timer)
-				reject(errors.new(`reopen child (${mode}) exited ${code} without a report; stderr: ${err}`))
+				reject(new Error(`reopen child (${mode}) exited ${code} without a report; stderr: ${err}`))
 			}
 		})
 	})

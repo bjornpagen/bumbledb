@@ -4,8 +4,6 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import * as errors from "@superbuilders/errors"
-
 import { ErrNewtypeMismatch } from "#db.ts"
 import { dbClose, native } from "#native.ts"
 import type { SchemaSpec } from "#spec.ts"
@@ -69,9 +67,16 @@ describe("the coherence wall's engine twin", function suite() {
 		dbClose(outcome.db)
 	})
 
-	test("ErrNewtypeMismatch is the matchable sentinel Db's admission wraps", function sentinel() {
-		const wrapped = errors.wrap(ErrNewtypeMismatch, "create /tmp/somewhere: statement 1 …")
-		assert.ok(errors.is(wrapped, ErrNewtypeMismatch), "errors.is matches through the wrap")
-		assert.match(ErrNewtypeMismatch.message, /faces of a dependency agree on their newtype/)
+	test("ErrNewtypeMismatch is a structured tagged-error class", function taggedError() {
+		const error = new ErrNewtypeMismatch({
+			operation: "create",
+			path: "/tmp/somewhere",
+			message: "the faces of a dependency agree on their newtype"
+		})
+		assert.ok(error instanceof ErrNewtypeMismatch)
+		assert.equal(error._tag, "ErrNewtypeMismatch")
+		assert.equal(error.operation, "create")
+		assert.equal(error.path, "/tmp/somewhere")
+		assert.match(error.message, /faces of a dependency agree on their newtype/)
 	})
 })

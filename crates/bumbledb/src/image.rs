@@ -85,7 +85,9 @@ pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[
         .map(|desc| {
             let width = match desc {
                 ValueType::Bool => ColumnWidth::Byte,
-                ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => ColumnWidth::Word,
+                ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => {
+                    ColumnWidth::Word
+                }
                 ValueType::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))
                         .expect("bytes width is at most 8 words")

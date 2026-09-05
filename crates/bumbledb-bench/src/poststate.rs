@@ -14,6 +14,7 @@ fn owned(value: &Value) -> Owned {
         Value::Bool(v) => Owned::Bool(*v),
         Value::U64(v) => Owned::U64(*v),
         Value::I64(v) => Owned::I64(*v),
+        Value::F64(v) => Owned::F64(v.to_bits()),
         Value::String(text) => Owned::Str(text.to_string()),
         Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
         Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),

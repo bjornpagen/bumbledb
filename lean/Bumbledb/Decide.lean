@@ -382,6 +382,8 @@ theorem mem_points_u64 (v : Value) (x : U64) :
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | i64 => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
+  | f64 => exact ⟨fun h => (nomatch h),
+      by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | str => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | fixedBytes n => exact ⟨fun h => (nomatch h),
@@ -423,6 +425,8 @@ theorem mem_points_i64 (v : Value) (x : I64) :
   | u64 => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | i64 => exact ⟨fun h => (nomatch h),
+      by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
+  | f64 => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩
   | str => exact ⟨fun h => (nomatch h),
       by rintro ⟨iv, hiv, -⟩; exact nomatch hiv⟩

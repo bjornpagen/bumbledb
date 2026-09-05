@@ -297,6 +297,9 @@ fn push_value(
         Value::I64(v) => {
             let _ = write!(out, "{{\"i64\":{v}}}");
         }
+        Value::F64(v) => {
+            let _ = write!(out, "{{\"f64\":\"{:016x}\"}}", v.to_bits());
+        }
         Value::String(bytes) => {
             let id = world.resolve(bytes)?;
             used.insert(id);
@@ -591,6 +594,7 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::Bool => "bool".into(),
         ValueType::U64 => "u64".into(),
         ValueType::I64 => "i64".into(),
+        ValueType::F64 => "f64".into(),
         ValueType::String => "str".into(),
         ValueType::FixedBytes { len } => format!("bytes<{len}>"),
         ValueType::Interval {
@@ -1454,7 +1458,12 @@ pub fn write_corpus(dir: &Path) -> Report {
     std::fs::create_dir_all(dir).expect("create the corpus directory");
     for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
         let path = entry.expect("corpus dir entry").path();
-        if path.extension().is_some_and(|ext| ext == "json") {
+        if path.extension().is_some_and(|ext| ext == "json")
+            && !path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .is_some_and(manually_authored_case)
+        {
             std::fs::remove_file(&path).expect("clear a stale corpus case");
         }
     }
@@ -1467,6 +1476,18 @@ pub fn write_corpus(dir: &Path) -> Report {
         std::fs::write(dir.join(name), document).expect("write a corpus case");
     }
     report
+}
+
+// These existing Lean-only expression fixtures are authored independently of
+// the random generator. Regeneration owns its outputs, not these witnesses.
+fn manually_authored_case(name: &str) -> bool {
+    matches!(
+        name,
+        "hand-measure-find"
+            | "hand-measure-count-collision"
+            | "hand-measure-predicate"
+            | "hand-measure-fold-sum"
+    )
 }
 
 /// # Panics
@@ -1495,7 +1516,7 @@ pub fn replay_checked_in_corpus() -> usize {
 
         // disk (do not edit cases/); skip engine+naive replay. Lean
 
-        if text.contains("\"measure\":") || text.contains("\"agg_measure\":") {
+        if manually_authored_case(&name) {
             continue;
         }
         let document = if name.starts_with("judgment-") {

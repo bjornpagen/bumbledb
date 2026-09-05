@@ -7,12 +7,11 @@
  * plus one. A replica that finds no manifest refuses; only a writer
  * births a store.
  */
-
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import type { Db, MemberRelation, Schema, SchemaRelations, WriteOutcome } from "@bjornpagen/bumbledb"
 import { factOf, internalBlake3, Db as SdkDb } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { parse } from "#braids.ts"
 import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, digest32, hex32, saturatingAddU64 } from "#bytes.ts"
@@ -22,7 +21,15 @@ import type { Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
 import type { Braid, Descriptor } from "#descriptor.ts"
 import { descriptorOf } from "#descriptor.ts"
-import { ErrRefused, ErrReplayDiverged, refuse, refuseManifestMissing, wrapStore } from "#errors.ts"
+import {
+	ErrRefused,
+	ErrReplayDiverged,
+	LogInputError,
+	LogOperationError,
+	refuse,
+	refuseManifestMissing,
+	wrapStore
+} from "#errors.ts"
 import type { Generation } from "#keys.ts"
 import {
 	CKPT_SCRATCH_LEASE,
@@ -41,56 +48,94 @@ import type { Etag, ObjectStore } from "#store.ts"
 import { Vector } from "#vector.ts"
 
 const ZERO_HASH = digest32(new Uint8Array(32))
-
 /** The gc-safety heartbeat cadence: every N-th pass re-reads the manifest. */
 const HEARTBEAT_PASSES = 16
-
 /** The re-poll cadence of waitFor, its one consumer — the
  *  machine-constants table's `wait_for_poll_ms` fact. */
 const WAIT_FOR_POLL_MS = 10
-
 type ReplicaState =
-	| { readonly tag: "bootstrapped" }
-	| { readonly tag: "checkpoint-seeded"; readonly catalog: Digest32 }
-	| { readonly tag: "sidecar-resumed"; readonly floor: ReadonlyMap<Braid, Generation> }
-
+	| {
+			readonly tag: "bootstrapped"
+	  }
+	| {
+			readonly tag: "checkpoint-seeded"
+			readonly catalog: Digest32
+	  }
+	| {
+			readonly tag: "sidecar-resumed"
+			readonly floor: ReadonlyMap<Braid, Generation>
+	  }
 type RefreshOutcome =
-	| { readonly tag: "advanced"; readonly vector: ReadonlyMap<Braid, Generation> }
-	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
-	| { readonly tag: "reseed"; readonly cause: string }
-	| { readonly tag: "refused"; readonly detail: string }
-
+	| {
+			readonly tag: "advanced"
+			readonly vector: ReadonlyMap<Braid, Generation>
+	  }
+	| {
+			readonly tag: "wedged"
+			readonly braid: Braid
+			readonly cause: string
+	  }
+	| {
+			readonly tag: "reseed"
+			readonly cause: string
+	  }
+	| {
+			readonly tag: "refused"
+			readonly detail: string
+	  }
 type Step =
-	| { readonly tag: "applied" }
-	| { readonly tag: "tip" }
-	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
-	| { readonly tag: "reseed"; readonly cause: string }
-
+	| {
+			readonly tag: "applied"
+	  }
+	| {
+			readonly tag: "tip"
+	  }
+	| {
+			readonly tag: "wedged"
+			readonly braid: Braid
+			readonly cause: string
+	  }
+	| {
+			readonly tag: "reseed"
+			readonly cause: string
+	  }
 /** The full waitFor sum: a wedged braid the target needs is an
  *  outcome, never an infinite poll. */
 type Waited =
-	| { readonly tag: "reached"; readonly vector: ReadonlyMap<Braid, Generation> }
-	| { readonly tag: "wedged"; readonly braid: Braid; readonly cause: string }
-	| { readonly tag: "refused"; readonly detail: string }
-
+	| {
+			readonly tag: "reached"
+			readonly vector: ReadonlyMap<Braid, Generation>
+	  }
+	| {
+			readonly tag: "wedged"
+			readonly braid: Braid
+			readonly cause: string
+	  }
+	| {
+			readonly tag: "refused"
+			readonly detail: string
+	  }
 type ApplyPhase = "open" | "steady"
-
-type SlotApply = { readonly tag: "applied"; readonly generation: bigint } | { readonly tag: "discard" }
-
+type SlotApply =
+	| {
+			readonly tag: "applied"
+			readonly generation: bigint
+	  }
+	| {
+			readonly tag: "discard"
+	  }
 interface OpenReplicaOptions<Rels extends SchemaRelations> {
 	readonly store: ObjectStore
 	readonly prefix: string
 	readonly dir: string
 	readonly theory: Schema<Rels>
 }
-
 interface Replica<Rels extends SchemaRelations> extends AsyncDisposable {
 	readonly db: Db<Rels>
 	readonly vector: ReadonlyMap<Braid, Generation>
 	refresh(braid?: Braid): Promise<ReadonlyMap<Braid, Generation>>
 	waitFor(vector: ReadonlyMap<Braid, Generation>): Promise<Waited>
 }
-
 interface Core<Rels extends SchemaRelations> {
 	readonly store: ObjectStore
 	readonly prefix: string
@@ -112,17 +157,14 @@ interface Core<Rels extends SchemaRelations> {
 	wedged: Map<Braid, string>
 	provenance: ReplicaState
 }
-
 const cores = new WeakMap<object, Core<SchemaRelations>>()
-
 function coreOf<Rels extends SchemaRelations>(replica: Replica<Rels>): Core<Rels> {
 	const core = cores.get(replica)
 	if (core === undefined) {
-		throw errors.new("not a replica of this driver")
+		throw new LogInputError({ message: "not a replica of this driver" })
 	}
 	return core as unknown as Core<Rels>
 }
-
 /** One asynchronous door per replica: refreshes, commits, and disposal serialize. */
 function withGate<Rels extends SchemaRelations, R>(core: Core<Rels>, body: () => Promise<R>): Promise<R> {
 	const run = core.gate.then(body, body)
@@ -136,17 +178,13 @@ function withGate<Rels extends SchemaRelations, R>(core: Core<Rels>, body: () =>
 	)
 	return run
 }
-
 function blake3Digest(bytes: Uint8Array): Digest32 {
 	return digest32(new Uint8Array(internalBlake3(bytes)))
 }
-
 function sidecarPath<Rels extends SchemaRelations>(core: Core<Rels>): string {
 	return path.join(core.dir, "chain")
 }
-
 let storeSequence = 0
-
 /** LMDB registers environments per canonical path for the life of the
  *  process and the engine has no close verb, so a store path is never
  *  reused: every bootstrap gets a fresh name and discards leave the old
@@ -155,11 +193,9 @@ function freshStoreName(): string {
 	storeSequence += 1
 	return `store-${process.pid.toString(36)}-${Date.now().toString(36)}-${storeSequence}`
 }
-
 function storePath<Rels extends SchemaRelations>(core: Core<Rels>): string {
 	return path.join(core.dir, core.storeName)
 }
-
 /** A wire braid id is a braid of this theory or a typed refuse. */
 function braidOf(theory: Schema<SchemaRelations> | Schema<never>, raw: Braid): Braid {
 	const id = Number.parseInt(raw.slice(1), 16)
@@ -169,7 +205,6 @@ function braidOf(theory: Schema<SchemaRelations> | Schema<never>, raw: Braid): B
 	}
 	return parsed
 }
-
 function zeroChain(descriptor: Descriptor): Map<Braid, ChainEntry> {
 	const chain = new Map<Braid, ChainEntry>()
 	for (const id of descriptor.braidMembers.keys()) {
@@ -177,38 +212,35 @@ function zeroChain(descriptor: Descriptor): Map<Braid, ChainEntry> {
 	}
 	return chain
 }
-
 function entriesOf<Rels extends SchemaRelations>(core: Core<Rels>): Map<Braid, ChainEntry> {
 	return core.chain.entries as Map<Braid, ChainEntry>
 }
-
 function chainEntry<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid): ChainEntry {
 	const id = braidOf(core.theory, braid)
 	const entry = entriesOf(core).get(id)
 	if (entry === undefined) {
-		throw errors.new(`braid ${id} is not derived from this theory`)
+		throw new LogInputError({ message: `braid ${id} is not derived from this theory` })
 	}
 	return entry
 }
-
 function generationOf<Rels extends SchemaRelations>(core: Core<Rels>): bigint {
 	return core.db.read(function readGeneration(instance) {
 		return instance.generation
 	})
 }
-
 /** The opened store's catalog digest — the engine handle's computed claim. */
 function catalogDigestOf<Rels extends SchemaRelations>(core: Core<Rels>): Digest32 {
 	return digest32(core.db.catalogDigest())
 }
-
 /** Pending-arm payload: recorded ops and the batch header's timestamp
  *  ride on the batch, not a third Option beside the vector. Wire
  *  Pending is {braid,gen,bytes}; ops/ts are the in-memory fields of
  *  that arm (§30) — null on a batch adopted as bytes the seat has not
  *  decoded. */
-type HeldBatch = Pending & { readonly ops: readonly Op[] | null; readonly ts: bigint | null }
-
+type HeldBatch = Pending & {
+	readonly ops: readonly Op[] | null
+	readonly ts: bigint | null
+}
 function holdPending<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	batch: Pending,
@@ -218,18 +250,15 @@ function holdPending<Rels extends SchemaRelations>(
 	const held: HeldBatch = { braid: batch.braid, slot: batch.slot, bytes: batch.bytes, ops, ts }
 	core.chain = { tag: "pending", entries: entriesOf(core), batch: held }
 }
-
 function pendingOf<Rels extends SchemaRelations>(core: Core<Rels>): HeldBatch | null {
 	if (core.chain.tag !== "pending") {
 		return null
 	}
 	return core.chain.batch as HeldBatch
 }
-
 function settleHeld<Rels extends SchemaRelations>(core: Core<Rels>): void {
 	core.chain = { tag: "settled", entries: entriesOf(core) }
 }
-
 /** The local vector equals the published checkpoint vector and the
  *  chain is Settled — the seed/open floor the catalog claim is audited
  *  against. */
@@ -244,49 +273,43 @@ function atCheckpointFloor<Rels extends SchemaRelations>(core: Core<Rels>): bool
 	}
 	return true
 }
-
 async function persistSidecar<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	await writeSidecar(core.descriptor.codec, sidecarPath(core), core.chain)
 }
-
 /** Writes the checkpoint store file and fsyncs the file and its parent
  *  directory — the mdb is durable before the sidecar. */
 async function writeCheckpointMdb(dir: string, bytes: Uint8Array): Promise<void> {
 	const data = path.join(dir, "data.mdb")
 	const handle = await fs.open(data, "w")
-	const written = await errors.try(
+	const written = await Promise.resolve(
 		(async function writeAll() {
 			await handle.writeFile(bytes)
 			await handle.sync()
 		})()
-	)
+	).then(Result.succeed, (cause: unknown) => Result.fail(cause))
 	await handle.close()
-	if (written.error) {
-		throw errors.wrap(written.error, `write checkpoint store ${data}`)
+	if (Result.isFailure(written)) {
+		throw new LogOperationError({ message: `write checkpoint store ${data}`, cause: written.failure })
 	}
 	const parent = await fs.open(dir, "r")
-	const synced = await errors.try(parent.sync())
+	const synced = await Promise.resolve(parent.sync()).then(Result.succeed, (cause: unknown) => Result.fail(cause))
 	await parent.close()
-	if (synced.error) {
-		throw errors.wrap(synced.error, `fsync checkpoint store directory ${dir}`)
+	if (Result.isFailure(synced)) {
+		throw new LogOperationError({ message: `fsync checkpoint store directory ${dir}`, cause: synced.failure })
 	}
 }
-
 async function settle<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	settleHeld(core)
 	await persistSidecar(core)
 }
-
 async function clearPending<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	await settle(core)
 }
-
 function disposed<Rels extends SchemaRelations>(core: Core<Rels>): void {
 	if (core.closed) {
-		throw errors.new("replica is disposed")
+		throw new LogInputError({ message: "replica is disposed" })
 	}
 }
-
 function adoptChain<Rels extends SchemaRelations>(core: Core<Rels>, chain: Chain): void {
 	const entries = new Map<Braid, ChainEntry>()
 	for (const [raw, entry] of chain.entries) {
@@ -310,7 +333,6 @@ function adoptChain<Rels extends SchemaRelations>(core: Core<Rels>, chain: Chain
 		core.chain = { tag: "settled", entries }
 	}
 }
-
 /** One `db.write` applying ops in listed order, rows in listed order.
  *  The positional row → named fact lift is the engine's `factOf` —
  *  closed-ref handles included. */
@@ -319,7 +341,7 @@ function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly 
 		for (const op of ops) {
 			const member = core.theory.relations[op.relation]
 			if (member === undefined) {
-				throw errors.new(`batch op cites unknown relation ${op.relation}`)
+				throw new LogInputError({ message: `batch op cites unknown relation ${op.relation}` })
 			}
 			const relation = member as MemberRelation<Rels>
 			const facts = op.rows.map(function liftRow(row) {
@@ -334,7 +356,6 @@ function applyOps<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly 
 		return 0
 	})
 }
-
 /**
  * Decode, verify the chain, `db.write` the batch, then refuse a
  * first-applied no-op against the identity. The sidecar advances
@@ -357,7 +378,7 @@ async function applySlot<Rels extends SchemaRelations>(
 		if (phase === "open") {
 			return { tag: "discard" }
 		}
-		throw errors.wrap(ErrReplayDiverged, `braid ${braid} slot ${slot} writer ${decoded.header.writer}`)
+		throw new ErrReplayDiverged({ message: `braid ${braid} slot ${slot} writer ${decoded.header.writer}` })
 	}
 	const identity = chainSum(core.chain) - entry.g + slot
 	if (outcome.value.generation < identity) {
@@ -370,7 +391,6 @@ async function applySlot<Rels extends SchemaRelations>(
 	await persistSidecar(core)
 	return { tag: "applied", generation: outcome.value.generation }
 }
-
 /**
  * The published checkpoint vector is the one floor: a slot at or
  * below it is retired, and a create must not touch the store.
@@ -386,7 +406,6 @@ function belowFloor<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid
 	}
 	return slot <= floor.g
 }
-
 /**
  * The gc floor rule: below the current checkpoint's vector a 404 is a
  * collected hole, at or above it the honest tip.
@@ -394,21 +413,33 @@ function belowFloor<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid
 function holeAt<Rels extends SchemaRelations>(core: Core<Rels>, braid: Braid, next: Generation): boolean {
 	return belowFloor(core, braid, next)
 }
-
 /**
  * Classification of a pending batch against occupant, store
  * generation, and the floor. BelowFloor is published (`Clear`) — the
  * slot is already in the trusted history, not a candidate to re-judge.
  */
 type PendingFold =
-	| { readonly tag: "ours" }
-	| { readonly tag: "theirs-unapplied" }
-	| { readonly tag: "theirs-applied" }
-	| { readonly tag: "absent-unapplied" }
-	| { readonly tag: "absent-applied" }
-	| { readonly tag: "below-floor" }
-	| { readonly tag: "phantom" }
-
+	| {
+			readonly tag: "ours"
+	  }
+	| {
+			readonly tag: "theirs-unapplied"
+	  }
+	| {
+			readonly tag: "theirs-applied"
+	  }
+	| {
+			readonly tag: "absent-unapplied"
+	  }
+	| {
+			readonly tag: "absent-applied"
+	  }
+	| {
+			readonly tag: "below-floor"
+	  }
+	| {
+			readonly tag: "phantom"
+	  }
 function foldPending(
 	sum: bigint,
 	generation: bigint,
@@ -433,14 +464,12 @@ function foldPending(
 	}
 	return { tag: "phantom" }
 }
-
-function isCorruption(error: unknown): boolean {
+function isCorruption(error: unknown): error is ErrReplayDiverged | ErrRefused {
 	if (!(error instanceof Error)) {
 		return false
 	}
-	return errors.is(error, ErrReplayDiverged) || errors.is(error, ErrRefused)
+	return error instanceof ErrReplayDiverged || error instanceof ErrRefused
 }
-
 /**
  * One braid, one slot. Catch-up, refresh, waitFor, and open all call
  * this; a hot braid cannot drain past one step per round.
@@ -471,20 +500,22 @@ async function stepBraid<Rels extends SchemaRelations>(
 		}
 		await settle(core)
 	}
-	const applied = await errors.try(applySlot(core, id, next, fetched.bytes, phase))
-	if (applied.error) {
-		if (phase === "steady" && isCorruption(applied.error)) {
-			core.wedged.set(id, applied.error.message)
-			return { tag: "wedged", braid: id, cause: applied.error.message }
+	const applied = await Promise.resolve(applySlot(core, id, next, fetched.bytes, phase)).then(
+		Result.succeed,
+		Result.fail
+	)
+	if (Result.isFailure(applied)) {
+		if (phase === "steady" && isCorruption(applied.failure)) {
+			core.wedged.set(id, applied.failure.message)
+			return { tag: "wedged", braid: id, cause: applied.failure.message }
 		}
-		throw applied.error
+		throw applied.failure
 	}
-	if (applied.data.tag === "discard") {
+	if (applied.success.tag === "discard") {
 		return { tag: "reseed", cause: "rejected-in-open" }
 	}
 	return { tag: "applied" }
 }
-
 /**
  * One pass: heartbeat, one slot per braid, wholeness, disposed. The
  * same function refresh, waitFor, catch-up, and open execute.
@@ -528,15 +559,12 @@ async function runPass<Rels extends SchemaRelations>(
 	}
 	return { tag: "advanced", vector: vectorOf(core) }
 }
-
 function allBraids<Rels extends SchemaRelations>(core: Core<Rels>): Braid[] {
 	return [...core.descriptor.braidMembers.keys()]
 }
-
 function wholenessHolds<Rels extends SchemaRelations>(core: Core<Rels>): boolean {
 	return generationOf(core) === chainGeneration(core.chain)
 }
-
 async function adoptManifest<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	bytes: Uint8Array,
@@ -559,7 +587,7 @@ async function adoptManifest<Rels extends SchemaRelations>(
 	} else if (core.checkpointDigest === null || !bytesEqual(manifest.checkpoint, core.checkpointDigest)) {
 		const facts = await core.store.get(ckptDocKey(core.prefix, manifest.checkpoint))
 		if (facts === null) {
-			throw errors.new(`manifest points at absent checkpoint ${hex32(manifest.checkpoint)}`)
+			throw new LogInputError({ message: `manifest points at absent checkpoint ${hex32(manifest.checkpoint)}` })
 		}
 		// The codec-backed parseCheckpoint judges the braid set against the
 		// sealed handle — an unknown or drifted braid refuses at parse.
@@ -570,7 +598,6 @@ async function adoptManifest<Rels extends SchemaRelations>(
 	// hand. A failed fetch leaves the old etag and the old floor (40/67).
 	core.manifestEtag = etag
 }
-
 /** A replica never births a manifest. Absence is ManifestMissing. */
 async function refreshManifest<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	if (core.manifestEtag !== null) {
@@ -587,7 +614,6 @@ async function refreshManifest<Rels extends SchemaRelations>(core: Core<Rels>): 
 	}
 	await adoptManifest(core, fetched.bytes, fetched.etag)
 }
-
 /** Bootstraps a fresh local store: from the current checkpoint when one
  *  exists, else `Db.create` at the zero vector. Always holds Settled —
  *  a prior Pending arm cannot survive beside the new vector. */
@@ -599,7 +625,7 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 	if (core.checkpoint !== null && core.checkpointDigest !== null) {
 		const mdb = await core.store.get(checkpointMdbKey(core.prefix, core.checkpointDigest))
 		if (mdb === null) {
-			throw errors.new(`checkpoint ${hex32(core.checkpointDigest)} names an absent .mdb`)
+			throw new LogInputError({ message: `checkpoint ${hex32(core.checkpointDigest)} names an absent .mdb` })
 		}
 		await fs.mkdir(target, { recursive: true })
 		await writeCheckpointMdb(target, mdb.bytes)
@@ -615,9 +641,9 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 		}
 		const opened = generationOf(core)
 		if (opened !== chainGeneration(core.chain)) {
-			throw errors.new(
-				`checkpoint store opened at generation ${opened}, chain generation is ${chainGeneration(core.chain)}`
-			)
+			throw new LogInputError({
+				message: `checkpoint store opened at generation ${opened}, chain generation is ${chainGeneration(core.chain)}`
+			})
 		}
 		auditCatalog(core.checkpoint, catalogDigestOf(core))
 		core.provenance = { tag: "checkpoint-seeded", catalog: core.checkpointDigest }
@@ -626,16 +652,17 @@ async function initializeStore<Rels extends SchemaRelations>(core: Core<Rels>): 
 	}
 	const created = await SdkDb.create(target, core.theory)
 	if (created.tag === "rejected") {
-		throw errors.new("the theory's ground axioms were rejected at bootstrap")
+		throw new LogInputError({ message: "the theory's ground axioms were rejected at bootstrap" })
 	}
 	core.db = created.value
 	core.chain = { tag: "settled", entries: zeroChain(core.descriptor) }
 	core.provenance = { tag: "bootstrapped" }
 	await persistSidecar(core)
 }
-
 /** The scream tracks the set of repair signatures; a recurrence alarms. */
-function screamOf(context: string): { attempt(signature: string): void } {
+function screamOf(context: string): {
+	attempt(signature: string): void
+} {
 	const seen = new Set<string>()
 	let attempts = 0
 	return {
@@ -652,7 +679,6 @@ function screamOf(context: string): { attempt(signature: string): void } {
 		}
 	}
 }
-
 /** The disposable law: the directory is cache, never truth. The local
  *  LMDB path rotates because the engine has no close verb — the old
  *  environment is left for GC while the fresh pull takes a new path.
@@ -671,7 +697,7 @@ async function discardAndReopen<Rels extends SchemaRelations>(core: Core<Rels>):
 			continue
 		}
 		if (outcome.tag === "refused") {
-			throw errors.wrap(ErrRefused, outcome.detail)
+			throw new ErrRefused({ message: outcome.detail, reason: null })
 		}
 		if (generationOf(core) === chainGeneration(core.chain)) {
 			return
@@ -679,27 +705,27 @@ async function discardAndReopen<Rels extends SchemaRelations>(core: Core<Rels>):
 		scream.attempt("wholeness")
 	}
 }
-
 async function newestStoreDir(dir: string): Promise<string | null> {
-	const listed = await errors.try(fs.readdir(dir))
-	if (listed.error) {
+	const listed = await Promise.resolve(fs.readdir(dir)).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+	if (Result.isFailure(listed)) {
 		return null
 	}
 	let newest: string | null = null
 	let newestAt = -1
-	for (const name of listed.data) {
+	for (const name of listed.success) {
 		if (!name.startsWith("store-")) {
 			continue
 		}
-		const stat = await errors.try(fs.stat(path.join(dir, name)))
-		if (stat.error === undefined && stat.data.mtimeMs > newestAt) {
-			newestAt = stat.data.mtimeMs
+		const stat = await Promise.resolve(fs.stat(path.join(dir, name))).then(Result.succeed, (cause: unknown) =>
+			Result.fail(cause)
+		)
+		if (Result.isSuccess(stat) && stat.success.mtimeMs > newestAt) {
+			newestAt = stat.success.mtimeMs
 			newest = name
 		}
 	}
 	return newest
 }
-
 /**
  * Open reclaims the reserved `~tmp`/`~lease` namespace. The known
  * document `{dir}/~lease/ckpt-scratch` names a crash-stranded
@@ -708,9 +734,9 @@ async function newestStoreDir(dir: string): Promise<string | null> {
  */
 async function sweepReservedKeys<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
 	const lease = path.join(core.dir, LEASE_NAMESPACE, CKPT_SCRATCH_LEASE)
-	const read = await errors.try(fs.readFile(lease))
-	if (read.error === undefined) {
-		const digest = parseCkptScratch(read.data)
+	const read = await Promise.resolve(fs.readFile(lease)).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+	if (Result.isSuccess(read)) {
+		const digest = parseCkptScratch(read.success)
 		if (digest !== null && (core.checkpointDigest === null || !bytesEqual(digest, core.checkpointDigest))) {
 			await core.store.delete(ckptDocKey(core.prefix, digest))
 			await core.store.delete(checkpointMdbKey(core.prefix, digest))
@@ -719,23 +745,23 @@ async function sweepReservedKeys<Rels extends SchemaRelations>(core: Core<Rels>)
 	await fs.rm(path.join(core.dir, TEMP_NAMESPACE), { recursive: true, force: true })
 	await fs.rm(path.join(core.dir, LEASE_NAMESPACE), { recursive: true, force: true })
 }
-
 /** The disposable law says cache directories do not hoard corpses: every
  *  rotated `store-*` LMDB dir except the adopted one is dead — left by a
  *  crashed process or a prior rotation — and is swept at open. */
 async function sweepRotations<Rels extends SchemaRelations>(core: Core<Rels>): Promise<void> {
-	const listed = await errors.try(fs.readdir(core.dir))
-	if (listed.error) {
+	const listed = await Promise.resolve(fs.readdir(core.dir)).then(Result.succeed, (cause: unknown) =>
+		Result.fail(cause)
+	)
+	if (Result.isFailure(listed)) {
 		return
 	}
-	for (const name of listed.data) {
+	for (const name of listed.success) {
 		if (!name.startsWith("store-") || name === core.storeName) {
 			continue
 		}
 		await fs.rm(path.join(core.dir, name), { recursive: true, force: true })
 	}
 }
-
 /**
  * Pending recovery: apply the resurrected batch. A batch rejected here
  * was never acked; a born-no-op settles; anything else stays Pending
@@ -759,14 +785,14 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 		await settle(core)
 		return
 	}
-	const decoded = errors.trySync(function decodePending() {
+	const decoded = Result.try(function decodePending() {
 		return decodeBatch(core.descriptor, chain.batch.bytes)
 	})
-	if (decoded.error) {
+	if (Result.isFailure(decoded)) {
 		await settle(core)
 		return
 	}
-	const outcome = applyOps(core, decoded.data.ops)
+	const outcome = applyOps(core, decoded.success.ops)
 	if (outcome.tag === "rejected") {
 		await settle(core)
 		return
@@ -778,9 +804,8 @@ async function resolvePendingAtOpen<Rels extends SchemaRelations>(core: Core<Rel
 		await settle(core)
 		return
 	}
-	holdPending(core, chain.batch, decoded.data.ops, decoded.data.header.timestamp)
+	holdPending(core, chain.batch, decoded.success.ops, decoded.success.header.timestamp)
 }
-
 /**
  * Pending resurrection through a cold re-pull: the store directory was
  * unopenable (or discarded), so the sidecar's pending is resolved
@@ -798,13 +823,13 @@ async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>
 		await settle(core)
 		return
 	}
-	const decoded = errors.trySync(function decodePending() {
+	const decoded = Result.try(function decodePending() {
 		return decodeBatch(core.descriptor, pending.bytes)
 	})
-	if (decoded.error) {
+	if (Result.isFailure(decoded)) {
 		return
 	}
-	const slot = decoded.data.header.braidGen
+	const slot = decoded.success.header.braidGen
 	if (entriesOf(core).has(braid) && chainEntry(core, braid).g >= slot) {
 		const published = await core.store.get(logKey(core.prefix, braid, slot))
 		if (published !== null && bytesEqual(published.bytes, pending.bytes)) {
@@ -812,13 +837,12 @@ async function resolveColdPending<Rels extends SchemaRelations>(core: Core<Rels>
 		}
 	}
 	const before = generationOf(core)
-	const outcome = applyOps(core, decoded.data.ops)
+	const outcome = applyOps(core, decoded.success.ops)
 	if (outcome.tag === "accepted" && outcome.value.generation > before) {
-		holdPending(core, { ...pending, braid }, decoded.data.ops, decoded.data.header.timestamp)
-		await readdressPending(core, decoded.data.ops, decoded.data.header.writer)
+		holdPending(core, { ...pending, braid }, decoded.success.ops, decoded.success.header.timestamp)
+		await readdressPending(core, decoded.success.ops, decoded.success.header.writer)
 	}
 }
-
 async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Core<Rels>> {
 	const descriptor = descriptorOf(options.theory)
 	const core: Core<Rels> = {
@@ -845,7 +869,6 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		refuseManifestMissing("the store has no manifest")
 	}
 	await adoptManifest(core, fetched.bytes, fetched.etag)
-
 	const existing = await newestStoreDir(core.dir)
 	const sidecar = await readSidecar(descriptor.codec, sidecarPath(core))
 	let opened = false
@@ -858,9 +881,12 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	// sidecar is discarded cache (the disposable law), never adopted.
 	if (existing !== null && sidecar.tag === "read") {
 		core.storeName = existing
-		const openedDb = await errors.try(SdkDb.open(storePath(core), options.theory))
-		if (openedDb.error === undefined) {
-			core.db = openedDb.data
+		const openedDb = await Promise.resolve(SdkDb.open(storePath(core), options.theory)).then(
+			Result.succeed,
+			Result.fail
+		)
+		if (Result.isSuccess(openedDb)) {
+			core.db = openedDb.success
 			adoptChain(core, sidecar.chain)
 			core.provenance = { tag: "sidecar-resumed", floor: vectorOf(core) }
 			opened = true
@@ -872,17 +898,14 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 		}
 		await initializeStore(core)
 	}
-
 	if (opened) {
 		await resolvePendingAtOpen(core)
 	}
-
 	const outcome = await runPass(core, allBraids(core), "open")
 	if (outcome.tag === "reseed" || outcome.tag === "refused" || !wholenessHolds(core)) {
 		coldPending = core.chain.tag === "pending" ? core.chain.batch : coldPending
 		await discardAndReopen(core)
 	}
-
 	if (coldPending !== null) {
 		await resolveColdPending(core, coldPending)
 	}
@@ -893,7 +916,6 @@ async function openCore<Rels extends SchemaRelations>(options: OpenReplicaOption
 	await sweepReservedKeys(core)
 	return core
 }
-
 /**
  * The steady-state discard route: a contested pending slot surrenders
  * the directory. The pending batch rides in memory — the sidecar is
@@ -907,7 +929,6 @@ async function repairDiscard<Rels extends SchemaRelations>(core: Core<Rels>): Pr
 		await resolveColdPending(core, coldPending)
 	}
 }
-
 /**
  * Re-addresses an applied-but-unpublished batch at the braid's current
  * tip: fresh slot, `prev` citing the new predecessor, timestamp
@@ -947,11 +968,9 @@ async function readdressPending<Rels extends SchemaRelations>(
 	holdPending(core, { braid, slot: generation(entry.g + 1n), bytes }, ops, timestamp)
 	await persistSidecar(core)
 }
-
 function maxBigint(a: bigint, b: bigint): bigint {
 	return a > b ? a : b
 }
-
 function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<Braid, Generation> {
 	const vector = new Map<Braid, Generation>()
 	for (const [id, entry] of core.chain.entries) {
@@ -959,7 +978,6 @@ function vectorOf<Rels extends SchemaRelations>(core: Core<Rels>): ReadonlyMap<B
 	}
 	return vector
 }
-
 async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid?: Braid): Promise<RefreshOutcome> {
 	const braids = braid === undefined ? allBraids(core) : [braidOf(core.theory, braid)]
 	const outcome = await runPass(core, braids, "steady")
@@ -969,7 +987,6 @@ async function refreshPass<Rels extends SchemaRelations>(core: Core<Rels>, braid
 	}
 	return outcome
 }
-
 /** waitFor is refresh with a verdict: the same pass, then the full
  *  Waited sum. A braid the target needs that is wedged below it returns
  *  Wedged — no refresh will ever reach the target — and a heartbeat
@@ -1003,7 +1020,6 @@ async function waitForVector<Rels extends SchemaRelations>(
 		})
 	}
 }
-
 async function openReplica<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Replica<Rels>> {
 	const core = await openCore(options)
 	const replica: Replica<Rels> = {

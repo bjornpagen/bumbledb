@@ -16,7 +16,6 @@
  *   fsync) and the fresh high-water mark did too.
  */
 
-import * as errors from "@superbuilders/errors"
 import type { Fact } from "#index.ts"
 import { Db } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
@@ -129,7 +128,7 @@ const reverted = db.write(function revertDoomed(tx) {
 		})
 	})
 	if (row === undefined) {
-		throw errors.new("doomed grp vanished")
+		throw new Error("doomed grp vanished")
 	}
 	tx.delete(grp, [row])
 })

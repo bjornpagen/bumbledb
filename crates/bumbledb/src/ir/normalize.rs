@@ -23,7 +23,7 @@ mod place_comparisons;
 pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 #[cfg(test)]
 pub use fold::with_fold_disabled;
-pub(crate) use fold::{decoded_interval, render_scalar, render_const};
+pub(crate) use fold::{decoded_interval, render_const, render_scalar};
 pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
 pub use normalize::normalize_rules;
 

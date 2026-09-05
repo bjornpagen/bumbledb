@@ -14,6 +14,7 @@ import type {
 	SchemaRelations
 } from "#index.ts"
 import { Db, InstanceBuilder, relation, schema, str, u64 } from "#index.ts"
+import { native } from "#native.ts"
 import { accepted } from "#test/accepted.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-owned-read-"))
@@ -64,24 +65,66 @@ describe("one way to read an owned instance", function suite() {
 		owned[Symbol.dispose]()
 	})
 
-	test("owned get/scan/contains are plain methods; a hot get loop mints no per-call handle", async function hotGet() {
+	test("owned reads use direct crossings; hot gets request no new handle or lease", async function hotGet(t) {
 		const builder = InstanceBuilder.create(Ledger)
 		builder.load(Holder, [{ id: 1n, name: "ada" }])
 		const owned = accepted(await builder.admit())
-		assert.equal("read" in owned, false, "the lease spelling is unrepresentable")
-		assert.deepEqual(owned.scan(Holder), [{ id: 1n, name: "ada" }])
-		assert.equal(owned.contains(Holder, { id: 1n, name: "ada" }), true)
-		assert.deepEqual(owned.get(Holder, { id: 1n }), { id: 1n, name: "ada" })
-		owned.get(Holder, { id: 1n })
-		const before = process.memoryUsage().heapUsed
-		for (let i = 0; i < 4_000; i++) {
-			owned.get(Holder, { id: 1n })
+		const originalGet = native.ownedGet
+		const handleCrossings = [
+			"dbCreate",
+			"dbOpen",
+			"dbFromInstance",
+			"dbRead",
+			"dbWrite",
+			"dbWriteFrom",
+			"instancePrepare",
+			"dbPrepare",
+			"instanceBuilderNew",
+			"instanceBuilderAdmit",
+			"ownedPrepare",
+			"logCodec"
+		] as const
+		const handleCalls = handleCrossings.map(function observe(name) {
+			return { name, method: t.mock.method(native, name) }
+		})
+		const scan = t.mock.method(native, "ownedScan")
+		const contains = t.mock.method(native, "ownedContains")
+		const get = t.mock.method(native, "ownedGet")
+		function assertNoHandleCrossings(): void {
+			for (const { name, method } of handleCalls) {
+				assert.equal(method.mock.callCount(), 0, `owned reads must not call ${name}`)
+			}
 		}
-		const after = process.memoryUsage().heapUsed
-		assert.ok(
-			after - before < 4_000_000,
-			`hot get grew the heap by ${after - before} bytes — a per-call handle lease would allocate far more`
-		)
-		owned[Symbol.dispose]()
+		try {
+			assert.equal("read" in owned, false, "the lease spelling is unrepresentable")
+			assert.deepEqual(owned.scan(Holder), [{ id: 1n, name: "ada" }])
+			assert.equal(owned.contains(Holder, { id: 1n, name: "ada" }), true)
+			assert.equal(scan.mock.callCount(), 1)
+			assert.equal(contains.mock.callCount(), 1)
+			// Count SDK/native crossings, not uncollected temporary row/key allocations.
+			// This is a handle-path regression test, not a heap or throughput benchmark.
+			for (let i = 0; i < 4_000; i++) {
+				assert.deepEqual(owned.get(Holder, { id: 1n }), { id: 1n, name: "ada" })
+			}
+			assert.equal(get.mock.callCount(), 4_000, "exactly one direct native get per SDK get")
+			assertNoHandleCrossings()
+
+			// Negative control: introduce a real, promptly disposed native owner inside
+			// one get. The census must reject this even though no handle is leaked.
+			get.mock.mockImplementation(function withExtraHandle(...args: Parameters<typeof native.ownedGet>) {
+				const extra = InstanceBuilder.create(Ledger)
+				extra[Symbol.dispose]()
+				return originalGet(...args)
+			})
+			assert.deepEqual(owned.get(Holder, { id: 1n }), { id: 1n, name: "ada" })
+			assert.equal(get.mock.callCount(), 4_001)
+			assert.throws(assertNoHandleCrossings, {
+				name: "AssertionError",
+				message: /owned reads must not call instanceBuilderNew/
+			})
+		} finally {
+			t.mock.restoreAll()
+			owned[Symbol.dispose]()
+		}
 	})
 })

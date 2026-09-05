@@ -130,7 +130,10 @@ fn push_resolved_answer<C: CatalogRead>(
             ValueType::Bool => (Cell::Bool(answer[word] != 0), 1),
             ValueType::U64 => (Cell::U64(answer[word]), 1),
             ValueType::I64 => (Cell::I64((answer[word] ^ (1 << 63)).cast_signed()), 1),
-            ValueType::F64 => (Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?), 1),
+            ValueType::F64 => (
+                Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?),
+                1,
+            ),
             ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => (
                 Answers::interval_cell(*element, answer[word], answer[word + 1]),
                 2,

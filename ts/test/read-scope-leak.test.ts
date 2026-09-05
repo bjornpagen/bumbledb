@@ -12,8 +12,6 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import * as errors from "@superbuilders/errors"
-
 import { Db, relation, schema, str, u64 } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
 
@@ -31,7 +29,7 @@ describe("read-callback reader accounting across faults", function suite() {
 		const db = accepted(await Db.create(path.join(tmpRoot, "store"), Theory))
 		assert.throws(function boom() {
 			db.read(function throwInside() {
-				throw errors.new("host fault inside read")
+				throw new Error("host fault inside read")
 			})
 		}, /host fault inside read/)
 		db.read(function stillWorks(instance) {

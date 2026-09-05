@@ -42,8 +42,9 @@ impl Element for i64 {
 /// because a fact never denotes nothing. Half-open and nonempty are
 /// Allen's algebra's preconditions, not conventions
 /// .
-/// generic impl below is the whole surface: no other constructors, no
-/// `Default`, no arithmetic. Deliberately **not** `Ord`/`PartialOrd`: the
+/// The generic constructors and integer `const_new` twins all check this
+/// invariant; there is no unchecked constructor, `Default`, or arithmetic.
+/// Deliberately **not** `Ord`/`PartialOrd`: the
 /// value order the encoding has (lexicographic by start) is an encoding
 /// accident, not semantics, and must not leak into host code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,13 +75,6 @@ impl<T: Element> Interval<T> {
         Self::new(start, end)
     }
 
-    /// Macro ground-axiom seam: the caller already proved `start < end`; this constructor does not re-check.
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn __ground_axiom(start: T, end: T) -> Self {
-        Self { start, end }
-    }
-
     #[must_use]
     pub fn is_ray(&self) -> bool {
         self.end == Self::MAX_END
@@ -96,6 +90,31 @@ impl<T: Element> Interval<T> {
         self.end
     }
 }
+
+// The stable const surface cannot call a generic `Ord` operation. These
+// sealed integer twins use the same strict comparison as `new`, rather than
+// granting a macro or any other safe caller an unchecked construction path.
+macro_rules! const_constructor {
+    ($($element:ty),+ $(,)?) => {
+        $(
+            impl Interval<$element> {
+                /// The const-evaluable twin of [`Self::new`], with the same
+                /// strict nonempty-bound check. Invalid bounds return `None`
+                /// at both compile time and runtime.
+                #[must_use]
+                pub const fn const_new(start: $element, end: $element) -> Option<Self> {
+                    if start < end {
+                        Some(Self { start, end })
+                    } else {
+                        None
+                    }
+                }
+            }
+        )+
+    };
+}
+
+const_constructor!(u64, i64);
 
 impl<T: Copy> Interval<T> {
     /// beyond the parse invariant `start < end`.
@@ -129,6 +148,41 @@ mod tests {
         assert!(Interval::<u64>::new(0, 1).is_some());
         assert!(Interval::<u64>::new(1, 0).is_none());
         assert!(Interval::<u64>::new(0, 0).is_none());
+    }
+
+    #[test]
+    fn const_construction_has_no_unchecked_escape() {
+        const UNSIGNED: Option<Interval<u64>> = Interval::<u64>::const_new(0, u64::MAX);
+        const SIGNED: Option<Interval<i64>> = Interval::<i64>::const_new(i64::MIN, i64::MAX);
+        const EMPTY: Option<Interval<u64>> = Interval::<u64>::const_new(7, 7);
+        const REVERSED: Option<Interval<i64>> = Interval::<i64>::const_new(7, -7);
+
+        assert_eq!(UNSIGNED.map(Interval::bounds), Some((0, u64::MAX)));
+        assert_eq!(SIGNED.map(Interval::bounds), Some((i64::MIN, i64::MAX)));
+        assert!(EMPTY.is_none());
+        assert!(REVERSED.is_none());
+    }
+
+    #[test]
+    fn const_and_runtime_integer_construction_agree_at_every_boundary_pair() {
+        let unsigned = [0, 1, 2, u64::MAX / 2, u64::MAX - 1, u64::MAX];
+        for start in unsigned {
+            for end in unsigned {
+                assert_eq!(
+                    Interval::<u64>::const_new(start, end),
+                    Interval::<u64>::new(start, end)
+                );
+            }
+        }
+        let signed = [i64::MIN, i64::MIN + 1, -1, 0, 1, i64::MAX - 1, i64::MAX];
+        for start in signed {
+            for end in signed {
+                assert_eq!(
+                    Interval::<i64>::const_new(start, end),
+                    Interval::<i64>::new(start, end)
+                );
+            }
+        }
     }
 
     #[test]

@@ -186,8 +186,9 @@ fn rustc_accepts_rlib(
         .arg(&probe)
         .output()
         .expect("spawn rustc compat probe");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    !stderr.contains("E0514") && !stderr.contains("incompatible version of rustc")
+    // A missing/corrupt library or dependency is not compatible merely
+    // because rustc did not emit E0514. Require the positive probe to compile.
+    output.status.success()
 }
 
 fn compatible_artifact(
@@ -210,7 +211,7 @@ fn compatible_artifact(
         rejected.push(path.display().to_string());
     }
     panic!(
-        "no rustc-compatible lib{name} artifact (E0514 on every candidate: {})",
+        "no rustc-compatible lib{name} artifact (positive probe failed for: {})",
         rejected.join(", ")
     );
 }

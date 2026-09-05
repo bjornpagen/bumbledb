@@ -22,13 +22,18 @@ mod apply;
 
 pub(crate) mod judgment;
 mod plan;
+mod prepared;
 mod write;
 
 #[cfg(test)]
 mod tests;
 
 pub use apply::apply;
+pub use prepared::ApplicationChanges;
+pub(crate) use prepared::PreparedCommit;
+pub(crate) use prepared::SealedCommit;
 pub use write::commit;
+pub(crate) use write::prepare;
 pub(crate) use write::{flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids};
 
 /// the row ids it minted. Everything else the later phases consume lives
@@ -46,6 +51,7 @@ pub struct Applied<'env> {
 pub struct Judged<'env> {
     txn: WriteTxn<'env>,
     row_id_next: BTreeMap<RelationId, u64>,
+    application_changes: ApplicationChanges,
 }
 
 impl<'env> Applied<'env> {
@@ -58,18 +64,37 @@ impl<'env> Applied<'env> {
             Admission::Accepted(()) => Admission::Accepted(Judged {
                 txn: self.txn,
                 row_id_next: self.row_id_next,
+                application_changes: ApplicationChanges {
+                    added: plan.inserts.len() as u64,
+                    removed: plan.deletes.len() as u64,
+                },
             }),
         })
     }
 }
 
-impl Judged<'_> {
-    /// Phases 4–5: counter/dictionary flush, generation advance, LMDB commit.
-    pub(crate) fn finish(
+impl<'env> Judged<'env> {
+    /// Finish application bookkeeping without publishing the transaction.
+    /// The prepared value exposes no application mutation capability.
+    pub(crate) fn prepare(
+        self,
+        delta: &crate::storage::delta::WriteDelta<'_>,
+        env: &crate::storage::env::Environment,
+    ) -> std::result::Result<PreparedCommit<'env>, crate::storage::env::host::HostSealError> {
+        let current = self.txn.generation()?;
+        let next = current
+            .value()
+            .checked_add(1)
+            .ok_or(crate::storage::env::host::HostSealError::GenerationExhausted)?;
+        Ok(self.prepare_at(delta, env, GenerationId::from_storage(next))?)
+    }
+
+    fn prepare_at(
         mut self,
         delta: &crate::storage::delta::WriteDelta<'_>,
         env: &crate::storage::env::Environment,
-    ) -> Result<CommitReport> {
+        new_generation: GenerationId,
+    ) -> Result<PreparedCommit<'env>> {
         {
             let mut span = crate::obs::span(crate::obs::names::COUNTERS_FLUSH);
             let intern_count = delta
@@ -78,13 +103,27 @@ impl Judged<'_> {
             write::flush_counters(&mut self.txn, delta, &self.row_id_next, env)?;
             span.set_count(intern_count);
         }
-        let new_generation = self.txn.generation()?.next();
         self.txn.put_generation(new_generation)?;
-        {
-            let _s = crate::obs::span(crate::obs::names::LMDB_COMMIT);
-            self.txn.commit()?;
-        }
-        Ok(CommitReport::Changed { new_generation })
+        Ok(PreparedCommit::changed(
+            self.txn,
+            new_generation,
+            self.application_changes,
+        ))
+    }
+
+    /// Phases 4–5: counter/dictionary flush, generation advance, LMDB commit.
+    pub(crate) fn finish(
+        self,
+        delta: &crate::storage::delta::WriteDelta<'_>,
+        env: &crate::storage::env::Environment,
+    ) -> Result<CommitReport> {
+        // Legacy callback path keeps its existing error/counter contract until
+        // the new facade maps typed prepare errors. Successor prepare above
+        // checks exhaustion and never calls this unchecked legacy advance.
+        let new_generation = self.txn.generation()?.next();
+        self.prepare_at(delta, env, new_generation)?
+            .without_host_changes()
+            .commit()
     }
 }
 

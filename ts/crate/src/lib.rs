@@ -21,6 +21,8 @@ use napi_derive::napi;
 mod fingerprint_lock;
 pub mod log;
 mod marshal;
+mod runtime;
+pub mod runtime_wire;
 mod tags;
 
 use marshal::{DescriptorWire, FieldAttrs, ManifestWire, OwnedParam, ValueOut, ViolationWire};
@@ -222,6 +224,7 @@ fn bind_value(value: &Value) -> BindValue<'_> {
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
+        Value::F64(v) => BindValue::F64(*v),
         Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),

@@ -746,13 +746,12 @@ fn leaf_comparison(
         CmpOp::Eq => left == right,
         CmpOp::Ne => left != right,
         CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
-            let a = point(&left).expect("validated: order operators take integers");
-            let b = point(&right).expect("validated: order operators take integers");
+            let ordering = cmp_value(&left, &right);
             match op {
-                CmpOp::Lt => a < b,
-                CmpOp::Le => a <= b,
-                CmpOp::Gt => a > b,
-                CmpOp::Ge => a >= b,
+                CmpOp::Lt => ordering.is_lt(),
+                CmpOp::Le => ordering.is_le(),
+                CmpOp::Gt => ordering.is_gt(),
+                CmpOp::Ge => ordering.is_ge(),
                 _ => unreachable!(),
             }
         }

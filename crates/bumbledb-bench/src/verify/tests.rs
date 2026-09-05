@@ -1,26 +1,42 @@
 use super::stamp_value::stamp_value_with;
 use super::*;
 use crate::corpus_gen::Scale;
+use crate::fixture::TempDir;
 
-fn scratch(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("bumbledb-bench-verify-{tag}"))
-}
-
-fn cfg(tag: &str) -> VerifyConfig {
-    VerifyConfig {
+fn cfg(tag: &str) -> (VerifyConfig, TempDir) {
+    let scratch = TempDir::new(&format!("verify-{tag}"));
+    let config = VerifyConfig {
         corpus_gen: GenConfig {
             seed: 1,
             scale: Scale::S,
         },
 
         random_cases: 25,
-        out_dir: scratch(tag),
-    }
+        out_dir: scratch.path().to_path_buf(),
+    };
+    (config, scratch)
+}
+
+#[test]
+fn verification_attempts_own_disjoint_scratch_even_with_the_same_label() {
+    let (left, left_owner) = cfg("same-label");
+    let (right, _right_owner) = cfg("same-label");
+    assert_ne!(left.out_dir, right.out_dir);
+    std::fs::create_dir_all(&left.out_dir).unwrap();
+    std::fs::create_dir_all(&right.out_dir).unwrap();
+    std::fs::write(left.out_dir.join("evidence"), "left").unwrap();
+    std::fs::write(right.out_dir.join("evidence"), "right").unwrap();
+    drop(left_owner);
+    assert!(!left.out_dir.exists());
+    assert_eq!(
+        std::fs::read_to_string(right.out_dir.join("evidence")).unwrap(),
+        "right"
+    );
 }
 
 #[test]
 fn the_stamp_tracks_every_ingredient() {
-    let base = cfg("stamp");
+    let (base, _scratch) = cfg("stamp");
     let baseline = stamp_value(&base);
     assert_eq!(baseline, stamp_value(&base), "deterministic");
     let mut seed = base.clone();
@@ -33,7 +49,7 @@ fn the_stamp_tracks_every_ingredient() {
 
 #[test]
 fn the_stamp_is_bound_to_the_binary() {
-    let base = cfg("stamp-binary");
+    let (base, _scratch) = cfg("stamp-binary");
 
     let exe = std::env::current_exe().expect("exe");
     let bytes = std::fs::read(exe).expect("read");
@@ -52,12 +68,11 @@ fn the_stamp_is_bound_to_the_binary() {
     assert!(!stamp_matches(&base, &path));
     std::fs::write(&path, stamp_value(&base)).expect("write");
     assert!(stamp_matches(&base, &path), "this binary's stamp accepts");
-    let _ = std::fs::remove_dir_all(&base.out_dir);
 }
 
 #[test]
 fn divergence_by_error_is_a_bundle_not_a_panic() {
-    let mut config = cfg("error-divergence");
+    let (mut config, _scratch) = cfg("error-divergence");
     config.random_cases = 0;
     let failure = run_with_sql_override(&config, |family| {
         (family == "point").then(|| "SELECT this is not sql".to_owned())
@@ -78,12 +93,11 @@ fn divergence_by_error_is_a_bundle_not_a_panic() {
         !config.out_dir.join("verify.stamp").exists(),
         "no stamp on failure"
     );
-    let _ = std::fs::remove_dir_all(&config.out_dir);
 }
 
 #[test]
 fn stamp_matches_accepts_and_rejects() {
-    let base = cfg("stamp-match");
+    let (base, _scratch) = cfg("stamp-match");
     std::fs::create_dir_all(&base.out_dir).expect("dir");
     let path = base.out_dir.join("verify.stamp");
     assert!(!stamp_matches(&base, &path), "missing file rejects");
@@ -91,12 +105,11 @@ fn stamp_matches_accepts_and_rejects() {
     assert!(stamp_matches(&base, &path));
     std::fs::write(&path, "not a stamp").expect("write");
     assert!(!stamp_matches(&base, &path));
-    let _ = std::fs::remove_dir_all(&base.out_dir);
 }
 
 #[test]
 fn a_wrong_oracle_fails_with_a_bundle() {
-    let mut config = cfg("mismatch");
+    let (mut config, _scratch) = cfg("mismatch");
     config.random_cases = 0;
     let failure = run_with_sql_override(&config, |family| {
         (family == "point").then(|| {
@@ -122,12 +135,11 @@ fn a_wrong_oracle_fails_with_a_bundle() {
         !config.out_dir.join("verify.stamp").exists(),
         "no stamp on failure"
     );
-    let _ = std::fs::remove_dir_all(&config.out_dir);
 }
 
 #[test]
 fn a_full_verify_at_s_succeeds() {
-    let config = cfg("full");
+    let (config, _scratch) = cfg("full");
     let report = run(&config).expect("verify succeeds");
 
     assert_eq!(
@@ -141,7 +153,6 @@ fn a_full_verify_at_s_succeeds() {
     let mut other = config.clone();
     other.random_cases += 1;
     assert!(!stamp_matches(&other, &stamp_path));
-    let _ = std::fs::remove_dir_all(&config.out_dir);
 }
 
 #[test]
@@ -154,7 +165,7 @@ fn the_default_randomized_batch_draws_an_interiors_or_rec_query() {
     let derived = (0..DEFAULT_RANDOM_CASES)
         .filter(|_| {
             let query = crate::querygen::random_query(&mut rng, cfg);
-            !query.interiors().is_empty() || matches!(query, bumbledb::Query { .. })
+            !query.interiors().is_empty() || query.rec().is_some()
         })
         .count();
     assert!(

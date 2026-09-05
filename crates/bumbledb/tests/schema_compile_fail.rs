@@ -173,8 +173,10 @@ fn rustc_accepts_rlib(
         .arg(&probe)
         .output()
         .expect("spawn rustc compat probe");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    !stderr.contains("E0514") && !stderr.contains("incompatible version of rustc")
+    // Absence of a version diagnostic is not compatibility: missing or
+    // partially rebuilt artifacts and missing transitive dependencies must
+    // also refuse. Only a successfully compiled positive probe is evidence.
+    output.status.success()
 }
 
 fn compatible_artifact(
@@ -197,9 +199,59 @@ fn compatible_artifact(
         rejected.push(path.display().to_string());
     }
     panic!(
-        "no rustc-compatible lib{name} artifact (E0514 on every candidate: {})",
+        "no rustc-compatible lib{name} artifact (positive probe failed for: {})",
         rejected.join(", ")
     );
+}
+
+#[test]
+fn artifact_probe_requires_success_and_rejects_missing_or_malformed_libraries() {
+    let scratch =
+        std::env::temp_dir().join(format!("bumbledb-artifact-probe-{}", std::process::id()));
+    std::fs::create_dir(&scratch).expect("unique probe directory");
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
+    let artifact = scratch.join("libbumbledb_probe.rlib");
+    assert!(!rustc_accepts_rlib(
+        &rustc,
+        "bumbledb_probe",
+        &artifact,
+        &[],
+        &scratch,
+    ));
+    std::fs::write(&artifact, b"not a Rust library").unwrap();
+    assert!(!rustc_accepts_rlib(
+        &rustc,
+        "bumbledb_probe",
+        &artifact,
+        &[],
+        &scratch,
+    ));
+    let source = scratch.join("library.rs");
+    std::fs::write(&source, "pub struct PositiveProbe;\n").unwrap();
+    let build = Command::new(&rustc)
+        .args([
+            "--edition=2021",
+            "--crate-type=rlib",
+            "--crate-name=bumbledb_probe",
+        ])
+        .arg(&source)
+        .arg("-o")
+        .arg(&artifact)
+        .output()
+        .expect("build positive library probe");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(rustc_accepts_rlib(
+        &rustc,
+        "bumbledb_probe",
+        &artifact,
+        &[],
+        &scratch,
+    ));
+    std::fs::remove_dir_all(&scratch).expect("remove probe-owned scratch");
 }
 
 /// Compiles one fixture, expecting failure with the pinned diagnostics.
@@ -312,9 +364,10 @@ fn schema_compile_fail_fixtures() {
     // in schema_macro.rs) — each spanned at both offending faces;
     // and the cross-schema `FreshField`
     // witness (the schema-bound witness law — the binding typestate
-    // makes a foreign witness a type mismatch).
+    // makes a foreign witness a type mismatch); and the interval constructor
+    // boundary (the unchecked seam is absent; invalid const bounds refuse).
     assert_eq!(
-        seen, 41,
-        "the schema compile-fail roster has forty-one fixtures"
+        seen, 43,
+        "the schema compile-fail roster has forty-three fixtures"
     );
 }

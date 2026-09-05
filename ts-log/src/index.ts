@@ -30,6 +30,8 @@ export {
 	ErrSpanningCommit,
 	ErrStore,
 	isManifestMissing,
+	LogInputError,
+	LogOperationError,
 	refusalOf
 } from "#errors.ts"
 export type { Generation, StoreKey } from "#keys.ts"

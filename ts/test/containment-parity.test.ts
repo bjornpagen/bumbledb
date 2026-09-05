@@ -35,23 +35,37 @@ const AnalysisTargetEntry = relation("AnalysisTargetEntry", {
 
 describe("the target-key wall at schema() — the value tier, no native needed", function schemaHalf() {
 	test("row 1: the report's minimal shape refuses, names throughout", function reportShape() {
-		assert.throws(function minimal() {
-			// @ts-expect-error — the TargetKeyWall verdict: Target(value) resolves no key of Target
-			schema("Report", { Source: ReportSource, Target: ReportTarget }, [
-				key(ReportTarget, ["scope", "value"]),
-				contained(on(ReportSource, "value"), on(ReportTarget, "value"))
-			])
-		}, /^schema Report: Source\(value\) <= Target\(value\): target projection \(value\) matches no declared key of Target — available keys: \(target\); \(scope, value\)$/)
+		assert.throws(
+			function minimal() {
+				// @ts-expect-error — the TargetKeyWall verdict: Target(value) resolves no key of Target
+				schema("Report", { Source: ReportSource, Target: ReportTarget }, [
+					key(ReportTarget, ["scope", "value"]),
+					contained(on(ReportSource, "value"), on(ReportTarget, "value"))
+				])
+			},
+			{
+				name: "AuthoringError",
+				message:
+					/^schema Report: Source\(value\) <= Target\(value\): target projection \(value\) matches no declared key of Target — available keys: \(target\); \(scope, value\)$/
+			}
+		)
 	})
 
 	test("row 2: Primer's shape refuses with the spec's pinned diagnostic", function primerShape() {
-		assert.throws(function primer() {
-			// @ts-expect-error — the TargetKeyWall verdict: AnalysisTargetEntry(sourceAddress) resolves no key
-			schema("Analysis", { Coverage, AnalysisTargetEntry }, [
-				key(AnalysisTargetEntry, ["policyPackage", "sourceAddress"]),
-				contained(on(Coverage, "sourceAddress"), on(AnalysisTargetEntry, "sourceAddress"))
-			])
-		}, /^schema Analysis: Coverage\(sourceAddress\) <= AnalysisTargetEntry\(sourceAddress\): target projection \(sourceAddress\) matches no declared key of AnalysisTargetEntry — available keys: \(entry\); \(policyPackage, sourceAddress\)$/)
+		assert.throws(
+			function primer() {
+				// @ts-expect-error — the TargetKeyWall verdict: AnalysisTargetEntry(sourceAddress) resolves no key
+				schema("Analysis", { Coverage, AnalysisTargetEntry }, [
+					key(AnalysisTargetEntry, ["policyPackage", "sourceAddress"]),
+					contained(on(Coverage, "sourceAddress"), on(AnalysisTargetEntry, "sourceAddress"))
+				])
+			},
+			{
+				name: "AuthoringError",
+				message:
+					/^schema Analysis: Coverage\(sourceAddress\) <= AnalysisTargetEntry\(sourceAddress\): target projection \(sourceAddress\) matches no declared key of AnalysisTargetEntry — available keys: \(entry\); \(policyPackage, sourceAddress\)$/
+			}
+		)
 	})
 
 	test("row 3: projection = a declared key, same order — admitted", function sameOrder() {
@@ -110,10 +124,17 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 	test("row 8: closed target, a payload projection — refused by CLOSEDNESS, its own message", function closedPayload() {
 		const Sev = closed("Sev", ["Info", "Critical"], { level: u64 }, { Info: { level: 1n }, Critical: { level: 5n } })
 		const Task = relation("Task", { level: u64 })
-		assert.throws(function payloadTarget() {
-			// @ts-expect-error — the TargetKeyWall verdict: a closed target is addressed by its synthetic id only
-			schema("Rubric", { Sev, Task }, [contained(on(Task, "level"), on(Sev, "level"))])
-		}, /^schema Rubric: Task\(level\) <= Sev\(level\): closed target Sev is addressed by its synthetic id only — projection \(level\) must be exactly \(id\) \(rewrite the target side as on\(Sev, "id"\)\)$/)
+		assert.throws(
+			function payloadTarget() {
+				// @ts-expect-error — the TargetKeyWall verdict: a closed target is addressed by its synthetic id only
+				schema("Rubric", { Sev, Task }, [contained(on(Task, "level"), on(Sev, "level"))])
+			},
+			{
+				name: "AuthoringError",
+				message:
+					/^schema Rubric: Task\(level\) <= Sev\(level\): closed target Sev is addressed by its synthetic id only — projection \(level\) must be exactly \(id\) \(rewrite the target side as on\(Sev, "id"\)\)$/
+			}
+		)
 	})
 
 	test("row 8 sub-case: a declared payload key equal to the projection changes nothing — closedness judges first", function closedPayloadKeyed() {
@@ -144,18 +165,32 @@ describe("the target-key wall at schema() — the value tier, no native needed",
 		const A = relation("A", { id: u64.fresh, peer: u64 })
 		const B = relation("B", { ref: u64 })
 
-		assert.throws(function reverseUnkeyed() {
-			schema("Half", { A, B }, [key(B, ["ref"]), mirrors(on(A, "peer"), on(B, "ref"))])
-		}, /^schema Half: A\(peer\) == B\(ref\): target projection \(peer\) matches no declared key of A — available keys: \(id\)$/)
+		assert.throws(
+			function reverseUnkeyed() {
+				schema("Half", { A, B }, [key(B, ["ref"]), mirrors(on(A, "peer"), on(B, "ref"))])
+			},
+			{
+				name: "AuthoringError",
+				message:
+					/^schema Half: A\(peer\) == B\(ref\): target projection \(peer\) matches no declared key of A — available keys: \(id\)$/
+			}
+		)
 	})
 
 	test("row 11: capacity with a non-key target — refused, the same rule", function capacityNonKey() {
 		const Parent = relation("Parent", { id: u64.fresh, group: u64 })
 		const Child = relation("Child", { parent: u64 })
-		assert.throws(function nonKeyTarget() {
-			// @ts-expect-error — the TargetKeyWall verdict through the capacity target face
-			schema("Grouped", { Parent, Child }, [capacity(on(Parent, "group"), within(0n, 3n), on(Child, "parent"))])
-		}, /^schema Grouped: Parent\(group\) <=\{0\.\.3\} Child\(parent\): target projection \(group\) matches no declared key of Parent — available keys: \(id\)$/)
+		assert.throws(
+			function nonKeyTarget() {
+				// @ts-expect-error — the TargetKeyWall verdict through the capacity target face
+				schema("Grouped", { Parent, Child }, [capacity(on(Parent, "group"), within(0n, 3n), on(Child, "parent"))])
+			},
+			{
+				name: "AuthoringError",
+				message:
+					/^schema Grouped: Parent\(group\) <=\{0\.\.3\} Child\(parent\): target projection \(group\) matches no declared key of Parent — available keys: \(id\)$/
+			}
+		)
 	})
 
 	test("row 12: an interval-bearing projection with no pointwise key — refused with the pointwise hint", function pointwiseHint() {

@@ -2,7 +2,7 @@
  * The FFI identity lane (one-core doc 40 §4): every refusal row of every
  * family the bridge crosses — batch decode, batch encode, manifest,
  * checkpoint, sidecar — is forced through the real bridge from Node and
- * asserted at the ts-log seat: the `ErrRefused` sentinel carries the
+ * asserted at the ts-log seat: the `ErrRefused` tagged error carries the
  * core's own identity kind, spelled exactly as the generated table
  * (`conformance/v3/identities.json`) spells it. One row, one test,
  * keyed off the table itself, so a new core variant lands red here
@@ -11,28 +11,26 @@
  * them, never skipped. Hostile bytes reuse the conformance corpus where
  * a family carries the fixture; the rest are minimal constructions.
  */
-
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { describe, test } from "node:test"
 import type { FactValue, LiteralSpec, SchemaSpec, StatementSpec, ValueSpec, ValueTypeSpec } from "@bjornpagen/bumbledb"
 import { internalLogEncodeBatch } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { digest32, fromHex, toHex } from "#bytes.ts"
 import { parseSidecar } from "#chain.ts"
 import type { EncodeHeader } from "#codec.ts"
 import { decodeBatch, encodeBatch } from "#codec.ts"
 import type { Braid, Descriptor } from "#descriptor.ts"
 import { braidHex } from "#descriptor.ts"
-import { ErrRefused, refusalOf } from "#errors.ts"
+import { ErrRefused, LogInputError, refusalOf } from "#errors.ts"
 import { generation } from "#keys.ts"
 import type { CheckpointFacts, CheckpointHead } from "#manifest.ts"
 import { parseCheckpoint, parseManifest, renderCheckpoint } from "#manifest.ts"
 import { assembleFromSpec } from "#test/assemble.ts"
 
 const corpusRoot = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/v3")
-
 /** The generated identity table: one array per boundary enum, refusal
  *  kinds spelled by each core enum's `identity()`, outcome arms spelled
  *  as the tags the tagged hosts narrow. */
@@ -48,12 +46,9 @@ interface IdentityTable {
 	readonly waited: readonly string[]
 	readonly refreshOutcome: readonly string[]
 }
-
 const table = JSON.parse(fs.readFileSync(path.join(corpusRoot, "identities.json"), "utf8")) as IdentityTable
-
 /** The refusal families the bridge crosses; each has a cover lane below. */
 const BRIDGED_FAMILIES = ["batchDecode", "batchEncode", "manifest", "checkpoint", "sidecar"] as const
-
 /** Families the bridge never crosses: `counter` is the id-lease refusal
  *  family each driver mints host-side (the counter body is the canonical
  *  decimal, spoken natively by both drivers, never bridged);
@@ -61,43 +56,38 @@ const BRIDGED_FAMILIES = ["batchDecode", "batchEncode", "manifest", "checkpoint"
  *  hosts narrow — outcomes, not refusal crossings. errors.test.ts locks
  *  those rosters arm for arm; this lane owns the bridged crossings. */
 const HOST_FAMILIES = ["counter", "admission", "waited", "refreshOutcome"] as const
-
 // ---------------------------------------------------------------------------
 // Corpus schema assembly: the shared schemas.json roster, walked into
 // engine SchemaSpecs and sealed through the shadow sealer — the corpus
 // pins codecs and braid maps on shapes the engine seal refuses.
 // ---------------------------------------------------------------------------
-
 type CorpusValue = Record<string, unknown>
-
 interface CorpusField {
 	readonly name: string
 	readonly type: unknown
 	readonly generation?: string
 }
-
 interface CorpusRelation {
 	readonly name: string
 	readonly fields: readonly CorpusField[]
-	readonly extension?: ReadonlyArray<{ readonly handle: string; readonly values: readonly CorpusValue[] }>
+	readonly extension?: ReadonlyArray<{
+		readonly handle: string
+		readonly values: readonly CorpusValue[]
+	}>
 }
-
 interface CorpusSide {
 	readonly relation: number
 	readonly projection: readonly number[]
 	readonly selection?: ReadonlyArray<readonly [number, readonly CorpusValue[]]>
 }
-
 interface CorpusSchema {
 	readonly relations: readonly CorpusRelation[]
 	readonly statements: readonly Record<string, unknown>[]
 }
-
 const schemasRaw = JSON.parse(fs.readFileSync(path.join(corpusRoot, "schemas.json"), "utf8")) as {
 	schemas: Record<string, CorpusSchema>
 }
 const assembled = new Map<string, Descriptor>()
-
 function typeOf(raw: unknown): ValueTypeSpec {
 	if (raw === "bool" || raw === "u64" || raw === "i64" || raw === "string") {
 		return { kind: raw }
@@ -109,13 +99,17 @@ function typeOf(raw: unknown): ValueTypeSpec {
 	if (record.interval === "u64" || record.interval === "i64") {
 		return { kind: "interval", element: record.interval, width: undefined }
 	}
-	const fixed = record.fixedInterval as { element: "u64" | "i64"; width: string } | undefined
+	const fixed = record.fixedInterval as
+		| {
+				element: "u64" | "i64"
+				width: string
+		  }
+		| undefined
 	if (fixed !== undefined) {
 		return { kind: "interval", element: fixed.element, width: BigInt(fixed.width) }
 	}
-	throw errors.new(`corpus type unreadable: ${JSON.stringify(raw)}`)
+	throw new LogInputError({ message: `corpus type unreadable: ${JSON.stringify(raw)}` })
 }
-
 function valueSpecOf(raw: CorpusValue): ValueSpec {
 	if (typeof raw.bool === "boolean") {
 		return { kind: "bool", value: raw.bool }
@@ -140,22 +134,21 @@ function valueSpecOf(raw: CorpusValue): ValueSpec {
 	if (i !== undefined) {
 		return { kind: "intervalI64", start: BigInt(i[0]), end: BigInt(i[1]) }
 	}
-	throw errors.new(`corpus value unreadable: ${JSON.stringify(raw)}`)
+	throw new LogInputError({ message: `corpus value unreadable: ${JSON.stringify(raw)}` })
 }
-
 function specOf(corpus: CorpusSchema): SchemaSpec {
 	function sealedName(relation: CorpusRelation, ordinal: number): string {
 		const sealed = relation.extension === undefined ? relation.fields : [{ name: "id" }, ...relation.fields]
 		const field = sealed[ordinal]
 		if (field === undefined) {
-			throw errors.new(`corpus relation ${relation.name} has no sealed field ${ordinal}`)
+			throw new LogInputError({ message: `corpus relation ${relation.name} has no sealed field ${ordinal}` })
 		}
 		return field.name
 	}
 	function relationNamed(id: number): CorpusRelation {
 		const relation = corpus.relations[id]
 		if (relation === undefined) {
-			throw errors.new(`corpus cites unknown relation ${id}`)
+			throw new LogInputError({ message: `corpus cites unknown relation ${id}` })
 		}
 		return relation
 	}
@@ -179,7 +172,12 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 		}
 	}
 	const statements: StatementSpec[] = corpus.statements.map(function statementOf(raw): StatementSpec {
-		const fd = raw.functionality as { relation: number; projection: readonly number[] } | undefined
+		const fd = raw.functionality as
+			| {
+					relation: number
+					projection: readonly number[]
+			  }
+			| undefined
 		if (fd !== undefined) {
 			const relation = relationNamed(fd.relation)
 			return {
@@ -190,7 +188,12 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 				})
 			}
 		}
-		const containment = raw.containment as { source: CorpusSide; target: CorpusSide } | undefined
+		const containment = raw.containment as
+			| {
+					source: CorpusSide
+					target: CorpusSide
+			  }
+			| undefined
 		if (containment !== undefined) {
 			return {
 				kind: "containment",
@@ -211,7 +214,18 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 		if (capacity !== undefined) {
 			const sourceRelation = relationNamed(capacity.source.relation)
 			const targetRelation = relationNamed(capacity.target.relation)
-			let weight: { kind: "unit" } | { kind: "field"; field: string } | { kind: "durationField"; field: string } = {
+			let weight:
+				| {
+						kind: "unit"
+				  }
+				| {
+						kind: "field"
+						field: string
+				  }
+				| {
+						kind: "durationField"
+						field: string
+				  } = {
 				kind: "unit"
 			}
 			if (typeof capacity.weight === "object" && capacity.weight !== null) {
@@ -224,7 +238,12 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 				}
 			}
 			const lo = { kind: "lit", value: BigInt(capacity.lo) } as const
-			let window: Extract<StatementSpec, { kind: "capacity" }>["window"]
+			let window: Extract<
+				StatementSpec,
+				{
+					kind: "capacity"
+				}
+			>["window"]
 			if (capacity.hi === undefined) {
 				window = { kind: "floor", lo }
 			} else if (typeof capacity.hi.lit === "string") {
@@ -242,11 +261,11 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 					hi: { kind: "durationField", field: sealedName(targetRelation, capacity.hi.targetDuration) }
 				}
 			} else {
-				throw errors.new(`corpus capacity hi unreadable: ${JSON.stringify(capacity.hi)}`)
+				throw new LogInputError({ message: `corpus capacity hi unreadable: ${JSON.stringify(capacity.hi)}` })
 			}
 			return { kind: "capacity", target: sideOf(capacity.target), weight, window, source: sideOf(capacity.source) }
 		}
-		throw errors.new(`corpus statement unreadable: ${JSON.stringify(raw)}`)
+		throw new LogInputError({ message: `corpus statement unreadable: ${JSON.stringify(raw)}` })
 	})
 	return {
 		relations: corpus.relations.map(function relationSpecOf(relation) {
@@ -279,7 +298,6 @@ function specOf(corpus: CorpusSchema): SchemaSpec {
 		statements
 	}
 }
-
 function schemaNamed(name: string): Descriptor {
 	const hit = assembled.get(name)
 	if (hit !== undefined) {
@@ -287,31 +305,33 @@ function schemaNamed(name: string): Descriptor {
 	}
 	const corpus = schemasRaw.schemas[name]
 	if (corpus === undefined) {
-		throw errors.new(`lane cites schema ${name}`)
+		throw new LogInputError({ message: `lane cites schema ${name}` })
 	}
 	const descriptor = assembleFromSpec(specOf(corpus))
 	assembled.set(name, descriptor)
 	return descriptor
 }
-
 // ---------------------------------------------------------------------------
 // The lane itself.
 // ---------------------------------------------------------------------------
-
 /** One table row's forcing function: runs the hostile input and asserts
  *  the crossed identity is the row. */
 type Cover = (row: string) => void
-
 interface RefusalSidecar {
 	readonly expect: string
 	readonly refusal?: string
 	readonly schema?: string
 }
-
 /** Reads one conformance refusal golden and pins the fixture's own named
  *  refusal to the table row, so a re-purposed fixture fails the lane
  *  instead of silently testing the wrong offense. */
-function refusalFixture(rel: string, row: string): { readonly bytes: Uint8Array; readonly schema: string | undefined } {
+function refusalFixture(
+	rel: string,
+	row: string
+): {
+	readonly bytes: Uint8Array
+	readonly schema: string | undefined
+} {
 	const sidecar = JSON.parse(fs.readFileSync(path.join(corpusRoot, `${rel}.json`), "utf8")) as RefusalSidecar
 	assert.equal(sidecar.refusal, row, `${rel}: the fixture's named refusal is the table row`)
 	return {
@@ -319,29 +339,25 @@ function refusalFixture(rel: string, row: string): { readonly bytes: Uint8Array;
 		schema: sidecar.schema
 	}
 }
-
 /** Forces the seat call and returns the crossed identity kind off the
- *  `ErrRefused` sentinel's cause — the one shape a bridge refusal wears
+ *  `ErrRefused` error's cause — the one shape a bridge refusal wears
  *  on this side. */
 function seatKind(force: () => unknown): string {
-	const ran = errors.trySync(force)
-	assert.ok(ran.error, "the hostile input refuses")
-	assert.ok(errors.is(ran.error, ErrRefused), `the seat's sentinel is ErrRefused, got: ${ran.error.message}`)
-	const cause = refusalOf(ran.error)
-	assert.ok(cause !== undefined, "the sentinel carries its cause")
+	const ran = Result.try(force)
+	assert.ok(Result.isFailure(ran), "the hostile input refuses")
+	assert.ok(ran.failure instanceof ErrRefused, `the seat's class is ErrRefused, got: ${String(ran.failure)}`)
+	const cause = refusalOf(ran.failure)
+	assert.ok(cause !== undefined, "the tagged error carries its cause")
 	return cause.kind
 }
-
 function firstBraid(descriptor: Descriptor): Braid {
 	const first = descriptor.braidMembers.keys().next()
 	assert.ok(!first.done, "the theory decomposes into at least one braid")
 	return first.value
 }
-
 function braidIdOf(id: Braid): number {
 	return Number.parseInt(id.slice(1), 16)
 }
-
 /** A valid encode header for the given braid. The header carries no
  *  fingerprint — the sealed handle is the wire's fingerprint authority. */
 function encodeHeaderOf(id: Braid): EncodeHeader {
@@ -353,7 +369,6 @@ function encodeHeaderOf(id: Braid): EncodeHeader {
 		timestamp: 1n
 	}
 }
-
 function fixtureDecodeCover(rel: string): Cover {
 	return function force(row) {
 		const { bytes, schema } = refusalFixture(rel, row)
@@ -375,7 +390,6 @@ function fixtureDecodeCover(rel: string): Cover {
 		assert.equal(kind, row, `${rel}: the crossed kind is the table row`)
 	}
 }
-
 function fixtureManifestCover(rel: string): Cover {
 	return function force(row) {
 		const { bytes } = refusalFixture(rel, row)
@@ -385,7 +399,6 @@ function fixtureManifestCover(rel: string): Cover {
 		assert.equal(kind, row, `${rel}: the crossed kind is the table row`)
 	}
 }
-
 function fixtureCheckpointCover(rel: string): Cover {
 	return function force(row) {
 		const { bytes, schema } = refusalFixture(rel, row)
@@ -396,7 +409,6 @@ function fixtureCheckpointCover(rel: string): Cover {
 		assert.equal(kind, row, `${rel}: the crossed kind is the table row`)
 	}
 }
-
 function fixtureSidecarCover(rel: string): Cover {
 	return function force(row) {
 		const { bytes, schema } = refusalFixture(rel, row)
@@ -407,7 +419,6 @@ function fixtureSidecarCover(rel: string): Cover {
 		assert.equal(kind, row, `${rel}: the crossed kind is the table row`)
 	}
 }
-
 const batchDecodeCovers: Readonly<Record<string, Cover>> = {
 	Truncated: fixtureDecodeCover("batch/r_truncated_row"),
 	BadMagic: fixtureDecodeCover("batch/r_bad_magic"),
@@ -421,12 +432,37 @@ const batchDecodeCovers: Readonly<Record<string, Cover>> = {
 	OpRelationOutsideBraid: fixtureDecodeCover("batch/r_relation_outside_braid"),
 	TagMismatch: fixtureDecodeCover("batch/r_tag_mismatch"),
 	BoolByte: fixtureDecodeCover("batch/r_bool_byte_2"),
+	NonCanonicalF64: function noncanonicalFloat(row) {
+		const descriptor = assembleFromSpec({
+			relations: [
+				{
+					name: "Float",
+					fields: [{ name: "value", valueType: { kind: "f64" }, fresh: false, newtype: undefined }],
+					closed: undefined
+				}
+			],
+			statements: []
+		})
+		const bytes = encodeBatch(descriptor, encodeHeaderOf(firstBraid(descriptor)), [
+			{
+				op: "insert",
+				relation: "Float",
+				rows: [[0]]
+			}
+		])
+		assert.equal(bytes.length, 122, "104-byte header + 9-byte op + tag + 8-byte IEEE payload")
+		const hostile = new Uint8Array(bytes)
+		hostile.set(fromHex("8000000000000000"), 114)
+		assert.equal(
+			seatKind(() => decodeBatch(descriptor, hostile)),
+			row
+		)
+	},
 	InvalidUtf8: fixtureDecodeCover("batch/r_string_bad_utf8"),
 	EmptyInterval: fixtureDecodeCover("batch/r_interval_empty"),
 	IntervalOverflow: fixtureDecodeCover("batch/r_fixed_interval_overflow"),
 	TrailingBytes: fixtureDecodeCover("batch/r_trailing_byte")
 }
-
 const batchEncodeCovers: Readonly<Record<string, Cover>> = {
 	/** UNCONSTRUCTIBLE from TS by design — the S2 ruling "the handle is
 	 *  the fingerprint authority": the batch-header bridge crossing
@@ -473,13 +509,13 @@ const batchEncodeCovers: Readonly<Record<string, Cover>> = {
 		assert.equal(raw.kind, row, "the bridge spells the table row")
 		// The seat never mints this row: an unknown name refuses at the
 		// vocabulary gate, host-side, before any bridge crossing.
-		const ran = errors.trySync(function encodeIt() {
+		const ran = Result.try(function encodeIt() {
 			return encodeBatch(descriptor, encodeHeaderOf(firstBraid(descriptor)), [
 				{ op: "insert", relation: "Ghost", rows: [] }
 			])
 		})
-		assert.ok(ran.error, "the seat's vocabulary gate refuses the unknown name")
-		assert.equal(errors.is(ran.error, ErrRefused), false, "a host gate, not a bridge refusal")
+		assert.ok(Result.isFailure(ran), "the seat's vocabulary gate refuses the unknown name")
+		assert.equal(ran.failure instanceof ErrRefused, false, "a host gate, not a bridge refusal")
 	},
 	ClosedRelation: function force(row) {
 		const descriptor = schemaNamed("multi")
@@ -571,12 +607,10 @@ const batchEncodeCovers: Readonly<Record<string, Cover>> = {
 		)
 	}
 }
-
 const manifestCovers: Readonly<Record<string, Cover>> = {
 	Malformed: fixtureManifestCover("documents/manifest/r_truncated"),
 	Version: fixtureManifestCover("documents/manifest/r_version_2")
 }
-
 const checkpointCovers: Readonly<Record<string, Cover>> = {
 	Malformed: fixtureCheckpointCover("documents/checkpoint/r_truncated"),
 	Version: fixtureCheckpointCover("documents/checkpoint/r_version_2"),
@@ -609,14 +643,12 @@ const checkpointCovers: Readonly<Record<string, Cover>> = {
 		assert.equal(kind, row, "the drifted braid set crosses as the table row")
 	}
 }
-
 const sidecarCovers: Readonly<Record<string, Cover>> = {
 	Malformed: fixtureSidecarCover("documents/sidecar/r_truncated"),
 	Version: fixtureSidecarCover("documents/sidecar/r_version_2"),
 	UnknownBraid: fixtureSidecarCover("documents/sidecar/r_unknown_braid"),
 	Overflow: fixtureSidecarCover("documents/sidecar/r_overflow")
 }
-
 /** One lane per bridged family: the roster test holds covers and table
  *  rows to the same set (a new core identity is red until its hostile
  *  input lands; a cover whose row left the core is a ghost and dies),
@@ -639,7 +671,6 @@ function familyLane(family: string, rows: readonly string[], covers: Readonly<Re
 		}
 	})
 }
-
 describe("identity lane: the family roster", function suite() {
 	test("every table family is placed: bridged or host-side", function placement() {
 		const families = Object.keys(table)
@@ -654,7 +685,6 @@ describe("identity lane: the family roster", function suite() {
 		)
 	})
 })
-
 familyLane("batchDecode", table.batchDecode, batchDecodeCovers)
 familyLane("batchEncode", table.batchEncode, batchEncodeCovers)
 familyLane("manifest", table.manifest, manifestCovers)

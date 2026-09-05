@@ -228,6 +228,16 @@ impl ObjectStore for FsStore {
             key_shape_fault(&path)?;
             let _ownership = self.fence(key)?;
             key_shape_fault(&path)?;
+            // Occupation is a complete create-only answer under the same
+            // mutation lock. Do not fsync ancestors or a doomed temporary
+            // object while every other process waits for this key's lock.
+            // In particular, an unrelated staging failure must not turn an
+            // already-present equal body into a second `Created` outcome.
+            match fs::metadata(&path) {
+                Ok(_) => return Ok(Create::Exists),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
+            }
             ensure_parent(&self.root, &path)?;
             let temp = synced_temp(&self.root, body.bytes)?;
             let published = publish_link(&temp, &path);
@@ -369,6 +379,37 @@ mod tests {
         assert!(
             temp.exists(),
             "a constructor must not wipe a live publish temp"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn occupied_create_does_not_stage_or_claim_a_second_equal_body_birth() {
+        let root = scratch("occupied_no_staging");
+        let key = StoreKey::of("ids/counter");
+        let store = FsStore::new(&root);
+        assert!(matches!(
+            store.put_create(&key, b"4096").unwrap(),
+            Create::Created(_)
+        ));
+        let generation = fs::read(store.generation_path(&key)).unwrap();
+
+        // An occupied create needs no temporary file. A regular file here
+        // deterministically fails an attempted staging-directory creation,
+        // independently of filesystem permissions or elapsed time.
+        fs::remove_dir(root.join(TEMP_NAMESPACE)).unwrap();
+        fs::write(root.join(TEMP_NAMESPACE), b"staging unavailable").unwrap();
+        for body in [b"4096".as_slice(), b"different".as_slice()] {
+            assert_eq!(
+                store.put_create(&key, Fenced::new(body, 99)).unwrap(),
+                Create::Exists
+            );
+        }
+        assert_eq!(store.get(&key).unwrap().unwrap().bytes, b"4096");
+        assert_eq!(fs::read(store.generation_path(&key)).unwrap(), generation);
+        assert_eq!(
+            fs::read(root.join(TEMP_NAMESPACE)).unwrap(),
+            b"staging unavailable"
         );
         let _ = fs::remove_dir_all(&root);
     }

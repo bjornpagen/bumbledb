@@ -11,7 +11,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
         | ValueType::Interval { .. }
         | ValueType::FixedInterval { .. } => "INTEGER",
         ValueType::String => "TEXT",
-        ValueType::FixedBytes { .. } => "BLOB",
+        ValueType::FixedBytes { .. } | ValueType::F64 => "BLOB",
     }
 }
 
@@ -178,6 +178,7 @@ fn sql_literal(value: &Value) -> String {
             )
         }
         Value::I64(v) => format!("{v}"),
+        Value::F64(v) => crate::float::sql_literal(*v),
         Value::String(text) => format!("'{}'", text.replace('\'', "''")),
         Value::FixedBytes(raw) => {
             let hex = raw.iter().fold(String::new(), |mut acc, byte| {
@@ -267,6 +268,7 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
             Sql::Integer(i64::try_from(*v).expect("the SQLite mapping axiom: u64 < 2^63"))
         }
         Value::I64(v) => Sql::Integer(*v),
+        Value::F64(v) => Sql::Blob(crate::float::sql_bytes(*v).to_vec()),
         Value::String(text) => Sql::Text(text.to_string()),
         Value::FixedBytes(raw) => Sql::Blob(raw.to_vec()),
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
@@ -327,6 +329,7 @@ pub fn from_sql_value(
             .map(Value::U64)
             .map_err(|_| format!("u64 column holds negative {v}")),
         (Sql::Integer(v), ValueType::I64) => Ok(Value::I64(*v)),
+        (Sql::Blob(raw), ValueType::F64) => crate::float::from_sql_bytes(raw).map(Value::F64),
         (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into())),
         (Sql::Blob(raw), ValueType::FixedBytes { .. }) => Ok(Value::FixedBytes(raw.clone().into())),
         (_, ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {

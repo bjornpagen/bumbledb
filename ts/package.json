@@ -48,12 +48,15 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"dependencies": {
-		"@superbuilders/errors": "^4.0.2",
 		"arkregex": "^0.0.8"
+	},
+	"peerDependencies": {
+		"effect": "4.0.0-rc.112"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",
 		"@types/node": "^26.1.0",
+		"effect": "4.0.0-rc.112",
 		"typescript": "^7.0.2"
 	},
 	"engines": {

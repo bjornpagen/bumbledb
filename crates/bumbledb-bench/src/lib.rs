@@ -18,6 +18,7 @@ pub mod duralane;
 pub mod edb;
 pub mod families;
 pub(crate) mod fixture;
+pub(crate) mod float;
 pub mod harness;
 pub mod json;
 pub mod lanes;

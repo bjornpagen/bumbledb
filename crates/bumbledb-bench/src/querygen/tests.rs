@@ -103,6 +103,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("point_in_i64", cov.point_in_i64),
         ("adjacent_left", cov.adjacent_left),
         ("adjacent_right", cov.adjacent_right),
+        ("scalar_float", cov.scalar_float),
         ("ladder_equal", cov.ladder[0]),
         ("ladder_adjacent", cov.ladder[1]),
         ("ladder_nested", cov.ladder[2]),

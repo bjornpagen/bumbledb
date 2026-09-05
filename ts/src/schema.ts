@@ -1,3 +1,4 @@
+import { AuthoringError, SdkInvariantError } from "#errors.ts"
 /**
  * `schema` — assembles relations and statements into a theory value (the
  * `Theory` analog; what `Db.create`/`Db.open` take). Construction-time
@@ -15,7 +16,6 @@
  * this wall just makes the SDK agree with it first.
  */
 
-import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, sealedFieldOf } from "#closed.ts"
 import type { FaceData } from "#face.ts"
@@ -37,9 +37,9 @@ function collectImplied(name: string, relations: SchemaRelations): ImpliedKeys {
 	for (const [recordKey, member] of Object.entries(relations)) {
 		assertDeclarationOrderKey(`schema ${name} relation`, recordKey)
 		if (member.name !== recordKey) {
-			throw errors.new(
-				`schema ${name}: record key ${recordKey} holds relation ${member.name} — the key must equal the relation's declared name`
-			)
+			throw new AuthoringError({
+				message: `schema ${name}: record key ${recordKey} holds relation ${member.name} — the key must equal the relation's declared name`
+			})
 		}
 		const projections: Array<readonly string[]> = []
 		if (isClosedMember(member)) {
@@ -71,12 +71,14 @@ function verifyMembership(name: string, relations: SchemaRelations, statement: S
 	for (const owner of statementOwners(statement)) {
 		const member = relations[owner.name]
 		if (member === undefined) {
-			throw errors.new(`schema ${name}: relation ${owner.name} is not declared in this schema — ${rendered}`)
+			throw new AuthoringError({
+				message: `schema ${name}: relation ${owner.name} is not declared in this schema — ${rendered}`
+			})
 		}
 		if (member !== owner) {
-			throw errors.new(
-				`schema ${name}: statement references a different relation value named ${owner.name} than the one this schema declares — ${rendered}`
-			)
+			throw new AuthoringError({
+				message: `schema ${name}: statement references a different relation value named ${owner.name} than the one this schema declares — ${rendered}`
+			})
 		}
 	}
 }
@@ -100,12 +102,14 @@ function verifyBindingHandles(
 			continue
 		}
 		if (roster === undefined) {
-			throw errors.new(
-				`schema ${name}: ${face.owner.name}.${binding.field} is not a closed-relation reference — the handle literal ${literal.handle} is legal only on a field carrying a closed relation's roster — ${rendered}`
-			)
+			throw new AuthoringError({
+				message: `schema ${name}: ${face.owner.name}.${binding.field} is not a closed-relation reference — the handle literal ${literal.handle} is legal only on a field carrying a closed relation's roster — ${rendered}`
+			})
 		}
 		if (!roster.handles.includes(literal.handle)) {
-			throw errors.new(`schema ${name}: closed relation ${roster.name} has no handle ${literal.handle} — ${rendered}`)
+			throw new AuthoringError({
+				message: `schema ${name}: closed relation ${roster.name} has no handle ${literal.handle} — ${rendered}`
+			})
 		}
 	}
 }
@@ -185,9 +189,9 @@ function verifyClosedReferenceBinding(
 	}
 	const resolved = closedTargetOf(statements, face.owner.name, binding.field)
 	if (resolved !== roster.name) {
-		throw errors.new(
-			`schema ${name}: ${face.owner.name}.${binding.field} spells a ${roster.name} handle, but no declared containment resolves the closed reference — a closed reference is the plain u64 column plus its declared containment; declare contained(on(${face.owner.name}, "${binding.field}"), on(${roster.name}, "id")) — ${rendered}`
-		)
+		throw new AuthoringError({
+			message: `schema ${name}: ${face.owner.name}.${binding.field} spells a ${roster.name} handle, but no declared containment resolves the closed reference — a closed reference is the plain u64 column plus its declared containment; declare contained(on(${face.owner.name}, "${binding.field}"), on(${roster.name}, "id")) — ${rendered}`
+		})
 	}
 }
 
@@ -262,9 +266,9 @@ function verifyTargetKeyFace(
 		if (face.projection.length === 1 && face.projection[0] === "id") {
 			return
 		}
-		throw errors.new(
-			`schema ${name}: ${rendered}: closed target ${face.owner.name} is addressed by its synthetic id only — projection (${face.projection.join(", ")}) must be exactly (id) (rewrite the target side as on(${face.owner.name}, "id"))`
-		)
+		throw new AuthoringError({
+			message: `schema ${name}: ${rendered}: closed target ${face.owner.name} is addressed by its synthetic id only — projection (${face.projection.join(", ")}) must be exactly (id) (rewrite the target side as on(${face.owner.name}, "id"))`
+		})
 	}
 	const roster = [...(implied.get(face.owner.name) ?? []), ...(declared.get(face.owner.name) ?? [])]
 	const want = new Set(face.projection)
@@ -294,9 +298,9 @@ function verifyTargetKeyFace(
 		return descriptor !== undefined && descriptor.kind === "interval"
 	})
 	const hint = pointwise ? "; hint: declare the exact pointwise key `R(prefix…, interval) -> R`" : ""
-	throw errors.new(
-		`schema ${name}: ${rendered}: target projection (${face.projection.join(", ")}) matches no declared key of ${face.owner.name} — available keys: ${available}${hint}`
-	)
+	throw new AuthoringError({
+		message: `schema ${name}: ${rendered}: target projection (${face.projection.join(", ")}) matches no declared key of ${face.owner.name} — available keys: ${available}${hint}`
+	})
 }
 
 type SchemaRelation = AnyRelation | AnyClosed
@@ -325,19 +329,19 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	const seen = new Set<string>()
 	for (const statement of statements) {
 		if (!isStatement(statement)) {
-			throw errors.new(
-				`schema ${name}: a statement is minted only by key/contained/mirrors/capacity — a structural literal skips the construction-time arity and roster walls`
-			)
+			throw new AuthoringError({
+				message: `schema ${name}: a statement is minted only by key/contained/mirrors/capacity — a structural literal skips the construction-time arity and roster walls`
+			})
 		}
 		const rendered = renderStatement(statement)
 		verifyMembership(name, relations, statement, rendered)
 		if (implied.rendered.has(rendered)) {
-			throw errors.new(
-				`schema ${name}: ${rendered} is redundant here (the fresh mark or closedness already implies it) — and rejected as a duplicate`
-			)
+			throw new AuthoringError({
+				message: `schema ${name}: ${rendered} is redundant here (the fresh mark or closedness already implies it) — and rejected as a duplicate`
+			})
 		}
 		if (seen.has(rendered)) {
-			throw errors.new(`schema ${name}: duplicate statement — ${rendered}`)
+			throw new AuthoringError({ message: `schema ${name}: duplicate statement — ${rendered}` })
 		}
 		seen.add(rendered)
 		verifyHandles(name, statement, rendered)
@@ -346,7 +350,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	verifyTargetKeys(name, statements, implied.roster)
 	const classes = computeClasses(name, relations, statements)
 	if (!classesComplete<EvaluatedClasses<ClassesOf<Rels, Stmts>>>(classes, relations)) {
-		throw errors.new(`schema ${name}: class-map construction incomplete`)
+		throw new SdkInvariantError({ message: `schema ${name}: class-map construction incomplete` })
 	}
 	return Object.freeze({ name, relations, statements: Object.freeze([...statements]), classes })
 }

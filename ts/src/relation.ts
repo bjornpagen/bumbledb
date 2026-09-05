@@ -1,3 +1,4 @@
+import { AuthoringError } from "#errors.ts"
 /**
  * `relation` — the ordinary-relation half of the theory's signature. A
  * relation value is a frozen plain object carrying its name, its ordered
@@ -12,27 +13,27 @@
  * including fresh cells. Mint with `tx.reserve` before insert.
  */
 
-import * as errors from "@superbuilders/errors"
 import { type AnyField, assertDeclarationOrderKey, assertDeclarationRecord, type Infer, literalOf } from "#fields.ts"
 import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
 
 function resolveEntry(context: string, field: AnyField, entry: unknown): LiteralSetSpec {
 	if (Array.isArray(entry)) {
 		if (entry.length < 2) {
-			throw errors.new(
-				entry.length === 0
-					? `${context}: an empty literal set selects nothing — write the selection you mean`
-					: `${context}: a one-element literal set is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
-			)
+			throw new AuthoringError({
+				message:
+					entry.length === 0
+						? `${context}: an empty literal set selects nothing — write the selection you mean`
+						: `${context}: a one-element literal set is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
+			})
 		}
 		const seen = new Set<string>()
 		const literals: LiteralSpec[] = entry.map(function lowerSetLiteral(literal: unknown) {
 			const lowered = Object.freeze(literalOf(field, literal))
 			const rendered = renderLiteral(lowered)
 			if (seen.has(rendered)) {
-				throw errors.new(
-					`${context}: the literal set spells ${rendered} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
-				)
+				throw new AuthoringError({
+					message: `${context}: the literal set spells ${rendered} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
+				})
 			}
 			seen.add(rendered)
 			return lowered
@@ -56,16 +57,16 @@ function resolveSelection(
 			return candidate.name === fieldName
 		})
 		if (declared === undefined) {
-			throw errors.new(`relation ${name} has no field ${fieldName}`)
+			throw new AuthoringError({ message: `relation ${name} has no field ${fieldName}` })
 		}
 		bindings.push(
 			Object.freeze({ field: fieldName, set: resolveEntry(`relation ${name}.${fieldName}`, declared.field, entry) })
 		)
 	}
 	if (bindings.length === 0) {
-		throw errors.new(
-			`relation ${name}: an empty selection is the bare relation respelled — pass the relation itself (the canonical-utterance law: one meaning, one spelling)`
-		)
+		throw new AuthoringError({
+			message: `relation ${name}: an empty selection is the bare relation respelled — pass the relation itself (the canonical-utterance law: one meaning, one spelling)`
+		})
 	}
 	return Object.freeze(bindings)
 }
@@ -135,7 +136,7 @@ function relation<const Name extends string, Fields extends FieldsShape>(
 	function where(selection: SelectionInput<Fields>): Selected<Name, Fields> {
 		const owner = holder.value
 		if (owner === undefined) {
-			throw errors.new(`relation ${name}: self-reference read before construction completed`)
+			throw new AuthoringError({ message: `relation ${name}: self-reference read before construction completed` })
 		}
 		return Object.freeze({
 			relation: owner,

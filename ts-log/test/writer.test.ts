@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { internalBlake3, type SchemaRelations, type WriteTx } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { bytesEqual, digest32 } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
 import type { Op } from "#codec.ts"
@@ -29,13 +29,15 @@ import { type Batch, openWriter } from "#writer.ts"
 
 const HOME = braid("c00000000")
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-writer-"))
-
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
-
 let laneCounter = 0
-function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (name: string) => string } {
+function lane(): {
+	store: ReturnType<typeof memStore>
+	prefix: string
+	dir: (name: string) => string
+} {
 	laneCounter += 1
 	const base = path.join(tmpRoot, `lane-${laneCounter}`)
 	return {
@@ -46,14 +48,15 @@ function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (nam
 		}
 	}
 }
-
 describe("writer encode site", function suite() {
 	test("the writer births an empty store; a replica alone refuses ManifestMissing", async function exclusiveBirth() {
 		const { store, prefix, dir } = lane()
-		const missing = await errors.try(openReplica({ store, prefix, dir: dir("reader-cold"), theory: Ledger }))
-		assert.ok(missing.error)
-		assert.ok(errors.is(missing.error, ErrManifestMissing))
-
+		const missing = await Promise.resolve(openReplica({ store, prefix, dir: dir("reader-cold"), theory: Ledger })).then(
+			Result.succeed,
+			Result.fail
+		)
+		assert.ok(Result.isFailure(missing))
+		assert.ok(missing.failure instanceof ErrManifestMissing)
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(writer.role, "writer")
 		const out = await writer.commit(function record(batch) {
@@ -62,14 +65,12 @@ describe("writer encode site", function suite() {
 		})
 		assert.equal(out.tag, "accepted")
 		assert.ok(out.tag === "accepted")
-
 		const reader = await openReplica({ store, prefix, dir: dir("reader"), theory: Ledger })
 		await reader.waitFor(new Map([[HOME, out.value.slot]]))
 		assert.equal(reader.vector.get(HOME), 1n)
 		await writer.replica[Symbol.asyncDispose]()
 		await reader[Symbol.asyncDispose]()
 	})
-
 	test("openWriter on a replica wraps and settles without birthing", async function wrapBorn() {
 		const { store, prefix, dir } = lane()
 		const born = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -85,14 +86,12 @@ describe("writer encode site", function suite() {
 		assert.equal(out.tag, "accepted")
 		await replica[Symbol.asyncDispose]()
 	})
-
 	test("a Digest32 chain prev encodes as 32 predecessor bytes", async function digestPrev() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const replica = writer.replica
 		const core = coreOf(replica)
 		entriesOf(core).set(HOME, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n })
-
 		const out = await writer.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			return 0
@@ -100,16 +99,13 @@ describe("writer encode site", function suite() {
 		assert.equal(out.tag, "accepted")
 		assert.ok(out.tag === "accepted")
 		assert.equal(out.value.slot, 1n)
-
 		const published = await store.get(logKey(prefix, HOME, generation(1n)))
 		assert.ok(published !== null)
 		const decoded = decodeBatch(descriptorOf(Ledger), published.bytes)
 		assert.equal(decoded.header.prev.length, 32)
 		assert.ok(bytesEqual(decoded.header.prev, new Uint8Array(32)))
-
 		await replica[Symbol.asyncDispose]()
 	})
-
 	test("the first publish after a replica-built chain cites the predecessor", async function replicaBuilt() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -119,7 +115,6 @@ describe("writer encode site", function suite() {
 			return 0
 		})
 		assert.ok(first.tag === "accepted")
-
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
 		const b = writerB.replica
 		await b.waitFor(new Map([[HOME, first.value.slot]]))
@@ -129,19 +124,16 @@ describe("writer encode site", function suite() {
 		})
 		assert.ok(second.tag === "accepted")
 		assert.equal(second.value.slot, 2n)
-
 		const published = await store.get(logKey(prefix, HOME, generation(2n)))
 		assert.ok(published !== null)
 		const decoded = decodeBatch(descriptorOf(Ledger), published.bytes)
 		const predecessor = await store.get(logKey(prefix, HOME, generation(1n)))
 		assert.ok(predecessor !== null)
 		assert.ok(bytesEqual(decoded.header.prev, digest32(new Uint8Array(internalBlake3(predecessor.bytes)))))
-
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
 })
-
 describe("one vocabulary", function suite() {
 	test("the recorder is the engine write surface: a WriteTx serves as a Batch", function subtype() {
 		function adopt<Rels extends SchemaRelations>(tx: WriteTx<Rels>): Batch<Rels> {
@@ -149,7 +141,6 @@ describe("one vocabulary", function suite() {
 		}
 		assert.equal(typeof adopt, "function")
 	})
-
 	test("the empty commit is not a commit: a distinct outcome, never a slot", async function emptyCommit() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -164,7 +155,6 @@ describe("one vocabulary", function suite() {
 		assert.equal(await store.get(logKey(prefix, HOME, generation(1n))), null)
 		await writer.replica[Symbol.asyncDispose]()
 	})
-
 	test("reserve speaks the engine's FreshRange: zero is Empty, a draw is contiguous", async function freshRange() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -191,7 +181,6 @@ describe("one vocabulary", function suite() {
 		assert.equal(out.value.durability, "published")
 		await writer.replica[Symbol.asyncDispose]()
 	})
-
 	test("a draw the cached pool cannot serve refills the lease — never Exhausted", async function refill() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -211,7 +200,6 @@ describe("one vocabulary", function suite() {
 		)
 		await writer.replica[Symbol.asyncDispose]()
 	})
-
 	test("commitSplit outcomes are the engine's Admission beside the braid", async function splitAdmission() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -231,9 +219,7 @@ describe("one vocabulary", function suite() {
 		await writer.replica[Symbol.asyncDispose]()
 	})
 })
-
 const ZERO_DIGEST = digest32(new Uint8Array(32))
-
 function floorFacts(homeG: bigint): CheckpointFacts {
 	const braids = new Map()
 	let sum = 0n
@@ -244,7 +230,6 @@ function floorFacts(homeG: bigint): CheckpointFacts {
 	}
 	return { braids, catalog: ZERO_DIGEST, writer: 0n, prev: null, sum }
 }
-
 describe("the floor is a write-path invariant", function suite() {
 	test("foldPending names BelowFloor before any occupant arm", function foldTable() {
 		const ours = new Uint8Array([1, 2, 3])
@@ -258,26 +243,24 @@ describe("the floor is a write-path invariant", function suite() {
 		assert.equal(foldPending(3n, 4n, null, ours, false).tag, "absent-applied")
 		assert.equal(foldPending(3n, 6n, null, ours, false).tag, "phantom")
 	})
-
 	test("putCreate below the floor is refused SlotRetired — a swept slot cannot be recreated", async function retired() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const core = coreOf(writer.replica)
 		core.checkpoint = floorFacts(5n)
-		const caught = await errors.try(
+		const caught = await Promise.resolve(
 			writer.commit(function record(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				return 0
 			})
-		)
-		assert.ok(caught.error)
-		assert.ok(errors.is(caught.error, ErrSlotRetired))
-		assert.equal(slotRetiredOf(caught.error)?.braid, HOME)
-		assert.equal(slotRetiredOf(caught.error)?.slot, 1n)
+		).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		assert.ok(Result.isFailure(caught))
+		assert.ok(caught.failure instanceof ErrSlotRetired)
+		assert.equal(slotRetiredOf(caught.failure)?.braid, HOME)
+		assert.equal(slotRetiredOf(caught.failure)?.slot, 1n)
 		assert.equal(await store.get(logKey(prefix, HOME, generation(1n))), null)
 		await writer.replica[Symbol.asyncDispose]()
 	})
-
 	test("a pending slot the floor already covers is published (Clear), not re-judged", async function belowFloorPublished() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -286,7 +269,6 @@ describe("the floor is a write-path invariant", function suite() {
 			return 0
 		})
 		assert.ok(seeded.tag === "accepted")
-
 		const core = coreOf(writer.replica)
 		const descriptor = descriptorOf(Ledger)
 		const ops: Op[] = [{ op: "insert", relation: "Holder", rows: [[2n, "bob"]] }]
@@ -319,7 +301,6 @@ describe("the floor is a write-path invariant", function suite() {
 		assert.equal(await store.get(logKey(prefix, HOME, generation(2n))), null)
 		await writer.replica[Symbol.asyncDispose]()
 	})
-
 	test("the resolve sites Clear on BelowFloor and never re-judge", function sites() {
 		const replica = fs.readFileSync(path.resolve(import.meta.dirname, "../src/replica.ts"), "utf8")
 		const writer = fs.readFileSync(path.resolve(import.meta.dirname, "../src/writer.ts"), "utf8")

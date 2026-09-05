@@ -57,6 +57,8 @@ pub mod allen;
 pub mod alloc_counter;
 pub(crate) mod api;
 pub(crate) mod arena;
+pub mod canonical;
+pub mod changes;
 /// Content digest used by the bench corpus/stamp harness. Not embedding API.
 #[doc(hidden)]
 pub mod digest;
@@ -74,6 +76,7 @@ pub mod schema;
 pub(crate) mod storage;
 mod value;
 mod verify_store;
+pub mod work;
 
 pub use allen::{AllenMask, Basic, classify};
 /// the bridge crates' parse-once write representation, consumed by the
@@ -87,11 +90,24 @@ pub use api::db::{
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
 };
-pub use bumbledb_theory::{F64, F64ParseError, Id128, Id128ParseError};
+pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Id128, Id128ParseError};
+pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
+/// Narrow native wrapper seam; not a public key/value database product.
+#[doc(hidden)]
+pub mod integration {
+    pub use crate::api::db::session::{
+        CoreCommit, IntegrationError, PreparedWrite, SealedWrite, WriterSession,
+    };
+    pub use crate::storage::commit::ApplicationChanges;
+    pub use crate::storage::env::host::{
+        AttachmentChange, HostChanges, HostRecordChange, HostSealError,
+    };
+}
 pub use error::{
     Admission, Check, Committed, ConditionalWrite, Conflict, Direction, Error, ErrorFamily,
     Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
 };
+pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, UnsupportedNumericalPlatform};
 pub use interval::Interval;
 /// The grounding's test-support off switch (`plan/ground.rs`): reachable only
 /// under the `ground-off` feature, which the bench crate's dual-run
@@ -104,6 +120,7 @@ pub use plan::ground::with_grounding_disabled;
 /// artifact, never reuse one.
 pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
 pub use storage::env::GenerationId;
+pub use work::{ExecutionPolicy, WorkContext, WorkError};
 
 pub use ir::{
     AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadOp, HeadTerm,

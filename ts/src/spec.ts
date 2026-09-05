@@ -4,6 +4,7 @@ type ValueTypeSpec =
 	| { readonly kind: "bool" }
 	| { readonly kind: "u64" }
 	| { readonly kind: "i64" }
+	| { readonly kind: "f64" }
 	| { readonly kind: "string" }
 	| { readonly kind: "fixedBytes"; readonly len: number }
 	| {
@@ -16,6 +17,7 @@ type ValueSpec =
 	| { readonly kind: "bool"; readonly value: boolean }
 	| { readonly kind: "u64"; readonly value: bigint }
 	| { readonly kind: "i64"; readonly value: bigint }
+	| { readonly kind: "f64"; readonly value: number }
 	| { readonly kind: "string"; readonly value: string }
 	| { readonly kind: "fixedBytes"; readonly value: Uint8Array }
 	| { readonly kind: "intervalU64"; readonly start: bigint; readonly end: bigint }
@@ -170,6 +172,15 @@ function renderLiteral(literal: LiteralSpec): string {
 		case "u64":
 		case "i64":
 			return value.value.toString()
+		case "f64": {
+			const image = new DataView(new ArrayBuffer(8))
+			if (Number.isNaN(value.value)) {
+				image.setBigUint64(0, 0x7ff8000000000000n)
+			} else {
+				image.setFloat64(0, value.value === 0 ? 0 : value.value)
+			}
+			return `f64:0x${image.getBigUint64(0).toString(16).padStart(16, "0")}`
+		}
 		case "string": {
 			let out = '"'
 			for (const ch of value.value) {

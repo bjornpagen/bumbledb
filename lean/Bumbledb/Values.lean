@@ -1,7 +1,9 @@
+import Bumbledb.Float64.Order
+
 /-!
 # Values — the value universe (Level 0, 
 
-The value universe: the structural types (Bool, U64, I64, Str,
+The value universe: the structural types (Bool, U64, I64, F64, Str,
 FixedBytes n, Interval over an orderable element domain, and the
 fixed-width interval family `interval<E, w>` — one type per width,
 the fixedBytes<N> precedent generalized), the nonempty half-open
@@ -506,6 +508,7 @@ inductive ValueType where
   | bool
   | u64
   | i64
+  | f64
   /-- Interned string identity — equality only, NO order (see the
  module doc). -/
   | str
@@ -550,6 +553,7 @@ def ValueType.carrier : ValueType → Type
   | .bool => Bool
   | .u64 => U64
   | .i64 => I64
+  | .f64 => F64
   | .str => StrId
   | .fixedBytes n => FixedBytes n
   | .interval .u64 => Interval U64
@@ -571,6 +575,7 @@ def encodeAt : (t : ValueType) → t.carrier → List Word
   | .bool, b => [cond b 1 0]
   | .u64, v => [encodeU64 v]
   | .i64, v => [encodeI64 v]
+  | .f64, v => [F64.orderKey v]
   | .str, s => [s.id]
   | .fixedBytes _, bs => padFixedBytes bs
   | .interval .u64, iv => [(encodeIntervalU64 iv).1, (encodeIntervalU64 iv).2]
@@ -602,6 +607,9 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
   | .i64, a, b =>
     simp only [encodeAt, List.cons.injEq, and_true] at heq
     exact (encodeI64_eq_iff a b).mp heq
+  | .f64, a, b =>
+    simp only [encodeAt, List.cons.injEq, and_true] at heq
+    exact (F64.orderKey_injective a b).mp heq
   | .str, a, b =>
     simp only [encodeAt, List.cons.injEq, and_true] at heq
     cases a; cases b; cases heq; rfl

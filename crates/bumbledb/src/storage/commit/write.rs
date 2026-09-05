@@ -10,7 +10,41 @@ use crate::storage::keys::{self, StatKind};
 use bumbledb_theory::schema::RelationId;
 
 use super::plan::plan_commit;
-use super::{CommitReport, apply, judgment};
+use super::{CommitReport, PreparedCommit, apply, judgment};
+
+/// Private successor path. The caller retains the database's exclusive
+/// writer-session guard across preparation, rejection, replacement by an empty
+/// delta, host sealing, and commit/abort. No retry, publication, or callback.
+pub(crate) fn prepare<'env>(
+    delta: &WriteDelta<'_>,
+    env: &'env Environment,
+) -> std::result::Result<Admission<PreparedCommit<'env>>, crate::storage::env::host::HostSealError>
+{
+    if delta.is_empty() {
+        return Ok(Admission::Accepted(PreparedCommit::unchanged(
+            env.write_txn()?,
+        )?));
+    }
+    let plan = {
+        let view = env.read_txn()?;
+        let selections = judgment::Selections::encode(delta, &view)?;
+        plan_commit(delta, selections)?
+    };
+    let judged = match apply(&plan, env)? {
+        Admission::Accepted(applied) => applied.judge(&plan)?,
+        Admission::Rejected(violations) => Admission::Rejected(violations),
+    };
+    match judged {
+        Admission::Accepted(judged) => Ok(Admission::Accepted(judged.prepare(delta, env)?)),
+        Admission::Rejected(violations) => {
+            // Unlike the legacy best-effort decorator, a failed complete
+            // evidence decode refuses the attempt instead of omitting cites.
+            let view = env.read_txn()?;
+            let pairs = decode_cited_facts(&violations, delta.schema(), &view, delta)?;
+            Ok(Admission::Rejected(Violations::from_pairs(pairs)))
+        }
+    }
+}
 
 /// With the 10 ms-doubling backoff the worst case adds 70 ms before the typed
 /// error escapes.

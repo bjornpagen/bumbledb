@@ -168,6 +168,9 @@ fn value_json(value: &Value) -> String {
         Value::Bool(b) => format!("{{\"kind\":\"bool\",\"value\":{b}}}"),
         Value::U64(v) => format!("{{\"kind\":\"u64\",\"value\":\"{v}\"}}"),
         Value::I64(v) => format!("{{\"kind\":\"i64\",\"value\":\"{v}\"}}"),
+        Value::F64(_) => panic!(
+            "F64 notation cases need a shared lossless JSON fixture adapter: JSON.stringify maps nonfinite numbers to null"
+        ),
         Value::String(text) => {
             format!("{{\"kind\":\"string\",\"value\":{}}}", json_string(text))
         }

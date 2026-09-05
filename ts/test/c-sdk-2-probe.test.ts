@@ -3,7 +3,6 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { after, before, test } from "node:test"
-import * as errors from "@superbuilders/errors"
 import type { Db as DbValue, Fact, KeyFact, MemberRelation, ReadInstance } from "#index.ts"
 import { Db } from "#index.ts"
 import { accepted } from "#test/accepted.ts"
@@ -27,7 +26,7 @@ function rowByKey<R extends MemberRelation<Rels>>(
 ): Fact<R> {
 	const row = snap.get(relation, key)
 	if (row === undefined) {
-		throw errors.new(`prompt operand missing: no ${what} row for key`)
+		throw new Error(`prompt operand missing: no ${what} row for key`)
 	}
 	return row
 }

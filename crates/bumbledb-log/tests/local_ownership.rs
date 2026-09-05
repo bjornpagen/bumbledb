@@ -277,6 +277,14 @@ fn paused_mutation_times_out_contender_instead_of_overwriting_it() {
         store.put_swap(&key, b"stale", &before).unwrap(),
         Swap::Moved
     );
+    let resumed = store.get(&key).unwrap().unwrap();
+    assert!(matches!(
+        store
+            .put_swap(&key, b"after-release", &resumed.etag)
+            .unwrap(),
+        Swap::Swapped(_)
+    ));
+    assert_eq!(store.get(&key).unwrap().unwrap().bytes, b"after-release");
 }
 
 #[test]

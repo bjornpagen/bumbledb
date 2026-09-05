@@ -19,6 +19,7 @@ mod apply;
 mod closed;
 mod commit;
 mod functionality;
+mod host;
 mod judgment;
 mod marks;
 mod plan;

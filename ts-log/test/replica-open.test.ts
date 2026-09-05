@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 import { relation, schema, str, u64 } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { digest32, digest32FromHex } from "#bytes.ts"
 import type { Chain } from "#chain.ts"
 import { CHAIN_FILE, renderSidecar } from "#chain.ts"
@@ -17,25 +17,22 @@ import { memStore } from "#store.ts"
 import { Ledger } from "#test/fixtures.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-replica-open-"))
-
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
-
 describe("replica open refusals", function suite() {
 	test("a replica refuses ManifestMissing when the store has no manifest", async function missing() {
-		const caught = await errors.try(
+		const caught = await Promise.resolve(
 			openReplica({
 				store: memStore(),
 				prefix: "prod/main",
 				dir: path.join(tmpRoot, "missing"),
 				theory: Ledger
 			})
-		)
-		assert.ok(caught.error)
-		assert.ok(errors.is(caught.error, ErrManifestMissing))
+		).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		assert.ok(Result.isFailure(caught))
+		assert.ok(caught.failure instanceof ErrManifestMissing)
 	})
-
 	test("a sidecar naming a foreign braid is corrupt cache: open reseeds at zero", async function foreignBraid() {
 		const store = memStore()
 		const descriptor = descriptorOf(Ledger)
@@ -74,7 +71,6 @@ describe("replica open refusals", function suite() {
 		await replica[Symbol.asyncDispose]()
 	})
 })
-
 describe("adoptManifest is one transition", function suite() {
 	test("the etag is assigned only after the checkpoint document is in hand", function order() {
 		const source = fs.readFileSync(path.resolve(import.meta.dirname, "../src/replica.ts"), "utf8")
@@ -92,7 +88,6 @@ describe("adoptManifest is one transition", function suite() {
 		assert.ok(facts < checkpoint, "checkpoint bytes precede checkpoint facts")
 		assert.ok(checkpoint < etag, "checkpoint facts precede etag")
 	})
-
 	test("a failed checkpoint fetch leaves the old etag, so the floor cannot freeze", async function failedFetch() {
 		const store = memStore()
 		const descriptor = descriptorOf(Ledger)
@@ -120,14 +115,13 @@ describe("adoptManifest is one transition", function suite() {
 		)
 		assert.equal(swapped.tag, "swapped")
 		core.passes = 15
-		const caught = await errors.try(replica.refresh())
-		assert.ok(caught.error)
+		const caught = await Promise.resolve(replica.refresh()).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		assert.ok(Result.isFailure(caught))
 		assert.equal(core.manifestEtag, genesis, "etag stays the old pointer when the checkpoint is absent")
 		assert.equal(core.checkpoint, null)
 		await replica[Symbol.asyncDispose]()
 	})
 })
-
 describe("waitFor surfaces the full Waited sum", function suite() {
 	test("a wedged braid the target needs returns Wedged promptly", async function wedged() {
 		const store = memStore()
@@ -154,7 +148,6 @@ describe("waitFor surfaces the full Waited sum", function suite() {
 		assert.equal(waited.cause, "planted corruption")
 		await replica[Symbol.asyncDispose]()
 	})
-
 	test("a dominated target returns Reached carrying the vector", async function reached() {
 		const store = memStore()
 		const descriptor = descriptorOf(Ledger)

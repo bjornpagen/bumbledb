@@ -1,3 +1,4 @@
+import { Result } from "effect"
 /**
  * Bug-hunt probes (sdk-runtime + ffi lens): marshal edges (bigint u64/i64
  * extremes, bytes<N> widths, interval rays at MAX_END, fixed-width interval
@@ -13,7 +14,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import * as errors from "@superbuilders/errors"
 import {
 	bool,
 	bytes,
@@ -24,6 +24,7 @@ import {
 	interval,
 	key,
 	mirrors,
+	NativeOperationError,
 	on,
 	query,
 	relation,
@@ -352,7 +353,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(function boom() {
 			db.write(function bad(tx) {
 				put(tx, Num, { u: 1n, s: 1n })
-				throw errors.new("host boom")
+				throw new Error("host boom")
 			})
 		}, /host boom/)
 		assert.equal(db.read((i) => i.scan(Num)).length, before, "the recorded insert never landed")
@@ -368,7 +369,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			db.read(function boom(_instance, witness) {
 				return db.writeFrom(witness, function bad(tx) {
 					put(tx, Num, { u: 3n, s: 3n })
-					throw errors.new("witnessed boom")
+					throw new Error("witnessed boom")
 				})
 			})
 		}, /witnessed boom/)
@@ -385,7 +386,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(function boom() {
 			db.write(function bad(tx) {
 				put(tx, Item, { kind: "Special", flag: true })
-				throw errors.new("after violation")
+				throw new Error("after violation")
 			})
 		}, /after violation/)
 		const clean = db.write(function fine(tx) {
@@ -394,33 +395,53 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.equal(clean.tag, "accepted")
 	})
 
+	test("falsy host throws abort writes and preserve the exact cause", function falsyHostThrows() {
+		for (const cause of [undefined, null, false, 0, ""]) {
+			const generation = db.read((instance) => instance.generation)
+			const rows = db.read((instance) => instance.scan(Num)).length
+			assert.throws(
+				() =>
+					db.write((tx) => {
+						put(tx, Num, { u: 73n, s: 73n })
+						throw cause
+					}),
+				(error: unknown) => error instanceof NativeOperationError && error.cause === cause
+			)
+			assert.equal(
+				db.read((instance) => instance.generation),
+				generation
+			)
+			assert.equal(db.read((instance) => instance.scan(Num)).length, rows)
+		}
+	})
+
 	test("an async write callback is refused — never a silent empty commit", async function asyncCallback() {
 		const before = db.read((instance) => instance.generation)
 		const beforeRows = db.read((i) => i.scan(Num)).length
 		let lateError: unknown
 
-		const attempt = errors.trySync(function admitSneaky() {
+		const attempt = Result.try(function admitSneaky() {
 			db.write(
 				// @ts-expect-error — SyncResult forbids Promise; this is the runtime thenable probe
 				async function sneaky(tx) {
 					await Promise.resolve()
-					const late = errors.trySync(function lateInsert() {
+					const late = Result.try(function lateInsert() {
 						put(tx, Num, { u: 6n, s: 6n })
 					})
-					if (late.error) {
-						lateError = late.error
+					if (Result.isFailure(late)) {
+						lateError = late.failure
 					}
 				}
 			)
 		})
 		await new Promise((resolve) => setImmediate(resolve))
 		const after = db.read((instance) => instance.generation)
-		if (attempt.error === undefined) {
+		if (Result.isSuccess(attempt)) {
 			assert.equal(lateError, undefined, "the callback's inserts must not throw spent")
 			assert.equal(db.read((i) => i.scan(Num)).length, beforeRows + 1, "the insert must land if admitted")
 		} else {
 			assert.match(
-				attempt.error.toString(),
+				String(attempt.failure),
 				/returned a thenable/,
 				"the refusal is the typed thenable probe, nothing colder"
 			)

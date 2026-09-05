@@ -508,7 +508,9 @@ fn parse_float(tokens: &mut Tokens) -> Parse<Option<Lit>> {
     };
     let text = lit.to_string();
     if !text.starts_with(|c: char| c.is_ascii_digit())
-        || text.starts_with("0x") || text.starts_with("0o") || text.starts_with("0b")
+        || text.starts_with("0x")
+        || text.starts_with("0o")
+        || text.starts_with("0b")
         || !(text.contains(['.', 'e', 'E']) || text.ends_with("f64"))
     {
         return Ok(None);
@@ -521,7 +523,9 @@ fn parse_float(tokens: &mut Tokens) -> Parse<Option<Lit>> {
         return fail(lit.span(), "query!: f64 numeric literals must be finite");
     }
     *tokens = lookahead;
-    Ok(Some(Lit::Float((if negative { -value } else { value }).to_bits())))
+    Ok(Some(Lit::Float(
+        (if negative { -value } else { value }).to_bits(),
+    )))
 }
 
 fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {

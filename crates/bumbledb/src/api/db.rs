@@ -36,6 +36,7 @@ mod prepare;
 mod read;
 mod read_instance;
 mod reserve;
+pub(crate) mod session;
 mod write;
 
 pub use builder::InstanceBuilder;
@@ -86,7 +87,12 @@ pub trait CodecRead<S>: codec_seal::Sealed {
         ))
     }
 
-    fn decode_f64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<bumbledb_theory::F64> {
+    fn decode_f64_field(
+        &self,
+        relation: RelationId,
+        fact: &[u8],
+        idx: usize,
+    ) -> Result<bumbledb_theory::F64> {
         Ok(crate::encoding::decode_f64(
             crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
         )?)

@@ -45,6 +45,7 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::ClosedJoin, 8),
     (Shape::GroundFold, 7),
     (Shape::Pack, 7),
+    (Shape::ScalarFloat, 12),
 ];
 
 const DRESS_PCT: u64 = 60;
@@ -79,6 +80,8 @@ enum Shape {
     Pack,
 
     Measure,
+
+    ScalarFloat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +190,7 @@ enum RulesVariant {
     Aggregate,
 }
 
-pub const CMP_TYPES: [&str; 6] = ["u64", "i64", "bool", "string", "bytes", "interval"];
+pub const CMP_TYPES: [&str; 7] = ["u64", "i64", "bool", "string", "bytes", "interval", "f64"];
 
 pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Eq,
@@ -204,6 +207,7 @@ pub const CMP_OPS: [CmpOp; 8] = [
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Coverage {
+    pub scalar_float: u64,
     pub key_probe: u64,
     pub star: u64,
     pub chain: u64,
@@ -298,7 +302,7 @@ pub struct Coverage {
 
     pub spine_violations: u64,
 
-    pub matrix: [[u64; 6]; 8],
+    pub matrix: [[u64; 7]; 8],
 }
 
 const PARAM_DRAWS: usize = 4;

@@ -864,6 +864,9 @@ fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
         Value::I64(v) => {
             let _ = write!(out, "{{\"i64\":{v}}}");
         }
+        Value::F64(v) => {
+            let _ = write!(out, "{{\"f64\":\"{:016x}\"}}", v.to_bits());
+        }
         Value::FixedBytes(bytes) => {
             out.push_str("{\"bytes\":[");
             for (index, byte) in bytes.iter().enumerate() {

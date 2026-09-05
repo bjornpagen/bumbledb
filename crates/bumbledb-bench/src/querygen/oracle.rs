@@ -194,6 +194,19 @@ fn param_value(
                 }
             })
         }
+        ValueType::F64 => {
+            let bits = match kind {
+                DrawKind::Hit | DrawKind::Boundary => {
+                    target::FLOAT_BITS[usize::try_from(rng.range(target::FLOAT_BITS.len() as u64))
+                        .expect("small float vocabulary")]
+                }
+                DrawKind::Miss => {
+                    // These normal values are outside the declared boundary vocabulary.
+                    0x4000_0000_0000_0000 | (rng.u64() & 0x000f_ffff_ffff_ffff)
+                }
+            };
+            Value::F64(bumbledb::F64::from_bits(bits))
+        }
         ValueType::String => Value::String(
             match kind {
                 DrawKind::Hit | DrawKind::Boundary => target::string_hit(rel, field, rng),

@@ -156,6 +156,7 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
             }
         }
         ValueType::I64 => Value::I64(signed(rng)),
+        ValueType::F64 => Value::F64(bumbledb::F64::from_bits(rng.u64())),
         ValueType::String => Value::String(pick(rng, HANDLES).into()),
         ValueType::FixedBytes { len } => {
             let declared = usize::from(*len);

@@ -1,3 +1,4 @@
+import { AuthoringError, SdkInvariantError } from "#errors.ts"
 /**
  * The marshal layer: fact object ⇄ positional `FactValue[]` by field
  * ordinal, schema-directed, in ONE place only. The write side lowers named
@@ -27,7 +28,6 @@
  * silent fallback, never `undefined`.
  */
 
-import * as errors from "@superbuilders/errors"
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { FactValue } from "#native.ts"
@@ -43,7 +43,7 @@ type KeyFact<R extends AnyRelation> = [FreshKeys<R>] extends [never]
 
 function recordOf(fact: object): Readonly<Record<string, unknown>> {
 	if (!isStringIndexed(fact)) {
-		throw errors.new("fact object is not string-indexable")
+		throw new AuthoringError({ message: "fact object is not string-indexable" })
 	}
 	return fact
 }
@@ -64,9 +64,9 @@ function isStringIndexed(value: object): value is Readonly<Record<string, unknow
 function closedCellOf(context: string, closed: AnyClosedRoster, name: string): FactValue {
 	const id = closed.handles.indexOf(name)
 	if (id === -1) {
-		throw errors.new(
-			`${context}: "${name}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
-		)
+		throw new AuthoringError({
+			message: `${context}: "${name}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
+		})
 	}
 	return BigInt(id)
 }
@@ -77,9 +77,9 @@ function handleOf(context: string, closed: AnyClosedRoster, cell: FactValue): st
 	}
 	const handle = closed.handles[Number(cell)]
 	if (handle === undefined) {
-		throw errors.new(
-			`${context}: id ${cell} is outside the ${closed.name} roster (${closed.handles.join(", ")}) — the column types ${closed.name} but no law pins it — a containment statement is the missing piece`
-		)
+		throw new AuthoringError({
+			message: `${context}: id ${cell} is outside the ${closed.name} roster (${closed.handles.join(", ")}) — the column types ${closed.name} but no law pins it — a containment statement is the missing piece`
+		})
 	}
 	return handle
 }
@@ -135,7 +135,7 @@ function rowOf(relation: RelationData, fact: Readonly<Record<string, unknown>>):
 	return relation.fields.map(function marshalCell(declared) {
 		const value = fact[declared.name]
 		if (value === undefined) {
-			throw errors.new(`relation ${relation.name}: fact is missing field ${declared.name}`)
+			throw new AuthoringError({ message: `relation ${relation.name}: fact is missing field ${declared.name}` })
 		}
 		return cellOf(`relation ${relation.name} field ${declared.name}`, declared.field, value)
 	})
@@ -151,13 +151,15 @@ function keyRowOf(
 			return candidate.name === fieldName
 		})
 		if (declared === undefined) {
-			throw errors.new(`relation ${relation.name}: key projection cites unknown field ${fieldName}`)
+			throw new AuthoringError({
+				message: `relation ${relation.name}: key projection cites unknown field ${fieldName}`
+			})
 		}
 		const value = key[fieldName]
 		if (value === undefined) {
-			throw errors.new(
-				`relation ${relation.name}: key object is missing field ${fieldName} — get reads through the primary (first-declared) key, whose projection is (${projection.join(", ")})`
-			)
+			throw new AuthoringError({
+				message: `relation ${relation.name}: key object is missing field ${fieldName} — get reads through the primary (first-declared) key, whose projection is (${projection.join(", ")})`
+			})
 		}
 		return cellOf(`relation ${relation.name} key field ${fieldName}`, declared.field, value)
 	})
@@ -175,15 +177,17 @@ function isCompleteFact<R extends AnyRelation>(
 function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): Fact<R> {
 	const data = relation.data
 	if (row.length !== data.fields.length) {
-		throw errors.new(
-			`relation ${data.name}: row arity ${row.length} does not match the ${data.fields.length} declared fields`
-		)
+		throw new SdkInvariantError({
+			message: `relation ${data.name}: row arity ${row.length} does not match the ${data.fields.length} declared fields`
+		})
 	}
 	const decoded: Record<string, FactValue> = {}
 	data.fields.forEach(function decodeCell(declared, ordinal) {
 		const cell = row[ordinal]
 		if (cell === undefined) {
-			throw errors.new(`relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`)
+			throw new SdkInvariantError({
+				message: `relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`
+			})
 		}
 		const roster = rosterOf(declared.field)
 		decoded[declared.name] =
@@ -191,7 +195,7 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 	})
 	Object.freeze(decoded)
 	if (!isCompleteFact(relation, decoded)) {
-		throw errors.new(`relation ${data.name}: decoded row is not a complete fact`)
+		throw new SdkInvariantError({ message: `relation ${data.name}: decoded row is not a complete fact` })
 	}
 	return decoded
 }

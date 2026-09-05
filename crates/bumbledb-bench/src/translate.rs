@@ -129,6 +129,9 @@ pub enum Inexpressible {
     CapacityJudgment,
 
     IntervalDerivedColumn,
+
+    /// Ordered BLOBs are a relational mirror, never a SUM/AVG oracle.
+    FloatArithmetic,
 }
 
 /// Callers do not choose a gate by shape — one function,
@@ -149,7 +152,9 @@ pub fn sqlite_expressible_on(case: &LaneCase<'_>, schema: &Schema) -> Result<(),
                 Err(Inexpressible::PackAggregate)
             } else {
                 derived::refuse_interval_columns(query, schema)
-                    .map_err(|_| Inexpressible::IntervalDerivedColumn)
+                    .map_err(|_| Inexpressible::IntervalDerivedColumn)?;
+                derived::refuse_float_arithmetic(query, schema)
+                    .map_err(|_| Inexpressible::FloatArithmetic)
             }
         }
         LaneCase::Judgment(StatementDescriptor::Functionality { .. }) => {

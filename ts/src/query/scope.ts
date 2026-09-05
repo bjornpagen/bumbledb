@@ -1,6 +1,6 @@
-import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { sealedFieldsOf } from "#closed.ts"
+import { SdkInvariantError } from "#errors.ts"
 import type { AnyField, Infer, SignatureOf } from "#fields.ts"
 import { rosterOf, signaturesAgree } from "#fields.ts"
 import type { Same, SameLen } from "#judgment.ts"
@@ -108,7 +108,7 @@ function v<R extends MatchOwner>(owner: R): VarsOf<R> {
 	}
 	Object.freeze(record)
 	if (!varsMinted(owner, record)) {
-		throw errors.new(`v(${owner.name}): variable-record minting incomplete`)
+		throw new SdkInvariantError({ message: `v(${owner.name}): variable-record minting incomplete` })
 	}
 	return record
 }

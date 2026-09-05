@@ -616,6 +616,7 @@ pub struct Relation {
 /// [`SchemaDescriptor::validate`]; downstream code trusts its invariants.
 #[derive(Debug, Clone)]
 pub struct Schema {
+    identity: std::sync::OnceLock<fingerprint::SchemaFingerprint>,
     relations: Box<[Relation]>,
 
     keys: Box<[KeyStatement]>,

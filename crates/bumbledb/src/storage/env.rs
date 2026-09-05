@@ -11,6 +11,7 @@ mod create;
 mod debug;
 mod escaped_fresh;
 pub(crate) use escaped_fresh::FreshMarks;
+pub(crate) mod host;
 mod maintenance;
 mod open;
 mod open_env;
@@ -132,6 +133,8 @@ pub struct Environment {
 
     #[cfg(test)]
     fail_fresh_flush: AtomicU32,
+    #[cfg(test)]
+    fail_host_after: Mutex<Option<usize>>,
 }
 
 pub(crate) fn refuse_existing_destination(path: &std::path::Path) -> crate::error::Result<()> {
@@ -194,6 +197,8 @@ impl Environment {
             pending_fresh_flush: Mutex::new(escaped_fresh::FlushState::default()),
             #[cfg(test)]
             fail_fresh_flush: AtomicU32::new(0),
+            #[cfg(test)]
+            fail_host_after: Mutex::new(None),
         }
     }
 

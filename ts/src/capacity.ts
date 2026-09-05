@@ -1,3 +1,4 @@
+import { AuthoringError } from "#errors.ts"
 /**
  * Capacity-law mints — the window, weight, and dependent-bound vocabulary
  * the one `capacity` statement constructor consumes
@@ -35,7 +36,6 @@
  * back as `bigint` too (u128-wide engine accumulator, C3).
  */
 
-import * as errors from "@superbuilders/errors"
 import type { AnyFace, FaceFields, FaceSource, ProjectedShape } from "#face.ts"
 import type { CapacityBoundSpec, CapacityWindowSpec, WeightSpec } from "#spec.ts"
 
@@ -228,9 +228,9 @@ const unitWeight: WeightSpec = Object.freeze({ kind: "unit" })
 
 function assertRowLocal(field: string, role: string): string {
 	if (field.includes(".")) {
-		throw errors.new(
-			`${role} \`${field}\` walks a reference — the vocabulary is closed at the row (ruling 6): pin the column with a two-column containment (Source(ref, f) <= Catalog(id, f)) and name the local field`
-		)
+		throw new AuthoringError({
+			message: `${role} \`${field}\` walks a reference — the vocabulary is closed at the row (ruling 6): pin the column with a two-column containment (Source(ref, f) <= Catalog(id, f)) and name the local field`
+		})
 	}
 	return field
 }
@@ -277,31 +277,37 @@ function within<const Lo extends bigint, const Hi extends bigint>(
 }>
 function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): CapacityWindow {
 	if (lo < 0n) {
-		throw errors.new(`capacity bounds are u64: within(${lo}${hi === undefined ? "" : ", …"}) is out of domain`)
+		throw new AuthoringError({
+			message: `capacity bounds are u64: within(${lo}${hi === undefined ? "" : ", …"}) is out of domain`
+		})
 	}
 	if (hi === undefined) {
 		return admitWindow({ kind: "exact", n: lit(lo) })
 	}
 	if (hi === "*") {
 		if (lo === 0n) {
-			throw errors.new("the `{0..*}` window is vacuous — it provably says nothing; delete the statement")
+			throw new AuthoringError({
+				message: "the `{0..*}` window is vacuous — it provably says nothing; delete the statement"
+			})
 		}
 		return admitWindow({ kind: "floor", lo: lit(lo) })
 	}
 	if (typeof hi === "bigint") {
 		if (hi < 0n) {
-			throw errors.new(`capacity bounds are u64: within(${lo}, ${hi}) is out of domain`)
+			throw new AuthoringError({ message: `capacity bounds are u64: within(${lo}, ${hi}) is out of domain` })
 		}
 		if (hi < lo) {
-			throw errors.new(
-				`the window \`{${lo}..${hi}}\` is inverted — no measure satisfies it; bounds are \`{lo..hi}\` with lo < hi (an exact measure is \`{n}\`: within(n))`
-			)
+			throw new AuthoringError({
+				message: `the window \`{${lo}..${hi}}\` is inverted — no measure satisfies it; bounds are \`{lo..hi}\` with lo < hi (an exact measure is \`{n}\`: within(n))`
+			})
 		}
 		if (lo === hi) {
 			if (lo === 0n) {
-				throw errors.new("`{0..0}` — the point window is written `{0}`: use within(0n)")
+				throw new AuthoringError({ message: "`{0..0}` — the point window is written `{0}`: use within(0n)" })
 			}
-			throw errors.new(`\`{${lo}..${lo}}\` — an exact measure is written \`{${lo}}\`: use within(${lo}n)`)
+			throw new AuthoringError({
+				message: `\`{${lo}..${lo}}\` — an exact measure is written \`{${lo}}\`: use within(${lo}n)`
+			})
 		}
 		return admitWindow({ kind: "range", lo: lit(lo), hi: lit(hi) })
 	}

@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { digest32 } from "#bytes.ts"
 import { readSidecar, writeSidecar } from "#chain.ts"
 import { braid, descriptorOf } from "#descriptor.ts"
@@ -19,15 +19,16 @@ import { Booking, Holder, Ledger } from "#test/fixtures.ts"
 import { openWriter } from "#writer.ts"
 
 const CODEC = descriptorOf(Ledger).codec
-
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-e2e-"))
-
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
-
 let laneCounter = 0
-function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (name: string) => string } {
+function lane(): {
+	store: ReturnType<typeof memStore>
+	prefix: string
+	dir: (name: string) => string
+} {
 	laneCounter += 1
 	const base = path.join(tmpRoot, `lane-${laneCounter}`)
 	return {
@@ -38,17 +39,14 @@ function lane(): { store: ReturnType<typeof memStore>; prefix: string; dir: (nam
 		}
 	}
 }
-
 function booking(id: bigint, holder: bigint, slot: string) {
 	return { id, holder, slot, at: { start: 1n, end: 2n } }
 }
-
 describe("replica and writer over the mem store", function suite() {
 	test("commit publishes, a second replica replays it, waitFor delivers read-your-writes", async function commitReplay() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const a = writerA.replica
-
 		const out = await writerA.commit(function record(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			const ids = batch.reserve(Booking, "id", 1n)
@@ -63,7 +61,6 @@ describe("replica and writer over the mem store", function suite() {
 		assert.equal(out.value.slot, 1n)
 		assert.equal(out.value.durability, "published")
 		assert.equal(out.value.value.empty, false)
-
 		const b = await openReplica({ store, prefix, dir: dir("b"), theory: Ledger })
 		const waited = await b.waitFor(new Map([[out.value.braid, out.value.slot]]))
 		assert.ok(waited.tag === "reached", "read-your-writes: waitFor reaches the committed slot")
@@ -77,7 +74,6 @@ describe("replica and writer over the mem store", function suite() {
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
-
 	test("a rejected commit never reaches the network and surfaces typed violations", async function rejectedLocal() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -99,7 +95,6 @@ describe("replica and writer over the mem store", function suite() {
 		assert.equal(leaked, null, "Rejected never reaches the network: slot 2 is absent")
 		await a[Symbol.asyncDispose]()
 	})
-
 	test("reopen from the same directory serves without replay drift", async function reopen() {
 		const { store, prefix, dir } = lane()
 		{
@@ -121,7 +116,6 @@ describe("replica and writer over the mem store", function suite() {
 		)
 		await again[Symbol.asyncDispose]()
 	})
-
 	test("the crash window heals by idempotent re-apply: a rewound sidecar catches up as engine no-ops", async function crashWindow() {
 		const { store, prefix, dir } = lane()
 		{
@@ -143,7 +137,6 @@ describe("replica and writer over the mem store", function suite() {
 		const rewound = new Map(sidecar.chain.entries)
 		rewound.set(HOME, { g: generation(0n), prev: digest32(new Uint8Array(32)), ts: 0n })
 		await writeSidecar(CODEC, sidecarFile, { tag: "settled", entries: rewound })
-
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(again.vector.get(HOME), 2n)
 		assert.equal(
@@ -154,7 +147,6 @@ describe("replica and writer over the mem store", function suite() {
 		)
 		await again[Symbol.asyncDispose]()
 	})
-
 	test("a torn sidecar fails the wholeness identity and the directory is discarded and re-pulled", async function wholenessDiscard() {
 		const { store, prefix, dir } = lane()
 		{
@@ -172,7 +164,6 @@ describe("replica and writer over the mem store", function suite() {
 		const torn = new Map(sidecar.chain.entries)
 		torn.set(NOTES, { g: generation(5n), prev: digest32(new Uint8Array(32).fill(1)), ts: 0n })
 		await writeSidecar(CODEC, sidecarFile, { tag: "settled", entries: torn })
-
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		assert.equal(again.vector.get(HOME), 1n)
 		assert.equal(again.vector.get(NOTES), 0n)
@@ -184,26 +175,22 @@ describe("replica and writer over the mem store", function suite() {
 		)
 		await again[Symbol.asyncDispose]()
 	})
-
 	test("the double-mint K-conflict re-judges into the serial rejection — the case-5 story", async function doubleMint() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
 		const a = writerA.replica
 		const b = writerB.replica
-
 		await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			return 0
 		})
 		await b.refresh()
-
 		const winner = await writerA.commit(function mint(batch) {
 			batch.insert(Booking, [booking(100n, 1n, "s1")])
 			return 0
 		})
 		assert.ok(winner.tag === "accepted")
-
 		const loser = await writerB.commit(function mint(batch) {
 			batch.insert(Booking, [booking(200n, 1n, "s1")])
 			return 0
@@ -211,7 +198,6 @@ describe("replica and writer over the mem store", function suite() {
 		assert.equal(loser.tag, "rejected")
 		assert.ok(loser.tag === "rejected")
 		assert.equal(loser.violations[0]?.kind, "functionality")
-
 		const slots = b.db.read(function readSlots(instance) {
 			return instance.scan(Booking).map(function slotOf(fact) {
 				return [fact.id, fact.slot] as const
@@ -221,14 +207,12 @@ describe("replica and writer over the mem store", function suite() {
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
-
 	test("a disjoint-shaped loss re-judges at the tip and lands a fresh header at tip+1", async function disjointLoss() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
 		const a = writerA.replica
 		const b = writerB.replica
-
 		await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [
 				{ id: 1n, name: "ada" },
@@ -237,13 +221,11 @@ describe("replica and writer over the mem store", function suite() {
 			return 0
 		})
 		await b.refresh()
-
 		const winner = await writerA.commit(function mint(batch) {
 			batch.insert(Booking, [booking(100n, 1n, "s1")])
 			return 0
 		})
 		assert.ok(winner.tag === "accepted" && winner.value.slot === 2n)
-
 		const published = await writerB.commit(function mint(batch) {
 			batch.insert(Booking, [booking(200n, 2n, "s2")])
 			return 0
@@ -251,7 +233,6 @@ describe("replica and writer over the mem store", function suite() {
 		assert.ok(published.tag === "accepted")
 		assert.equal(published.value.slot, 3n)
 		assert.equal(published.value.durability, "published")
-
 		await a.refresh()
 		const slots = a.db.read(function readSlots(instance) {
 			return instance
@@ -265,20 +246,17 @@ describe("replica and writer over the mem store", function suite() {
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
-
 	test("a net-noop-shaped loss re-judges to a net no-op: Accepted at the current slot, nothing published", async function netNoopLoss() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
 		const a = writerA.replica
 		const b = writerB.replica
-
 		const winner = await writerA.commit(function mint(batch) {
 			batch.insert(Holder, [{ id: 7n, name: "ada" }])
 			return 0
 		})
 		assert.ok(winner.tag === "accepted" && winner.value.slot === 1n)
-
 		const absorbed = await writerB.commit(function mint(batch) {
 			batch.insert(Holder, [{ id: 7n, name: "ada" }])
 			return 0
@@ -286,7 +264,6 @@ describe("replica and writer over the mem store", function suite() {
 		assert.ok(absorbed.tag === "accepted")
 		assert.equal(absorbed.value.slot, 1n)
 		assert.equal(absorbed.value.durability, "published")
-
 		const second = await store.get(storeKey("prod/main/log/c00000000/0000000000000002"))
 		assert.equal(second, null)
 		assert.equal(
@@ -298,7 +275,6 @@ describe("replica and writer over the mem store", function suite() {
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
-
 	test("commitSplit returns the per-braid outcome vector", async function split() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
@@ -322,20 +298,17 @@ describe("replica and writer over the mem store", function suite() {
 		)
 		await a[Symbol.asyncDispose]()
 	})
-
 	test("a stale writer forty slots behind resolves through one re-open and one race at the tip", async function staleForty() {
 		const { store, prefix, dir } = lane()
 		const writerA = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const writerB = await openWriter({ store, prefix, dir: dir("b"), theory: Ledger })
 		const a = writerA.replica
 		const b = writerB.replica
-
 		await writerA.commit(function seed(batch) {
 			batch.insert(Holder, [{ id: 1n, name: "ada" }])
 			return 0
 		})
 		await b.refresh()
-
 		for (let round = 0; round < 40; round++) {
 			const out = await writerA.commit(function mint(batch) {
 				batch.insert(Holder, [{ id: 100n + BigInt(round), name: `h${round}` }])
@@ -344,7 +317,6 @@ describe("replica and writer over the mem store", function suite() {
 			assert.ok(out.tag === "accepted")
 		}
 		assert.equal(a.vector.get(HOME), 41n)
-
 		const stale = await writerB.commit(function mint(batch) {
 			batch.insert(Holder, [{ id: 999n, name: "zed" }])
 			return 0
@@ -364,7 +336,6 @@ describe("replica and writer over the mem store", function suite() {
 		await a[Symbol.asyncDispose]()
 		await b[Symbol.asyncDispose]()
 	})
-
 	test("open sweeps dead rotated store dirs, keeping only the adopted one", async function sweep() {
 		const { store, prefix, dir } = lane()
 		{
@@ -379,7 +350,6 @@ describe("replica and writer over the mem store", function suite() {
 		fs.mkdirSync(path.join(dir("a"), "store-corpse-1"), { recursive: true })
 		fs.writeFileSync(path.join(dir("a"), "store-corpse-1", "data.mdb"), "dead")
 		fs.utimesSync(path.join(dir("a"), "store-corpse-1"), 0, 0)
-
 		const again = await openReplica({ store, prefix, dir: dir("a"), theory: Ledger })
 		const rotations = fs.readdirSync(dir("a")).filter(function stores(name) {
 			return name.startsWith("store-")
@@ -389,21 +359,20 @@ describe("replica and writer over the mem store", function suite() {
 		assert.equal(again.vector.get(HOME), 1n)
 		await again[Symbol.asyncDispose]()
 	})
-
 	test("a spanning commit is a typed refusal naming the verb boundary", async function spanning() {
 		const { store, prefix, dir } = lane()
 		const writer = await openWriter({ store, prefix, dir: dir("a"), theory: Ledger })
 		const a = writer.replica
-		const caught = await errors.try(
+		const caught = await Promise.resolve(
 			writer.commit(function record(batch) {
 				batch.insert(Holder, [{ id: 1n, name: "ada" }])
 				batch.insert(Ledger.relations.Note, [{ id: 1n, body: "memo" }])
 				return 0
 			})
-		)
-		assert.ok(caught.error)
-		assert.ok(errors.is(caught.error, ErrSpanningCommit), `named ErrSpanningCommit, not ${caught.error.message}`)
-		assert.ok(!errors.is(caught.error, ErrContention))
+		).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		assert.ok(Result.isFailure(caught))
+		assert.ok(caught.failure instanceof ErrSpanningCommit, `named ErrSpanningCommit, not ${String(caught.failure)}`)
+		assert.ok(!(caught.failure instanceof ErrContention))
 		await a[Symbol.asyncDispose]()
 	})
 })

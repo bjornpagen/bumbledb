@@ -3,6 +3,9 @@
 use core::cmp::Ordering;
 use core::fmt;
 
+mod cast;
+pub use cast::F64CastError;
+
 const SIGN: u64 = 1 << 63;
 const EXPONENT: u64 = 0x7ff0_0000_0000_0000;
 const FRACTION: u64 = 0x000f_ffff_ffff_ffff;

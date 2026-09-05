@@ -12,7 +12,6 @@
  * live-tip losses surface as ErrContention carrying the terminal
  * re-judgment's own violation or the racing tip.
  */
-
 import * as crypto from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
@@ -30,8 +29,8 @@ import {
 	type SchemaRelations,
 	type Violation
 } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
+import { Result } from "effect"
 import type { Digest32 } from "#bytes.ts"
 import { bytesEqual, checkedAddU64, digest32, utf8Encoder, utf8StrictDecoder } from "#bytes.ts"
 import { chainSum } from "#chain.ts"
@@ -42,6 +41,7 @@ import { descriptorOf } from "#descriptor.ts"
 import {
 	ErrRefillNeeded,
 	ErrSpanningCommit,
+	LogInputError,
 	refillNeededOf,
 	refuse,
 	refuseExhausted,
@@ -87,35 +87,27 @@ import type { ObjectStore } from "#store.ts"
 
 /** 10 owns the width: one CAS amortizes counter traffic 4096× below slot traffic. */
 const LEASE_WIDTH = 4096n
-
 /** The counter body's one grammar (`conformance/v3/counter/`): a
  *  canonical u64 decimal — no sign, no leading zero, no trailing bytes. */
 const ID_LEASE_COUNTER = regex("^(?:0|[1-9][0-9]*)$")
 const U64_MAX = 0xffffffffffffffffn
-
 /** The live-loss bound (60): consecutive losses at the live tip, history never counts. */
 const LOSS_BOUND = 16
-
 /** Writer id in the fixed-layout header: magic + version + flags + fingerprint + braid + braid_gen + prev. */
 const WRITER_AT = 4 + 2 + 2 + 32 + 4 + 8 + 32
-
 const BATCH_MAGIC = utf8Encoder.encode("BDBL")
-
 type Durability = "published" | "local-pending"
-
 /** Where an accepted commit landed on its braid: the slot (the braid
  *  position — never the store-wide sum) and how durable the batch is. */
 interface Landing {
 	readonly slot: Generation
 	readonly durability: Durability
 }
-
 /** The accepted payload of `commit`: the body's value plus the landing. */
 interface CommitReceipt<R> extends Landing {
 	readonly value: R
 	readonly braid: Braid
 }
-
 /** The empty commit is not a commit: a body that records no ops names no
  *  braid, so the refusal is its own outcome — never a slot, never a
  *  thrown surprise. The body's value rides out, the way an abandoned
@@ -124,22 +116,22 @@ interface EmptyCommit<R> {
 	readonly tag: "empty"
 	readonly value: R
 }
-
 /** The engine's Admission sum carrying the log's receipt in its accepted
  *  arm; the rejected arm is the engine's violations, shell and payload. */
 type Commit<Rels extends SchemaRelations, R> = Admission<Rels, CommitReceipt<R>> | EmptyCommit<R>
-
 /** One braid's verdict inside a split commit: the engine's Admission
  *  carrying the landing, beside the braid it judged. */
 interface BraidOutcome<Rels extends SchemaRelations> {
 	readonly braid: Braid
 	readonly admission: Admission<Rels, Landing>
 }
-
 type CommitSplit<Rels extends SchemaRelations, R> =
-	| { readonly tag: "split"; readonly value: R; readonly outcomes: readonly BraidOutcome<Rels>[] }
+	| {
+			readonly tag: "split"
+			readonly value: R
+			readonly outcomes: readonly BraidOutcome<Rels>[]
+	  }
 	| EmptyCommit<R>
-
 /**
  * The recorder: the engine `WriteTx`'s write surface, verbatim — insert,
  * delete, and reserve carry the engine's own signatures, so a write-only
@@ -153,7 +145,6 @@ interface Batch<Rels extends SchemaRelations> {
 	delete<Rel extends MemberRelation<Rels>>(relation: Rel, facts: Iterable<Fact<Rel>>): MutationReport
 	reserve<Rel extends MemberRelation<Rels>>(relation: Rel, field: FreshKeys<Rel> & string, count: bigint): FreshRange
 }
-
 /** Ownership of a slot, read from the winner's header. */
 interface Deposition {
 	readonly braid: Braid
@@ -161,7 +152,6 @@ interface Deposition {
 	readonly resident: bigint
 	readonly usurper: bigint
 }
-
 interface Writer<Rels extends SchemaRelations> {
 	readonly role: "writer"
 	readonly replica: Replica<Rels>
@@ -169,19 +159,16 @@ interface Writer<Rels extends SchemaRelations> {
 	commit<R>(body: (batch: Batch<Rels>) => R | Promise<R>): Promise<Commit<Rels, R>>
 	commitSplit<R>(body: (batch: Batch<Rels>) => R | Promise<R>): Promise<CommitSplit<Rels, R>>
 }
-
 interface LeaseRange {
 	next: bigint
 	readonly end: bigint
 }
-
 /** The scream of an unbounded repair loop: the set of recent signatures,
  *  a warning every eighth attempt, and an alarm the moment any
  *  signature recurs. */
 interface Scream {
 	attempt(signature: string): void
 }
-
 function screamOf(context: string): Scream {
 	const seen = new Set<string>()
 	let attempts = 0
@@ -199,18 +186,15 @@ function screamOf(context: string): Scream {
 		}
 	}
 }
-
 interface WriterState {
 	readonly writerId: bigint
 	readonly pools: Map<string, LeaseRange[]>
 	readonly scream: Scream
 	deposition: Deposition | null
 }
-
 function poolKey(relation: number, field: number): string {
 	return `${relation}:${field}`
 }
-
 function remainingOf(state: WriterState, relation: number, field: number): bigint {
 	const pool = state.pools.get(poolKey(relation, field)) ?? []
 	let remaining = 0n
@@ -219,7 +203,6 @@ function remainingOf(state: WriterState, relation: number, field: number): bigin
 	}
 	return remaining
 }
-
 /** The zero draw is the absence of a range (the engine's ruling). */
 const EMPTY_RANGE: FreshRange = Object.freeze({
 	empty: true,
@@ -229,7 +212,6 @@ const EMPTY_RANGE: FreshRange = Object.freeze({
 	},
 	*[Symbol.iterator](): IterableIterator<bigint> {}
 })
-
 /** A drawn range as the engine's FreshRange value: contiguous, frozen. */
 function drawnRange(start: bigint, endExclusive: bigint): FreshRange {
 	const count = endExclusive - start
@@ -251,7 +233,6 @@ function drawnRange(start: bigint, endExclusive: bigint): FreshRange {
 		}
 	})
 }
-
 /** Untouched full-width blocks pooled for the key: the record loop's
  *  guarantee unit — k full blocks serve any k draws, each at most one
  *  width, whatever tails the draws abandon. */
@@ -265,7 +246,6 @@ function fullBlocksOf(state: WriterState, relation: number, field: number): numb
 	}
 	return full
 }
-
 /** `Lease.draw(count)` = OverWidth | Exhausted | Drawn, the log-Rust
  *  algebra: Exhausted names the u64 ceiling ONLY; a draw the pooled
  *  tail cannot serve abandons the tail (unique, never dense) and falls
@@ -278,7 +258,7 @@ function drawIds(
 	count: bigint
 ): FreshRange {
 	if (count < 0n) {
-		throw errors.new(`id-lease count is unsigned: ${count}`)
+		throw new LogInputError({ message: `id-lease count is unsigned: ${count}` })
 	}
 	if (count > LEASE_WIDTH) {
 		refuseOverWidth({ requested: count }, `id-lease draw ${count} exceeds the lease width ${LEASE_WIDTH}`)
@@ -314,27 +294,25 @@ function drawIds(
 		`id-lease relation ${relation} field ${field} pool cannot serve ${count}`
 	)
 }
-
 /** The counter parse: canonical decimal within u64 or a typed Counter
  *  refusal — leading zeros, signs, trailing bytes, non-UTF-8, and
  *  values past u64 all refuse under the one pinned identity. */
 function parseCounter(key: StoreKey, bytes: Uint8Array): bigint {
-	const decoded = errors.trySync(function decodeCounter() {
+	const decoded = Result.try(function decodeCounter() {
 		return utf8StrictDecoder.decode(bytes)
 	})
-	if (decoded.error) {
+	if (Result.isFailure(decoded)) {
 		refuse({ kind: "Counter", key }, `id-lease counter ${key} body is not UTF-8`)
 	}
-	if (!ID_LEASE_COUNTER.test(decoded.data)) {
+	if (!ID_LEASE_COUNTER.test(decoded.success)) {
 		refuse({ kind: "Counter", key }, `id-lease counter ${key} body is not a canonical decimal`)
 	}
-	const value = BigInt(decoded.data)
+	const value = BigInt(decoded.success)
 	if (value > U64_MAX) {
 		refuse({ kind: "Counter", key }, `id-lease counter ${key} value leaves u64`)
 	}
 	return value
 }
-
 /** `ids/{relation}/{field}`: birth claims [0, width); every later lease CAS-increments. */
 async function acquireLease<Rels extends SchemaRelations>(
 	core: Core<Rels>,
@@ -365,13 +343,11 @@ async function acquireLease<Rels extends SchemaRelations>(
 		}
 	}
 }
-
 function pushRange(state: WriterState, relation: number, field: number, next: bigint, end: bigint): void {
 	const pool = state.pools.get(poolKey(relation, field)) ?? []
 	pool.push({ next, end })
 	state.pools.set(poolKey(relation, field), pool)
 }
-
 async function ensureFreshLeases<Rels extends SchemaRelations>(core: Core<Rels>, state: WriterState): Promise<void> {
 	for (const info of core.descriptor.relations) {
 		if (info.closed) {
@@ -384,24 +360,25 @@ async function ensureFreshLeases<Rels extends SchemaRelations>(core: Core<Rels>,
 		}
 	}
 }
-
 interface Recording {
 	readonly ops: Op[]
 }
-
 function recorderOf<Rels extends SchemaRelations>(
 	core: Core<Rels>,
 	state: WriterState,
 	draws: Map<string, number>
-): { batch: Batch<Rels>; recording: Recording } {
+): {
+	batch: Batch<Rels>
+	recording: Recording
+} {
 	const recording: Recording = { ops: [] }
 	function infoOf(name: string): RelationInfo {
 		const info = core.descriptor.relationByName.get(name)
 		if (info === undefined) {
-			throw errors.new(`relation ${name} is not a member of this theory`)
+			throw new LogInputError({ message: `relation ${name} is not a member of this theory` })
 		}
 		if (info.closed) {
-			throw errors.new(`relation ${name} is closed — sealed rows never change`)
+			throw new LogInputError({ message: `relation ${name} is closed — sealed rows never change` })
 		}
 		return info
 	}
@@ -435,14 +412,13 @@ function recorderOf<Rels extends SchemaRelations>(
 			})
 			const declared = info.fields[ordinal]
 			if (declared === undefined || !declared.fresh) {
-				throw errors.new(`relation ${relation.name}: field ${field} is not a fresh cell`)
+				throw new LogInputError({ message: `relation ${relation.name}: field ${field} is not a fresh cell` })
 			}
 			return drawIds(state, draws, info.id, ordinal, count)
 		}
 	}
 	return { batch, recording }
 }
-
 /** Runs the recording body against the cached pool. A draw the pool
  *  cannot serve discards the attempt's recording, leases fresh blocks —
  *  one full block per draw the attempt made on the starved key — and
@@ -455,25 +431,28 @@ async function recordWithLeases<Rels extends SchemaRelations, R>(
 	core: Core<Rels>,
 	state: WriterState,
 	body: (batch: Batch<Rels>) => R | Promise<R>
-): Promise<{ value: R; ops: Op[] }> {
+): Promise<{
+	value: R
+	ops: Op[]
+}> {
 	await ensureFreshLeases(core, state)
 	for (;;) {
 		const draws = new Map<string, number>()
 		const { batch, recording } = recorderOf(core, state, draws)
-		const ran = await errors.try(
+		const ran = await Promise.resolve(
 			(async function runBody() {
 				return body(batch)
 			})()
-		)
-		if (!ran.error) {
-			return { value: ran.data, ops: recording.ops }
+		).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+		if (!Result.isFailure(ran)) {
+			return { value: ran.success, ops: recording.ops }
 		}
-		if (!errors.is(ran.error, ErrRefillNeeded)) {
-			throw ran.error
+		if (!(ran.failure instanceof ErrRefillNeeded)) {
+			throw ran.failure
 		}
-		const need = refillNeededOf(ran.error)
+		const need = refillNeededOf(ran.failure)
 		if (need === undefined) {
-			throw ran.error
+			throw ran.failure
 		}
 		// Draws this attempt made on the starved key, the missed one included.
 		const drawn = draws.get(poolKey(need.relation, need.field)) ?? 0
@@ -483,14 +462,13 @@ async function recordWithLeases<Rels extends SchemaRelations, R>(
 		}
 	}
 }
-
 function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: readonly Op[]): Map<Braid, Op[]> {
 	const partitioned = new Map<Braid, Op[]>()
 	for (const op of ops) {
 		const info = core.descriptor.relationByName.get(op.relation)
 		const braid = info === undefined ? undefined : core.descriptor.braidOfRelation.get(info.id)
 		if (braid === undefined) {
-			throw errors.new(`relation ${op.relation} belongs to no braid`)
+			throw new LogInputError({ message: `relation ${op.relation} belongs to no braid` })
 		}
 		const bucket = partitioned.get(braid)
 		if (bucket === undefined) {
@@ -501,7 +479,6 @@ function braidsTouched<Rels extends SchemaRelations>(core: Core<Rels>, ops: read
 	}
 	return partitioned
 }
-
 function u64leAt(bytes: Uint8Array, at: number): bigint | undefined {
 	if (bytes.length < at + 8) {
 		return undefined
@@ -509,7 +486,6 @@ function u64leAt(bytes: Uint8Array, at: number): bigint | undefined {
 	const view = new DataView(bytes.buffer, bytes.byteOffset + at, 8)
 	return view.getBigUint64(0, true)
 }
-
 /** The usurper is a fact in the header. A body that refuses to decode
  *  does not hide the slot's owner. The Rust writer machine sniffs the
  *  same fixed offset (`writer/loss.rs`); the batch grammar itself has
@@ -520,12 +496,10 @@ function headerWriter(bytes: Uint8Array): bigint | undefined {
 	}
 	return u64leAt(bytes, WRITER_AT)
 }
-
 /** Header prev is 32 branded bytes. */
 function digestPrev(prev: Digest32 | Uint8Array): Digest32 {
 	return digest32(prev)
 }
-
 function noteDeposition(state: WriterState, braid: Braid, slot: Generation, winnerBytes: Uint8Array): void {
 	if (state.deposition !== null) {
 		return
@@ -536,7 +510,6 @@ function noteDeposition(state: WriterState, braid: Braid, slot: Generation, winn
 	}
 	state.deposition = { braid, slot, resident: state.writerId, usurper }
 }
-
 /** The terminal contention scream: the re-judgment's own rejection names
  *  the hot statement and carries the offending facts' raw values; an
  *  accepted-but-outraced terminal loss carries the racing tip. A
@@ -545,13 +518,19 @@ function noteDeposition(state: WriterState, braid: Braid, slot: Generation, winn
 function screamContention<Rels extends SchemaRelations>(
 	braid: Braid,
 	rejudged:
-		| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
-		| { readonly tag: "outraced"; readonly tip: Generation }
+		| {
+				readonly tag: "rejected"
+				readonly violations: readonly Violation<Rels>[]
+		  }
+		| {
+				readonly tag: "outraced"
+				readonly tip: Generation
+		  }
 ): never {
 	if (rejudged.tag === "rejected") {
 		const violation = rejudged.violations[0]
 		if (violation === undefined) {
-			throw errors.new("a rejection carries at least one violation")
+			throw new LogInputError({ message: "a rejection carries at least one violation" })
 		}
 		throwContention(
 			{
@@ -572,7 +551,6 @@ function screamContention<Rels extends SchemaRelations>(
 		`braid ${braid}: ${LOSS_BOUND} consecutive losses at the live tip outraced accepted re-judgments`
 	)
 }
-
 /**
  * Publishes the applied pending batch: refuse a below-floor create,
  * then slot CAS, then the one loss path on Exists. A byte-equal
@@ -591,7 +569,7 @@ async function publishPending<Rels extends SchemaRelations>(
 	for (;;) {
 		const pending = pendingOf(core)
 		if (pending === null) {
-			throw errors.new("publish reached with no pending batch")
+			throw new LogInputError({ message: "publish reached with no pending batch" })
 		}
 		const braid = pending.braid
 		// The floor is a write precondition: a slot at or below it is
@@ -614,7 +592,7 @@ async function publishPending<Rels extends SchemaRelations>(
 		}
 		if (winnerBytes === null) {
 			if (pending.ts === null) {
-				throw errors.new("publish reached with an undecoded pending timestamp")
+				throw new LogInputError({ message: "publish reached with an undecoded pending timestamp" })
 			}
 			entriesOf(core).set(braid, {
 				g: pending.slot,
@@ -624,7 +602,6 @@ async function publishPending<Rels extends SchemaRelations>(
 			await clearPending(core)
 			return { tag: "accepted", value: { slot: pending.slot, durability: "published" } }
 		}
-
 		losses += 1
 		state.scream.attempt("slot occupant is not ours")
 		noteDeposition(state, braid, pending.slot, winnerBytes)
@@ -650,7 +627,6 @@ async function publishPending<Rels extends SchemaRelations>(
 		}
 	}
 }
-
 /** The commit discipline (60): encode, fsync as Pending before any
  *  apply, judge locally, publish only what advanced the generation.
  *  Settled is written only after the verdict. */
@@ -676,7 +652,6 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	// Pending → durable, before any apply.
 	holdPending(core, { braid, slot: generation(entry.g + 1n), bytes }, ops, timestamp)
 	await persistSidecar(core)
-
 	const before = generationOf(core)
 	const outcome = applyOps(core, ops)
 	if (outcome.tag === "rejected") {
@@ -689,7 +664,6 @@ async function disciplineCommit<Rels extends SchemaRelations>(
 	}
 	return publishPending(core, state, ops)
 }
-
 /** An inherited pending is resolved-and-published by open. A slot the
  *  floor already covers is published (`Clear`), not re-judged (46). */
 async function settleInheritedPending<Rels extends SchemaRelations>(
@@ -714,20 +688,20 @@ async function settleInheritedPending<Rels extends SchemaRelations>(
 	}
 	let ops = pending.ops
 	if (ops === null) {
-		const decoded = errors.trySync(function decodePending() {
+		const decoded = Result.try(function decodePending() {
 			return decodeBatch(core.descriptor, pending.bytes)
 		})
-		if (decoded.error) {
+		if (Result.isFailure(decoded)) {
 			await clearPending(core)
 			return
 		}
-		ops = decoded.data.ops
+		ops = decoded.success.ops
 		// The decoded arm re-holds so publish reads the header facts once.
 		holdPending(
 			core,
 			{ braid: pending.braid, slot: pending.slot, bytes: pending.bytes },
 			ops,
-			decoded.data.header.timestamp
+			decoded.success.header.timestamp
 		)
 	}
 	const published = await publishPending(core, state, ops)
@@ -735,14 +709,19 @@ async function settleInheritedPending<Rels extends SchemaRelations>(
 		return
 	}
 }
-
 type PublishRefusal = "manifest-missing" | "manifest" | "checkpoint-doc-missing" | "checkpoint"
-
 type Published =
-	| { readonly tag: "replaced" }
-	| { readonly tag: "kept"; readonly incumbent: Digest32 }
-	| { readonly tag: "refused"; readonly reason: PublishRefusal }
-
+	| {
+			readonly tag: "replaced"
+	  }
+	| {
+			readonly tag: "kept"
+			readonly incumbent: Digest32
+	  }
+	| {
+			readonly tag: "refused"
+			readonly reason: PublishRefusal
+	  }
 async function putCreateOnce(store: ObjectStore, key: ReturnType<typeof ckptDocKey>, bytes: Uint8Array): Promise<void> {
 	for (;;) {
 		const created = await store.putCreate(key, bytes)
@@ -755,38 +734,33 @@ async function putCreateOnce(store: ObjectStore, key: ReturnType<typeof ckptDocK
 		}
 	}
 }
-
 /** The loser deletes its own `ckpt/{digest}` and `.mdb`. */
 async function deleteOrphan(store: ObjectStore, prefix: string, digest: Digest32): Promise<void> {
 	await store.delete(ckptDocKey(prefix, digest))
 	await store.delete(checkpointMdbKey(prefix, digest))
 }
-
 function scratchPath(dir: string): string {
 	return path.join(dir, LEASE_NAMESPACE, CKPT_SCRATCH_LEASE)
 }
-
 async function claimScratch(dir: string, digest: Digest32): Promise<void> {
 	const target = scratchPath(dir)
 	await fs.mkdir(path.dirname(target), { recursive: true })
 	const handle = await fs.open(target, "w")
-	const written = await errors.try(
+	const written = await Promise.resolve(
 		(async function writeLease() {
 			await handle.writeFile(encodeCkptScratch(digest))
 			await handle.sync()
 		})()
-	)
+	).then(Result.succeed, (cause: unknown) => Result.fail(cause))
 	await handle.close()
-	if (written.error) {
+	if (Result.isFailure(written)) {
 		await fs.rm(target, { force: true })
-		throw written.error
+		throw written.failure
 	}
 }
-
 async function releaseScratch(dir: string): Promise<void> {
 	await fs.rm(scratchPath(dir), { force: true })
 }
-
 async function casPublish(
 	store: ObjectStore,
 	prefix: string,
@@ -801,13 +775,13 @@ async function casPublish(
 		if (fetched === null) {
 			return { tag: "refused", reason: "manifest-missing" }
 		}
-		const parsed = errors.trySync(function parse() {
+		const parsed = Result.try(function parse() {
 			return parseManifest(fetched.bytes)
 		})
-		if (parsed.error) {
+		if (Result.isFailure(parsed)) {
 			return { tag: "refused", reason: "manifest" }
 		}
-		const incumbent = parsed.data.checkpoint
+		const incumbent = parsed.success.checkpoint
 		if (incumbent !== null && bytesEqual(incumbent, digest)) {
 			return { tag: "replaced" }
 		}
@@ -816,24 +790,23 @@ async function casPublish(
 			if (doc === null) {
 				return { tag: "refused", reason: "checkpoint-doc-missing" }
 			}
-			const incumbentDoc = errors.trySync(function parseIncumbent() {
+			const incumbentDoc = Result.try(function parseIncumbent() {
 				return parseCheckpoint(codec, doc.bytes)
 			})
-			if (incumbentDoc.error) {
+			if (Result.isFailure(incumbentDoc)) {
 				return { tag: "refused", reason: "checkpoint" }
 			}
-			if (checkpointVector(candidate).order(checkpointVector(incumbentDoc.data)) !== "after") {
+			if (checkpointVector(candidate).order(checkpointVector(incumbentDoc.success)) !== "after") {
 				return { tag: "kept", incumbent }
 			}
 		}
-		const next = renderManifest({ fingerprint: parsed.data.fingerprint, checkpoint: digest })
+		const next = renderManifest({ fingerprint: parsed.success.fingerprint, checkpoint: digest })
 		const swapped = await store.putSwap(manifestKey(prefix), next, fetched.etag)
 		if (swapped.tag === "swapped") {
 			return { tag: "replaced" }
 		}
 	}
 }
-
 /**
  * Publishes `candidate` under the checkpoint order. The digest is the
  * blake3 of the full bytes, `prev` included. A scratch lease
@@ -854,22 +827,21 @@ async function publishCheckpoint(
 	const bytes = renderCheckpoint(codec, candidate)
 	const digest = digest32(new Uint8Array(internalBlake3(bytes)))
 	await claimScratch(dir, digest)
-	const ran = await errors.try(
+	const ran = await Promise.resolve(
 		(async function publish() {
 			await putCreateOnce(store, checkpointMdbKey(prefix, digest), mdb)
 			return await casPublish(store, prefix, codec, candidate, digest, bytes)
 		})()
-	)
-	if (ran.error) {
-		throw ran.error
+	).then(Result.succeed, (cause: unknown) => Result.fail(cause))
+	if (Result.isFailure(ran)) {
+		throw ran.failure
 	}
-	if (ran.data.tag === "kept" || ran.data.tag === "refused") {
+	if (ran.success.tag === "kept" || ran.success.tag === "refused") {
 		await deleteOrphan(store, prefix, digest)
 	}
 	await releaseScratch(dir)
-	return ran.data
+	return ran.success
 }
-
 /** Only the writer births a store: create-only PUT of a genesis manifest. */
 async function birthStore(store: ObjectStore, prefix: string, fingerprint: Digest32): Promise<void> {
 	const key = manifestKey(prefix)
@@ -885,13 +857,11 @@ async function birthStore(store: ObjectStore, prefix: string, fingerprint: Diges
 		}
 	}
 }
-
 function isReplica<Rels extends SchemaRelations>(
 	source: Replica<Rels> | OpenReplicaOptions<Rels>
 ): source is Replica<Rels> {
 	return typeof (source as Replica<Rels>).refresh === "function"
 }
-
 /** Wrap a born replica: settle an inherited pending; do not birth; do not draw id leases. */
 async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): Promise<Writer<Rels>> {
 	const core = coreOf(replica)
@@ -918,7 +888,7 @@ async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): P
 				}
 				const partitioned = braidsTouched(core, recorded.ops)
 				if (partitioned.size > 1) {
-					throw errors.wrap(ErrSpanningCommit, `the recorded ops span braids ${[...partitioned.keys()].join(", ")}`)
+					throw new ErrSpanningCommit({ message: `the recorded ops span braids ${[...partitioned.keys()].join(", ")}` })
 				}
 				const [braid, ops] = [...partitioned.entries()][0] as [Braid, Op[]]
 				const outcome = await disciplineCommit(core, state, braid, ops)
@@ -931,7 +901,6 @@ async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): P
 				}
 			})
 		},
-
 		async commitSplit(body) {
 			return withGate(core, async function splitBody() {
 				const recorded = await recordWithLeases(core, state, body)
@@ -949,7 +918,6 @@ async function writerOn<Rels extends SchemaRelations>(replica: Replica<Rels>): P
 		}
 	}
 }
-
 async function openWriter<Rels extends SchemaRelations>(replica: Replica<Rels>): Promise<Writer<Rels>>
 async function openWriter<Rels extends SchemaRelations>(options: OpenReplicaOptions<Rels>): Promise<Writer<Rels>>
 async function openWriter<Rels extends SchemaRelations>(

@@ -83,6 +83,13 @@ export {
 	ErrUseAfterScope,
 	InstanceBuilder
 } from "#db.ts"
+export {
+	AuthoringError,
+	NativeLoadError,
+	NativeOperationError,
+	NativeReportedError,
+	SdkInvariantError
+} from "#errors.ts"
 export type {
 	AnyFace,
 	Arity,
@@ -171,7 +178,6 @@ export {
 	internalLogRenderManifest,
 	internalLogRenderSidecar
 } from "#native.ts"
-
 export type {
 	AnyCond,
 	BindingInput,
@@ -231,6 +237,10 @@ export type {
 	SelectionInput
 } from "#relation.ts"
 export { relation } from "#relation.ts"
+export type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
+export { NativeRuntime } from "#runtime.ts"
+export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
+export { CloseFailure, DbError } from "#runtime-errors.ts"
 export type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"
 export type {

@@ -11,6 +11,21 @@ use bumbledb_theory::schema::{
     SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 
+#[test]
+fn f64_literal_uses_canonical_ieee_bits() {
+    for (input, expected) in [
+        (0x8000_0000_0000_0000, "f64:0x0000000000000000"),
+        (0x7ff0_0000_0000_0001, "f64:0x7ff8000000000000"),
+        (0xfff0_0000_0000_0000, "f64:0xfff0000000000000"),
+        (0x0000_0000_0000_0001, "f64:0x0000000000000001"),
+        (0x3ff0_0000_0000_0000, "f64:0x3ff0000000000000"),
+    ] {
+        let mut text = String::new();
+        super::literal(&mut text, &Value::F64(crate::F64::from_bits(input)));
+        assert_eq!(text, expected);
+    }
+}
+
 fn calendar() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),

@@ -1,4 +1,3 @@
-import * as errors from "@superbuilders/errors"
 import {
 	type BoundsOnTarget,
 	type CapacityWeight,
@@ -11,6 +10,7 @@ import {
 	type WeightOnSource
 } from "#capacity.ts"
 import { isClosedMember, sealedFieldOf } from "#closed.ts"
+import { AuthoringError } from "#errors.ts"
 import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
 import { type AnyClosedRoster, rosterOf, rostersAgree } from "#fields.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
@@ -82,9 +82,9 @@ function renderRosterSide(roster: AnyClosedRoster | undefined): string {
  */
 function assertArityAgreement(source: FaceData, target: FaceData, statement: Statement): void {
 	if (source.projection.length !== target.projection.length) {
-		throw errors.new(
-			`${source.owner.name}(${source.projection.join(", ")}) and ${target.owner.name}(${target.projection.join(", ")}) project ${source.projection.length} vs ${target.projection.length} fields — positional pairing requires both faces to project equally many — ${renderStatement(statement)}`
-		)
+		throw new AuthoringError({
+			message: `${source.owner.name}(${source.projection.join(", ")}) and ${target.owner.name}(${target.projection.join(", ")}) project ${source.projection.length} vs ${target.projection.length} fields — positional pairing requires both faces to project equally many — ${renderStatement(statement)}`
+		})
 	}
 }
 
@@ -97,9 +97,9 @@ function assertRosterAgreement(source: FaceData, target: FaceData, statement: St
 		const sourceRoster = rosterOf(sealedFieldOf(source.owner, fieldName))
 		const targetRoster = rosterOf(sealedFieldOf(target.owner, targetField))
 		if (!rostersAgree(sourceRoster, targetRoster)) {
-			throw errors.new(
-				`${source.owner.name}.${fieldName} is ${renderRosterSide(sourceRoster)} but ${target.owner.name}.${targetField} is ${renderRosterSide(targetRoster)} — closedness rides the descriptor: a closed reference is spelled with the vocabulary's own id descriptor (one meaning, one spelling), so faces pair closed-with-closed through one roster or bare-with-bare, never across — ${renderStatement(statement)}`
-			)
+			throw new AuthoringError({
+				message: `${source.owner.name}.${fieldName} is ${renderRosterSide(sourceRoster)} but ${target.owner.name}.${targetField} is ${renderRosterSide(targetRoster)} — closedness rides the descriptor: a closed reference is spelled with the vocabulary's own id descriptor (one meaning, one spelling), so faces pair closed-with-closed through one roster or bare-with-bare, never across — ${renderStatement(statement)}`
+			})
 		}
 	})
 }
@@ -125,16 +125,16 @@ function key<
 	const Projection extends readonly [keyof RelationFields<R> & string, ...(keyof RelationFields<R> & string)[]]
 >(relation: R, fields: Projection): KeyStatement<R, Projection> {
 	if (isClosedMember(relation)) {
-		throw errors.new(
-			`key(${relation.name}, ...): closedness already materializes ${relation.name}(id) -> ${relation.name} — an explicit key on a closed relation is rejected as a duplicate`
-		)
+		throw new AuthoringError({
+			message: `key(${relation.name}, ...): closedness already materializes ${relation.name}(id) -> ${relation.name} — an explicit key on a closed relation is rejected as a duplicate`
+		})
 	}
 	const seen = new Set<string>()
 	for (const fieldName of fields) {
 		if (seen.has(fieldName)) {
-			throw errors.new(
-				`key(${relation.name}, ...): the projection spells ${fieldName} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
-			)
+			throw new AuthoringError({
+				message: `key(${relation.name}, ...): the projection spells ${fieldName} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
+			})
 		}
 		seen.add(fieldName)
 	}
@@ -182,19 +182,19 @@ function assertWeightOnSource(weight: WeightSpec, source: FaceData, statement: S
 	}
 	const field = sealedFieldOf(source.owner, weight.field)
 	if (field === undefined) {
-		throw errors.new(
-			`${source.owner.name} has no field ${weight.field} — a weight names a field of the SOURCE's own row (the weight vocabulary is closed at the row) — ${renderStatement(statement)}`
-		)
+		throw new AuthoringError({
+			message: `${source.owner.name} has no field ${weight.field} — a weight names a field of the SOURCE's own row (the weight vocabulary is closed at the row) — ${renderStatement(statement)}`
+		})
 	}
 	if (weight.kind === "field" && field.kind !== "u64") {
-		throw errors.new(
-			`${source.owner.name}.${weight.field} is ${field.kind}, not u64 — a weight is u64-encoded (a signed weight would break the polarity scheduler: an insert could lower a sum) — ${renderStatement(statement)}`
-		)
+		throw new AuthoringError({
+			message: `${source.owner.name}.${weight.field} is ${field.kind}, not u64 — a weight is u64-encoded (a signed weight would break the polarity scheduler: an insert could lower a sum) — ${renderStatement(statement)}`
+		})
 	}
 	if (weight.kind === "durationField" && field.kind !== "interval") {
-		throw errors.new(
-			`${source.owner.name}.${weight.field} is ${field.kind}, not an interval — Duration(...) weighs an interval field's measure — ${renderStatement(statement)}`
-		)
+		throw new AuthoringError({
+			message: `${source.owner.name}.${weight.field} is ${field.kind}, not an interval — Duration(...) weighs an interval field's measure — ${renderStatement(statement)}`
+		})
 	}
 }
 
@@ -206,19 +206,19 @@ function assertBoundsOnTarget(window: CapacityWindowSpec, target: FaceData, stat
 		}
 		const field = sealedFieldOf(target.owner, bound.field)
 		if (field === undefined) {
-			throw errors.new(
-				`${target.owner.name} has no field ${bound.field} — a dependent bound names a field of the TARGET's own row (bound names resolve against the target's full roster) — ${renderStatement(statement)}`
-			)
+			throw new AuthoringError({
+				message: `${target.owner.name} has no field ${bound.field} — a dependent bound names a field of the TARGET's own row (bound names resolve against the target's full roster) — ${renderStatement(statement)}`
+			})
 		}
 		if (bound.kind === "field" && field.kind !== "u64") {
-			throw errors.new(
-				`${target.owner.name}.${bound.field} is ${field.kind}, not u64 — a dependent bound reads a u64 field of the TARGET row (Duration(...) is the interval-measure spelling) — ${renderStatement(statement)}`
-			)
+			throw new AuthoringError({
+				message: `${target.owner.name}.${bound.field} is ${field.kind}, not u64 — a dependent bound reads a u64 field of the TARGET row (Duration(...) is the interval-measure spelling) — ${renderStatement(statement)}`
+			})
 		}
 		if (bound.kind === "durationField" && field.kind !== "interval") {
-			throw errors.new(
-				`${target.owner.name}.${bound.field} is ${field.kind}, not an interval — Duration(...) bounds by an interval field's measure — ${renderStatement(statement)}`
-			)
+			throw new AuthoringError({
+				message: `${target.owner.name}.${bound.field} is ${field.kind}, not an interval — Duration(...) bounds by an interval field's measure — ${renderStatement(statement)}`
+			})
 		}
 	}
 }
@@ -244,37 +244,40 @@ function capacity(
 	const windowValue = weighted ? third : second
 	const source = weighted ? fourth : (third as AnyFace)
 	if (!isCapacityWindow(windowValue)) {
-		throw errors.new(
-			"a capacity window is minted only by within() — a structural literal skips the ban table (the canonical-utterance law)"
-		)
+		throw new AuthoringError({
+			message:
+				"a capacity window is minted only by within() — a structural literal skips the ban table (the canonical-utterance law)"
+		})
 	}
 	let weight: WeightSpec = unitWeight
 	if (weighted) {
 		if (!isCapacityWeight(second)) {
-			throw errors.new(
-				"a capacity weight is minted only by weigh() — a structural literal skips the row-local weight wall"
-			)
+			throw new AuthoringError({
+				message: "a capacity weight is minted only by weigh() — a structural literal skips the row-local weight wall"
+			})
 		}
 		weight = second.weight
 	}
 	const window = windowValue.window
 	if (weight.kind === "unit" && window.kind === "floor" && window.lo.kind === "lit" && window.lo.value === 1n) {
-		throw errors.new(
-			"`{1..*}` on the unit instance says only what the bare containment says — drop the annotation and write the containment: contained(source, target)"
-		)
+		throw new AuthoringError({
+			message:
+				"`{1..*}` on the unit instance says only what the bare containment says — drop the annotation and write the containment: contained(source, target)"
+		})
 	}
 	if (weight.kind === "unit" && window.kind === "floor") {
-		throw errors.new(
-			"`{N..*}` on the unit instance — a bare count floor is refused; weigh the source (`<=[w]{N..*}` stays legal) or drop the bound"
-		)
+		throw new AuthoringError({
+			message:
+				"`{N..*}` on the unit instance — a bare count floor is refused; weigh the source (`<=[w]{N..*}` stays legal) or drop the bound"
+		})
 	}
 
 	// CapacityDimensionMixing twin — ruled 2026-07-24): a count of facts
 
 	if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
-		throw errors.new(
-			`a unit (count) window against the duration() bound on ${window.hi.field} mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal`
-		)
+		throw new AuthoringError({
+			message: `a unit (count) window against the duration() bound on ${window.hi.field} mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal`
+		})
 	}
 	const data: CapacityData = Object.freeze({
 		kind: "capacity",

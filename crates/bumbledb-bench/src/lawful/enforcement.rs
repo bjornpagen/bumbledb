@@ -122,7 +122,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
     match ty {
         ValueType::Bool | ValueType::U64 | ValueType::I64 => "INTEGER",
         ValueType::String => "TEXT",
-        ValueType::FixedBytes { .. } => "BLOB",
+        ValueType::FixedBytes { .. } | ValueType::F64 => "BLOB",
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
             unreachable!("the lawful world declares scalar fields only")
         }

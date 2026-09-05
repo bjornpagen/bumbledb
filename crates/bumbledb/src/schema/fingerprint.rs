@@ -121,7 +121,9 @@ pub(crate) fn fingerprint_of_descriptor(bytes: &[u8]) -> SchemaFingerprint {
 /// Computes the schema fingerprint: blake3 of [`canonical_bytes`].
 #[must_use]
 pub fn fingerprint(schema: &Schema) -> SchemaFingerprint {
-    fingerprint_of_descriptor(&canonical_descriptor(schema))
+    *schema
+        .identity
+        .get_or_init(|| fingerprint_of_descriptor(&canonical_descriptor(schema)))
 }
 
 fn put_len(out: &mut Vec<u8>, len: usize) {

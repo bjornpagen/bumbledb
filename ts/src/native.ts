@@ -1,5 +1,6 @@
 import { createRequire } from "node:module"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
+import { NativeLoadError, NativeOperationError, NativeReportedError } from "#errors.ts"
 import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
 
 /** The opaque database handle (owns the LMDB environment + exclusive lock). */
@@ -38,7 +39,7 @@ interface IntervalValue {
 	readonly end: bigint
 }
 
-type FactValue = boolean | bigint | string | Uint8Array | IntervalValue
+type FactValue = boolean | bigint | number | string | Uint8Array | IntervalValue
 
 type TaggedValue = ValueSpec
 
@@ -161,6 +162,7 @@ type LogBatchDecodeKind =
 	| "OpRelationOutsideBraid"
 	| "TagMismatch"
 	| "BoolByte"
+	| "NonCanonicalF64"
 	| "InvalidUtf8"
 	| "EmptyInterval"
 	| "IntervalOverflow"
@@ -605,19 +607,26 @@ interface NativeBinding extends Native {
 function loadNativeBinding(platform: string, arch: string): NativeBinding {
 	const platformPackage = `@bjornpagen/bumbledb-${platform}-${arch}`
 
-	const present = errors.trySync(() => requireNative.resolve(`${platformPackage}/package.json`))
-	if (present.error) {
-		throw errors.wrap(
-			present.error,
-			`no native binary for ${platform}-${arch}: @bjornpagen/bumbledb ships ${SHIPPED_PLATFORMS.join(", ")} only`
-		)
+	const present = Result.try(() => requireNative.resolve(`${platformPackage}/package.json`))
+	if (Result.isFailure(present)) {
+		throw new NativeLoadError({
+			package: platformPackage,
+			operation: "resolve",
+			message: `no native binary for ${platform}-${arch}: @bjornpagen/bumbledb ships ${SHIPPED_PLATFORMS.join(", ")} only`,
+			cause: present.failure
+		})
 	}
 
-	const loaded = errors.trySync(() => requireNative(platformPackage))
-	if (loaded.error) {
-		throw errors.wrap(loaded.error, `load the ${platformPackage} native binary (package present but unloadable)`)
+	const loaded = Result.try(() => requireNative(platformPackage))
+	if (Result.isFailure(loaded)) {
+		throw new NativeLoadError({
+			package: platformPackage,
+			operation: "load",
+			message: `load the ${platformPackage} native binary (package present but unloadable)`,
+			cause: loaded.failure
+		})
 	}
-	return loaded.data
+	return loaded.success
 }
 
 const binding: NativeBinding = loadNativeBinding(process.platform, process.arch)
@@ -768,19 +777,21 @@ function errorFromThrow(caught: unknown): Error {
 		return caught
 	}
 	if (isEngineThrow(caught)) {
-		const error = errors.new(`bumbledb ${caught.kind}: ${caught.message}`)
-		Object.defineProperty(error, "kind", { value: caught.kind, enumerable: true })
-		return error
+		return new NativeReportedError({
+			kind: caught.kind,
+			message: `bumbledb ${caught.kind}: ${caught.message}`,
+			cause: caught
+		})
 	}
-	return errors.new(String(caught))
+	return new NativeReportedError({ kind: "Unknown", message: String(caught), cause: caught })
 }
 
 function bridged<T>(context: string, run: () => T): T {
 	try {
 		return run()
 	} catch (caught) {
-		const inner = errorFromThrow(caught)
-		throw errors.wrap(inner, `${context}: ${inner.message}`)
+		if (caught instanceof Error) throw caught
+		throw new NativeOperationError({ operation: context, cause: caught })
 	}
 }
 
@@ -788,8 +799,8 @@ async function bridgedAsync<T>(context: string, run: () => Promise<T>): Promise<
 	try {
 		return await run()
 	} catch (caught) {
-		const inner = errorFromThrow(caught)
-		throw errors.wrap(inner, `${context}: ${inner.message}`)
+		if (caught instanceof Error) throw caught
+		throw new NativeOperationError({ operation: context, cause: caught })
 	}
 }
 

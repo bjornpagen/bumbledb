@@ -3,6 +3,28 @@ use crate::schema::ContainmentId;
 use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
 use bumbledb_theory::schema::{IntervalElement, LiteralSet, RelationDescriptor};
 
+#[test]
+fn f64_literal_uses_canonical_ieee_bits() {
+    struct DisplayLiteral(Value);
+    impl std::fmt::Display for DisplayLiteral {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            super::literal(f, &self.0)
+        }
+    }
+    for (input, expected) in [
+        (0x8000_0000_0000_0000, "f64:0x0000000000000000"),
+        (0xfff8_0000_0000_0001, "f64:0x7ff8000000000000"),
+        (0x7ff0_0000_0000_0000, "f64:0x7ff0000000000000"),
+        (0x8000_0000_0000_0001, "f64:0x8000000000000001"),
+        (0xbff0_0000_0000_0000, "f64:0xbff0000000000000"),
+    ] {
+        assert_eq!(
+            DisplayLiteral(Value::F64(crate::F64::from_bits(input))).to_string(),
+            expected
+        );
+    }
+}
+
 fn example() -> SchemaDescriptor {
     let savings = Value::U64(1);
     SchemaDescriptor {

@@ -82,30 +82,34 @@ def Value.point : Value → Option Point
   | _ => none
 
 /-- The order tag: the orderable vocabulary's domains — the two
-interval element domains plus bool (ruled 2026-07-23, R3). `Elem`
-stays exactly the interval element type (an interval over bool is
-unrepresentable); the TAG is where bool joins the order vocabulary. -/
+interval element domains, bool (ruled 2026-07-23, R3), and canonical
+binary64. `Elem` stays exactly the interval element type; scalar bool
+and f64 do not thereby introduce interval domains. -/
 inductive OrderTag where
   | bool
+  | f64
   | elem (e : Elem)
 deriving DecidableEq
 
-/-- The encoded order word of an orderable value, tagged by its
-order domain — order comparisons read THIS, so the order the model
-compares is the order the storage encodings sort
+/-- The order rank of an orderable value, tagged by its domain.
+For integers and bool, it is the storage encoding
 (`encode_u64_order_embedding` / `encode_i64_order_embedding` /
 `encode_bool_order_embedding` carry it to the domain order; bool
 enters with false < true, its 0/1 encoding's own order — ruled
-2026-07-23, R3). Cross-domain comparison is unrepresentable: the tags
-must agree. -/
+2026-07-23, R3). F64 instead uses an independent exact integer
+interpretation in units of 2^-1074, with explicit infinity/NaN ranks;
+it does NOT reuse the physical key. `F64.orderKey_lt_iff` and
+`F64.orderKey_le_iff` prove the physical-key/numerical-order refinement.
+Cross-domain comparison is unrepresentable: the tags must agree. -/
 def Value.orderWord : Value → Option (OrderTag × Word)
   | { type := .bool, val := b } => some (.bool, encodeBool b)
   | { type := .u64, val := x } => some (.elem .u64, encodeU64 x)
   | { type := .i64, val := x } => some (.elem .i64, encodeI64 x)
+  | { type := .f64, val := x } => some (.f64, F64.numericWord x)
   | _ => none
 
-/-- Strict value order: same element domain, strictly smaller encoded
-word. `False` on every non-scalar operand — the order-operand screen's
+/-- Strict value order: same order domain, strictly smaller rank.
+`False` on every non-scalar operand — the order-operand screen's
 denotation (`screen_order_operand` rejects what this empties). -/
 def Value.vlt (a b : Value) : Prop :=
   match a.orderWord, b.orderWord with
@@ -138,6 +142,20 @@ theorem Value.vle_bool (a b : Bool) :
   show (OrderTag.bool = OrderTag.bool ∧ encodeBool a ≤ encodeBool b) ↔
     a ≤ b
   rw [← encode_bool_order_embedding]
+  simp
+
+/-- F64 conditions read the exact numerical denotation, whose agreement
+with physical key order is proved separately by `F64.orderKey_lt_iff`. -/
+theorem Value.vlt_f64 (a b : F64) :
+    Value.vlt ⟨.f64, a⟩ ⟨.f64, b⟩ ↔ a < b := by
+  change (OrderTag.f64 = OrderTag.f64 ∧ F64.numericWord a < F64.numericWord b) ↔
+    F64.numericWord a < F64.numericWord b
+  simp
+
+theorem Value.vle_f64 (a b : F64) :
+    Value.vle ⟨.f64, a⟩ ⟨.f64, b⟩ ↔ a ≤ b := by
+  change (OrderTag.f64 = OrderTag.f64 ∧ F64.numericWord a ≤ F64.numericWord b) ↔
+    F64.numericWord a ≤ F64.numericWord b
   simp
 
 /-- The `U64` value a gap denotes — total via the domain-ceiling guard
@@ -1080,6 +1098,7 @@ def ValueType.carrierDecEq : (t : ValueType) → DecidableEq t.carrier
   | .bool => inferInstanceAs (DecidableEq Bool)
   | .u64 => inferInstanceAs (DecidableEq U64)
   | .i64 => inferInstanceAs (DecidableEq I64)
+  | .f64 => inferInstanceAs (DecidableEq F64)
   | .str => inferInstanceAs (DecidableEq StrId)
   | .fixedBytes n => inferInstanceAs (DecidableEq (FixedBytes n))
   | .interval .u64 => inferInstanceAs (DecidableEq (Interval U64))
@@ -1148,6 +1167,7 @@ instance : (a : Value) → (p : Point) → Decidable (p ∈ a.points)
   | ⟨.bool, _⟩, _ => isFalse fun h => h
   | ⟨.u64, _⟩, _ => isFalse fun h => h
   | ⟨.i64, _⟩, _ => isFalse fun h => h
+  | ⟨.f64, _⟩, _ => isFalse fun h => h
   | ⟨.str, _⟩, _ => isFalse fun h => h
   | ⟨.fixedBytes _, _⟩, _ => isFalse fun h => h
 

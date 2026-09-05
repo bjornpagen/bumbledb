@@ -3,7 +3,6 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
-import * as errors from "@superbuilders/errors"
 import type { Db as DbValue, Fact, ReadInstance, WriteTx } from "#index.ts"
 import {
 	abandon,
@@ -123,7 +122,7 @@ describe("the Db runtime against a real store", function suite() {
 				await Db.create(path.join(tmpRoot, "broken"), Broken)
 			},
 			function isSchemaError(error: unknown) {
-				return error instanceof Error && errors.is(error, ErrSchemaError)
+				return error instanceof Error && error instanceof ErrSchemaError
 			}
 		)
 	})

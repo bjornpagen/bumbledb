@@ -1,5 +1,5 @@
-import * as errors from "@superbuilders/errors"
 import { regex } from "arkregex"
+import { AuthoringError } from "#errors.ts"
 import type { LiteralSpec } from "#spec.ts"
 
 const INTEGER_INDEX_NAME = regex("^(?:0|[1-9][0-9]*)$")
@@ -27,7 +27,9 @@ interface IntervalValue {
  */
 function span(start: bigint, end: bigint): IntervalValue {
 	if (start >= end) {
-		throw errors.new(`interval is half-open and nonempty: start must be < end (got ${start}..${end})`)
+		throw new AuthoringError({
+			message: `interval is half-open and nonempty: start must be < end (got ${start}..${end})`
+		})
 	}
 	return Object.freeze({ start, end })
 }
@@ -144,7 +146,7 @@ type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
  * through ill-typed input (the well-typed surfaces make it unrepresentable).
  */
 function literalShapeError(context: string, expected: string, value: unknown): Error {
-	return errors.new(`${context}: expected ${expected}, got ${typeof value}`)
+	return new AuthoringError({ message: `${context}: expected ${expected}, got ${typeof value}` })
 }
 
 function rosterOf(field: AnyField | undefined): AnyClosedRoster | undefined {
@@ -201,7 +203,9 @@ function handleLiteral(closed: AnyClosedRoster, value: unknown): LiteralSpec {
 		throw literalShapeError("selection literal", `a ${closed.name} handle name (string)`, value)
 	}
 	if (!closed.handles.includes(value)) {
-		throw errors.new(`"${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`)
+		throw new AuthoringError({
+			message: `"${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
+		})
 	}
 	return { kind: "handle", handle: value }
 }
@@ -218,23 +222,23 @@ function intervalLiteral(element: "u64" | "i64", value: unknown): LiteralSpec {
 
 function assertDeclarationOrderKey(where: string, name: string): void {
 	if (INTEGER_INDEX_NAME.test(name)) {
-		throw errors.new(
-			`${where}: name ${name} is an integer index — JavaScript object keys re-order integer indices, breaking the declaration-order law; use a non-numeric name`
-		)
+		throw new AuthoringError({
+			message: `${where}: name ${name} is an integer index — JavaScript object keys re-order integer indices, breaking the declaration-order law; use a non-numeric name`
+		})
 	}
 	if (name.includes(".")) {
-		throw errors.new(
-			`${where}: name ${name} contains a dot — the law classes key on the \`relation.field\` coordinate, so a dotted name would alias unrelated slots (macro parity: Rust identifiers cannot contain dots); use a dot-free name`
-		)
+		throw new AuthoringError({
+			message: `${where}: name ${name} contains a dot — the law classes key on the \`relation.field\` coordinate, so a dotted name would alias unrelated slots (macro parity: Rust identifiers cannot contain dots); use a dot-free name`
+		})
 	}
 }
 
 function assertDeclarationRecord(where: string, record: object): void {
 	const proto = Object.getPrototypeOf(record)
 	if (proto !== Object.prototype && proto !== null) {
-		throw errors.new(
-			`${where}: the declaration record's prototype was replaced — a plain \`__proto__: {...}\` entry is the prototype setter, so its key silently vanishes from the declaration; spell it computed (["__proto__"]: {...}) to declare it as data`
-		)
+		throw new AuthoringError({
+			message: `${where}: the declaration record's prototype was replaced — a plain \`__proto__: {...}\` entry is the prototype setter, so its key silently vanishes from the declaration; spell it computed (["__proto__"]: {...}) to declare it as data`
+		})
 	}
 }
 
@@ -250,7 +254,9 @@ const str: StrField = Object.freeze({ kind: "str" })
 
 function bytes<const Width extends number>(width: Width): BytesField<Width> {
 	if (!Number.isInteger(width) || width < 1 || width > 64) {
-		throw errors.new(`bytes width must be an integer in 1..=64 (got ${width}) — the range is pinned at declaration`)
+		throw new AuthoringError({
+			message: `bytes width must be an integer in 1..=64 (got ${width}) — the range is pinned at declaration`
+		})
 	}
 	return Object.freeze({ kind: "bytes", width })
 }
@@ -263,10 +269,14 @@ function interval<Element extends U64Field | I64Field, const Width extends bigin
 function interval(element: U64Field | I64Field, width?: bigint): IntervalField<"u64" | "i64", bigint | undefined> {
 	const elementKind = element.kind
 	if (elementKind !== "u64" && elementKind !== "i64") {
-		throw errors.new(`interval element must be the u64 or i64 field constructor (got ${elementKind})`)
+		throw new AuthoringError({
+			message: `interval element must be the u64 or i64 field constructor (got ${elementKind})`
+		})
 	}
 	if (width !== undefined && width < 1n) {
-		throw errors.new(`interval width must be >= 1 (got ${width}) — w >= 1 is pinned at declaration`)
+		throw new AuthoringError({
+			message: `interval width must be >= 1 (got ${width}) — w >= 1 is pinned at declaration`
+		})
 	}
 	return Object.freeze({ kind: "interval", element: elementKind, width })
 }

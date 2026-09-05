@@ -17,7 +17,7 @@ use bumbledb::schema::{
     StatementDescriptor, StatementKind, Weight,
 };
 use bumbledb_log::braids::{BraidId, braids};
-use bumbledb_log::codec::{Batch, BatchHeader, Codec, Op};
+use bumbledb_log::codec::{Batch, BatchHeader, Codec, DecodeError, Op};
 use bumbledb_log::manifest::{Checkpoint, Head, Manifest};
 use bumbledb_log::replica::{encode_ckpt_scratch, parse_ckpt_scratch};
 use bumbledb_log::sidecar::{Chain, ChainEntry, Pending};
@@ -47,6 +47,7 @@ const BATCH_DECODE_IDENTITIES: &[&str] = &[
     "OpRelationOutsideBraid",
     "TagMismatch",
     "BoolByte",
+    "NonCanonicalF64",
     "InvalidUtf8",
     "EmptyInterval",
     "IntervalOverflow",
@@ -477,8 +478,23 @@ pub fn log_decode_batch(
         Ok(batch) => Ok(LogOutcome::Value(BatchWire(batch))),
         Err(refusal) => Ok(LogOutcome::Refused {
             kind: mint(BATCH_DECODE_IDENTITIES, refusal.identity())?,
-            message: format!("bumbledb-log decode refusal: {refusal:?}"),
+            message: decode_refusal_message(&refusal),
         }),
+    }
+}
+
+fn decode_refusal_message(refusal: &DecodeError) -> String {
+    match refusal {
+        DecodeError::NonCanonicalF64 {
+            relation,
+            row,
+            field,
+            bits,
+        } => format!(
+            "bumbledb-log decode refusal: NonCanonicalF64 {{ relation: {}, row: {row}, field: {field}, bits: 0x{bits:016x} }}",
+            relation.0
+        ),
+        _ => format!("bumbledb-log decode refusal: {refusal:?}"),
     }
 }
 
@@ -934,6 +950,12 @@ mod mint_table {
                 field: 0,
                 got: 2,
             },
+            DecodeError::NonCanonicalF64 {
+                relation: RelationId(0),
+                row: 0,
+                field: 0,
+                bits: 0x8000_0000_0000_0000,
+            },
             DecodeError::InvalidUtf8 {
                 relation: RelationId(0),
                 row: 0,
@@ -953,6 +975,20 @@ mod mint_table {
         ];
         let spelled: Vec<&'static str> = witnesses.iter().map(DecodeError::identity).collect();
         assert_eq!(spelled, BATCH_DECODE_IDENTITIES);
+    }
+
+    #[test]
+    fn noncanonical_float_diagnostic_preserves_all_bits_as_text() {
+        let error = DecodeError::NonCanonicalF64 {
+            relation: RelationId(7),
+            row: 3,
+            field: 2,
+            bits: 0xfff0_0000_0000_0001,
+        };
+        assert_eq!(
+            super::decode_refusal_message(&error),
+            "bumbledb-log decode refusal: NonCanonicalF64 { relation: 7, row: 3, field: 2, bits: 0xfff0000000000001 }"
+        );
     }
 
     #[test]

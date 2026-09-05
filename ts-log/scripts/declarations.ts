@@ -1,22 +1,20 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
-import * as errors from "@superbuilders/errors"
+import { DeclarationError } from "./errors.ts"
 
 const PUBLISHED_HASH_IMPORTS = {
 	"bumbledb-src": "./src/*.ts",
 	types: "./dist/*.d.ts",
 	default: "./dist/*.js"
 } as const
-
 function relativeFromHash(fromFile: string, hashSpecifier: string, distDir: string): string {
 	if (!hashSpecifier.startsWith("#") || !hashSpecifier.endsWith(".ts")) {
-		throw errors.new(`declaration rewrite expected a #*.ts specifier, got ${hashSpecifier}`)
+		throw new DeclarationError({ message: `declaration rewrite expected a #*.ts specifier, got ${hashSpecifier}` })
 	}
 	const targetJs = path.join(distDir, hashSpecifier.slice(1).replace(/\.ts$/, ".js"))
 	const relative = path.relative(path.dirname(fromFile), targetJs).split(path.sep).join("/")
 	return relative.startsWith(".") ? relative : `./${relative}`
 }
-
 function rewriteDeclarationImports(distDir: string): void {
 	for (const file of declarationFiles(distDir)) {
 		const source = fs.readFileSync(file, "utf8")
@@ -28,7 +26,6 @@ function rewriteDeclarationImports(distDir: string): void {
 		}
 	}
 }
-
 /** Fails if any emitted declaration still mentions a `#` specifier. */
 function assertDeclarationsAreIsolated(distDir: string): void {
 	const leaked: string[] = []
@@ -38,12 +35,11 @@ function assertDeclarationsAreIsolated(distDir: string): void {
 		}
 	}
 	if (leaked.length > 0) {
-		throw errors.new(
-			`published declarations must not import # specifiers (consumers would resolve them through package.json imports); leaked: ${leaked.join(", ")}`
-		)
+		throw new DeclarationError({
+			message: `published declarations must not import # specifiers (consumers would resolve them through package.json imports); leaked: ${leaked.join(", ")}`
+		})
 	}
 }
-
 /**
  * The packed manifest's `#*.ts` map is the isolation contract: consumers
  * resolve types to `dist/*.d.ts`, Node resolves runtime to `dist/*.js`,
@@ -52,22 +48,21 @@ function assertDeclarationsAreIsolated(distDir: string): void {
 function assertPackedImports(packed: Record<string, unknown>): void {
 	const imports = packed.imports
 	if (typeof imports !== "object" || imports === null) {
-		throw errors.new("the packed manifest is missing imports")
+		throw new DeclarationError({ message: "the packed manifest is missing imports" })
 	}
 	const hash = (imports as Record<string, unknown>)["#*.ts"]
 	if (typeof hash !== "object" || hash === null) {
-		throw errors.new('the packed manifest is missing imports["#*.ts"]')
+		throw new DeclarationError({ message: 'the packed manifest is missing imports["#*.ts"]' })
 	}
 	const conditions = hash as Record<string, unknown>
 	for (const [key, value] of Object.entries(PUBLISHED_HASH_IMPORTS)) {
 		if (conditions[key] !== value) {
-			throw errors.new(
-				`the packed imports["#*.ts"].${key} is ${String(conditions[key])}, expected ${value} (published types must not resolve to src)`
-			)
+			throw new DeclarationError({
+				message: `the packed imports["#*.ts"].${key} is ${String(conditions[key])}, expected ${value} (published types must not resolve to src)`
+			})
 		}
 	}
 }
-
 function declarationFiles(distDir: string): string[] {
 	const files: string[] = []
 	function walk(dir: string): void {

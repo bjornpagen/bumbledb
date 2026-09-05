@@ -1531,6 +1531,12 @@ mod zero_dyn_census {
             "crates/bumbledb/src/error/convert.rs",
             "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {",
         ),
+        // The opaque transaction adjunct preserves its concrete Work/Storage
+        // causes through std::error::Error. No query dispatch uses this trait.
+        (
+            "crates/bumbledb/src/storage/env/host.rs",
+            "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {",
+        ),
     ];
 
     fn workspace_root() -> PathBuf {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import { bool, bytes as bytesField, i64, interval, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
-import * as errors from "@superbuilders/errors"
+import { Result } from "effect"
 import { digest32, toHex } from "#bytes.ts"
 import type { BatchHeader, Op } from "#codec.ts"
 import { decodeBatch, encodeBatch, verifyChain } from "#codec.ts"
@@ -12,7 +12,6 @@ import { Ledger } from "#test/fixtures.ts"
 
 const ZERO_DIGEST = digest32(new Uint8Array(32))
 const ONES_DIGEST = digest32(new Uint8Array(32).fill(1))
-
 function headerOf(): BatchHeader {
 	return {
 		fingerprint: digest32(descriptorOf(Ledger).fingerprintBytes),
@@ -23,7 +22,6 @@ function headerOf(): BatchHeader {
 		timestamp: 1755801600000n
 	}
 }
-
 function opsOf(): Op[] {
 	return [
 		{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] },
@@ -38,16 +36,14 @@ function opsOf(): Op[] {
 		{ op: "delete", relation: "Booking", rows: [[9n, 1n, "s3", { start: 4n, end: 8n }]] }
 	]
 }
-
 function refusalKindOf(run: () => unknown): string {
-	const caught = errors.trySync(run)
-	assert.ok(caught.error, "expected a refusal")
-	assert.ok(errors.is(caught.error, ErrRefused), `expected ErrRefused, got: ${caught.error.message}`)
-	const cause = refusalOf(caught.error)
+	const caught = Result.try(run)
+	assert.ok(Result.isFailure(caught), "expected a refusal")
+	assert.ok(caught.failure instanceof ErrRefused, `expected ErrRefused, got: ${String(caught.failure)}`)
+	const cause = refusalOf(caught.failure)
 	assert.ok(cause !== undefined, "refusal carries its cause")
 	return cause.kind
 }
-
 describe("the command codec seat", function suite() {
 	test("decode(encode) roundtrips header and ops; re-encode is byte-identical", function roundtrip() {
 		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
@@ -57,7 +53,6 @@ describe("the command codec seat", function suite() {
 		const again = encodeBatch(Ledger, decoded.header, decoded.ops)
 		assert.equal(toHex(again), toHex(bytes))
 	})
-
 	test("every value tag rides the bridge: bool, u64, i64, string, fixedBytes, interval, fixedInterval", function allTags() {
 		const Wide = relation("Wide", {
 			flag: bool,
@@ -84,7 +79,6 @@ describe("the command codec seat", function suite() {
 		const decoded = decodeBatch(WideTheory, encoded)
 		assert.deepEqual(decoded.ops[0]?.rows[0], row)
 	})
-
 	test("a short prev cannot encode", function shortPrev() {
 		assert.equal(
 			refusalKindOf(function encodeIt() {
@@ -93,19 +87,16 @@ describe("the command codec seat", function suite() {
 			"DigestWidth"
 		)
 	})
-
 	test("a lone surrogate cannot encode", function loneSurrogate() {
 		assert.throws(function encodeIt() {
 			return encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Holder", rows: [[1n, "\uD800"]] }])
 		})
 	})
-
 	test("an op citing a relation name outside the theory cannot encode", function unknownName() {
 		assert.throws(function encodeIt() {
 			return encodeBatch(Ledger, headerOf(), [{ op: "insert", relation: "Ghost", rows: [] }])
 		})
 	})
-
 	test("a fixed interval whose end is the domain ceiling cannot encode", function ray() {
 		const Wide = relation("Wide", { lease: interval(u64, 1n) })
 		const WideTheory = schema("WideTheory", { Wide }, [])
@@ -123,7 +114,6 @@ describe("the command codec seat", function suite() {
 			)
 		})
 	})
-
 	test("a fixed interval of the wrong width refuses with the core's Value identity", function wrongWidth() {
 		const Wide = relation("Wide", { lease: interval(u64, 1n) })
 		const WideTheory = schema("WideTheory", { Wide }, [])
@@ -144,7 +134,6 @@ describe("the command codec seat", function suite() {
 			"Value"
 		)
 	})
-
 	test("a spanning batch refuses with the core's OpRelationOutsideBraid identity", function spanning() {
 		const ops: Op[] = [
 			{ op: "insert", relation: "Holder", rows: [[1n, "ada"]] },
@@ -157,7 +146,6 @@ describe("the command codec seat", function suite() {
 			"OpRelationOutsideBraid"
 		)
 	})
-
 	test("a cell past the layout's width refuses Arity at the seat", function wideRow() {
 		assert.equal(
 			refusalKindOf(function encodeIt() {
@@ -166,7 +154,6 @@ describe("the command codec seat", function suite() {
 			"Arity"
 		)
 	})
-
 	test("a decode refusal crosses with the core's identity kind", function trailing() {
 		const bytes = encodeBatch(Ledger, headerOf(), opsOf())
 		const padded = new Uint8Array(bytes.length + 1)
@@ -178,7 +165,6 @@ describe("the command codec seat", function suite() {
 			"TrailingBytes"
 		)
 	})
-
 	test("the chain discipline: slot, prev, and timestamp causes", function chain() {
 		const header = headerOf()
 		const good = { g: generation(1n), prev: ZERO_DIGEST, ts: 0n }
@@ -189,11 +175,11 @@ describe("the command codec seat", function suite() {
 			[{ braid: header.braid, slot: generation(1n), chain: { ...good, prev: ONES_DIGEST } }, "prev"],
 			[{ braid: header.braid, slot: generation(1n), chain: { ...good, ts: header.timestamp + 1n } }, "timestamp"]
 		] as const) {
-			const caught = errors.trySync(function checkIt() {
+			const caught = Result.try(function checkIt() {
 				verifyChain(header, probe.braid, probe.slot, probe.chain)
 			})
-			assert.ok(caught.error && errors.is(caught.error, ErrChainMismatch))
-			const data = chainMismatchOf(caught.error)
+			assert.ok(Result.isFailure(caught) && caught.failure instanceof ErrChainMismatch)
+			const data = chainMismatchOf(caught.failure)
 			assert.equal(data?.cause, cause)
 			assert.equal(data?.braid, probe.braid)
 			assert.equal(data?.writer, header.writer)

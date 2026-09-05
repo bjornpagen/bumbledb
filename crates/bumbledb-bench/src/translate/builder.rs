@@ -26,6 +26,7 @@ fn sql_literal(value: &Value) -> Result<String, String> {
         Value::Bool(v) => u8::from(*v).to_string(),
         Value::U64(v) => sql_u64(*v)?,
         Value::I64(v) => v.to_string(),
+        Value::F64(v) => crate::float::sql_literal(*v),
         Value::String(text) => sql_string_literal(text)?,
         Value::FixedBytes(raw) => {
             let mut hex = String::with_capacity(raw.len() * 2 + 3);

@@ -362,15 +362,14 @@ fn emit(
 
 pub(crate) fn render_scalar(out: &mut String, value_type: &ValueType, word: u64) {
     if *value_type == ValueType::F64 {
-        match bumbledb_theory::F64::from_order_key(word) {
-            Ok(value) => literal(out, &Value::F64(value)),
-            Err(_) => {
-                // Range-fold diagnostics may contain the open domain's
-                // synthetic integer boundaries, which are not F64 values.
-                // Never turn those keys into fabricated canonical values.
-                use std::fmt::Write as _;
-                let _ = write!(out, "f64-order-boundary(0x{word:016x})");
-            }
+        if let Ok(value) = bumbledb_theory::F64::from_order_key(word) {
+            literal(out, &Value::F64(value));
+        } else {
+            // Range-fold diagnostics may contain the open domain's
+            // synthetic integer boundaries, which are not F64 values.
+            // Never turn those keys into fabricated canonical values.
+            use std::fmt::Write as _;
+            let _ = write!(out, "f64-order-boundary(0x{word:016x})");
         }
         return;
     }

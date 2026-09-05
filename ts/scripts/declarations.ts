@@ -1,6 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
-import * as errors from "@superbuilders/errors"
+import { ScriptError } from "./errors.ts"
 
 const PUBLISHED_HASH_IMPORTS = {
 	"bumbledb-src": "./src/*.ts",
@@ -10,7 +10,7 @@ const PUBLISHED_HASH_IMPORTS = {
 
 function relativeFromHash(fromFile: string, hashSpecifier: string, distDir: string): string {
 	if (!hashSpecifier.startsWith("#") || !hashSpecifier.endsWith(".ts")) {
-		throw errors.new(`declaration rewrite expected a #*.ts specifier, got ${hashSpecifier}`)
+		throw new ScriptError({ message: `declaration rewrite expected a #*.ts specifier, got ${hashSpecifier}` })
 	}
 	const targetJs = path.join(distDir, hashSpecifier.slice(1).replace(/\.ts$/, ".js"))
 	const relative = path.relative(path.dirname(fromFile), targetJs).split(path.sep).join("/")
@@ -38,9 +38,9 @@ function assertDeclarationsAreIsolated(distDir: string): void {
 		}
 	}
 	if (leaked.length > 0) {
-		throw errors.new(
-			`published declarations must not import # specifiers (consumers would resolve them through package.json imports); leaked: ${leaked.join(", ")}`
-		)
+		throw new ScriptError({
+			message: `published declarations must not import # specifiers (consumers would resolve them through package.json imports); leaked: ${leaked.join(", ")}`
+		})
 	}
 }
 
@@ -52,18 +52,18 @@ function assertDeclarationsAreIsolated(distDir: string): void {
 function assertPackedImports(packed: Record<string, unknown>): void {
 	const imports = packed.imports
 	if (typeof imports !== "object" || imports === null) {
-		throw errors.new("the packed manifest is missing imports")
+		throw new ScriptError({ message: "the packed manifest is missing imports" })
 	}
 	const hash = (imports as Record<string, unknown>)["#*.ts"]
 	if (typeof hash !== "object" || hash === null) {
-		throw errors.new('the packed manifest is missing imports["#*.ts"]')
+		throw new ScriptError({ message: 'the packed manifest is missing imports["#*.ts"]' })
 	}
 	const conditions = hash as Record<string, unknown>
 	for (const [key, value] of Object.entries(PUBLISHED_HASH_IMPORTS)) {
 		if (conditions[key] !== value) {
-			throw errors.new(
-				`the packed imports["#*.ts"].${key} is ${String(conditions[key])}, expected ${value} (published types must not resolve to src)`
-			)
+			throw new ScriptError({
+				message: `the packed imports["#*.ts"].${key} is ${String(conditions[key])}, expected ${value} (published types must not resolve to src)`
+			})
 		}
 	}
 }

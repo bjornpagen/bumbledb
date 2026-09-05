@@ -1,4 +1,4 @@
-import * as errors from "@superbuilders/errors"
+import { AuthoringError } from "#errors.ts"
 import {
 	type AnyClosedIdField,
 	type AnyField,
@@ -178,7 +178,7 @@ function mintAxioms<Handles extends string, Cols extends Record<string, PayloadF
 	}
 	Object.freeze(out)
 	if (!axiomsMinted<Handles, Cols>(out, handles, cols)) {
-		throw errors.new(`closed relation ${name}: axiom-row minting incomplete`)
+		throw new AuthoringError({ message: `closed relation ${name}: axiom-row minting incomplete` })
 	}
 	return out
 }
@@ -202,23 +202,27 @@ function closed<Name extends string, Handles extends ClosedHandleTuple, Cols ext
 	axioms?: Axioms<Handles[number], Cols>
 ): Closed<Name, Handles, Record<never, never>> | Closed<Name, Handles, Cols> {
 	if (!Array.isArray(handles)) {
-		throw errors.new(
-			`closed relation ${name}: payload columns declared without ground axioms — the payload tier is spelled closed(name, handles, columns, axioms)`
-		)
+		throw new AuthoringError({
+			message: `closed relation ${name}: payload columns declared without ground axioms — the payload tier is spelled closed(name, handles, columns, axioms)`
+		})
 	}
 	if (!isHandleTuple(handles)) {
-		throw errors.new(`closed relation ${name}: at least one handle is required (an empty vocabulary declares nothing)`)
+		throw new AuthoringError({
+			message: `closed relation ${name}: at least one handle is required (an empty vocabulary declares nothing)`
+		})
 	}
 	if (columns === undefined) {
 		if (axioms !== undefined) {
-			throw errors.new(`closed relation ${name}: the bare tier declares no columns, so ground axioms are inadmissible`)
+			throw new AuthoringError({
+				message: `closed relation ${name}: the bare tier declares no columns, so ground axioms are inadmissible`
+			})
 		}
 		return closedBare(name, handles)
 	}
 	if (axioms === undefined) {
-		throw errors.new(
-			`closed relation ${name}: payload columns declared without ground axioms — the payload tier is spelled closed(name, handles, columns, axioms)`
-		)
+		throw new AuthoringError({
+			message: `closed relation ${name}: payload columns declared without ground axioms — the payload tier is spelled closed(name, handles, columns, axioms)`
+		})
 	}
 	return closedPayload(name, handles, columns, axioms)
 }
@@ -236,7 +240,7 @@ function closedBare<Name extends string, const Hs extends ClosedHandleTuple>(
 	}
 	Object.freeze(empty)
 	if (!axiomsMinted<Hs[number], Record<never, never>>(empty, handles, [])) {
-		throw errors.new(`closed relation ${name}: bare-tier axiom-row minting incomplete`)
+		throw new AuthoringError({ message: `closed relation ${name}: bare-tier axiom-row minting incomplete` })
 	}
 	return mintClosed(name, handles, {}, empty)
 }
@@ -256,7 +260,7 @@ function closedPayload<Name extends string, Handles extends ClosedHandleTuple, C
 		assertDeclarationOrderKey(`closed relation ${name} handle`, handle)
 	}
 	if (!handleKeysOwn(axioms, handles)) {
-		throw errors.new(`closed relation ${name}: handle enumeration incomplete`)
+		throw new AuthoringError({ message: `closed relation ${name}: handle enumeration incomplete` })
 	}
 	return mintClosed(name, handles, columns, axioms)
 }
@@ -283,7 +287,7 @@ function mintClosed<Name extends string, Handles extends ClosedHandleTuple, Cols
 	const seen = new Set<string>()
 	for (const handle of handles) {
 		if (seen.has(handle)) {
-			throw errors.new(`closed relation ${name}: duplicate handle ${handle}`)
+			throw new AuthoringError({ message: `closed relation ${name}: duplicate handle ${handle}` })
 		}
 		seen.add(handle)
 	}
@@ -293,9 +297,9 @@ function mintClosed<Name extends string, Handles extends ClosedHandleTuple, Cols
 	for (const [columnName, field] of Object.entries(columns)) {
 		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
 		if (columnName === "id") {
-			throw errors.new(
-				`closed relation ${name}: the payload column id collides with the sealed shape's synthetic id (the relation mints its own id at ordinal 0; name the column something else)`
-			)
+			throw new AuthoringError({
+				message: `closed relation ${name}: the payload column id collides with the sealed shape's synthetic id (the relation mints its own id at ordinal 0; name the column something else)`
+			})
 		}
 		cols.push(Object.freeze({ name: columnName, field }))
 	}
@@ -323,7 +327,9 @@ function mintClosed<Name extends string, Handles extends ClosedHandleTuple, Cols
 	function where(selection: ClosedSelectionInput<Cols>): SelectedClosed<Name, Handles, Cols> {
 		const owner = holder.value
 		if (owner === undefined) {
-			throw errors.new(`closed relation ${name}: self-reference read before construction completed`)
+			throw new AuthoringError({
+				message: `closed relation ${name}: self-reference read before construction completed`
+			})
 		}
 		return Object.freeze({
 			relation: owner,
@@ -334,7 +340,7 @@ function mintClosed<Name extends string, Handles extends ClosedHandleTuple, Cols
 	const value: ClosedCore<Name, Handles, Cols> =
 		cols.length > 0 ? Object.freeze({ ...core, where }) : Object.freeze(core)
 	if (!surfaceMinted(value, cols)) {
-		throw errors.new(`closed relation ${name}: ergonomic-surface minting incomplete`)
+		throw new AuthoringError({ message: `closed relation ${name}: ergonomic-surface minting incomplete` })
 	}
 	holder.value = value
 	return value
