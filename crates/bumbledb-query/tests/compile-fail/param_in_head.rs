@@ -19,4 +19,5 @@ pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Cal {
         (?window) | Busy(person: p);
     })
+    .into_query()
 }

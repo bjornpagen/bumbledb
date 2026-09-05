@@ -1,6 +1,0 @@
-{
-  "kind": "manifest",
-  "expect": "refusal",
-  "refusal": "Malformed",
-  "hex": "03"
-}

@@ -8,9 +8,11 @@ export const runtimeErrorCodes = [
 	"InvalidArgument",
 	"Internal",
 	"DirectoryBusy",
+	"WriterBusy",
 	"InvalidPath",
 	"Io",
 	"ResourceLimit",
+	"Engine",
 	"Cancelled",
 	"DeadlineExceeded"
 ] as const

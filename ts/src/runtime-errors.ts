@@ -11,14 +11,22 @@ const ResourceLimit = Schema.Struct({
 	limit: Schema.BigInt
 })
 const PlainReason = Schema.Struct({
-	_tag: Schema.Literals(runtimeErrorCodes.filter((code) => code !== "ResourceLimit" && code !== "Io"))
+	_tag: Schema.Literals(
+		runtimeErrorCodes.filter((code) => code !== "ResourceLimit" && code !== "Io" && code !== "Engine")
+	)
 })
 const Io = Schema.Struct({
 	_tag: Schema.Literal("Io"),
 	kind: Schema.String,
 	osCode: Schema.optional(Schema.Number)
 })
-export const DbReason = Schema.Union([ResourceLimit, Io, PlainReason])
+/** A typed engine refusal crossing the executor: core family tag + message. */
+const Engine = Schema.Struct({
+	_tag: Schema.Literal("Engine"),
+	kind: Schema.String,
+	message: Schema.String
+})
+export const DbReason = Schema.Union([ResourceLimit, Io, Engine, PlainReason])
 export class DbError extends Schema.TaggedError<DbError>()("DbError", {
 	operation: Schema.String,
 	reason: DbReason

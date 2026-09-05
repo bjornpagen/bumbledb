@@ -18,25 +18,25 @@ bumbledb::schema! {
     pub Joins;
 
     relation Kind {
-        id: u64 as JKindId, fresh,
+        id: u64 as JKindId,
         name: str,
     }
     relation Company {
-        id: u64 as JCompanyId, fresh,
+        id: u64 as JCompanyId,
         name: str,
         country: u64 as JCountryId,
     }
     relation Person {
-        id: u64 as JPersonId, fresh,
+        id: u64 as JPersonId,
         name: str,
         gender: u64 as JGenderId,
     }
     relation Keyword {
-        id: u64 as JKeywordId, fresh,
+        id: u64 as JKeywordId,
         word: str,
     }
     relation Movie {
-        id: u64 as JMovieId, fresh,
+        id: u64 as JMovieId,
         title: str,
         year: i64,
         kind: u64 as JKindId,
@@ -60,6 +60,15 @@ bumbledb::schema! {
     closed relation Role as JRoleId = {
         Actor, Actress, Director, Producer, Writer, Composer, Editor, Extra,
     };
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Kind(id)    -> Kind;
+    Company(id) -> Company;
+    Person(id)  -> Person;
+    Keyword(id) -> Keyword;
+    Movie(id)   -> Movie;
 
     Kind(name) -> Kind;
     Keyword(word) -> Keyword;

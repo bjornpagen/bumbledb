@@ -1,24 +1,23 @@
-//! Credential-gated S3 smokes. The same env as the CI gate:
-//! `BUMBLEDB_S3_SMOKE_BUCKET`, `AWS_ACCESS_KEY_ID`,
-//! `AWS_SECRET_ACCESS_KEY` required; `BUMBLEDB_S3_SMOKE_REGION`
-//! defaults to `us-east-1`; `BUMBLEDB_S3_SMOKE_ENDPOINT` optional.
-//! Missing credentials skip loudly and never fail.
+//! Credential-gated REAL S3 lane (S3-01/02 core shapes). Emulator green is
+//! not S3 qualification; these tests run only with real credentials and are
+//! reported skipped — never passed — without them. Required env:
+//! `BUMBLEDB_S3_SMOKE_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`;
+//! `BUMBLEDB_S3_SMOKE_REGION` defaults to `us-east-1`;
+//! `BUMBLEDB_S3_SMOKE_ENDPOINT` optional. The full S3-01..06 qualification
+//! (multipart ambiguity, versioning/lifecycle policy, credential rotation)
+//! is the F3 campaign over this same adapter with the deployment's actual
+//! configuration. Verification: `NotRun` (F1 authors, does not execute).
 
-mod lane_e_support;
+#![cfg(feature = "store")]
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use bumbledb::{Admission, SchemaDescriptor};
-use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
-use bumbledb_log::replica::{Opened, Replica};
 use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
-use bumbledb_log::store::{Create, ObjectStore, Poll, StoreKey, Swap};
-use bumbledb_log::writer::{Options, Slotted, Writer, WriterOpened};
-use lane_e_support::{NOTE, note_row, temp_dir, theory};
+use bumbledb_log::store::{
+    ConditionalOutcome, ConditionalStore as _, HeadRead, ObjectKind, ObjectRead, get_verified,
+    put_verified,
+};
 
 const REQUIRED: [&str; 3] = [
     "BUMBLEDB_S3_SMOKE_BUCKET",
@@ -26,322 +25,174 @@ const REQUIRED: [&str; 3] = [
     "AWS_SECRET_ACCESS_KEY",
 ];
 
-static PREFIX_SEQ: AtomicU64 = AtomicU64::new(0);
-
-fn missing_required() -> Vec<&'static str> {
-    REQUIRED
-        .into_iter()
-        .filter(|key| !matches!(std::env::var(key), Ok(value) if !value.is_empty()))
-        .collect()
+fn credentials_available() -> bool {
+    REQUIRED.iter().all(|name| std::env::var(name).is_ok())
 }
 
-/// Pid, clock nanos, and a process-local sequence. Machines and
-/// re-runs cannot share a prefix: seq resets, pid reuses, nanos does
-/// not.
-fn unique_prefix(tag: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+/// Loud skip: prints WHY the lane did not run. A skipped credential lane is
+/// `NotRun`, never qualification.
+macro_rules! require_credentials {
+    () => {
+        if !credentials_available() {
+            eprintln!(
+                "SKIP (NotRun, not passed): real-S3 lane requires {:?}",
+                REQUIRED
+            );
+            return;
+        }
+    };
+}
+
+fn store() -> S3Store {
+    S3Store::new(&S3Config {
+        endpoint: std::env::var("BUMBLEDB_S3_SMOKE_ENDPOINT").ok(),
+        region: std::env::var("BUMBLEDB_S3_SMOKE_REGION").unwrap_or_else(|_| "us-east-1".into()),
+        bucket: std::env::var("BUMBLEDB_S3_SMOKE_BUCKET").expect("bucket env"),
+        credentials: S3Credentials::Static {
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("key env"),
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret env"),
+            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+        },
+    })
+    .expect("S3 store constructs")
+}
+
+static PREFIX_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn fresh_prefix(tag: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     format!(
-        "smoke/{}/{}/{}/{tag}",
+        "bdb-p05-smoke/{tag}-{}-{nanos}-{}",
         std::process::id(),
-        nanos,
         PREFIX_SEQ.fetch_add(1, Ordering::Relaxed)
     )
 }
 
-/// Sweeps the store prefix on drop. The binding must stay live until
-/// the test ends — a `_` discard would sweep under a still-running body.
-struct PrefixSweep(S3Store);
-
-impl Drop for PrefixSweep {
-    fn drop(&mut self) {
-        if let Err(err) = self.0.sweep_prefix() {
-            eprintln!("S3 smoke prefix sweep failed: {err}");
+fn cleanup(store: &S3Store, prefix: &str) {
+    if let Ok(page) = store.list_objects(&format!("{prefix}/"), None) {
+        for key in page.keys {
+            let _ = store.delete_object(&key);
         }
     }
-}
-
-fn smoke_store(prefix: &str) -> Option<(S3Store, PrefixSweep)> {
-    let missing = missing_required();
-    if !missing.is_empty() {
-        eprintln!("SKIPPED S3 smoke: credential-gated lane not run (missing {missing:?})");
-        return None;
-    }
-    let region = std::env::var("BUMBLEDB_S3_SMOKE_REGION").unwrap_or_else(|_| "us-east-1".into());
-    let endpoint = std::env::var("BUMBLEDB_S3_SMOKE_ENDPOINT")
-        .ok()
-        .filter(|value| !value.is_empty());
-    let session_token = std::env::var("AWS_SESSION_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty());
-    let store = S3Store::new(&S3Config {
-        endpoint,
-        region,
-        bucket: std::env::var("BUMBLEDB_S3_SMOKE_BUCKET").expect("bucket"),
-        credentials: S3Credentials::Static {
-            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("id"),
-            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret"),
-            session_token,
-        },
-        prefix: prefix.to_string(),
-    })
-    .expect("S3Store");
-    Some((store.clone(), PrefixSweep(store)))
+    let _ = store.delete_object(&format!("{prefix}/HEAD"));
 }
 
 #[test]
-fn s3_smoke_skips_loudly_without_credentials() {
-    let missing = missing_required();
-    if missing.is_empty() {
-        eprintln!("S3 smoke credentials present; the s3_smoke* verbs run against the bucket");
-    } else {
-        eprintln!("SKIPPED S3 smoke: credential-gated lane not run (missing {missing:?})");
-    }
-}
-
-#[test]
-fn s3_smoke_create_only_race() {
-    let Some((store, _sweep)) = smoke_store(&unique_prefix("create")) else {
-        return;
-    };
-    let key = StoreKey::of("log/c00000000/1");
-    let a = store.clone();
-    let b = store.clone();
-    let key_a = key.clone();
-    let key_b = key.clone();
-    let left = thread::spawn(move || a.put_create(&key_a, b"alpha"));
-    let right = thread::spawn(move || b.put_create(&key_b, b"beta"));
-    let left = left.join().expect("a");
-    let right = right.join().expect("b");
-    let winner = match (&left, &right) {
-        (Ok(Create::Created(_)), Ok(Create::Exists)) => &b"alpha"[..],
-        (Ok(Create::Exists), Ok(Create::Created(_))) => &b"beta"[..],
-        other => panic!("exactly one Created and one Exists, got {other:?}"),
-    };
-    let fetched = store.get(&key).expect("get").expect("present");
-    assert_eq!(
-        fetched.bytes, winner,
-        "the Created arm is the body that persisted"
-    );
-    store.delete(&key).expect("cleanup");
-}
-
-#[test]
-fn s3_smoke_cas_linearizes() {
-    let Some((store, _sweep)) = smoke_store(&unique_prefix("cas")) else {
-        return;
-    };
-    let key = StoreKey::of("manifest");
-    assert!(matches!(
-        store.put_create(&key, b"0").expect("birth"),
-        Create::Created(_)
-    ));
-    let store = Arc::new(store);
-    let threads: Vec<_> = (0..2)
-        .map(|_| {
-            let store = Arc::clone(&store);
-            let key = key.clone();
-            thread::spawn(move || {
-                let mut landed = 0u64;
-                while landed < 4 {
-                    let current = store.get(&key).expect("get").expect("present");
-                    let value: u64 = String::from_utf8(current.bytes)
-                        .expect("utf8")
-                        .parse()
-                        .expect("decimal");
-                    let next = (value + 1).to_string();
-                    if let Swap::Swapped(_) = store
-                        .put_swap(&key, next.as_bytes(), &current.etag)
-                        .expect("swap")
-                    {
-                        landed += 1;
-                    }
-                }
-            })
-        })
-        .collect();
-    for handle in threads {
-        handle.join().expect("thread");
-    }
-    let total: u64 = String::from_utf8(store.get(&key).expect("get").expect("present").bytes)
-        .expect("utf8")
-        .parse()
-        .expect("decimal");
-    assert_eq!(total, 8, "no swap was lost and none applied twice");
-    store.delete(&key).expect("cleanup");
-}
-
-#[test]
-fn s3_smoke_poll_unchanged() {
-    let Some((store, _sweep)) = smoke_store(&unique_prefix("poll")) else {
-        return;
-    };
-    let key = StoreKey::of("manifest");
-    let Create::Created(etag) = store.put_create(&key, br#"{"v":1}"#).expect("create") else {
-        panic!("fresh key must be Created");
+fn s3_01_conditional_create_and_exact_version_replacement_have_one_winner() {
+    require_credentials!();
+    let store = store();
+    let prefix = fresh_prefix("cas");
+    let head_key = format!("{prefix}/HEAD");
+    // Conditional create: first wins, second definitively loses.
+    let v1 = match store.create_head(&head_key, b"rev-1").expect("create") {
+        ConditionalOutcome::Published { version } => version,
+        other => panic!("first create publishes: {other:?}"),
     };
     assert_eq!(
-        store.get_if_changed(&key, &etag).expect("poll"),
-        Poll::Unchanged
+        store
+            .create_head(&head_key, b"rev-1-imposter")
+            .expect("second create"),
+        ConditionalOutcome::PreconditionFailed,
+        "a never-reused head is never re-created over"
     );
-    store.delete(&key).expect("cleanup");
-}
-
-#[test]
-fn s3_smoke_get_before_put() {
-    let Some((store, _sweep)) = smoke_store(&unique_prefix("negcache")) else {
-        return;
-    };
-    let key = StoreKey::of("log/c00000000/probe");
-    assert_eq!(store.get(&key).expect("probe"), None);
-    assert!(matches!(
-        store.put_create(&key, b"after-miss").expect("create"),
-        Create::Created(_)
-    ));
-    let fetched = store.get(&key).expect("get").expect("present");
-    assert_eq!(fetched.bytes, b"after-miss");
-    store.delete(&key).expect("cleanup");
-}
-
-fn open_writer(store: S3Store, dir: &Path) -> Writer<SchemaDescriptor, S3Store> {
-    match Writer::open(store, "", dir, theory(), Options::new(91)).expect("open writer") {
-        WriterOpened::Ready(writer) => writer,
-        WriterOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
+    // Exact-version race: two contenders, one captured version — at most one
+    // winner, and a loser is a DEFINITE loss even under identical fact bytes
+    // (no ABA: every proposed body differs through its revision).
+    let store_b = self::store();
+    let (outcome_a, outcome_b) = thread::scope(|scope| {
+        let key_a = head_key.clone();
+        let v_a = v1.clone();
+        let store_ref = &store;
+        let a = scope.spawn(move || {
+            store_ref
+                .replace_head(&key_a, &v_a, b"rev-2-from-a")
+                .expect("a swaps")
+        });
+        let outcome_b = store_b
+            .replace_head(&head_key, &v1, b"rev-2-from-b")
+            .expect("b swaps");
+        (a.join().expect("a thread"), outcome_b)
+    });
+    let wins = [&outcome_a, &outcome_b]
+        .iter()
+        .filter(|outcome| matches!(outcome, ConditionalOutcome::Published { .. }))
+        .count();
+    let losses = [&outcome_a, &outcome_b]
+        .iter()
+        .filter(|outcome| matches!(outcome, ConditionalOutcome::PreconditionFailed))
+        .count();
+    // Real transports may legitimately return Indeterminate; that arm is
+    // uncertainty, never a second win.
+    assert!(wins <= 1, "at most one publication per observed version");
+    assert!(wins + losses >= 1, "the race terminated observably");
+    match store.read_head(&format!("{prefix}/HEAD")).expect("read") {
+        HeadRead::Present { body, .. } => {
+            assert!(
+                &*body == b"rev-2-from-a" || &*body == b"rev-2-from-b",
+                "exactly one contender's body holds"
+            );
+        }
+        HeadRead::Absent => panic!("the head exists"),
     }
-}
-
-fn open_replica(store: S3Store, dir: &Path) -> Replica<SchemaDescriptor, S3Store> {
-    match Replica::open(store, "", dir, theory()).expect("open replica") {
-        Opened::Ready(replica) => *replica,
-        Opened::Refused(refusal) => panic!("open refused: {refusal:?}"),
-    }
+    cleanup(&store, &prefix);
 }
 
 #[test]
-fn s3_smoke_replica_writer_round_trip() {
-    let Some((store, _sweep)) = smoke_store(&unique_prefix("roundtrip")) else {
-        return;
-    };
-    let root = temp_dir("s3_roundtrip");
-    let writer = open_writer(store.clone(), &root.join("w"));
-    let outcome = writer
-        .commit(|batch| {
-            batch.insert(NOTE, [note_row(7, "s3-smoke")]);
-            Ok(())
-        })
-        .expect("commit");
-    let Admission::Accepted(Slotted { slot, .. }) = outcome else {
-        panic!("accepted expected");
-    };
-    assert_eq!(slot, 1);
-    drop(writer);
-
-    let replica = open_replica(store, &root.join("r"));
-    let present = replica
-        .db()
-        .expect("db")
-        .read(|instance| instance.contains_dyn(NOTE, &note_row(7, "s3-smoke")))
-        .expect("read");
-    assert!(present, "reopen restores the committed note");
-}
-
-fn child_script() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ts-log/test/interop-child.ts")
-}
-
-#[test]
-fn s3_smoke_interop_rust_writes_ts_reads() {
-    let prefix = unique_prefix("interop");
-    let Some((store, _sweep)) = smoke_store(&prefix) else {
-        return;
-    };
-    let key = StoreKey::of("interop/obj-0");
-    let body = b"cross-language-s3";
-    let Create::Created(etag) = store.put_create(&key, body).expect("create") else {
-        panic!("fresh key must be Created");
-    };
-
-    let out = std::process::Command::new("node")
-        .args([
-            child_script().into_os_string().into_string().expect("utf8"),
-            "read".into(),
-            "s3".into(),
-            prefix,
-            key.to_string(),
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .expect("spawn node child");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success(),
-        "node child failed: {stdout}\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let line = stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("INTEROP "))
-        .expect("interop line");
-    let report: serde_json::Value = serde_json::from_str(line).expect("json");
-    assert_eq!(report["hex"].as_str().expect("hex"), hex_of(body));
+fn s3_02_immutable_objects_verify_and_stale_versions_lose_after_movement() {
+    require_credentials!();
+    let store = store();
+    let prefix = fresh_prefix("objects");
+    // Content-addressed immutable object: store, verify, idempotent re-put.
+    let reference = put_verified(
+        &store,
+        &prefix,
+        1,
+        ObjectKind::Chunk,
+        b"real-s3 chunk bytes",
+    )
+    .expect("put");
     assert_eq!(
-        report["etag"].as_str().expect("etag"),
-        etag.0,
-        "vendor etag agrees across languages; not blake3"
+        get_verified(&store, &prefix, &reference).expect("verified"),
+        b"real-s3 chunk bytes"
     );
-    store.delete(&key).expect("cleanup");
-}
-
-#[test]
-fn s3_smoke_duty_once() {
-    let Some((store, _sweep)) = smoke_store(&unique_prefix("duty")) else {
-        return;
+    put_verified(
+        &store,
+        &prefix,
+        1,
+        ObjectKind::Chunk,
+        b"real-s3 chunk bytes",
+    )
+    .expect("idempotent re-put");
+    // Definite absence is Absent, not an error.
+    assert!(matches!(
+        store
+            .get_object(&format!("{prefix}/objects/1/chunk/{}", "0".repeat(64)))
+            .expect("read"),
+        ObjectRead::Absent
+    ));
+    // Listing enumerates the actual extant name.
+    let page = store
+        .list_objects(&format!("{prefix}/objects/"), None)
+        .expect("list");
+    assert_eq!(page.keys.len(), 1, "{:?}", page.keys);
+    // A stale head version cannot win after the head moved (S3-01/02 tail).
+    let head_key = format!("{prefix}/HEAD");
+    let v1 = match store.create_head(&head_key, b"one").expect("create") {
+        ConditionalOutcome::Published { version } => version,
+        other => panic!("{other:?}"),
     };
-    let root = temp_dir("s3_duty");
-    let writer = open_writer(store.clone(), &root.join("w"));
-    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    assert!(matches!(
-        writer
-            .commit(|batch| {
-                batch.insert(NOTE, [note_row(3, "duty-s3")]);
-                Ok(())
-            })
-            .expect("commit"),
-        Admission::Accepted(_)
-    ));
-    assert!(matches!(
-        writer
-            .commit(|batch| {
-                batch.insert(NOTE, [note_row(4, "duty-s3")]);
-                Ok(())
-            })
-            .expect("commit"),
-        Admission::Accepted(_)
-    ));
-    writer.quiesce();
-    drop(writer);
-
-    let mut duty =
-        match Checkpointer::open(store, "", &root.join("d"), theory(), 91).expect("open duty") {
-            CheckpointerOpened::Ready(duty) => *duty,
-            CheckpointerOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
-        };
-    duty.set_checkpoint_cadence(2, u64::MAX);
-    match duty.run().expect("run") {
-        Ran::Ready {
-            compact: Compact::Published(_),
-            ..
-        } => {}
-        other => panic!("duty should compact on S3, got {other:?}"),
+    match store.replace_head(&head_key, &v1, b"two").expect("swap") {
+        ConditionalOutcome::Published { .. } => {}
+        other => panic!("{other:?}"),
     }
-}
-
-fn hex_of(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut acc, b| {
-        use std::fmt::Write as _;
-        let _ = write!(acc, "{b:02x}");
-        acc
-    })
+    assert_eq!(
+        store
+            .replace_head(&head_key, &v1, b"three")
+            .expect("stale swap"),
+        ConditionalOutcome::PreconditionFailed,
+        "ETags are opaque exact tokens; a stale one definitively loses"
+    );
+    cleanup(&store, &prefix);
 }

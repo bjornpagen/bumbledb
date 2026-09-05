@@ -4,10 +4,10 @@ use super::{
 };
 
 use crate::error::{Error, Mismatch, Result};
+use crate::image::intern::InternerHandle;
 use crate::ir::{ParamId, Value};
 use crate::obs;
-use crate::storage::catalog::CatalogRead;
-use crate::storage::dict;
+use crate::work::WorkContext;
 use bumbledb_theory::schema::IntervalElement;
 
 impl<S> PreparedQuery<S> {
@@ -24,40 +24,37 @@ impl<S> PreparedQuery<S> {
         });
     }
 
-    /// typed error before anything else runs. One u64 compare — with the
-    pub(super) fn check_identity(
-        &self,
-        identity: &crate::storage::env::CatalogIdentity,
-    ) -> Result<()> {
-        if self.identity.same(identity) {
+    /// typed error before anything else runs. One compare — with the
+    pub(super) fn check_identity(&self, source: super::source::PinnedSource) -> Result<()> {
+        if self.pinned == source {
             Ok(())
         } else {
             Err(Error::ForeignPreparedQuery)
         }
     }
 
-    pub(super) fn bind_params<C: CatalogRead>(
+    pub(super) fn bind_params(
         &mut self,
-        catalog: &C,
+        work: &WorkContext,
         params: &[BindValue<'_>],
     ) -> Result<()> {
         self.begin_bind(params.len())?;
         for (idx, value) in params.iter().enumerate() {
-            self.bind_scalar_slot(catalog, idx, *value)?;
+            self.bind_scalar_slot(work, idx, *value)?;
         }
         Ok(())
     }
 
-    pub(crate) fn bind_param_args<C: CatalogRead>(
+    pub(crate) fn bind_param_args(
         &mut self,
-        catalog: &C,
+        work: &WorkContext,
         args: &[ParamArg<'_>],
     ) -> Result<()> {
         self.begin_bind(args.len())?;
         for (idx, arg) in args.iter().enumerate() {
             match arg {
-                ParamArg::Scalar(value) => self.bind_scalar_slot(catalog, idx, *value)?,
-                ParamArg::Set(values) => self.bind_set_slot(catalog, idx, values)?,
+                ParamArg::Scalar(value) => self.bind_scalar_slot(work, idx, *value)?,
+                ParamArg::Set(values) => self.bind_set_slot(work, idx, values)?,
             }
         }
         Ok(())
@@ -82,9 +79,9 @@ impl<S> PreparedQuery<S> {
     }
 
     /// a set-typed slot rejects the scalar shape before any conversion.
-    fn bind_scalar_slot<C: CatalogRead>(
+    fn bind_scalar_slot(
         &mut self,
-        catalog: &C,
+        work: &WorkContext,
         idx: usize,
         value: BindValue<'_>,
     ) -> Result<()> {
@@ -136,39 +133,35 @@ impl<S> PreparedQuery<S> {
                         return Ok(());
                     }
                 }
-                let Some((resolved, missed)) = convert_scalar(catalog, value, ty)? else {
+                let interner = InternerHandle::new(self.cache.interner(), work);
+                let Some(resolved) = convert_scalar(&interner, value, ty)? else {
                     return Err(Error::ParamTypeMismatch {
                         param,
                         expected: *ty,
                     });
                 };
-                if let (BindValue::Str(text), ValueType::String) = (value, ty) {
+                if let (BindValue::Str(text), ValueType::String) = (value, ty)
+                    && let Const::Word(word) = &resolved
+                {
+                    // A latch is final: the interner is append-only, so a
+                    // memoized (text → token) pair never invalidates.
                     let memo = &mut self.param_word_memo[idx];
-                    if missed {
-                        memo.word = None;
-                    } else if let Const::Word(word) = &resolved {
-                        memo.text.clear();
-                        memo.text.push_str(text);
-                        memo.word = Some(*word);
-                    }
+                    memo.text.clear();
+                    memo.text.push_str(text);
+                    memo.word = Some(*word);
                 }
 
                 if *point && matches!(resolved, Const::Word(u64::MAX)) {
                     return Err(Error::PointParamAtCeiling { param });
                 }
                 self.resolved_params[idx] = resolved;
-                self.missed_params[idx] = missed;
+                self.missed_params[idx] = false;
                 Ok(())
             }
         }
     }
 
-    fn bind_set_slot<C: CatalogRead>(
-        &mut self,
-        catalog: &C,
-        idx: usize,
-        values: &[Value],
-    ) -> Result<()> {
+    fn bind_set_slot(&mut self, work: &WorkContext, idx: usize, values: &[Value]) -> Result<()> {
         let param = param_id(idx);
         let (expected, point) = match &self.params[idx] {
             ParamSpec::Set { elem, point } => (elem, *point),
@@ -179,6 +172,7 @@ impl<S> PreparedQuery<S> {
 
         let element_width = match expected {
             ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(*len),
+            ValueType::Id128 => 2,
             _ => 1,
         };
 
@@ -189,8 +183,9 @@ impl<S> PreparedQuery<S> {
             }
             _ => Vec::new(),
         };
+        let interner = InternerHandle::new(self.cache.interner(), work);
         for (element, value) in values.iter().enumerate() {
-            let Some(word_count) = element_words(catalog, value, expected, &mut words)? else {
+            let Some(word_count) = element_words(&interner, value, expected, &mut words)? else {
                 // Park the pooled Vec back before erroring: the slot
 
                 words.clear();
@@ -227,12 +222,8 @@ impl<S> PreparedQuery<S> {
             }
         }
 
-        if matches!(expected, ValueType::String) {
-            while words.last() == Some(&dict::SENTINEL_ID) {
-                words.pop();
-            }
-        }
-
+        // The empty set matches nothing under Eq on a positive occurrence;
+        // the miss short-circuit machinery carries exactly that.
         self.missed_params[idx] = words.is_empty();
         self.resolved_params[idx] = Const::WordSet(words);
         Ok(())
@@ -257,8 +248,8 @@ fn sort_dedup_spans<const K: usize>(words: &mut Vec<u64>) {
     words.truncate(kept * K);
 }
 
-fn element_words<C: CatalogRead>(
-    catalog: &C,
+fn element_words(
+    interner: &InternerHandle<'_>,
     value: &Value,
     expected: &ValueType,
     out: &mut Vec<u64>,
@@ -274,7 +265,7 @@ fn element_words<C: CatalogRead>(
         out.extend_from_slice(&words[..count]);
         return Ok(Some(count));
     }
-    let Some((resolved, _)) = convert_scalar(catalog, element_view(value), expected)? else {
+    let Some(resolved) = convert_scalar(interner, element_view(value), expected)? else {
         return Ok(None);
     };
     Ok(Some(match resolved {
@@ -289,18 +280,19 @@ fn element_words<C: CatalogRead>(
         Const::Interval { .. } => {
             unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
         }
-        Const::Words(_)
-        | Const::Param(_)
-        | Const::ParamSet(_)
-        | Const::WordSet(_)
-        | Const::PendingIntern { .. } => {
+        // Id128 elements are two-word spans, exactly like bytes<16>.
+        Const::Words(words) => {
+            out.extend_from_slice(&words);
+            words.len()
+        }
+        Const::Param(_) | Const::ParamSet(_) | Const::WordSet(_) | Const::PendingIntern { .. } => {
             unreachable!("convert_scalar resolves scalar kinds to inline column form")
         }
     }))
 }
 
-pub(super) fn resolve_filters<C: CatalogRead>(
-    catalog: &C,
+pub(super) fn resolve_filters(
+    interner: &InternerHandle<'_>,
     plan: &mut crate::plan::fj::ValidatedPlan,
     params: &[Const],
     missed: &[bool],
@@ -322,7 +314,7 @@ pub(super) fn resolve_filters<C: CatalogRead>(
         }
         for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
             if !crate::image::view::resolve_filter_into(
-                catalog, template, params, missed, negated, slot, latched,
+                interner, template, params, missed, negated, slot, latched,
             )? {
                 return Ok(false);
             }
@@ -337,7 +329,7 @@ pub(super) fn resolve_filters<C: CatalogRead>(
             "negated occurrences keep Eq-constants in their filters"
         );
         for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
-            if !resolve_selection_into(catalog, selection, params, missed, words, latched)? {
+            if !resolve_selection_into(interner, selection, params, missed, words, latched)? {
                 return Ok(false);
             }
         }
@@ -345,8 +337,8 @@ pub(super) fn resolve_filters<C: CatalogRead>(
     Ok(true)
 }
 
-fn resolve_selection_into<C: CatalogRead>(
-    catalog: &C,
+fn resolve_selection_into(
+    interner: &InternerHandle<'_>,
     selection: &mut crate::plan::fj::Selection,
     params: &[Const],
     missed: &[bool],
@@ -356,12 +348,12 @@ fn resolve_selection_into<C: CatalogRead>(
     out.clear();
 
     if let Const::PendingIntern { bytes } = &selection.value {
-        let Some(id) = catalog.dict_lookup(bytes)? else {
-            return Ok(false);
-        };
-        selection.value = Const::Word(id.raw());
+        // A latch is final (append-only interner): the template constant
+        // becomes a plain word on its first resolution.
+        let word = interner.latch(bytes)?;
+        selection.value = Const::Word(word);
         *latched += 1;
-        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(id.raw()));
+        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
     }
     let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
         Const::Word(word) => out.push(*word),
@@ -393,7 +385,7 @@ fn resolve_selection_into<C: CatalogRead>(
         }
 
         Const::WordSet(words) => out.extend_from_slice(words),
-        Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
+        Const::PendingIntern { .. } => unreachable!("latched above"),
     }
     Ok(true)
 }
@@ -404,23 +396,31 @@ fn element_view(value: &Value) -> BindValue<'_> {
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
         Value::F64(v) => BindValue::F64(*v),
+        Value::Id128(id) => BindValue::Id128(*id),
         Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
+        Value::IntervalF64(interval) => BindValue::IntervalF64(*interval),
     }
 }
 
-fn convert_scalar<C: CatalogRead>(
-    catalog: &C,
+fn convert_scalar(
+    interner: &InternerHandle<'_>,
     value: BindValue<'_>,
     expected: &ValueType,
-) -> Result<Option<(Const, bool)>> {
+) -> Result<Option<Const>> {
     let resolved = match (value, expected) {
         (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
         (BindValue::U64(v), ValueType::U64) => Const::Word(v),
         (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
         (BindValue::F64(v), ValueType::F64) => Const::Word(v.to_order_key()),
+        (BindValue::Id128(id), ValueType::Id128) => {
+            let bytes = id.to_bytes();
+            let hi = u64::from_be_bytes(bytes[..8].try_into().expect("sixteen bytes"));
+            let lo = u64::from_be_bytes(bytes[8..].try_into().expect("sixteen bytes"));
+            Const::Words(Box::from([hi, lo]))
+        }
 
         (
             BindValue::IntervalU64(start, end),
@@ -431,7 +431,7 @@ fn convert_scalar<C: CatalogRead>(
         (
             BindValue::IntervalU64(start, end),
             ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: bumbledb_theory::schema::FixedIntervalElement::U64,
                 width,
             },
         ) if start < end
@@ -452,7 +452,7 @@ fn convert_scalar<C: CatalogRead>(
         (
             BindValue::IntervalI64(start, end),
             ValueType::FixedInterval {
-                element: IntervalElement::I64,
+                element: bumbledb_theory::schema::FixedIntervalElement::I64,
                 width,
             },
         ) if start < end
@@ -464,14 +464,25 @@ fn convert_scalar<C: CatalogRead>(
                 end: i64_word(end),
             }
         }
-        (BindValue::Str(text), ValueType::String) => match catalog.dict_lookup(text.as_bytes())? {
-            Some(id) => Const::Word(id.raw()),
-            None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
+        // The checked host type already carries canonical NaN-free
+        // strictly-ordered endpoints; the physical words are order keys.
+        (
+            BindValue::IntervalF64(interval),
+            ValueType::Interval {
+                element: IntervalElement::F64,
+            },
+        ) => Const::Interval {
+            start: interval.start().to_order_key(),
+            end: interval.end().to_order_key(),
         },
+        // Interning is append-only and never misses: the bound text's
+        // token is final. A text absent from every image is an ordinary
+        // unequal word — no sentinel machinery, no dictionary descent.
+        (BindValue::Str(text), ValueType::String) => Const::Word(interner.intern_text(text)?),
 
         _ => return Ok(None),
     };
-    Ok(Some((resolved, false)))
+    Ok(Some(resolved))
 }
 
 fn i64_word(value: i64) -> u64 {

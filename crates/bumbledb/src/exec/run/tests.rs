@@ -1,5 +1,5 @@
 use super::*;
-use crate::encoding::{ValueRef, encode_fact};
+use crate::image::testsupport::TestSource;
 use crate::image::view::{FilterPredicate, OperandAddr, apply};
 use crate::ir::VarId;
 use crate::ir::normalize::{
@@ -9,12 +9,8 @@ use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -80,12 +76,10 @@ fn schema(relations: usize) -> Schema {
                     FieldDescriptor {
                         name: "a".into(),
                         value_type: bumbledb_theory::schema::ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "b".into(),
                         value_type: bumbledb_theory::schema::ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             })
@@ -96,33 +90,25 @@ fn schema(relations: usize) -> Schema {
     .expect("valid fixture")
 }
 
-fn views_of(
-    dir: &TempDir,
-    schema: &Schema,
-    data: &[Vec<(u64, u64)>],
-) -> Vec<Arc<crate::image::RelationImage>> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, rows) in data.iter().enumerate() {
-        let rel_id = RelationId(u32::try_from(rel).expect("small"));
-        for (a, b) in rows {
-            let mut bytes = Vec::new();
-            encode_fact(
-                &[ValueRef::U64(*a), ValueRef::U64(*b)],
-                schema.relation(rel_id).layout(),
-                &mut bytes,
-            );
-            delta.insert(&view, rel_id, &bytes).expect("insert");
-        }
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
+fn views_of(schema: &Schema, data: &[Vec<(u64, u64)>]) -> Vec<Arc<crate::image::RelationImage>> {
+    let rows: Vec<(RelationId, Vec<Vec<crate::ir::Value>>)> = data
+        .iter()
+        .enumerate()
+        .map(|(rel, rows)| {
+            let rel_id = RelationId(u32::try_from(rel).expect("small"));
+            let facts = rows
+                .iter()
+                .map(|(a, b)| vec![crate::ir::Value::U64(*a), crate::ir::Value::U64(*b)])
+                .collect();
+            (rel_id, facts)
+        })
+        .collect();
+    let source = TestSource::new(schema, &rows);
+    let cache = crate::image::cache::ImageCache::new(schema);
     (0..data.len())
         .map(|rel| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
+            source.image(&cache, rel_id)
         })
         .collect()
 }

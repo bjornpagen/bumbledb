@@ -131,8 +131,6 @@ pub struct WriteFamilyReport {
 pub struct StoreNumbers {
     pub db_bytes: u64,
     pub sqlite_bytes: u64,
-    pub cache_images: u64,
-    pub cache_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

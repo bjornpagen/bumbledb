@@ -1,1768 +1,528 @@
-import { Result } from "effect"
-import {
-	AuthoringError,
-	ErrAsyncCallback,
-	ErrFingerprintMismatch,
-	ErrForeignPrepared,
-	ErrForeignWitness,
-	ErrIrError,
-	ErrNewtypeMismatch,
-	ErrSchemaError,
-	ErrSpentHandle,
-	ErrUseAfterScope,
-	NativeOperationError,
-	SdkInvariantError
-} from "#errors.ts"
-/**
- * `Db` — the living half of the SDK (PRD-07): open/create a store from a
- * `Schema`, write typed facts through delta transactions with race-free
- * final-state point reads, receive rejections as typed violation VALUES
- * keyed to statements, and read through a synchronous instance callback —
- * all typed by the schema's relations record.
- *
- * A store read is one callback: `db.read((instance, witness) => …)`. The
- * instance is invalid the moment the callback returns; the witness is a
- * cloneable token and may escape. There is no handle-shaped read and no
- * `using snap = db.read`. Builder, owned instance, and witness
- * implement `Symbol.dispose`. Prepared plans are plain values whose
- * engine-side half is reclaimed by a GC finalizer — reclamation only,
- * never correctness.
- *
- * PROCESS MODEL: one process, one exclusive-lock handle per store. The
- * `Db` value owns the LMDB environment's exclusive lock until process
- * exit (or until GC reclaims the native handle); a second engine-level
- * open of the same store is refused by the engine (`EnvironmentLocked`),
- * matching Rust. Resume = reopen in a fresh process, or hold the one `Db`
- * this process already opened. The host owns composition; retry is host
- * policy.
- *
- * REJECTION IS DATA: a rejected commit is a domain outcome (it becomes the
- * LLM repair prompt downstream), returned as a {@link WriteOutcome}
- * carrying {@link Violation} values. A moved generation on
- * {@link Db.writeFrom} is the `{ tag: "moved" }` arm, not an exception.
- * Genuine failures — I/O, used-after-scope, spent handle, marshal shape —
- * throw named Effect tagged errors with structured fields and causes instead.
- */
-
-import * as path from "node:path"
-import { regex } from "arkregex"
-import { isClosedMember, sealedFieldsOf } from "#closed.ts"
-import { rosterOf } from "#fields.ts"
+import { Effect, Option } from "effect"
+import type { Scope } from "effect"
+import { drainClose, releaseOwner } from "#close.ts"
+import type { CompiledSchema, SchemaId } from "#compile.ts"
+import { Schema as CoreSchema, schemaTables } from "#compile.ts"
+import type { ChangeSet } from "#changes.ts"
+import { internalChanges } from "#changes.ts"
+import type { ApplyOutcomeWire, DbInspectionWire, ExpectedWire, SessionHandle, SnapshotHandle, WitnessWire } from "#db-native.ts"
+import { dbNative } from "#db-native.ts"
 import { lower } from "#lower.ts"
-import { cellOf, factOf, handleOf, isFreshField, type KeyFact, keyRowOf, recordOf, rowOf } from "#marshal.ts"
-
-import type {
-	AdmitResult,
-	BuilderHandle,
-	DbHandle,
-	FactValue,
-	InstanceHandle,
-	Manifest,
-	NativeWriteOutcome,
-	OwnedHandle,
-	PreparedHandle,
-	TxHandle,
-	WireFreshRange,
-	WireMutationReport,
-	Violation as WireViolation,
-	ViolationFact as WireViolationFact,
-	WitnessHandle
-} from "#native.ts"
-import { bridged, bridgedAsync, errorFromThrow, native } from "#native.ts"
-import type { FindColumn } from "#query/atom.ts"
-import type { Query } from "#query/lower.ts"
+import type { DbHandle, Violation } from "#native.ts"
+import type { AnyQuery } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
-import { decodeAnswers, wireParams } from "#query/run.ts"
-import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
-import type { AnyRelation, Fact, FreshKeys } from "#relation.ts"
-import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
-import { isStatement, type KeyStatement, type Statement } from "#statements.ts"
-
-const LEASED_FOR_PUBLISH = regex("leased for publish")
-
-type MemberRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], AnyRelation>
-
-interface MutationReport {
-	readonly submitted: bigint
-	readonly changed: bigint
-}
-
-type CollectionWrite<R extends AnyRelation> = Iterable<Fact<R>>
-
-interface FlatCollection {
-	readonly rows: bigint
-	readonly cells: readonly FactValue[]
-}
+import { wireParams } from "#query/run.ts"
+import type { ParamsRecord } from "#query/scope.ts"
+import type { Fact } from "#relation.ts"
+import type { CompleteResult } from "#result.ts"
+import { internalResult, makeCompleteResult } from "#result.ts"
+import type { CellValue } from "#rows.ts"
+import { factOfCells, keyCellsOf } from "#rows.ts"
+import type { CloseReport } from "#runtime-errors.ts"
+import { DbError } from "#runtime-errors.ts"
+import type { DirectoryHandle } from "#runtime-native.ts"
+import { runtimeNative } from "#runtime-native.ts"
+import type { ExecutionPolicy } from "#runtime.ts"
+import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import type { AnySchema } from "#schema.ts"
+import type { Key, QueryTemplate, Rel } from "#shape.ts"
 
 /**
- * The flat projector: every fact's cells land in ONE row-major
- * `FactValue` array (length rows×arity) — no JS array per fact exists
- * anywhere between the caller's objects and the native crossing — and
- * the row count is counted
- * while projecting (the {@link FlatCollection} law: the stated count is
- * what the bridge verifies against `rows × arity`, exactly, for every
- * arity). The per-cell judgment is `cellOf` — the one cell judge `rowOf`
- * also speaks (closed handle→id, well-formedness, interval shape) — and
- * the missing-field refusal is `rowOf`'s, byte for byte; only the output
- * form differs (flat, never per-row).
+ * The chapter 35 core surface: `Db.create`/`Db.open`, scoped coherent
+ * `Snapshot`s, reusable `ExecutionSession`s, the shared `QueryReader`
+ * capability, one immutable final-state `apply`, bounded `inspect` and
+ * honest `close`. Effect-only: every method constructs a lazy effect; all
+ * native work runs on the ONE bounded runtime executor under an explicit
+ * `ExecutionPolicy`; resources are scoped with `CloseFailure`-defect
+ * finalizers. There is no Promise/sync/disposal twin, no transaction
+ * callback, no per-row fiber and no Proxy row anywhere.
+ *
+ * Database open is the managed two-step handshake (C09/P06.md): acquire the
+ * kernel-held directory owner, then open the managed child database under
+ * it. `Db.open` NEVER creates on missing/error; `Db.create` refuses
+ * existing authority.
  */
-function rowsOf<R extends AnyRelation>(relation: R, facts: Iterable<Fact<R>>): FlatCollection {
-	const data = relation.data
-	const cells: FactValue[] = []
-	let rows = 0n
-	for (const fact of facts) {
-		rows += 1n
-		const record = recordOf(fact)
-		for (const declared of data.fields) {
-			const value = record[declared.name]
-			if (value === undefined) {
-				throw new AuthoringError({ message: `relation ${data.name}: fact is missing field ${declared.name}` })
-			}
-			cells.push(cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value))
-		}
-	}
-	return { rows, cells }
-}
 
-function mutateCollection<R extends AnyRelation>(
-	relation: R,
-	facts: CollectionWrite<R>,
-	apply: (rows: bigint, cells: readonly FactValue[]) => WireMutationReport
-): MutationReport {
-	const flat = rowsOf(relation, facts)
-	const report = apply(flat.rows, flat.cells)
-	return Object.freeze({ submitted: report.submitted, changed: report.changed })
-}
-
-type FreshRange =
-	| {
-			readonly empty: true
-			readonly count: 0n
-			at(index: bigint): undefined
-			[Symbol.iterator](): IterableIterator<bigint>
-	  }
-	| {
-			readonly empty: false
-			readonly start: bigint
-			readonly endExclusive: bigint
-			readonly count: bigint
-			at(index: bigint): bigint | undefined
-			[Symbol.iterator](): IterableIterator<bigint>
-	  }
-
-function freshRangeOf(wire: WireFreshRange): FreshRange {
-	if (wire.empty) {
-		return Object.freeze({
-			empty: true,
-			count: 0n,
-			at(_index: bigint) {
-				return undefined
-			},
-			*[Symbol.iterator](): IterableIterator<bigint> {}
-		})
-	}
-	const start = wire.start
-	const endExclusive = wire.endExclusive
-	const count = endExclusive - start
-	return Object.freeze({
-		empty: false,
-		start,
-		endExclusive,
-		get count() {
-			return count
-		},
-		at(index: bigint) {
-			if (index < 0n || index >= count) {
-				return undefined
-			}
-			return start + index
-		},
-		*[Symbol.iterator](): IterableIterator<bigint> {
-			for (let id = start; id < endExclusive; id++) {
-				yield id
-			}
-		}
-	})
-}
-
-type DeclaredKeyFact<R extends AnyRelation, Projection extends readonly string[]> = {
-	readonly [K in Projection[number] & keyof Fact<R>]: Fact<R>[K]
-}
-
-interface OffendingFact<Rels extends SchemaRelations> {
-	readonly relation: keyof Rels & string
-	readonly fact: Readonly<Record<string, FactValue>>
-}
-
-type ViolationBody<Rels extends SchemaRelations> = {
-	readonly canonical: string
-	readonly facts: readonly OffendingFact<Rels>[]
-}
-
-type ImpliedKeyViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
-	readonly kind: "functionality"
-	readonly statement: undefined
-}
-
-type DeclaredKeyViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
-	readonly kind: "functionality"
-	readonly statement: Statement
-}
-
-type ContainmentViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
-	readonly kind: "containment"
-	readonly statement: Statement
-	readonly direction: "sourceUnsatisfied" | "targetRequired"
-}
-
-type MirrorViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
-	readonly kind: "containment"
-	readonly statement: Statement
-	readonly direction: "sourceUnsatisfied" | "targetRequired"
-	readonly orientation: "written" | "mirrored"
-}
-
-type CapacityViolation<Rels extends SchemaRelations> = ViolationBody<Rels> & {
-	readonly kind: "capacity"
-	readonly statement: Statement
-	readonly measure: bigint
-}
-
-type Violation<Rels extends SchemaRelations> =
-	| ImpliedKeyViolation<Rels>
-	| DeclaredKeyViolation<Rels>
-	| ContainmentViolation<Rels>
-	| MirrorViolation<Rels>
-	| CapacityViolation<Rels>
-
-/**
- * The abandoned arm of a write result (ruled 2026-07-23, R10): present in
- * the type EXACTLY when the callback can abandon — the conditional
- * distributes over `R`, so a callback with no `Abandon` arm contributes
- * `never` and the arm vanishes from the sum. The outcome is in the type;
- * a dead arm is never handled.
- */
-type AbandonedArm<R> = R extends Abandon<infer P> ? { readonly tag: "abandoned"; readonly abandoned: P } : never
-
-type SyncResult<R> = R extends PromiseLike<unknown> ? never : R
-
-interface Committed<T> {
-	readonly value: T
+/** The core-local witness: catalog/store identity plus generation — never a log StateStamp. */
+interface CoreWitness {
+	readonly store: string
 	readonly generation: bigint
 }
 
-type Admission<Rels extends SchemaRelations, T> =
-	| { readonly tag: "accepted"; readonly value: T }
-	| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
+type ApplyExpected = { readonly kind: "any" } | { readonly kind: "exact"; readonly at: CoreWitness }
 
-type WriteOutcome<Rels extends SchemaRelations, R> =
-	| { readonly tag: "accepted"; readonly value: Committed<Exclude<R, Abandon<unknown>>> }
-	| { readonly tag: "rejected"; readonly violations: readonly Violation<Rels>[] }
-	| AbandonedArm<R>
+/** Core work policy plus the expected-state intent (chapter 35). */
+type ApplyOptions = ExecutionPolicy & { readonly expected: ApplyExpected }
 
-type WriteFromOutcome<Rels extends SchemaRelations, R> =
-	| WriteOutcome<Rels, R>
-	| { readonly tag: "moved"; readonly witnessed: bigint; readonly current: bigint }
+type ApplyOutcome =
+	| { readonly kind: "accepted"; readonly witness: CoreWitness }
+	| { readonly kind: "no-change"; readonly witness: CoreWitness }
+	| { readonly kind: "invariant-rejected"; readonly violations: readonly Violation[] }
+	| { readonly kind: "moved"; readonly witnessed: CoreWitness; readonly current: CoreWitness }
 
-type DeltaBuild<Rels extends SchemaRelations, R = void> = (tx: WriteTx<Rels>) => R
-
-const abandonMark: unique symbol = Symbol("bumbledb.abandon")
-
-/**
- * The abandon sentinel {@link abandon} builds: returning one from a `write`
- * or `writeFrom` callback rolls the transaction back WITHOUT
- * committing (no empty commit is ever issued) and surfaces the payload as
- * `{ tag: "abandoned", abandoned: payload }` (ruled 2026-07-23, R10 — the
- * sentinel's contract is unconditional, whichever write verb received it).
- */
-interface Abandon<P> {
-	readonly [abandonMark]: true
-	readonly payload: P
-}
-
-function abandon<P>(payload: P): Abandon<P> {
-	return Object.freeze({ [abandonMark]: true as const, payload })
-}
-
-type AbandonedPayload<R> = R extends Abandon<infer P> ? P : never
-
-function isAbandon<R>(value: R): value is R & Abandon<AbandonedPayload<R>> {
-	return typeof value === "object" && value !== null && abandonMark in value
-}
-
-function isAbandonedOutcome<Rels extends SchemaRelations, R>(
-	outcome: { readonly tag: "abandoned"; readonly abandoned: AbandonedPayload<R> },
-	sentinel: Abandon<AbandonedPayload<R>>
-): outcome is { readonly tag: "abandoned"; readonly abandoned: AbandonedPayload<R> } & WriteOutcome<Rels, R> {
-	return isAbandon(sentinel) && outcome.abandoned === sentinel.payload
-}
-
-function abandonedOutcome<Rels extends SchemaRelations, R>(
-	sentinel: Abandon<AbandonedPayload<R>>
-): WriteOutcome<Rels, R> {
-	const outcome = Object.freeze({ tag: "abandoned" as const, abandoned: sentinel.payload })
-	if (!isAbandonedOutcome<Rels, R>(outcome, sentinel)) {
-		throw new SdkInvariantError({ message: "bumbledb abandon outcome construction incomplete" })
-	}
-	return outcome
-}
-
-interface WriteTx<Rels extends SchemaRelations> {
-	insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport
-
-	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
-
-	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
-
-	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-
-	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-}
-
-const witnessTypes: unique symbol = Symbol("bumbledb.witness.types")
-
-interface Witness<Rels extends SchemaRelations> extends Disposable {
-	readonly [witnessTypes]?: Rels
-}
-
-interface ReadInstance<Rels extends SchemaRelations> {
+/** Bounded database diagnostics: measurements, never retained rows. */
+interface DbInspection {
+	readonly schemaId: SchemaId
 	readonly generation: bigint
-
-	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
-
-	count<R extends MemberRelation<Rels>>(relation: R): bigint
-
-	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-
-	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-
-	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-
-	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
-	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
+	readonly mapBytes: bigint
+	readonly populatedBytes: bigint
+	readonly diskBytes: bigint
+	readonly residentEstimateBytes: bigint
+	readonly retainedOperations: bigint
 }
-
-const preparedTypes: unique symbol = Symbol("bumbledb.prepared.types")
 
 /**
- * One prepared query as a plain VALUE: explicit visible compilation
- * (`db.prepare(q)` lowers, pins the plan, and surfaces every engine roster
- * refusal), no lifecycle. Execution happens ONLY through
- * `instance.execute(prepared, params)`. The engine-side plan is reclaimed by a GC
- * finalizer when this value becomes unreachable (reclamation only, never
- * correctness — an unreclaimed plan is idle memory, and process exit frees
- * everything).
+ * The one shared read capability (chapter 30): the same typed `get` and
+ * `execute` on a core snapshot and on a log published snapshot, so a
+ * cross-package read helper takes this interface with no adapter. Missing
+ * key is `Option.none`, never a fake I/O error or nullable row. It carries
+ * no writable authority — never a `Db`, an `apply`, or a raw transaction.
  */
-interface Prepared<Rels extends SchemaRelations, Row, Params extends ParamsRecord> {
-	readonly [preparedTypes]?: { readonly rels: Rels; readonly row: Row; readonly params: Params }
+interface QueryReader<S extends AnySchema> {
+	get<R extends Rel<S>>(relation: R, key: Key<R>, work: ExecutionPolicy): Effect.Effect<Option.Option<Fact<R>>, DbError>
+	execute<P extends ParamsRecord, A>(
+		query: QueryTemplate<S, P, A>,
+		params: P,
+		work: ExecutionPolicy
+	): Effect.Effect<CompleteResult<A>, DbError, Scope.Scope>
 }
 
-interface Db<Rels extends SchemaRelations> {
-	readonly schema: Schema<Rels>
-
-	read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R>
-	/**
-	 * One delta transaction: builds the delta synchronously through `fn`,
-	 * commits, and returns the domain outcome. A throw from `fn` aborts
-	 * the delta (LMDB untouched) and rethrows wrapped. `fn` may decline to
-	 * commit by returning {@link abandon}`(payload)`: the transaction rolls
-	 * back — nothing is committed, not even an empty commit — and the
-	 * outcome is `{ tag: "abandoned", abandoned: payload }`.
-	 */
-	write<R>(fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteOutcome<Rels, SyncResult<R>>
-
-	writeFrom<R>(witness: Witness<Rels>, fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteFromOutcome<Rels, SyncResult<R>>
-	/**
-	 * blake3 over the canonical catalog enumeration — the replication
-	 * equality oracle: equal digests imply identical judged content
-	 * regardless of page layout or allocation history. Harness-tier
-	 * (bounded sequential passes over the store), off any hot path.
-	 */
-	catalogDigest(): Uint8Array
-	/**
-	 * Prepares a query value built against THIS schema (identity is the
-	 * membership rule): lowers it to the engine IR, pins the plan, and
-	 * returns the typed {@link Prepared} value. Every IR roster refusal —
-	 * rule caps, rec roster, type rules — is the ENGINE's typed
-	 * judgment and throws here carrying its message intact.
-	 */
-	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
+interface Snapshot<S extends AnySchema> extends QueryReader<S> {
+	readonly witness: CoreWitness
+	session(work: ExecutionPolicy): Effect.Effect<ExecutionSession<S>, DbError, Scope.Scope>
+	close(): Effect.Effect<CloseReport>
 }
 
-interface RelationEntry {
-	readonly id: number
-	readonly member: SchemaRelation
-	readonly fieldIds: ReadonlyMap<string, number>
-	readonly primaryKey: PrimaryKey | undefined
+interface ExecutionSession<S extends AnySchema> {
+	execute<P extends ParamsRecord, A>(
+		query: QueryTemplate<S, P, A>,
+		params: P,
+		work: ExecutionPolicy
+	): Effect.Effect<CompleteResult<A>, DbError, Scope.Scope>
+	close(): Effect.Effect<CloseReport>
 }
 
-interface PrimaryKey {
-	readonly statementId: number
-	readonly projection: readonly string[]
+interface Db<S extends AnySchema> {
+	readonly schemaId: SchemaId
+	snapshot(work: ExecutionPolicy): Effect.Effect<Snapshot<S>, DbError, Scope.Scope>
+	apply(changes: ChangeSet<S>, options: ApplyOptions): Effect.Effect<ApplyOutcome, DbError>
+	inspect(work: ExecutionPolicy): Effect.Effect<DbInspection, DbError>
+	close(): Effect.Effect<CloseReport>
 }
 
-type ImpliedKeyEntry = {
-	readonly kind: "functionality"
-	readonly owner: string
-	readonly projection: readonly string[]
+function refusal(operation: string, reason: "InvalidArgument" | "Incompatible" | "ClosedHandle"): DbError {
+	return new DbError({ operation, reason: { _tag: reason } })
 }
 
-type DeclaredKeyEntry = {
-	readonly kind: "functionality"
-	readonly statement: Statement
-	readonly owner: string
-	readonly projection: readonly string[]
+function witnessOf(wire: WitnessWire): CoreWitness {
+	return Object.freeze({ store: wire.store, generation: wire.generation })
 }
 
-type StatementEntry =
-	| ImpliedKeyEntry
-	| DeclaredKeyEntry
-	| { readonly kind: "containment"; readonly statement: Statement }
-	| { readonly kind: "mirrors"; readonly statement: Statement; readonly orientation: "written" | "mirrored" }
-	| { readonly kind: "capacity"; readonly statement: Statement }
-
-function decodeOffendingFact<Rels extends SchemaRelations>(
-	member: SchemaRelation,
-	relation: keyof Rels & string,
-	fact: WireViolationFact
-): OffendingFact<Rels> {
-	const declared = sealedFieldsOf(member)
-	const decoded: Record<string, FactValue> = {}
-	for (const cell of fact.fields) {
-		const cited = declared.find(function byName(candidate) {
-			return candidate.name === cell.name
-		})
-		const roster = rosterOf(cited?.field)
-		decoded[cell.name] =
-			roster !== undefined
-				? handleOf(`violation fact ${fact.relation} field ${cell.name}`, roster, cell.value)
-				: cell.value
-	}
-	return Object.freeze({ relation, fact: Object.freeze(decoded) })
-}
-
-function violationFromEntry<Rels extends SchemaRelations>(
-	entry: StatementEntry,
-	wire: WireViolation,
-	facts: readonly OffendingFact<Rels>[]
-): Violation<Rels> {
-	const canonical = wire.canonical
-	if (entry.kind === "functionality") {
-		if (!("statement" in entry)) {
-			return Object.freeze({ kind: "functionality", statement: undefined, canonical, facts })
-		}
-		return Object.freeze({ kind: "functionality", statement: entry.statement, canonical, facts })
-	}
-	if (entry.kind === "capacity") {
-		if (wire.kind !== "capacity") {
-			throw new SdkInvariantError({
-				message: `bumbledb violation ${wire.statementId} is a capacity slot without a measure`
-			})
-		}
-		return Object.freeze({
-			kind: "capacity",
-			statement: entry.statement,
-			canonical,
-			measure: wire.measure,
-			facts
-		})
-	}
-	if (wire.kind !== "containment") {
-		throw new SdkInvariantError({
-			message: `bumbledb violation ${wire.statementId} is a containment slot without a direction`
-		})
-	}
-	if (entry.kind === "mirrors") {
-		return Object.freeze({
-			kind: "containment",
-			statement: entry.statement,
-			canonical,
-			direction: wire.direction,
-			orientation: entry.orientation,
-			facts
-		})
-	}
-	return Object.freeze({
-		kind: "containment",
-		statement: entry.statement,
-		canonical,
-		direction: wire.direction,
-		facts
-	})
-}
-
-function materializedEntries(theory: AnySchema): StatementEntry[] {
-	const entries = impliedKeyEntries(theory)
-	for (const statement of theory.statements) {
-		entries.push(...declaredEntries(statement))
-	}
-	return entries
-}
-
-function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
-	const entries: StatementEntry[] = []
-	for (const member of Object.values(theory.relations)) {
-		if (isClosedMember(member)) {
-			continue
-		}
-		for (const declared of member.data.fields) {
-			if (isFreshField(declared.field)) {
-				entries.push({
-					kind: "functionality",
-					owner: member.name,
-					projection: [declared.name]
-				})
-			}
-		}
-	}
-	for (const member of Object.values(theory.relations)) {
-		if (isClosedMember(member)) {
-			entries.push({
-				kind: "functionality",
-				owner: member.name,
-				projection: ["id"]
-			})
-		}
-	}
-	return entries
-}
-
-function declaredEntries(statement: Statement): StatementEntry[] {
-	const data = statement.data
-	switch (data.kind) {
-		case "key": {
-			return [
-				{
-					kind: "functionality",
-					statement,
-					owner: data.owner.name,
-					projection: data.projection
-				}
-			]
-		}
-		case "containment": {
-			return [{ kind: "containment", statement }]
-		}
-		case "mirrors": {
-			return [
-				{ kind: "mirrors", statement, orientation: "written" },
-				{ kind: "mirrors", statement, orientation: "mirrored" }
-			]
-		}
-		case "capacity": {
-			return [{ kind: "capacity", statement }]
-		}
+function outcomeOf(wire: ApplyOutcomeWire): ApplyOutcome {
+	switch (wire.tag) {
+		case "accepted":
+			return Object.freeze({ kind: "accepted", witness: witnessOf(wire.witness) })
+		case "no-change":
+			return Object.freeze({ kind: "no-change", witness: witnessOf(wire.witness) })
+		case "invariant-rejected":
+			return Object.freeze({ kind: "invariant-rejected", violations: wire.violations })
+		case "moved":
+			return Object.freeze({ kind: "moved", witnessed: witnessOf(wire.witnessed), current: witnessOf(wire.current) })
 	}
 }
 
 /**
- * Narrows a callback result to a thenable — the async-callback probe both
- * commit sites share: an `async` build callback typechecks (`Promise<void>`
- * is assignable where a `void` return is expected), so the refusal has to
- * be a runtime probe on the returned value.
+ * Validates the query template's schema binding (identity, the membership
+ * rule) and lowers it to IR plus wire params. Pure host preparation; the
+ * engine's IR validation under budget remains the authority.
  */
-function isThenable(value: unknown): boolean {
-	return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function"
-}
-
-function isStatementValue<R extends AnyRelation, P extends readonly string[]>(
-	value: KeyFact<R> | KeyStatement<R, P>
-): value is KeyStatement<R, P> {
-	return isStatement(value)
-}
-
-function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
-	keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-	declaredKey: DeclaredKeyFact<R, P> | undefined,
-	byStatement: (statement: KeyStatement<R, P>, key: DeclaredKeyFact<R, P>) => T,
-	byPrimary: (key: KeyFact<R>) => T
-): T {
-	if (declaredKey !== undefined) {
-		if (!isStatementValue(keyOrStatement)) {
-			throw new AuthoringError({ message: "keyed get takes a key() statement value as its second argument" })
-		}
-		return byStatement(keyOrStatement, declaredKey)
+function preparedOf<S extends AnySchema>(
+	theory: S,
+	query: AnyQuery,
+	params: Readonly<Record<string, unknown>>
+): { readonly ir: ReturnType<typeof lowerQuery>; readonly wire: ReturnType<typeof wireParams>; readonly finds: AnyQuery["data"]["finds"] } {
+	if (query.schema !== theory) {
+		throw refusal("QueryReader.execute", "Incompatible")
 	}
-	if (isStatementValue(keyOrStatement)) {
-		throw new AuthoringError({
-			message: "keyed get with a statement selector also takes the key object — get(relation, keyStatement, key)"
-		})
-	}
-	return byPrimary(keyOrStatement)
+	const ir = lowerQuery(query)
+	const wire = wireParams(query.data.params, params)
+	return { ir, wire, finds: query.data.finds }
 }
 
-interface Tables {
-	readonly relations: ReadonlyMap<string, RelationEntry>
-	readonly statements: readonly StatementEntry[]
+interface SnapshotState<S extends AnySchema> {
+	readonly theory: S
+	readonly handle: SnapshotHandle
 }
 
-function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
-	const entries = materializedEntries(theory)
-	if (entries.length !== manifest.statements.length) {
-		throw new SdkInvariantError({
-			message: `bumbledb manifest drift: the SDK lowering yields ${entries.length} materialized statements, the engine reports ${manifest.statements.length}`
-		})
-	}
-	manifest.statements.forEach(function verifySlot(statement, index) {
-		const entry = entries[index]
-		if (entry === undefined || statement.id !== index) {
-			throw new SdkInvariantError({
-				message: `bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${entry?.kind}`
+function executeOn<S extends AnySchema, A>(
+	state: SnapshotState<S>,
+	session: SessionHandle | undefined,
+	query: AnyQuery,
+	params: Readonly<Record<string, unknown>>,
+	work: ExecutionPolicy
+): Effect.Effect<CompleteResult<A>, DbError, Scope.Scope> {
+	return Effect.acquireRelease(
+		Effect.gen(function* () {
+			const prepared = yield* Effect.try({
+				try: () => preparedOf(state.theory, query, params),
+				catch: (cause) => (cause instanceof DbError ? cause : refusal("QueryReader.execute", "InvalidArgument"))
 			})
-		}
-		const engineKind = entry.kind === "mirrors" ? "containment" : entry.kind
-		if (engineKind !== statement.kind) {
-			throw new SdkInvariantError({
-				message: `bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${engineKind}`
-			})
-		}
-	})
-	const relations = new Map<string, RelationEntry>()
-	for (const relation of manifest.relations) {
-		const member = theory.relations[relation.name]
-		if (member === undefined) {
-			throw new SdkInvariantError({
-				message: `bumbledb manifest drift: relation ${relation.name} is not in schema ${theory.name}`
-			})
-		}
-		const fieldIds = new Map<string, number>()
-		for (const field of relation.fields) {
-			fieldIds.set(field.name, field.id)
-		}
-		sealedFieldsOf(member).forEach(function verifyField(declared, fieldOrdinal) {
-			if (fieldIds.get(declared.name) !== fieldOrdinal) {
-				throw new SdkInvariantError({
-					message: `bumbledb manifest drift: ${relation.name}.${declared.name} has engine field id ${fieldIds.get(declared.name)}, its sealed ordinal is ${fieldOrdinal}`
-				})
-			}
-		})
-		let primaryKey: PrimaryKey | undefined
-		entries.forEach(function firstOwnedKey(entry, index) {
-			if (primaryKey === undefined && entry.kind === "functionality" && entry.owner === relation.name) {
-				primaryKey = Object.freeze({ statementId: index, projection: entry.projection })
-			}
-		})
-		relations.set(relation.name, Object.freeze({ id: relation.id, member, fieldIds, primaryKey }))
-	}
-	Object.keys(theory.relations).forEach(function verifyRelation(name, ordinal) {
-		const entry = relations.get(name)
-		if (entry === undefined) {
-			throw new SdkInvariantError({
-				message: `bumbledb manifest drift: schema relation ${name} is not in the manifest`
-			})
-		}
-		if (entry.id !== ordinal) {
-			throw new SdkInvariantError({
-				message: `bumbledb manifest drift: relation ${name} has engine id ${entry.id}, its declaration ordinal is ${ordinal} — query lowering depends on declaration order = ids`
-			})
-		}
-	})
-	return Object.freeze({ relations, statements: Object.freeze(entries) })
-}
-
-function tablesFromTheory(theory: AnySchema): Tables {
-	const entries = materializedEntries(theory)
-	const relations = new Map<string, RelationEntry>()
-	Object.keys(theory.relations).forEach(function byOrdinal(name, ordinal) {
-		const member = theory.relations[name]
-		if (member === undefined) {
-			throw new SdkInvariantError({ message: `bumbledb theory has no relation ${name}` })
-		}
-		const fieldIds = new Map<string, number>()
-		sealedFieldsOf(member).forEach(function byField(declared, fieldOrdinal) {
-			fieldIds.set(declared.name, fieldOrdinal)
-		})
-		let primaryKey: PrimaryKey | undefined
-		entries.forEach(function firstOwnedKey(entry, index) {
-			if (primaryKey === undefined && entry.kind === "functionality" && entry.owner === name) {
-				primaryKey = Object.freeze({ statementId: index, projection: entry.projection })
-			}
-		})
-		relations.set(name, Object.freeze({ id: ordinal, member, fieldIds, primaryKey }))
-	})
-	return Object.freeze({ relations, statements: Object.freeze(entries) })
-}
-
-interface PointReads {
-	contains(relationId: number, row: readonly FactValue[]): boolean
-	get(relationId: number, statementId: number, key: readonly FactValue[]): FactValue[] | null
-}
-
-interface InstanceState {
-	readonly handle: InstanceHandle
-	live: boolean
-	readonly owner: object
-}
-
-const instanceStates = new WeakMap<object, InstanceState>()
-
-interface WitnessState {
-	readonly handle: WitnessHandle
-	spent: boolean
-	readonly owner: object
-}
-
-const witnessStates = new WeakMap<object, WitnessState>()
-
-const witnessReclaimer = new FinalizationRegistry<WitnessHandle>(function reclaimWitness(handle) {
-	const closed = Result.try(function closeWitness() {
-		native.witnessClose(handle)
-	})
-	if (Result.isFailure(closed)) {
-		return
-	}
-})
-
-interface PreparedPlan {
-	readonly handle: PreparedHandle
-	readonly owner: object
-	readonly params: readonly ParamEntry[]
-	readonly finds: readonly FindColumn[]
-}
-
-const preparedPlans = new WeakMap<object, PreparedPlan>()
-
-const planReclaimer = new FinalizationRegistry<PreparedHandle>(function reclaimPlan(handle) {
-	const closed = Result.try(function closePlan() {
-		native.preparedClose(handle)
-	})
-	if (Result.isFailure(closed)) {
-		return
-	}
-})
-
-interface CatalogNative {
-	scan(relationId: number): FactValue[][]
-	count(relationId: number): bigint
-	contains(relationId: number, values: readonly FactValue[]): boolean
-	get(relationId: number, statementId: number, keyValues: readonly FactValue[]): FactValue[] | null
-	prepare(query: ReturnType<typeof lowerQuery>): ReturnType<typeof native.instancePrepare>
-	execute(prepared: PreparedHandle, params: ReturnType<typeof wireParams>): FactValue[][]
-}
-
-function catalogMethods<Rels extends SchemaRelations>(
-	theory: Schema<Rels>,
-	tables: Tables,
-	owner: object,
-	assertLive: () => void,
-	ops: CatalogNative
-): Pick<ReadInstance<Rels>, "scan" | "count" | "get" | "contains" | "execute" | "prepare"> {
-	function planOf(prepared: object): PreparedPlan {
-		const plan = preparedPlans.get(prepared)
-		if (plan === undefined) {
-			throw new ErrForeignPrepared({
-				reason: "notPrepared",
-				message: "bumbledb execute target is not a prepared value of this SDK"
-			})
-		}
-		if (plan.owner !== owner) {
-			throw new ErrForeignPrepared({
-				reason: "foreignStore",
-				message: `bumbledb prepared value was prepared by a different store than this one (schema ${theory.name})`
-			})
-		}
-		return plan
-	}
-	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-		assertLive()
-		const entry = ordinaryEntry(tables, theory, relation)
-		return bridged("bumbledb instance contains", function readContains() {
-			return ops.contains(entry.id, rowOf(relation.data, recordOf(fact)))
-		})
-	}
-	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-		declaredKey?: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined {
-		assertLive()
-		const entry = ordinaryEntry(tables, theory, relation)
-		return selectKeyRead(
-			keyOrStatement,
-			declaredKey,
-			function byStatement(statement, key) {
-				const selected = declaredKeyOf(tables, theory, relation, statement)
-				const row = bridged("bumbledb instance get", function readGet() {
-					return ops.get(entry.id, selected.statementId, keyRowOf(relation.data, selected.projection, recordOf(key)))
-				})
-				return row === null ? undefined : factOf(relation, row)
-			},
-			function byPrimary(key) {
-				const primaryKey = entry.primaryKey
-				if (primaryKey === undefined) {
-					throw new AuthoringError({
-						message: `relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-					})
-				}
-				const row = bridged("bumbledb instance get", function readGet() {
-					return ops.get(
-						entry.id,
-						primaryKey.statementId,
-						keyRowOf(relation.data, primaryKey.projection, recordOf(key))
-					)
-				})
-				return row === null ? undefined : factOf(relation, row)
-			}
-		)
-	}
-	function scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[] {
-		assertLive()
-		const entry = ordinaryEntry(tables, theory, relation)
-		const rows = bridged("bumbledb instance scan", function readScan() {
-			return ops.scan(entry.id)
-		})
-		return rows.map(function decodeRow(row) {
-			return factOf(relation, row)
-		})
-	}
-	function count<R extends MemberRelation<Rels>>(relation: R): bigint {
-		assertLive()
-		const entry = ordinaryEntry(tables, theory, relation)
-		return bridged("bumbledb instance count", function readCount() {
-			return ops.count(entry.id)
-		})
-	}
-	function execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[] {
-		assertLive()
-		const plan = planOf(prepared)
-		const wire = wireParams(plan.params, recordOf(params))
-		const rows = bridged("execute bumbledb prepared query", function callExecute() {
-			return ops.execute(plan.handle, wire)
-		})
-		return decodeAnswers<Row>(plan.finds, rows)
-	}
-	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
-		assertLive()
-		if (q.schema !== theory) {
-			throw new AuthoringError({
-				message: `query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
-			})
-		}
-		const queryIr = lowerQuery(q)
-		const outcome = bridged("prepare bumbledb query", function callPrepare() {
-			return ops.prepare(queryIr)
-		})
-		if (!outcome.ok) {
-			throwPrepareRefusal(outcome.message)
-		}
-		const prepared: Prepared<Rels, Row, Params> = Object.freeze({})
-		preparedPlans.set(
-			prepared,
-			Object.freeze({
-				handle: outcome.prepared,
-				owner,
-				params: q.data.params,
-				finds: q.data.finds
-			})
-		)
-		planReclaimer.register(prepared, outcome.prepared)
-		return prepared
-	}
-	return { scan, count, get, contains, execute, prepare }
-}
-
-function ordinaryEntry(tables: Tables, theory: AnySchema, relation: AnyRelation): RelationEntry {
-	const entry = tables.relations.get(relation.name)
-	if (entry === undefined || entry.member !== relation) {
-		throw new AuthoringError({ message: `relation ${relation.name} is not a member of schema ${theory.name}` })
-	}
-	if (isClosedMember(relation)) {
-		throw new AuthoringError({
-			message: `relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
-		})
-	}
-	return entry
-}
-
-function declaredKeyOf(tables: Tables, theory: AnySchema, relation: AnyRelation, statement: Statement): PrimaryKey {
-	const statementId = tables.statements.findIndex(function byIdentity(candidate) {
-		return "statement" in candidate && candidate.statement === statement
-	})
-	const entry = tables.statements[statementId]
-	if (entry === undefined) {
-		throw new AuthoringError({
-			message: `keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
-		})
-	}
-	if (entry.kind !== "functionality") {
-		throw new AuthoringError({
-			message: "keyed get takes a key() statement — containments and capacity statements key nothing"
-		})
-	}
-	if (entry.owner !== relation.name) {
-		throw new AuthoringError({
-			message: `keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
-		})
-	}
-	return Object.freeze({ statementId, projection: entry.projection })
-}
-
-function overlayMethods<Rels extends SchemaRelations>(
-	theory: Schema<Rels>,
-	tables: Tables,
-	assertLive: () => void,
-	reads: PointReads
-): Pick<WriteTx<Rels>, "contains" | "get"> {
-	function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-		assertLive()
-		const entry = ordinaryEntry(tables, theory, relation)
-		return reads.contains(entry.id, rowOf(relation.data, recordOf(fact)))
-	}
-	function readThroughKey<R extends MemberRelation<Rels>>(
-		relation: R,
-		entry: RelationEntry,
-		selected: PrimaryKey,
-		key: Readonly<Record<string, unknown>>
-	): Fact<R> | undefined {
-		const row = reads.get(entry.id, selected.statementId, keyRowOf(relation.data, selected.projection, key))
-		if (row === null) {
-			return undefined
-		}
-		return factOf(relation, row)
-	}
-	function get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-	function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-		declaredKey?: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined {
-		assertLive()
-		const entry = ordinaryEntry(tables, theory, relation)
-		return selectKeyRead(
-			keyOrStatement,
-			declaredKey,
-			function byStatement(statement, key) {
-				return readThroughKey(relation, entry, declaredKeyOf(tables, theory, relation, statement), recordOf(key))
-			},
-			function byPrimary(key) {
-				const primaryKey = entry.primaryKey
-				if (primaryKey === undefined) {
-					throw new AuthoringError({
-						message: `relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-					})
-				}
-				return readThroughKey(relation, entry, primaryKey, recordOf(key))
-			}
-		)
-	}
-	return { contains, get }
-}
-
-function createReadInstance<Rels extends SchemaRelations>(
-	nativeHandle: InstanceHandle,
-	theory: Schema<Rels>,
-	tables: Tables,
-	owner: object
-): ReadInstance<Rels> {
-	const state: InstanceState = { handle: nativeHandle, live: true, owner }
-	function assertLive(): void {
-		if (!state.live) {
-			throw new ErrUseAfterScope({
-				handle: "readInstance",
-				message: "bumbledb read instance is invalidated — its owning callback already returned"
-			})
-		}
-	}
-	const methods = catalogMethods(theory, tables, owner, assertLive, {
-		scan(relationId) {
-			return native.instanceScan(state.handle, relationId)
-		},
-		count(relationId) {
-			return native.instanceCount(state.handle, relationId)
-		},
-		contains(relationId, values) {
-			return native.instanceContains(state.handle, relationId, values)
-		},
-		get(relationId, statementId, keyValues) {
-			return native.instanceGet(state.handle, relationId, statementId, keyValues)
-		},
-		prepare(query) {
-			return native.instancePrepare(state.handle, query)
-		},
-		execute(prepared, params) {
-			return native.preparedExecute(prepared, state.handle, params)
-		}
-	})
-	const instance: ReadInstance<Rels> = Object.freeze({
-		get generation() {
-			assertLive()
-			return bridged("bumbledb instance generation", function readGeneration() {
-				return native.instanceGeneration(state.handle)
-			})
-		},
-		...methods
-	})
-	instanceStates.set(instance, state)
-	return instance
-}
-
-function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<Rels>, manifest: Manifest): Db<Rels> {
-	const tables = tablesOf(theory, manifest)
-	/** This store's identity token: read scopes and prepared values carry it, so cross-store use is a typed refusal. */
-	const owner = Object.freeze({})
-
-	function isMemberName(name: string): name is keyof Rels & string {
-		return tables.relations.has(name)
-	}
-
-	function violationOf(wire: WireViolation): Violation<Rels> {
-		const entry = tables.statements[wire.statementId]
-		if (entry === undefined) {
-			throw new SdkInvariantError({ message: `bumbledb violation cites unknown statement id ${wire.statementId}` })
-		}
-		const facts = Object.freeze(
-			wire.facts.map(function offending(fact) {
-				const rel = tables.relations.get(fact.relation)
-				if (rel === undefined || !isMemberName(fact.relation)) {
-					throw new SdkInvariantError({ message: `bumbledb violation cites unknown relation ${fact.relation}` })
-				}
-				return decodeOffendingFact<Rels>(rel.member, fact.relation, fact)
-			})
-		)
-		return violationFromEntry(entry, wire, facts)
-	}
-
-	function pointReadsOf(assertLive: () => void, reads: PointReads) {
-		function contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			return reads.contains(entry.id, rowOf(relation.data, recordOf(fact)))
-		}
-
-		function readThroughKey<R extends MemberRelation<Rels>>(
-			relation: R,
-			entry: RelationEntry,
-			selected: PrimaryKey,
-			key: Readonly<Record<string, unknown>>
-		): Fact<R> | undefined {
-			const row = reads.get(entry.id, selected.statementId, keyRowOf(relation.data, selected.projection, key))
-			if (row === null) {
-				return undefined
-			}
-			return factOf(relation, row)
-		}
-		function get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-		function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-			relation: R,
-			keyStatement: KeyStatement<R, P>,
-			key: DeclaredKeyFact<R, P>
-		): Fact<R> | undefined
-		function get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-			relation: R,
-			keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
-			declaredKey?: DeclaredKeyFact<R, P>
-		): Fact<R> | undefined {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			return selectKeyRead(
-				keyOrStatement,
-				declaredKey,
-				function byStatement(statement, key) {
-					return readThroughKey(relation, entry, declaredKeyOf(tables, theory, relation, statement), recordOf(key))
-				},
-				function byPrimary(key) {
-					const primaryKey = entry.primaryKey
-					if (primaryKey === undefined) {
-						throw new AuthoringError({
-							message: `relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-						})
-					}
-					return readThroughKey(relation, entry, primaryKey, recordOf(key))
-				}
+			const wire = policyWire(work, "QueryReader.execute")
+			const handle = yield* nativeOperationWith(
+				"QueryReader.execute",
+				(callback) =>
+					session === undefined
+						? dbNative.runtimeSnapshotExecute(state.handle, wire, prepared.ir, prepared.wire, callback)
+						: dbNative.runtimeSessionExecute(session, wire, prepared.ir, prepared.wire, callback),
+				dbNative.runtimeResultTake,
+				(value) => value
 			)
-		}
-		return { contains, get }
-	}
-
-	function pinPrepared<Row, Params extends ParamsRecord>(
-		preparedHandle: PreparedHandle,
-		q: Query<Rels, Row, Params>
-	): Prepared<Rels, Row, Params> {
-		const prepared: Prepared<Rels, Row, Params> = Object.freeze({})
-		preparedPlans.set(
-			prepared,
-			Object.freeze({
-				handle: preparedHandle,
-				owner,
-				params: q.data.params,
-				finds: q.data.finds
-			})
-		)
-		planReclaimer.register(prepared, preparedHandle)
-		return prepared
-	}
-
-	function makeWitness(nativeHandle: WitnessHandle): Witness<Rels> {
-		const state: WitnessState = { handle: nativeHandle, spent: false, owner }
-		const witness: Witness<Rels> = Object.freeze({
-			[Symbol.dispose](): void {
-				if (state.spent) {
-					return
+			return makeCompleteResult<A>(handle, prepared.finds, work)
+		}),
+		(result) =>
+			Effect.suspend(() => {
+				const internal = internalResultHandle(result)
+				if (internal === undefined) {
+					return Effect.void
 				}
-				state.spent = true
-				bridged("close bumbledb witness", function closeWitness() {
-					native.witnessClose(nativeHandle)
-				})
-			}
-		})
-		witnessStates.set(witness, state)
-		witnessReclaimer.register(witness, nativeHandle)
-		return witness
-	}
-
-	function makeInstance(nativeHandle: InstanceHandle): ReadInstance<Rels> {
-		return createReadInstance(nativeHandle, theory, tables, owner)
-	}
-
-	function read<R>(body: (instance: ReadInstance<Rels>, witness: Witness<Rels>) => SyncResult<R>): SyncResult<R> {
-		let captured: R | undefined
-		const result = bridged("bumbledb read", function runRead() {
-			return native.dbRead(handle, function onRead(nativeInstance, nativeWitness) {
-				const instance = makeInstance(nativeInstance)
-				const witness = makeWitness(nativeWitness)
-				const value = body(instance, witness)
-				const state = instanceStates.get(instance)
-				if (state !== undefined) {
-					state.live = false
-				}
-				if (isThenable(value)) {
-					throw new ErrAsyncCallback({ scope: "read", message: "bumbledb read callback returned a thenable" })
-				}
-				captured = value
-				return value
-			})
-		})
-		return (captured ?? result) as SyncResult<R>
-	}
-
-	function makeTx(resolveTx: () => TxHandle): { readonly tx: WriteTx<Rels>; spend(): void } {
-		const txState = { spent: false }
-		function assertLive(): void {
-			if (txState.spent) {
-				throw new ErrUseAfterScope({ handle: "writeTransaction", message: "bumbledb write transaction is spent" })
-			}
-		}
-		const reads = pointReadsOf(assertLive, {
-			contains(relationId, row) {
-				const txHandle = resolveTx()
-				return bridged("bumbledb tx contains", function readContains() {
-					return native.txContains(txHandle, relationId, row)
-				})
-			},
-			get(relationId, statementId, key) {
-				const txHandle = resolveTx()
-				return bridged("bumbledb tx get", function readGet() {
-					return native.txGet(txHandle, relationId, statementId, key)
-				})
-			}
-		})
-		function insert<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			const txHandle = resolveTx()
-			return mutateCollection(relation, facts, function applyCells(rows, cells) {
-				return bridged("bumbledb tx insert", function record() {
-					return native.txInsert(txHandle, entry.id, rows, cells)
-				})
-			})
-		}
-		function remove<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			const txHandle = resolveTx()
-			const flat = rowsOf(relation, facts)
-			const report = bridged("bumbledb tx delete", function record() {
-				return native.txDelete(txHandle, entry.id, flat.rows, flat.cells)
-			})
-			return Object.freeze({ submitted: report.submitted, changed: report.changed })
-		}
-		function reserve<R extends MemberRelation<Rels>>(
-			relation: R,
-			field: FreshKeys<R> & string,
-			count: bigint
-		): FreshRange {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			const declared = relation.data.fields.find(function byName(candidate) {
-				return candidate.name === field
-			})
-			if (declared === undefined || !isFreshField(declared.field)) {
-				throw new AuthoringError({ message: `relation ${relation.name}: field ${field} is not a fresh cell` })
-			}
-			const fieldId = entry.fieldIds.get(field)
-			if (fieldId === undefined) {
-				throw new SdkInvariantError({
-					message: `bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`
-				})
-			}
-			const txHandle = resolveTx()
-			const range = bridged("bumbledb tx reserve", function mint() {
-				return native.txReserve(txHandle, entry.id, fieldId, count)
-			})
-			return freshRangeOf(range)
-		}
-		const tx: WriteTx<Rels> = Object.freeze({
-			insert,
-			delete: remove,
-			reserve,
-			contains: reads.contains,
-			get: reads.get
-		})
-		function spend(): void {
-			txState.spent = true
-		}
-		return { tx, spend }
-	}
-
-	function mapNativeWrite<R>(nativeOutcome: NativeWriteOutcome, built: R | undefined): WriteFromOutcome<Rels, R> {
-		if (nativeOutcome.tag === "moved") {
-			return Object.freeze({
-				tag: "moved" as const,
-				witnessed: nativeOutcome.witnessed,
-				current: nativeOutcome.current
-			})
-		}
-		if (nativeOutcome.tag === "rejected") {
-			return Object.freeze({
-				tag: "rejected" as const,
-				violations: Object.freeze(nativeOutcome.violations.map(violationOf))
-			})
-		}
-		if (nativeOutcome.tag === "abandoned") {
-			if (built === undefined || !isAbandon(built)) {
-				throw new SdkInvariantError({ message: "bumbledb write abandoned without an abandon sentinel" })
-			}
-			return abandonedOutcome<Rels, R>(built)
-		}
-		return Object.freeze({
-			tag: "accepted" as const,
-			value: Object.freeze({
-				value: built as Exclude<R, Abandon<unknown>>,
-				generation: nativeOutcome.generation
-			})
-		})
-	}
-
-	function runWrite<R>(
-		invoke: (callback: (tx: TxHandle) => boolean) => NativeWriteOutcome,
-		fn: (tx: WriteTx<Rels>) => SyncResult<R>
-	): WriteFromOutcome<Rels, SyncResult<R>> {
-		let built: SyncResult<R> | undefined
-		const nativeOutcome = bridged("bumbledb write", function callWrite() {
-			return invoke(function onWrite(txHandle) {
-				const made = makeTx(function resolveTx() {
-					return txHandle
-				})
-				const result = Result.try(function buildDelta() {
-					return fn(made.tx)
-				})
-				made.spend()
-				if (Result.isFailure(result)) {
-					throw new NativeOperationError({ operation: "build write delta", cause: result.failure })
-				}
-				if (isThenable(result.success)) {
-					throw new ErrAsyncCallback({ scope: "write", message: "bumbledb write callback returned a thenable" })
-				}
-				built = result.success
-				return !isAbandon(result.success)
-			})
-		})
-		return mapNativeWrite(nativeOutcome, built)
-	}
-
-	function write<R>(fn: (tx: WriteTx<Rels>) => SyncResult<R>): WriteOutcome<Rels, SyncResult<R>> {
-		const outcome = runWrite(function invoke(callback) {
-			return native.dbWrite(handle, callback)
-		}, fn)
-		if (outcome.tag === "moved") {
-			throw new SdkInvariantError({ message: "bumbledb write reported moved — unconditional writes cannot move" })
-		}
-		return outcome
-	}
-
-	function writeFrom<R>(
-		witness: Witness<Rels>,
-		fn: (tx: WriteTx<Rels>) => SyncResult<R>
-	): WriteFromOutcome<Rels, SyncResult<R>> {
-		const state = witnessStates.get(witness)
-		if (state === undefined) {
-			throw new ErrForeignWitness({
-				reason: "notWitness",
-				message: "bumbledb writeFrom witness is not a witness of this SDK"
-			})
-		}
-		if (state.owner !== owner) {
-			throw new ErrForeignWitness({
-				reason: "foreignStore",
-				message: `bumbledb writeFrom witness belongs to a different store (schema ${theory.name})`
-			})
-		}
-		if (state.spent) {
-			throw new ErrSpentHandle({
-				handle: "witness",
-				state: "disposed",
-				message: "bumbledb writeFrom witness has been disposed"
-			})
-		}
-		return runWrite(function invoke(callback) {
-			return native.dbWriteFrom(handle, state.handle, callback)
-		}, fn)
-	}
-
-	function catalogDigest(): Uint8Array {
-		return bridged("bumbledb catalog digest", function readCatalogDigest() {
-			return native.dbCatalogDigest(handle)
-		})
-	}
-
-	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
-		if (q.schema !== theory) {
-			throw new AuthoringError({
-				message: `query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
-			})
-		}
-		const queryIr = lowerQuery(q)
-		const outcome = bridged("prepare bumbledb query", function callPrepare() {
-			return native.dbPrepare(handle, queryIr)
-		})
-		if (!outcome.ok) {
-			throwPrepareRefusal(outcome.message)
-		}
-		return pinPrepared(outcome.prepared, q)
-	}
-
-	return Object.freeze({
-		schema: theory,
-		read,
-		write,
-		writeFrom,
-		catalogDigest,
-		prepare
-	})
-}
-
-function throwOpenRefusal(
-	verb: string,
-	canonical: string,
-	kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch",
-	message: string
-): never {
-	const detail = `${verb} ${canonical}: ${message}`
-	if (kind === "newtypeMismatch") {
-		throw new ErrNewtypeMismatch({ operation: verb, path: canonical, message: detail })
-	}
-	if (kind === "schemaError") {
-		throw new ErrSchemaError({ operation: verb, path: canonical, message: detail })
-	}
-	throw new ErrFingerprintMismatch({ operation: verb, path: canonical, message: detail })
-}
-
-function throwPrepareRefusal(message: string): never {
-	throw new ErrIrError({ operation: "prepare", message: `prepare: ${message}` })
-}
-
-function openFromHandle<Rels extends SchemaRelations>(dbHandle: DbHandle, theory: Schema<Rels>): Db<Rels> {
-	const manifest = bridged("fetch bumbledb manifest", function fetchManifest() {
-		return native.dbManifest(dbHandle)
-	})
-	return openDb(dbHandle, theory, manifest)
-}
-
-async function createStore<Rels extends SchemaRelations>(
-	storePath: string,
-	theory: Schema<Rels>
-): Promise<Admission<Rels, Db<Rels>>> {
-	const canonical = path.resolve(storePath)
-	const spec = lower(theory)
-	const created = await bridgedAsync(`create bumbledb store at ${canonical}`, function callBridge() {
-		return native.dbCreate(canonical, spec)
-	})
-	if (created.tag === "schemaError" || created.tag === "newtypeMismatch") {
-		throwOpenRefusal("create", canonical, created.tag, created.message)
-	}
-	if (created.tag === "rejected") {
-		return Object.freeze({
-			tag: "rejected" as const,
-			violations: Object.freeze(
-				created.violations.map(function mapWire(wire) {
-					return mapViolationWithoutStore<Rels>(theory, wire)
-				})
-			)
-		})
-	}
-	return Object.freeze({ tag: "accepted" as const, value: openFromHandle(created.db, theory) })
-}
-
-function mapViolationWithoutStore<Rels extends SchemaRelations>(
-	theory: Schema<Rels>,
-	wire: WireViolation
-): Violation<Rels> {
-	const entries = materializedEntries(theory)
-	const entry = entries[wire.statementId]
-	if (entry === undefined) {
-		throw new SdkInvariantError({ message: `bumbledb violation cites unknown statement id ${wire.statementId}` })
-	}
-	const facts = Object.freeze(
-		wire.facts.map(function offending(fact) {
-			const member = theory.relations[fact.relation]
-			if (member === undefined || !(fact.relation in theory.relations)) {
-				throw new SdkInvariantError({ message: `bumbledb violation cites unknown relation ${fact.relation}` })
-			}
-			return decodeOffendingFact<Rels>(member, fact.relation as keyof Rels & string, fact)
-		})
+				return releaseOwner("CompleteResult.close", (callback) => dbNative.runtimeResultClose(internal, callback))
+			}),
+		{ interruptible: true }
 	)
-	return violationFromEntry(entry, wire, facts)
 }
 
-async function openStore<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Promise<Db<Rels>> {
-	const canonical = path.resolve(storePath)
-	const spec = lower(theory)
-	const opened = await bridgedAsync(`open bumbledb store at ${canonical}`, function callBridge() {
-		return native.dbOpen(canonical, spec)
-	})
-	if (!opened.ok) {
-		throwOpenRefusal("open", canonical, opened.kind, opened.message)
-	}
-	return openFromHandle(opened.db, theory)
+function internalResultHandle(result: object) {
+	return internalResult(result)?.handle
 }
 
-interface OwnedInstance<Rels extends SchemaRelations> extends Disposable {
-	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
-	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
-	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
-	count<R extends MemberRelation<Rels>>(relation: R): bigint
-	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-
-	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-}
-
-interface InstanceBuilder<Rels extends SchemaRelations> extends Disposable {
-	load<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport
-	delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport
-	reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange
-	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
-
-	get<R extends MemberRelation<Rels>>(relation: R, key: KeyFact<R>): Fact<R> | undefined
-	get<R extends MemberRelation<Rels>, const P extends readonly string[]>(
-		relation: R,
-		keyStatement: KeyStatement<R, P>,
-		key: DeclaredKeyFact<R, P>
-	): Fact<R> | undefined
-	admit(): Promise<Admission<Rels, OwnedInstance<Rels>>>
-}
-
-const ownedRecords = new WeakMap<object, { handle: OwnedHandle; theory: AnySchema; spent: boolean; owner: object }>()
-const builderRecords = new WeakMap<object, { handle: BuilderHandle; theory: AnySchema; spent: boolean }>()
-
-const ownedReclaimer = new FinalizationRegistry<OwnedHandle>(function reclaimOwned(handle) {
-	const closed = Result.try(function closeOwned() {
-		native.ownedInstanceClose(handle)
-	})
-	if (Result.isFailure(closed)) {
-		return
-	}
-})
-
-const builderReclaimer = new FinalizationRegistry<BuilderHandle>(function reclaimBuilder(handle) {
-	const closed = Result.try(function closeBuilder() {
-		native.instanceBuilderClose(handle)
-	})
-	if (Result.isFailure(closed)) {
-		return
-	}
-})
-
-function wrapOwned<Rels extends SchemaRelations>(nativeHandle: OwnedHandle, theory: Schema<Rels>): OwnedInstance<Rels> {
-	const owner = Object.freeze({})
-	const rec = { handle: nativeHandle, theory, spent: false, owner }
-	const tables = tablesFromTheory(theory)
-	function assertLive(): void {
-		if (rec.spent) {
-			throw new ErrSpentHandle({
-				handle: "ownedInstance",
-				state: "disposed",
-				message: "bumbledb owned instance has been disposed"
-			})
+function getOn<S extends AnySchema, R extends Rel<S>>(
+	state: SnapshotState<S>,
+	relation: R,
+	key: Key<R>,
+	work: ExecutionPolicy
+): Effect.Effect<Option.Option<Fact<R>>, DbError> {
+	return Effect.gen(function* () {
+		if (state.theory.relations[relation.name] !== relation) {
+			return yield* Effect.fail(refusal("QueryReader.get", "InvalidArgument"))
 		}
-	}
-	const methods = catalogMethods(theory, tables, owner, assertLive, {
-		scan(relationId) {
-			return native.ownedScan(nativeHandle, relationId)
-		},
-		count(relationId) {
-			return native.ownedCount(nativeHandle, relationId)
-		},
-		contains(relationId, values) {
-			return native.ownedContains(nativeHandle, relationId, values)
-		},
-		get(relationId, statementId, keyValues) {
-			return native.ownedGet(nativeHandle, relationId, statementId, keyValues)
-		},
-		prepare(query) {
-			return native.ownedPrepare(nativeHandle, query)
-		},
-		execute(prepared, params) {
-			return native.ownedExecute(prepared, nativeHandle, params)
+		const tables = schemaTables(state.theory)
+		const relationId = tables.relationIds.get(relation.name)
+		const primary = tables.primaryKeys.get(relation.name)
+		if (relationId === undefined || primary === undefined) {
+			return yield* Effect.fail(refusal("QueryReader.get", "InvalidArgument"))
 		}
-	})
-	const instance: OwnedInstance<Rels> = Object.freeze({
-		...methods,
-		[Symbol.dispose](): void {
-			if (rec.spent) {
-				return
-			}
-			try {
-				native.ownedInstanceClose(nativeHandle)
-			} catch (caught) {
-				const error = errorFromThrow(caught)
-				if (LEASED_FOR_PUBLISH.test(error.message)) {
-					throw new ErrSpentHandle({
-						handle: "ownedInstance",
-						state: "leasedForPublish",
-						message: "bumbledb owned instance is leased for publish",
-						cause: caught
-					})
-				}
-				throw new NativeOperationError({ operation: "close bumbledb owned instance", cause: caught })
-			}
-			rec.spent = true
-			ownedReclaimer.unregister(instance)
-		}
-	})
-	ownedRecords.set(instance, rec)
-	ownedReclaimer.register(instance, nativeHandle, instance)
-	return instance
-}
-
-function wrapBuilder<Rels extends SchemaRelations>(
-	nativeHandle: BuilderHandle,
-	theory: Schema<Rels>
-): InstanceBuilder<Rels> {
-	const rec = { handle: nativeHandle, theory, spent: false }
-	const tables = tablesFromTheory(theory)
-	function assertLive(): void {
-		if (rec.spent) {
-			throw new ErrSpentHandle({
-				handle: "instanceBuilder",
-				state: "spent",
-				message: "bumbledb instance builder has been spent"
-			})
-		}
-	}
-	const overlay = overlayMethods(theory, tables, assertLive, {
-		contains(relationId, row) {
-			return bridged("bumbledb builder contains", function readContains() {
-				return native.instanceBuilderContains(nativeHandle, relationId, row)
-			})
-		},
-		get(relationId, statementId, key) {
-			return bridged("bumbledb builder get", function readGet() {
-				return native.instanceBuilderGet(nativeHandle, relationId, statementId, key)
-			})
-		}
-	})
-	const builder: InstanceBuilder<Rels> = Object.freeze({
-		load<R extends MemberRelation<Rels>>(relation: R, facts: CollectionWrite<R>): MutationReport {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			return mutateCollection(relation, facts, function applyCells(rows, cells) {
-				return bridged("bumbledb builder load", function loadCells() {
-					return native.instanceBuilderLoad(nativeHandle, entry.id, rows, cells)
-				})
-			})
-		},
-		delete<R extends MemberRelation<Rels>>(relation: R, facts: Iterable<Fact<R>>): MutationReport {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			const flat = rowsOf(relation, facts)
-			const report = bridged("bumbledb builder delete", function remove() {
-				return native.instanceBuilderDelete(nativeHandle, entry.id, flat.rows, flat.cells)
-			})
-			return Object.freeze({ submitted: report.submitted, changed: report.changed })
-		},
-		reserve<R extends MemberRelation<Rels>>(relation: R, field: FreshKeys<R> & string, count: bigint): FreshRange {
-			assertLive()
-			const entry = ordinaryEntry(tables, theory, relation)
-			const declared = relation.data.fields.find(function byName(candidate) {
-				return candidate.name === field
-			})
-			if (declared === undefined || !isFreshField(declared.field)) {
-				throw new AuthoringError({ message: `relation ${relation.name}: field ${field} is not a fresh cell` })
-			}
-			const fieldId = entry.fieldIds.get(field)
-			if (fieldId === undefined) {
-				throw new SdkInvariantError({
-					message: `bumbledb manifest drift: relation ${relation.name} has no field id for ${field}`
-				})
-			}
-			const range = bridged("bumbledb builder reserve", function mint() {
-				return native.instanceBuilderReserve(nativeHandle, entry.id, fieldId, count)
-			})
-			return freshRangeOf(range)
-		},
-		contains: overlay.contains,
-		get: overlay.get,
-		async admit(): Promise<Admission<Rels, OwnedInstance<Rels>>> {
-			if (rec.spent) {
-				throw new ErrSpentHandle({
-					handle: "instanceBuilder",
-					state: "spent",
-					message: "bumbledb instance builder has been spent"
-				})
-			}
-			rec.spent = true
-			builderReclaimer.unregister(builder)
-			let outcome: AdmitResult
-			try {
-				outcome = await native.instanceBuilderAdmit(nativeHandle)
-			} catch (caught) {
-				throw new NativeOperationError({ operation: "admit bumbledb instance", cause: caught })
-			}
-			if (outcome.tag === "rejected") {
-				return Object.freeze({
-					tag: "rejected" as const,
-					violations: Object.freeze(
-						outcome.violations.map(function mapWire(wire) {
-							return mapViolationWithoutStore<Rels>(theory, wire)
-						})
-					)
-				})
-			}
-			return Object.freeze({
-				tag: "accepted" as const,
-				value: wrapOwned(outcome.value, theory)
-			})
-		},
-		[Symbol.dispose](): void {
-			if (rec.spent) {
-				return
-			}
-			rec.spent = true
-			builderReclaimer.unregister(builder)
-			bridged("close bumbledb instance builder", function closeBuilder() {
-				native.instanceBuilderClose(nativeHandle)
-			})
-		}
-	})
-	builderRecords.set(builder, rec)
-	builderReclaimer.register(builder, nativeHandle, builder)
-	return builder
-}
-
-const InstanceBuilder = Object.freeze({
-	create<Rels extends SchemaRelations>(theory: Schema<Rels>): InstanceBuilder<Rels> {
-		const spec = lower(theory)
-		const handle = bridged("create bumbledb instance builder", function make() {
-			return native.instanceBuilderNew(spec)
+		const cells = yield* Effect.try({
+			try: () => keyCellsOf(relation.data, primary.projection, key as Readonly<Record<string, unknown>>),
+			catch: (cause) => (cause instanceof DbError ? cause : refusal("QueryReader.get", "InvalidArgument"))
 		})
-		return wrapBuilder(handle, theory)
+		const row = yield* nativeOperationWith(
+			"QueryReader.get",
+			(callback) =>
+				dbNative.runtimeSnapshotGet(
+					state.handle,
+					policyWire(work, "QueryReader.get"),
+					relationId,
+					primary.statementId,
+					cells,
+					callback
+				),
+			dbNative.runtimeRowTake,
+			(value) => value
+		)
+		if (row === null) {
+			return Option.none<Fact<R>>()
+		}
+		return Option.some(factOfCells(relation, row as readonly CellValue[]))
+	})
+}
+
+function makeSession<S extends AnySchema>(state: SnapshotState<S>, handle: SessionHandle): ExecutionSession<S> {
+	const session: ExecutionSession<S> = {
+		execute(query, params, work) {
+			return executeOn(state, handle, query, params, work)
+		},
+		close() {
+			return drainClose("ExecutionSession.close", (callback) => dbNative.runtimeSessionClose(handle, callback))
+		}
 	}
-})
+	Object.freeze(session)
+	sessionHandles.set(session, handle)
+	return session
+}
+
+function makeSnapshot<S extends AnySchema>(theory: S, handle: SnapshotHandle, witness: CoreWitness): Snapshot<S> {
+	const state: SnapshotState<S> = { theory, handle }
+	const snapshot: Snapshot<S> = {
+		witness,
+		get(relation, key, work) {
+			return getOn(state, relation, key, work)
+		},
+		execute(query, params, work) {
+			return executeOn(state, undefined, query, params, work)
+		},
+		session(work) {
+			return Effect.acquireRelease(
+				nativeOperationWith(
+					"Snapshot.session",
+					(callback) => dbNative.runtimeSnapshotSession(handle, policyWire(work, "Snapshot.session"), callback),
+					dbNative.runtimeSessionTake,
+					(value) => makeSession(state, value)
+				),
+				(session) =>
+					Effect.suspend(() =>
+						releaseOwner("ExecutionSession.close", (callback) =>
+							dbNative.runtimeSessionClose(sessionHandles.get(session) ?? missingSession(), callback)
+						)
+					),
+				{ interruptible: true }
+			)
+		},
+		close() {
+			return drainClose("Snapshot.close", (callback) => dbNative.runtimeSnapshotClose(handle, callback))
+		}
+	}
+	Object.freeze(snapshot)
+	snapshotHandles.set(snapshot, handle)
+	return snapshot
+}
+
+const sessionHandles = new WeakMap<object, SessionHandle>()
+
+function missingSession(): never {
+	throw new DbError({ operation: "ExecutionSession.close", reason: { _tag: "Internal" } })
+}
+
+interface DbState {
+	readonly theory: AnySchema
+	readonly db: DbHandle
+	readonly directory: DirectoryHandle
+	readonly schemaId: SchemaId
+}
+
+function makeDb<S extends AnySchema>(theory: S, state: DbState): Db<S> {
+	const value: Db<S> = {
+		schemaId: state.schemaId,
+		snapshot(work) {
+			return Effect.acquireRelease(
+				nativeOperationWith(
+					"Db.snapshot",
+					(callback) => dbNative.runtimeDbSnapshot(state.db, policyWire(work, "Db.snapshot"), callback),
+					dbNative.runtimeSnapshotTake,
+					(wire) => makeSnapshot(theory, wire.snapshot, witnessOf(wire.witness))
+				),
+				(snapshot) =>
+					Effect.suspend(() =>
+						releaseOwner("Snapshot.close", (callback) =>
+							dbNative.runtimeSnapshotClose(snapshotHandles.get(snapshot) ?? missingSnapshot(), callback)
+						)
+					),
+				{ interruptible: true }
+			)
+		},
+		apply(changes, options) {
+			return Effect.gen(function* () {
+				const internal = internalChanges(changes)
+				if (internal === undefined) {
+					// A foreign object supplied dynamically refuses before
+					// any native dispatch.
+					return yield* Effect.fail(refusal("Db.apply", "InvalidArgument"))
+				}
+				if (internal.schemaId !== state.schemaId) {
+					return yield* Effect.fail(refusal("Db.apply", "Incompatible"))
+				}
+				const expected: ExpectedWire =
+					options.expected.kind === "any"
+						? { kind: "any" }
+						: { kind: "exact", store: options.expected.at.store, generation: options.expected.at.generation }
+				return yield* nativeOperationWith(
+					"Db.apply",
+					(callback) =>
+						dbNative.runtimeDbApply(state.db, policyWire(options, "Db.apply"), internal.handle, expected, callback),
+					dbNative.runtimeApplyTake,
+					outcomeOf
+				)
+			})
+		},
+		inspect(work) {
+			return nativeOperationWith(
+				"Db.inspect",
+				(callback) => dbNative.runtimeDbInspect(state.db, policyWire(work, "Db.inspect"), callback),
+				dbNative.runtimeDbInspectTake,
+				(wire: DbInspectionWire): DbInspection =>
+					Object.freeze({
+						schemaId: state.schemaId,
+						generation: wire.generation,
+						mapBytes: wire.mapBytes,
+						populatedBytes: wire.populatedBytes,
+						diskBytes: wire.diskBytes,
+						residentEstimateBytes: wire.residentEstimateBytes,
+						retainedOperations: wire.retainedOperations
+					})
+			)
+		},
+		close() {
+			// The one close authority: database child first, then the
+			// directory owner releases its kernel lock LAST (C09). Both
+			// joins are idempotent natively.
+			return drainClose("Db.close", (callback) => dbNative.runtimeManagedDbClose(state.db, callback)).pipe(
+				Effect.flatMap((report) =>
+					drainClose("Db.directoryClose", (callback) => runtimeNative.runtimeDirectoryClose(state.directory, false, callback)).pipe(
+						Effect.map((directoryReport) => (report.kind === "closed" ? directoryReport : report))
+					)
+				)
+			)
+		}
+	}
+	Object.freeze(value)
+	return value
+}
+
+const snapshotHandles = new WeakMap<object, SnapshotHandle>()
+
+function missingSnapshot(): never {
+	throw new DbError({ operation: "Snapshot.close", reason: { _tag: "Internal" } })
+}
+
+/** The managed child name under the database directory owner. */
+const CHILD = "store"
+
+function openDatabase<S extends AnySchema>(
+	operation: "Db.create" | "Db.open",
+	path: string,
+	schema: S,
+	work: ExecutionPolicy,
+	create: boolean
+): Effect.Effect<Db<S>, DbError, Scope.Scope> {
+	return Effect.gen(function* () {
+		const runtime = yield* runtimeHandle()
+		const compiled: CompiledSchema<S> = yield* CoreSchema.compile(schema, work)
+		const spec = lower(schema)
+		const wire = policyWire(work, operation)
+		return yield* Effect.acquireRelease(
+			Effect.gen(function* () {
+				const directory = yield* nativeOperationWith(
+					operation,
+					(callback) => runtimeNative.runtimeDirectoryAcquire(runtime, wire, path, callback),
+					runtimeNative.runtimeDirectoryTake,
+					(value) => value
+				)
+				const outcome = yield* nativeOperationWith(
+					operation,
+					(callback) => runtimeNative.runtimeDirectoryDbOpen(directory, wire, CHILD, spec, create, callback),
+					runtimeNative.runtimeDbTake,
+					(value) => value
+				).pipe(
+					Effect.catch((error) =>
+						// The directory owner never leaks past a failed child
+						// open: release the kernel lock, then fail.
+						drainClose(operation, (callback) => runtimeNative.runtimeDirectoryClose(directory, false, callback)).pipe(
+							Effect.andThen(Effect.fail(error))
+						)
+					)
+				)
+				if (outcome.tag !== "accepted") {
+					yield* drainClose(operation, (callback) => runtimeNative.runtimeDirectoryClose(directory, false, callback))
+					// Schema rejection/refusal is an operational open failure
+					// here (a store admission refusal), reported typed.
+					return yield* Effect.fail(refusal(operation, "Incompatible"))
+				}
+				const state: DbState = { theory: schema, db: outcome.db, directory, schemaId: compiled.schemaId }
+				const db = makeDb(schema, state)
+				dbStates.set(db, state)
+				return db
+			}),
+			(db) =>
+				Effect.suspend(() => {
+					const state = dbStates.get(db)
+					if (state === undefined) {
+						return Effect.void
+					}
+					return releaseOwner("Db.close", (callback) => dbNative.runtimeManagedDbClose(state.db, callback)).pipe(
+						Effect.ensuring(
+							releaseOwner("Db.directoryClose", (callback) =>
+								runtimeNative.runtimeDirectoryClose(state.directory, false, callback)
+							)
+						)
+					)
+				}),
+			{ interruptible: true }
+		)
+	})
+}
+
+const dbStates = new WeakMap<object, DbState>()
 
 /**
- * The store lifecycle — `Db.create(path, schema)` / `Db.open(path, schema)`.
- * Create refuses an already-initialized directory; open verifies format
- * version and the schema fingerprint. A second live handle on the same
- * path is the engine's `EnvironmentLocked`. There is no close anywhere:
- * the process owns the environment until GC/exit (durability is the
- * engine's per-commit fsync). Resume = reopen in a fresh process, or
- * hold the `Db` this process opened.
+ * `Db.create` is the explicit constructor and refuses existing authority;
+ * `Db.open` of a missing or unreadable database never creates an empty
+ * replacement (chapter 30). Both compile the schema through the same
+ * implementation as `Schema.compile` — prior compilation is optional.
  */
 const Db = Object.freeze({
-	async create<Rels extends SchemaRelations>(
-		storePath: string,
-		theory: Schema<Rels>
-	): Promise<Admission<Rels, Db<Rels>>> {
-		return createStore(storePath, theory)
+	create<S extends AnySchema>(path: string, schema: S, work: ExecutionPolicy) {
+		return openDatabase("Db.create", path, schema, work, true)
 	},
-
-	async open<Rels extends SchemaRelations>(storePath: string, theory: Schema<Rels>): Promise<Db<Rels>> {
-		return openStore(storePath, theory)
-	},
-	async fromInstance<Rels extends SchemaRelations>(
-		storePath: string,
-		instance: OwnedInstance<Rels>
-	): Promise<Db<Rels>> {
-		const rec = ownedRecords.get(instance)
-		if (rec === undefined) {
-			throw new ErrSpentHandle({
-				handle: "ownedInstance",
-				state: "foreign",
-				message: "bumbledb fromInstance target is not an owned instance of this SDK"
-			})
-		}
-		if (rec.spent) {
-			throw new ErrSpentHandle({
-				handle: "ownedInstance",
-				state: "disposed",
-				message: "bumbledb fromInstance target has been disposed"
-			})
-		}
-		const canonical = path.resolve(storePath)
-		const dbHandle = await bridgedAsync(`publish bumbledb instance at ${canonical}`, function publish() {
-			return native.dbFromInstance(canonical, rec.handle)
-		})
-		return openFromHandle(dbHandle, rec.theory as Schema<Rels>)
+	open<S extends AnySchema>(path: string, schema: S, work: ExecutionPolicy) {
+		return openDatabase("Db.open", path, schema, work, false)
 	}
 })
 
+/**
+ * Private log-integration seam (C10): wraps a PUBLISHED core snapshot
+ * handle — minted by the internal log machine's native open/snapshot verbs
+ * — in the exact core `QueryReader` plus the scoped session acquisition
+ * (`PublishedSnapshot extends QueryReader` in chapter 35; the log adds
+ * identity/stamps/freshness AROUND this capability, never a second reader).
+ * The argument is the log package's branded handle for the same native
+ * registry entry, so the one cast below is a cross-package respelling of
+ * one native capability — the native side re-judges kind/generation/owner
+ * on every verb, so a forged object refuses there, typed.
+ */
+function internalPublishedReader<S extends AnySchema>(
+	core: object,
+	theory: S
+): {
+	readonly get: QueryReader<S>["get"]
+	readonly execute: QueryReader<S>["execute"]
+	readonly session: (work: ExecutionPolicy) => Effect.Effect<ExecutionSession<S>, DbError, Scope.Scope>
+} {
+	const state: SnapshotState<S> = { theory, handle: core as SnapshotHandle }
+	return Object.freeze({
+		get<R extends Rel<S>>(relation: R, key: Key<R>, work: ExecutionPolicy) {
+			return getOn(state, relation, key, work)
+		},
+		execute<P extends ParamsRecord, A>(queryValue: QueryTemplate<S, P, A>, params: P, work: ExecutionPolicy) {
+			return executeOn<S, A>(state, undefined, queryValue as AnyQuery, params, work)
+		},
+		session(work: ExecutionPolicy) {
+			return Effect.acquireRelease(
+				nativeOperationWith(
+					"Snapshot.session",
+					(callback) =>
+						dbNative.runtimeSnapshotSession(state.handle, policyWire(work, "Snapshot.session"), callback),
+					dbNative.runtimeSessionTake,
+					(value) => makeSession(state, value)
+				),
+				(session) =>
+					Effect.suspend(() =>
+						releaseOwner("ExecutionSession.close", (callback) =>
+							dbNative.runtimeSessionClose(sessionHandles.get(session) ?? missingSession(), callback)
+						)
+					),
+				{ interruptible: true }
+			)
+		}
+	})
+}
+
 export type {
-	Abandon,
-	AbandonedArm,
-	Admission,
-	CapacityViolation,
-	CollectionWrite,
-	Committed,
-	ContainmentViolation,
-	DeclaredKeyFact,
-	DeclaredKeyViolation,
-	DeltaBuild,
-	FreshRange,
-	ImpliedKeyViolation,
-	MemberRelation,
-	MirrorViolation,
-	MutationReport,
-	OffendingFact,
-	OwnedInstance,
-	Prepared,
-	ReadInstance,
-	SyncResult,
-	Violation,
-	Witness,
-	WriteFromOutcome,
-	WriteOutcome,
-	WriteTx
+	ApplyExpected,
+	ApplyOptions,
+	ApplyOutcome,
+	CoreWitness,
+	DbInspection,
+	ExecutionSession,
+	QueryReader,
+	Snapshot
 }
-export {
-	abandon,
-	Db,
-	ErrAsyncCallback,
-	ErrFingerprintMismatch,
-	ErrForeignPrepared,
-	ErrForeignWitness,
-	ErrIrError,
-	ErrNewtypeMismatch,
-	ErrSchemaError,
-	ErrSpentHandle,
-	ErrUseAfterScope,
-	InstanceBuilder
-}
+export { Db, internalPublishedReader }

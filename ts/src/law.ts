@@ -9,9 +9,10 @@ import { AuthoringError } from "#errors.ts"
  *
  * The three class laws (ratified; implemented exactly):
  *
- * 1. GENERATORS — a `fresh` field is a generator and names its class by
- * its declaration coordinate (`"Account.id"`); a closed relation's
- * synthetic id is a generator named `"Kind.id"`.
+ * 1. GENERATORS — a closed relation's synthetic id is a generator named
+ * `"Kind.id"` (the vocabulary mints its own row ids). Ordinary relations
+ * have no generator: the database issues no identity (`fresh` is deleted),
+ * and identity fields are ordinary application-owned values.
  * 2. GENERATOR-LESS classes are named by their least member coordinate
  * in relation-declaration × field-declaration order (readable off the
  * relation record and each member's frozen field list at the VALUE
@@ -81,15 +82,7 @@ type MemberFieldNames<M extends SchemaRelation> = M extends AnyClosed
 		? keyof RelationFields<M> & string
 		: never
 
-type FreshFieldNames<Fields> = {
-	[F in keyof Fields & string]: Fields[F] extends { readonly fresh: true } ? F : never
-}[keyof Fields & string]
-
-type MemberGenerators<N extends string, M extends SchemaRelation> = M extends AnyClosed
-	? `${N}.id`
-	: M extends AnyRelation
-		? `${N}.${FreshFieldNames<RelationFields<M>>}`
-		: never
+type MemberGenerators<N extends string, M extends SchemaRelation> = M extends AnyClosed ? `${N}.id` : never
 
 type GeneratorsOf<Rels extends SchemaRelations> = {
 	[N in keyof Rels & string]: MemberGenerators<N, Rels[N]>
@@ -204,7 +197,7 @@ type KeyEntry = readonly [string, string]
 /**
  * Every declared `key` of a statements tuple as {@link KeyEntry} rows —
  * the declared half of the target-key roster (the implied half is read off
- * each target face's own relation value: fresh marks, closed ids). A
+ * each target face's own relation value: closed ids). A
  * statement-tuple union or any undecidable key element degrades the WHOLE
  * wall to silent before this roster is ever consulted
  * ({@link DecidableRoster}) — the skip arm here is the same judgment
@@ -329,12 +322,6 @@ type DeclaredKeyMatch<N extends string, PU extends string, Keys extends readonly
 		: DeclaredKeyMatch<N, PU, T>
 	: TargetKeyWall<N, PU>
 
-type FreshKeyMatch<PU extends string, O extends AnyRelation> = [PU] extends [FreshFieldNames<RelationFields<O>>]
-	? true extends IsMulti<PU>
-		? false
-		: true
-	: false
-
 type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = string extends F["owner"]["name"]
 	? true
 	: string extends F["projection"][number]
@@ -344,9 +331,7 @@ type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = str
 				? true
 				: TargetKeyWall<F["owner"]["name"], F["projection"][number]>
 			: F["owner"] extends AnyRelation
-				? FreshKeyMatch<F["projection"][number], F["owner"]> extends true
-					? true
-					: DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
+				? DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
 				: true
 
 type JudgeStatement<St extends Statement, Keys extends readonly KeyEntry[]> = St["data"] extends {
@@ -410,7 +395,7 @@ function memberCoords(relations: SchemaRelations): MemberCoords[] {
 		const fields = sealedFieldsOf(member).map(function fieldCoord(declared) {
 			return {
 				name: declared.name,
-				generator: closed ? declared.name === "id" : "fresh" in declared.field && declared.field.fresh === true
+				generator: closed && declared.name === "id"
 			}
 		})
 		out.push({ relation: relationName, fields })
@@ -478,7 +463,7 @@ function statementFaces(statement: Statement): readonly [FaceData, FaceData] | u
 /**
  * Computes the class map — the runtime twin of {@link ClassesOf}, the SAME
  * computation as a plain union-find: every paired face's positionwise slot
- * pairs union their coordinates; a fresh field or closed id is a generator
+ * pairs union their coordinates; a closed id is a generator
  * naming its class; a generator-less class is named by its least member in
  * relation-declaration × field-declaration order; a slot in no law is bare
  * (`undefined`). The one-generator wall throws HERE, naming the two

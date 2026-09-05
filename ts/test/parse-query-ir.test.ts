@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import type { DbHandle, QueryIr } from "#native.ts"
-import { native } from "#native.ts"
+import type { QueryIr } from "#native.ts"
+import type { SessionHandle } from "#db-native.ts"
+import { dbNative } from "#db-native.ts"
+import { policyWire } from "#runtime.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 
 function plainIr(): QueryIr {
@@ -98,10 +100,22 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 		}, /Count carries no over/)
 	})
 
-	test("dbPrepare rejects an unbranded QueryIr object literal", function unbranded() {
-		const typePin: (db: DbHandle) => void = function expectUnbranded(db) {
-			// @ts-expect-error — dbPrepare demands a branded ParsedQuery
-			native.dbPrepare(db, plainIr())
+	test("the session execute verb rejects an unbranded QueryIr object literal", function unbranded() {
+		const typePin: (session: SessionHandle) => void = function expectUnbranded(session) {
+			const wire = policyWire(
+				{
+					inputBytes: 0n,
+					workingBytes: 0n,
+					scratchBytes: 0n,
+					resultBytes: 0n,
+					rows: 0n,
+					workUnits: 1n,
+					timeout: "1 second"
+				},
+				"typePin"
+			)
+			// @ts-expect-error — the bridge demands a branded ParsedQuery
+			dbNative.runtimeSessionExecute(session, wire, plainIr(), [], () => {})
 		}
 		void typePin
 	})

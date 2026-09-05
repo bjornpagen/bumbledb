@@ -1,19 +1,12 @@
 use super::R;
-use crate::encoding::{ValueRef, encode_fact};
-use crate::image::{ColumnView, LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE, build};
+use crate::image::testsupport::TestSource;
+use crate::image::{ColumnView, LINE, PAD_MIN_STRIDE, PAD_TOLERANCE, SET_STRIDE};
+use crate::ir::Value;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::testutil::TempDir;
-use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use bumbledb_theory::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
 #[test]
 fn twelve_column_bases_are_aligned_and_stride_padded() {
-    let dir = TempDir::new("image-stride-small");
-
     let fields: Vec<FieldDescriptor> = (0..12)
         .map(|i| FieldDescriptor {
             name: format!("f{i}").into(),
@@ -24,7 +17,6 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
             } else {
                 ValueType::I64
             },
-            generation: Generation::None,
         })
         .collect();
     let schema = SchemaDescriptor {
@@ -37,28 +29,19 @@ fn twelve_column_bases_are_aligned_and_stride_padded() {
     }
     .validate()
     .expect("valid fixture");
-    let env = Environment::create(dir.path(), &schema).expect("create");
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for row in 0..100i64 {
-        let mut values = Vec::new();
-        for i in 0..12 {
-            values.push(match i % 3 {
-                0 => ValueRef::Bool(row % 2 == 0),
-                1 => ValueRef::U64(row.cast_unsigned() * 12 + i),
-                _ => ValueRef::I64(row * 12 + i64::try_from(i).expect("small")),
-            });
-        }
-        let mut bytes = Vec::new();
-        encode_fact(&values, schema.relation(R).layout(), &mut bytes);
-        delta.insert(&view, R, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let rows: Vec<Vec<Value>> = (0..100i64)
+        .map(|row| {
+            (0..12)
+                .map(|i| match i % 3 {
+                    0 => Value::Bool(row % 2 == 0),
+                    1 => Value::U64(row.cast_unsigned() * 12 + i),
+                    _ => Value::I64(row * 12 + i64::try_from(i).expect("small")),
+                })
+                .collect()
+        })
+        .collect();
+    let source = TestSource::new(&schema, &[(R, rows)]);
+    let (_cache, image) = source.image_with_cache(R);
     let mut word_addrs = Vec::new();
     let mut byte_addrs = Vec::new();
     for i in 0..12 {
@@ -92,7 +75,6 @@ fn big_column_strides_avoid_the_tracker_band() {
         .map(|i| FieldDescriptor {
             name: format!("c{i}").into(),
             value_type: ValueType::U64,
-            generation: Generation::None,
         })
         .collect();
     let schema = SchemaDescriptor {
@@ -105,25 +87,18 @@ fn big_column_strides_avoid_the_tracker_band() {
     }
     .validate()
     .expect("valid fixture");
-    let dir = TempDir::new("image-stride");
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for row in 0..16_384u64 {
-        let values = [
-            ValueRef::U64(row),
-            ValueRef::U64(row ^ 1),
-            ValueRef::U64(row ^ 2),
-            ValueRef::U64(row ^ 3),
-        ];
-        let mut bytes = Vec::new();
-        encode_fact(&values, schema.relation(R).layout(), &mut bytes);
-        delta.insert(&view, R, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let rows: Vec<Vec<Value>> = (0..16_384u64)
+        .map(|row| {
+            vec![
+                Value::U64(row),
+                Value::U64(row ^ 1),
+                Value::U64(row ^ 2),
+                Value::U64(row ^ 3),
+            ]
+        })
+        .collect();
+    let source = TestSource::new(&schema, &[(R, rows)]);
+    let (_cache, image) = source.image_with_cache(R);
     let addrs: Vec<usize> = (0..4)
         .map(|i| match image.column(i) {
             ColumnView::Words(w) => w.as_ptr().addr(),

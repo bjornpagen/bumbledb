@@ -48,16 +48,19 @@ quickstart_fence!(
         closed relation Status as StatusId = { Open, Frozen, Closed };
 
         relation Holder {
-            id: u64 as HolderId, fresh,
+            id: u64 as HolderId,
             name: str,
             region: u64 as RegionId,
         }
         relation Account {
-            id: u64 as AccountId, fresh,
+            id: u64 as AccountId,
             holder: u64 as HolderId,
             status: u64 as StatusId,
             opened_at: i64,
         }
+
+        Holder(id)  -> Holder;
+        Account(id) -> Account;
 
         Account(holder) <= Holder(id);
         Holder(region)  <= Region(id);
@@ -67,10 +70,9 @@ quickstart_fence!(
         let db = bumbledb::Db::create(path, Ledger)?.expect("accepted");
 
         db.write(|tx| {
-            let ids = tx.reserve::<HolderId>(1)?;
-            let holder = ids.start().expect("nonempty");
+            let holder = HolderId(1);
             tx.insert([&Holder { id: holder, name: "alice", region: Region::Eu.id() }])?;
-            let account = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            let account = AccountId(1);
             tx.insert([&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 }])?;
             Ok(())
         })?.unwrap();
@@ -95,8 +97,8 @@ macro_rules! payload_fence {
             bumbledb::schema! {
                 pub Payload;
 
-                relation Attempt     { id: u64 as AttemptId, fresh, kind: u64 as KindId }
-                relation Certificate { id: u64 as CertificateId, fresh, kind: u64 as KindId }
+                relation Attempt     { id: u64 as AttemptId, kind: u64 as KindId }
+                relation Certificate { id: u64 as CertificateId, kind: u64 as KindId }
 
                 $($t)*
             }

@@ -360,15 +360,18 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
     let probes = [5u64, 25, 45, 100];
 
     let carrier = Interior {
-        rules: vec![ProjectionRule {
-            finds: vec![VarId(0), VarId(1)],
-            atoms: vec![Atom {
-                source: AtomSource::Edb(CLAIM),
-                bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
-            }],
-            negated: vec![],
-            conditions: vec![],
-        }],
+        rules: vec![
+            ProjectionRule {
+                finds: vec![VarId(0), VarId(1)],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(CLAIM),
+                    bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }
+            .to_rule(),
+        ],
     };
     let membership = Query {
         interiors: vec![carrier.clone()],

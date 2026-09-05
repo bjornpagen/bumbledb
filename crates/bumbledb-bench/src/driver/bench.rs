@@ -109,16 +109,12 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    let lane = if args.ephemeral {
-        crate::duralane::DurabilityLane::Nosync
-    } else {
-        crate::duralane::DurabilityLane::Durable
-    };
+    // One durability point remains (ENG-008): the stamped corpus opens
+    // durable, always. The retired `--nosync`/`--ephemeral` flags refuse in
+    // the parser.
+    let lane = crate::duralane::DurabilityLane::Durable;
 
     let mode = lane.store_mode();
-    if args.ephemeral {
-        eprintln!("bench: opening the stamped corpus under NosyncLane");
-    }
     let db = mode.open(&paths.db, Ledger)?;
     let cal_db = mode.open(&paths.cal_db, crate::calendar::Scheduling)?;
     let conn =
@@ -203,12 +199,11 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         &mut flames,
     )?;
 
-    let (cache_images, cache_bytes) = cache_residency(&db);
+    // The image cache is gone with the transitional store (owned snapshots
+    // replaced images), so the store block is the two file sizes.
     let store = report::StoreNumbers {
         db_bytes: db.disk_size().map_err(|e| format!("{e:?}"))?,
         sqlite_bytes: std::fs::metadata(&paths.oracle).map_or(0, |m| m.len()),
-        cache_images,
-        cache_bytes,
     };
 
     let run_report = report::RunReport {
@@ -242,14 +237,4 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
 
     let gates_ok = run_report.all_win() && (!run_report.budget_gates || run_report.budget_ok());
     Ok(i32::from(!gates_ok))
-}
-
-#[cfg(feature = "obs")]
-fn cache_residency<S>(db: &bumbledb::Db<S>) -> (u64, u64) {
-    db.cache_resident()
-}
-
-#[cfg(not(feature = "obs"))]
-fn cache_residency<S>(_: &bumbledb::Db<S>) -> (u64, u64) {
-    (0, 0)
 }

@@ -38,6 +38,17 @@ fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
             digest.update(&interval.start().to_le_bytes());
             digest.update(&interval.end().to_le_bytes());
         }
+        // New canonical kinds extend the tag roster; existing tags never
+        // renumber, so old corpus digests stay stable.
+        Value::Id128(id) => {
+            digest.update(&[9]);
+            digest.update(id.as_bytes());
+        }
+        Value::IntervalF64(interval) => {
+            digest.update(&[10]);
+            digest.update(&interval.start().to_bits().to_be_bytes());
+            digest.update(&interval.end().to_bits().to_be_bytes());
+        }
     }
 }
 

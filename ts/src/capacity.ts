@@ -102,13 +102,14 @@ type NegativeBan<N extends bigint> = bigint extends N
 		? BannedWindow<"capacity bounds are u64 — a negative bound is out of domain">
 		: unknown
 
-type FloorBan<N extends bigint> = bigint extends N
-	? unknown
-	: IsNegative<N> extends true
-		? BannedWindow<"capacity bounds are u64 — a negative bound is out of domain">
-		: N extends 0n
-			? BannedWindow<"`{0..*}` is vacuous — it provably says nothing; delete the statement">
-			: unknown
+/**
+ * The spelling-ban tables are DELETED (C01, chapter 34): `{n..n}`, `{0..0}`,
+ * unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
+ * equivalent spellings that lower to the one canonical `(lo, hi)` law at
+ * the mint. Genuinely different semantics still refuse: negative bounds
+ * (out of the u64 domain) and inverted literal bounds.
+ */
+type FloorBan<N extends bigint> = NegativeBan<N>
 
 type RangeBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
 	? unknown
@@ -118,22 +119,7 @@ type RangeBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
 			? BannedWindow<"capacity bounds are u64 — a negative bound is out of domain">
 			: IsNegative<Hi> extends true
 				? BannedWindow<"capacity bounds are u64 — a negative bound is out of domain">
-				: Lo extends Hi
-					? Hi extends Lo
-						? Lo extends 0n
-							? BannedWindow<"`{0..0}` — the point window is written `{0}`: use within(0n)">
-							: BannedWindow<"`{n..n}` — an exact measure is written `{n}`: use within(n)">
-						: unknown
-					: unknown
-
-type UnitWindowBan<W extends CapacityWindow> = W["window"] extends {
-	readonly kind: "floor"
-	readonly lo: { readonly kind: "lit"; readonly value: 1n }
-}
-	? BannedWindow<"`{1..*}` on the unit instance says only what the bare containment says — write contained(source, target)">
-	: W["window"] extends { readonly kind: "floor" }
-		? BannedWindow<"`{N..*}` on the unit instance — a bare count floor is refused; weigh the source (`<=[w]{N..*}` stays legal) or drop the bound">
-		: unknown
+				: unknown
 
 /**
  * The C18 dimension gate's ban row, unit instance (the engine's
@@ -270,11 +256,14 @@ function within<const Lo extends bigint, const R extends FieldRef | DurationRef>
 function within<const Lo extends bigint, const Hi extends bigint>(
 	lo: Lo,
 	hi: Hi & RangeBan<Lo, Hi>
-): CapacityWindow<{
-	readonly kind: "range"
-	readonly lo: { readonly kind: "lit"; readonly value: Lo }
-	readonly hi: { readonly kind: "lit"; readonly value: Hi }
-}>
+): CapacityWindow<
+	| {
+			readonly kind: "range"
+			readonly lo: { readonly kind: "lit"; readonly value: Lo }
+			readonly hi: { readonly kind: "lit"; readonly value: Hi }
+	  }
+	| { readonly kind: "exact"; readonly n: { readonly kind: "lit"; readonly value: Lo } }
+>
 function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): CapacityWindow {
 	if (lo < 0n) {
 		throw new AuthoringError({
@@ -285,11 +274,9 @@ function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): Capacit
 		return admitWindow({ kind: "exact", n: lit(lo) })
 	}
 	if (hi === "*") {
-		if (lo === 0n) {
-			throw new AuthoringError({
-				message: "the `{0..*}` window is vacuous — it provably says nothing; delete the statement"
-			})
-		}
+		// `{0..*}` (vacuous) and `{N..*}` floors are ACCEPTED canonical laws
+		// (C01): normalization preserves authored statement attribution
+		// instead of policing the spelling.
 		return admitWindow({ kind: "floor", lo: lit(lo) })
 	}
 	if (typeof hi === "bigint") {
@@ -298,16 +285,12 @@ function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): Capacit
 		}
 		if (hi < lo) {
 			throw new AuthoringError({
-				message: `the window \`{${lo}..${hi}}\` is inverted — no measure satisfies it; bounds are \`{lo..hi}\` with lo < hi (an exact measure is \`{n}\`: within(n))`
+				message: `the window \`{${lo}..${hi}}\` is inverted — no measure satisfies it; bounds are \`{lo..hi}\` with lo <= hi`
 			})
 		}
 		if (lo === hi) {
-			if (lo === 0n) {
-				throw new AuthoringError({ message: "`{0..0}` — the point window is written `{0}`: use within(0n)" })
-			}
-			throw new AuthoringError({
-				message: `\`{${lo}..${lo}}\` — an exact measure is written \`{${lo}}\`: use within(${lo}n)`
-			})
+			// `{n..n}` and `{0..0}` lower to the one canonical exact law.
+			return admitWindow({ kind: "exact", n: lit(lo) })
 		}
 		return admitWindow({ kind: "range", lo: lit(lo), hi: lit(hi) })
 	}
@@ -363,7 +346,6 @@ export type {
 	DurationRef,
 	FieldRef,
 	UnitDimensionBan,
-	UnitWindowBan,
 	WeightOnSource
 }
 export { duration, isCapacityWeight, isCapacityWindow, ref, unitWeight, weigh, within }

@@ -1,4 +1,5 @@
 pub mod query;
+pub mod successor;
 mod tuple;
 
 #[cfg(test)]
@@ -762,6 +763,10 @@ fn is_ray(value: &Value) -> bool {
     match value {
         Value::IntervalU64(interval) => interval.is_ray(),
         Value::IntervalI64(interval) => interval.is_ray(),
+        Value::IntervalF64(_) => panic!(
+            "float-duration capacity weights are refused at schema \
+             validation (chapter 11 §5); the model must never fold one"
+        ),
         other => panic!("a Duration weight/bound must be interval-encoded, got {other:?}"),
     }
 }

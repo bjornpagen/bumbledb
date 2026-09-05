@@ -1,10 +1,10 @@
-//! This lane sweeps the touched-parent count over ephemeral
+//! This lane sweeps the touched-parent count over scratch (durable — the
+//! no-sync surface is deleted, ENG-008) windowed twins;
 //! probe-order-invariant; the witness choice is explicitly
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use bumbledb::digest::Digest;
 use bumbledb::obs;
 use bumbledb::{Admission, Db, Violation};
 
@@ -53,15 +53,32 @@ pub fn child_fact_bytes(id: u64, parent: u64, flag: u64) -> [u8; 24] {
     out
 }
 
+/// The persisted local fingerprint width (`bumbledb::encoding::fingerprint`):
+/// 16 bytes, exact-checked, never an equality axiom.
+pub const MODEL_FINGERPRINT_LEN: usize = 16;
+
+/// The BLAKE3 `derive_key` context the engine's fact fingerprints use —
+/// mirrored here (the constant is private in core, exactly like the
+/// hash-probe lane's `FINGERPRINT_PROBE_CONTEXT`); [`pin_hash_model`]
+/// convicts any drift against the live engine before a single number is
+/// trusted.
+const MODEL_FINGERPRINT_DOMAIN: &str = "bumbledb v1 2026-09-04 fact fingerprint";
+
+/// The sweep's independent model of the engine's local fact fingerprint
+/// (the successor's membership order key: the old 32-byte `fact_hash`
+/// equality axiom is deleted; membership entries are ordered by
+/// `(relation, fp16, row_id)`).
 #[must_use]
-pub fn model_fact_hash(fact_bytes: &[u8]) -> [u8; 32] {
-    let mut digest = Digest::new();
-    digest.update(fact_bytes);
-    digest.finalize()
+pub fn model_fact_fingerprint(fact_bytes: &[u8]) -> [u8; MODEL_FINGERPRINT_LEN] {
+    let mut hasher = blake3::Hasher::new_derive_key(MODEL_FINGERPRINT_DOMAIN);
+    hasher.update(fact_bytes);
+    let mut out = [0u8; MODEL_FINGERPRINT_LEN];
+    hasher.finalize_xof().fill(&mut out);
+    out
 }
 
-fn hash_rank_word(hash: &[u8; 32]) -> u64 {
-    u64::from_be_bytes(hash[..8].try_into().expect("8 bytes"))
+fn hash_rank_word(fingerprint: &[u8; MODEL_FINGERPRINT_LEN]) -> u64 {
+    u64::from_be_bytes(fingerprint[..8].try_into().expect("8 bytes"))
 }
 
 fn slab(word: u64, k: u64) -> u64 {
@@ -77,8 +94,8 @@ fn grind_children(parents: &[u64], ranks: &[u64], next_id: &mut u64) -> Vec<(u64
             loop {
                 let id = *next_id;
                 *next_id += 1;
-                let hash = model_fact_hash(&child_fact_bytes(id, parent, 0));
-                if slab(hash_rank_word(&hash), k) == rank {
+                let fingerprint = model_fact_fingerprint(&child_fact_bytes(id, parent, 0));
+                if slab(hash_rank_word(&fingerprint), k) == rank {
                     return (id, parent);
                 }
             }
@@ -120,7 +137,7 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
     let hash_least = probe
         .iter()
         .copied()
-        .min_by_key(|&(id, parent)| model_fact_hash(&child_fact_bytes(id, parent, 0)))
+        .min_by_key(|&(id, parent)| model_fact_fingerprint(&child_fact_bytes(id, parent, 0)))
         .expect("nonempty probe");
     if hash_least == expected {
         return Err(
@@ -165,7 +182,8 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
         return Err(
             "hash-model pin: the surviving witness is not the model's key-least violator — \
              either the canonical fact encoding drifted from the sweep's model (bumbledb \
-             encoding/encode.rs; re-derive child_fact_bytes/model_fact_hash) or the \
+             encoding: canonical row bytes + encoding/fingerprint.rs; re-derive \
+             child_fact_bytes/model_fact_fingerprint) or the \
              source-side sort (judgment.rs::check_source) reverted to delta order; \
              resolve before trusting any sweep number"
                 .to_owned(),
@@ -211,8 +229,8 @@ fn run_cell(
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("sweep scratch: {e}"))?;
     }
-    let db = Db::create_nosync(dir, world::WindowedWorld)
-        .map_err(|e| format!("sweep nosync create: {e:?}"))?
+    let db = Db::create(dir, world::WindowedWorld)
+        .map_err(|e| format!("sweep create: {e:?}"))?
         .expect("accepted");
     load(&db, mass)?;
     pin_hash_model(&db)?;
@@ -297,8 +315,8 @@ fn run_with_floor(
     );
     let _ = writeln!(
         out,
-        "world: windowed twin, ephemeral; ambient {} parents x {} children/parent; \
-         seed {seed}; {samples} samples/cell",
+        "world: windowed twin, scratch (durable — ENG-008); ambient {} parents x {} \
+         children/parent; seed {seed}; {samples} samples/cell",
         mass.parents, mass.children_per_parent
     );
     let _ = writeln!(

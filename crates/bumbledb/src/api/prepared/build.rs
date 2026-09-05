@@ -4,10 +4,11 @@ use super::{
     ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
 };
 
+use super::source::{PinnedSource, QuerySource};
+use crate::api::db::{OwnedInstance, ReadInstance};
 use crate::error::Result;
 use crate::exec::dispatch::classify;
-use crate::image::ImageBind;
-use crate::image::LmdbSource;
+use crate::image::SourceImages;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
 use crate::ir::normalize::{NormalizedQuery, normalize_rules};
@@ -18,32 +19,43 @@ use crate::plan::fj::{
     DistinctWitness, binary2fj, factor, fold_split, gj_split, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
-use crate::storage::catalog::CatalogRead;
-use crate::storage::env::{CatalogIdentity, ReadTxn};
 use std::sync::Arc;
 
+/// Prepare against one committed snapshot lease (the C05 entry
+/// `ReadInstance::prepare` calls).
 /// # Errors
+/// Validation, statistics-read storage failure or stopped work.
 /// # Panics
 /// Only on programmer-invariant violations (`binary2fj` + `factor` +
 /// `fold_split` + `gj_split` construct valid plans by construction).
-pub(crate) fn prepare<S>(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
-    schema: Arc<Schema>,
+pub(crate) fn prepare_on<S>(
+    instance: &ReadInstance<'_, S>,
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
-    let catalog = txn.catalog();
-    let images = LmdbSource::bind(txn, cache);
-    prepare_on(txn.identity(), &catalog, &images, schema, query)
+    let source = QuerySource::store(instance.snapshot(), instance.work());
+    prepare_source(instance.schema_arc(), &source, query)
 }
 
-pub(crate) fn prepare_on<S, C: CatalogRead, I: ImageBind>(
-    identity: &CatalogIdentity,
-    catalog: &C,
-    images: &I,
-    schema: Arc<Schema>,
+/// Prepare against one admitted heap instance. The prepared query pins
+/// `PinnedSource::Heap` and rebuilds its images per execution.
+/// # Errors
+/// As [`prepare_on`].
+pub(crate) fn prepare_owned<S>(
+    instance: &OwnedInstance<S>,
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
+    let source = QuerySource::heap(instance, 0)?;
+    prepare_source(instance.schema_arc(), &source, query)
+}
+
+fn prepare_source<S>(
+    schema: &Arc<Schema>,
+    source: &QuerySource<'_>,
+    query: &Query,
+) -> Result<PreparedQuery<S>> {
+    let schema = Arc::clone(schema);
+    let cache = Arc::new(ImageCache::new(&schema));
+    let images = SourceImages::bind(source, &cache);
     let _prepare = obs::span(obs::names::PREPARE);
     let witness = {
         let _s = obs::span(obs::names::VALIDATE);
@@ -53,8 +65,7 @@ pub(crate) fn prepare_on<S, C: CatalogRead, I: ImageBind>(
     let mut interiors = Vec::with_capacity(witness.interiors().len());
     for i in 0..witness.interiors().len() {
         interiors.push(prepare_interior(
-            catalog,
-            images,
+            &images,
             &schema,
             &witness,
             i,
@@ -69,8 +80,7 @@ pub(crate) fn prepare_on<S, C: CatalogRead, I: ImageBind>(
             signatures.push(rec.signature());
             PreparedReach::Reach {
                 driver: Box::new(prepare_reach(
-                    catalog,
-                    images,
+                    &images,
                     &schema,
                     &witness,
                     rec,
@@ -83,10 +93,11 @@ pub(crate) fn prepare_on<S, C: CatalogRead, I: ImageBind>(
         }
     };
     let rendered = crate::ir::render::render(&schema, query);
+    let pinned = source.pinned();
     prepare_witnessed(
-        identity,
-        catalog,
-        images,
+        pinned,
+        &images,
+        Arc::clone(&cache),
         schema,
         &witness,
         rendered,
@@ -113,10 +124,10 @@ enum PreparedReach {
     clippy::too_many_arguments,
     reason = "the prepare pipeline reads as one protocol: normalize, ground, per-rule prepare, probes, artifacts"
 )]
-fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
-    identity: &CatalogIdentity,
-    catalog: &C,
-    images: &I,
+fn prepare_witnessed<S>(
+    pinned_source: PinnedSource,
+    images: &SourceImages<'_>,
+    cache: Arc<ImageCache>,
     schema: Arc<Schema>,
     witness: &crate::ir::validate::ValidatedQuery,
     rendered: String,
@@ -144,7 +155,6 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
         written.push(rule.written());
         first_rule_idx.get_or_insert(rule_idx);
         rules.push(prepare_rule(
-            catalog,
             images,
             &schema,
             &rule,
@@ -225,6 +235,32 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
                         .sum::<u32>()
             }
         };
+    let numeric_outputs = {
+        let first_compute = |finds: &[FindSpec]| {
+            finds.iter().find_map(|spec| match spec {
+                FindSpec::Compute(program) => Some(crate::error::FindIndex(program.find)),
+                _ => None,
+            })
+        };
+        rules
+            .iter()
+            .map(PreparedRule::finds)
+            .chain(
+                interiors
+                    .iter()
+                    .flat_map(|interior| interior.rules.iter().map(PreparedRule::finds)),
+            )
+            .chain(match &reach {
+                PreparedReach::Cq => Vec::new(),
+                PreparedReach::Reach { driver, .. } => driver
+                    .base
+                    .iter()
+                    .map(PreparedRule::finds)
+                    .chain(driver.rec.iter().map(|arm| arm.rule.finds.as_slice()))
+                    .collect(),
+            })
+            .find_map(first_compute)
+    };
     let pipeline = match reach {
         PreparedReach::Cq => seal_cq_pipeline(interiors, rules, &signature.columns),
         PreparedReach::Reach {
@@ -242,7 +278,11 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
     };
     Ok(PreparedQuery {
         schema,
-        identity: identity.clone(),
+        pinned: pinned_source,
+        cache,
+        heap_tick: 0,
+        forced_fallback: false,
+        sink_ram: crate::exec::scratch::DEFAULT_RAM_BYTES,
         pipeline,
         tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
         derived: super::reach::DerivedImages::default(),
@@ -256,15 +296,15 @@ fn prepare_witnessed<S, C: CatalogRead, I: ImageBind>(
         bindings,
         answer_scratch: Vec::new(),
         resolve_memo: ResolveMemo::new(),
-        determinant_key: Vec::new(),
+        key_scratch: Vec::new(),
+        numeric_outputs,
         rendered,
         marker: std::marker::PhantomData,
     })
 }
 
-fn prepare_interior<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
+fn prepare_interior(
+    images: &SourceImages<'_>,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
     index: usize,
@@ -289,7 +329,6 @@ fn prepare_interior<C: CatalogRead, I: ImageBind>(
         let rule = witnesses[rule_idx];
         written.push(rule.written());
         rules.push(prepare_rule(
-            catalog,
             images,
             schema,
             &rule,
@@ -303,14 +342,22 @@ fn prepare_interior<C: CatalogRead, I: ImageBind>(
     }
     let units = rules.len();
     let hint = output_hint(&rules);
+    // An interior is a full stage: projection, aggregate, or computed —
+    // the same sink selection as main (chapter 12's uniform nonrecursive
+    // composition; the projection-only wall is deleted).
     let sink = rules.first().map_or_else(
-        || crate::exec::sink::ProjectionSink::with_capacity_hint(&[], 0, 0),
+        || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
         |first| {
-            crate::exec::sink::ProjectionSink::with_capacity_hint(
-                first.finds(),
-                first.slot_count(),
-                hint,
-            )
+            let regime = if rules.len() > 1 {
+                if dnf_derived(&written) {
+                    SinkRegime::DnfUnion(first.dedup_spans())
+                } else {
+                    SinkRegime::Union
+                }
+            } else {
+                SinkRegime::SingleRule(first.distinct_witness())
+            };
+            make_sink(first.finds(), first.slot_count(), regime, hint, &[])
         },
     );
     Ok(PreparedInterior {
@@ -318,12 +365,12 @@ fn prepare_interior<C: CatalogRead, I: ImageBind>(
         sink,
         field_types: columns.iter().map(|c| *c.ty()).collect(),
         units,
+        row_scratch: Vec::new(),
     })
 }
 
-fn prepare_reach<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
+fn prepare_reach(
+    images: &SourceImages<'_>,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
     rec: &crate::ir::validate::ValidatedRec,
@@ -348,7 +395,6 @@ fn prepare_reach<C: CatalogRead, I: ImageBind>(
             continue;
         }
         base.push(prepare_rule(
-            catalog,
             images,
             schema,
             &base_w[rule_idx],
@@ -364,7 +410,6 @@ fn prepare_reach<C: CatalogRead, I: ImageBind>(
         }
         let delta = rec.arm(rule_idx).self_occ();
         rec_rules.push(prepare_rec_arm(
-            catalog,
             images,
             schema,
             &rec_w[rule_idx],
@@ -549,18 +594,15 @@ fn ground_main(
         .collect()
 }
 
-fn prepare_rule<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
+fn prepare_rule(
+    images: &SourceImages<'_>,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
-    prepare_rule_variant(
-        catalog, images, schema, rule, normalized, columns, signatures,
-    )
+    prepare_rule_variant(images, schema, rule, normalized, columns, signatures)
 }
 
 /// Prepare one rec arm: stamp the unique self-occurrence as `RecDelta` and
@@ -569,9 +611,8 @@ fn prepare_rule<C: CatalogRead, I: ImageBind>(
     clippy::too_many_arguments,
     reason = "the rec-arm pipeline's inputs are clearer unpacked"
 )]
-fn prepare_rec_arm<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
+fn prepare_rec_arm(
+    images: &SourceImages<'_>,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
@@ -589,15 +630,7 @@ fn prepare_rec_arm<C: CatalogRead, I: ImageBind>(
             .any(|occ| matches!(occ.bind, crate::ir::normalize::OccBind::RecDelta(_))),
         "self_occ is the rec atom normalize numbered"
     );
-    let prepared = prepare_rule_variant(
-        catalog,
-        images,
-        schema,
-        rule,
-        &normalized,
-        columns,
-        signatures,
-    )?;
+    let prepared = prepare_rule_variant(images, schema, rule, &normalized, columns, signatures)?;
     let PreparedRule::FreeJoin(fj) = prepared else {
         unreachable!("an Interior-reading rec arm never classifies as a key probe")
     };
@@ -624,9 +657,8 @@ fn stamp_rec_bind(
     }
 }
 
-fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
-    catalog: &C,
-    images: &I,
+fn prepare_rule_variant(
+    images: &SourceImages<'_>,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
@@ -661,7 +693,7 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
     {
         if occurrence.bind.edb().is_none() {
             stats.push(crate::plan::selectivity::occurrence_stats_on(
-                catalog, images, schema, occurrence, 0,
+                images, schema, occurrence, 0,
             )?);
             continue;
         }
@@ -669,10 +701,9 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
             .bind
             .edb()
             .expect("EDB bind is a stored relation");
-        let rows = crate::plan::selectivity::relation_rows_on(catalog, schema, relation)?;
-        let occ_stats = crate::plan::selectivity::occurrence_stats_on(
-            catalog, images, schema, occurrence, rows,
-        )?;
+        let rows = crate::plan::selectivity::relation_rows_on(images.source(), schema, relation)?;
+        let occ_stats =
+            crate::plan::selectivity::occurrence_stats_on(images, schema, occurrence, rows)?;
         pins.push(OccurrencePin {
             occ_id: occurrence.occ_id,
             relation,
@@ -703,7 +734,14 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
             .iter()
             .filter_map(|term| match term {
                 FindTerm::Var(var) => Some(*var),
-                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => None,
+                // A computed output is not a plan-level group variable
+                // (validation's group-key law, `ir/validate/validate.rs`);
+                // its inputs reach the sink through complete bindings, and
+                // the computed sink declines every scan-fold pushdown.
+                FindTerm::Compute(_)
+                | FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Pack { .. } => None,
             })
             .collect();
         fold_split(&mut fj, &group_key);
@@ -724,9 +762,13 @@ fn prepare_rule_variant<C: CatalogRead, I: ImageBind>(
         let _s = obs::span(obs::names::BUILD_COLTS);
         build_view_memo(&plan)
     };
+    let fallback = crate::api::prepared::fallback::FallbackRule::seal(normalized, &plan, |var| {
+        *rule.var_type(var)
+    });
     Ok(PreparedRule::FreeJoin(FreeJoinRule {
         plan,
         executor,
+        fallback,
         finds,
 
         dedup_spans: Box::default(),
@@ -877,11 +919,25 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
     rule.rule()
         .finds
         .iter()
-        .map(|term| match term {
+        .enumerate()
+        .map(|(find_idx, term)| match term {
             FindTerm::Var(var) => FindSpec::Var {
                 slot: layout.slot_of(*var),
                 width: layout.width_of(*var),
             },
+            FindTerm::Compute(expr) => {
+                let inputs = expr
+                    .variables()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                    .collect();
+                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
+                    find: find_idx,
+                    expression: expr.clone(),
+                    inputs,
+                }))
+            }
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
             FindTerm::Pack { over } => FindSpec::Pack {
                 slot: layout.slot_of(*over),
@@ -942,7 +998,7 @@ fn key_probe_find_table(
                     .expect("find slots come from the key-probe plan's layout");
                 Some((var.field, *column.ty()))
             }
-            FindSpec::Agg(_) | FindSpec::Pack { .. } => None,
+            FindSpec::Compute(_) | FindSpec::Agg(_) | FindSpec::Pack { .. } => None,
         })
         .collect::<Option<Vec<_>>>()
 }
@@ -963,6 +1019,9 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
                 Some(radix) if radix > 0 => radixes.push(radix),
                 _ => return Vec::new(),
             },
+            // A computed output joins the group key through an appended
+            // slot the radix table cannot cover: stay hashed.
+            FindTerm::Compute(_) => return Vec::new(),
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
         }
     }
@@ -981,6 +1040,32 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
 }
 
 fn make_sink(
+    finds: &[FindSpec],
+    slot_count: usize,
+    regime: SinkRegime<'_>,
+    hint: usize,
+    dense_groups: &[u16],
+) -> EitherSink {
+    if finds
+        .iter()
+        .any(|spec| matches!(spec, FindSpec::Compute(_)))
+    {
+        // Computed outputs run through the adapter: lower every Compute
+        // to an appended output slot, build the inner sink over the
+        // widened layout, and let the adapter evaluate programs per
+        // surviving binding (after all input predicates — chapter 12's
+        // stage error boundary). Dense-group radixes never cover the
+        // appended slots, so the inner sink stays hashed.
+        let (lowered, programs, total) = crate::api::prepared::computed::lower(finds, slot_count);
+        let inner = make_plain_sink(&lowered, total, regime, hint, &[]);
+        return EitherSink::Computed(Box::new(crate::api::prepared::computed::ComputedSink::new(
+            inner, programs, slot_count, total,
+        )));
+    }
+    make_plain_sink(finds, slot_count, regime, hint, dense_groups)
+}
+
+fn make_plain_sink(
     finds: &[FindSpec],
     slot_count: usize,
     regime: SinkRegime<'_>,

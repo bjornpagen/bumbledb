@@ -1,8 +1,17 @@
-//! Kernel-held local ownership. A paused process retains its lock; only
-//! closing the owning file (including process death) releases it. Lock
-//! files are stable namespace entries, never scratch to unlink or replace.
-//! This does not provide remote fencing or make the legacy filesystem
-//! object's separate body/generation writes crash-atomic.
+//! Kernel-held local exclusion. A paused process retains its lock; only
+//! closing the owning file (including process death) releases it. Lock files
+//! are stable namespace entries, never scratch to unlink or replace. No
+//! wall-clock TTL, token predecessor chain, renewal or check-then-rename
+//! proof exists; time does not mint a competing owner.
+//!
+//! Two distinct scopes share this one kernel mechanism (C07):
+//!
+//! - **Directory ownership** ([`acquire_directory`]): one owning process per
+//!   local materialization, acquired before reading recovery scratch or
+//!   deleting anything, held through native close, released last.
+//! - **Object mutation** ([`acquire_mutation`]): the whole critical section
+//!   of one filesystem-store conditional operation. It exists only inside the
+//!   filesystem adapter; it is not a tenant authority and does not fence S3.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
@@ -12,10 +21,10 @@ use std::time::{Duration, Instant};
 
 use bumbledb::work::{ByteKind, WorkContext, WorkError};
 
-use super::{LEASE_NAMESPACE, StoreKey, TEMP_NAMESPACE};
+use super::{LEASE_NAMESPACE, TEMP_NAMESPACE, key_ok};
 
-/// A bound on waiting for an emulator mutation, NOT the owner's lifetime.
-/// Directory opens are one-shot and never wait or steal ownership.
+/// A bound on waiting for a filesystem-store mutation lock, NOT an owner's
+/// lifetime. Directory opens are one-shot and never wait or steal ownership.
 const MUTATION_WAIT: Duration = Duration::from_secs(5);
 const LOCK_RETRY: Duration = Duration::from_millis(5);
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -55,8 +64,8 @@ fn checkpoint(work: Option<&WorkContext>) -> Result<(), WorkIoError> {
     Ok(())
 }
 
-/// Exclusive local mutation ownership, released by the file's destructor.
-/// No clone, caller-controlled unlock, renewal, expiry, or historical token exists.
+/// Exclusive local ownership, released by the file's destructor. No clone,
+/// caller-controlled unlock, renewal, expiry, or historical token exists.
 #[derive(Debug)]
 pub struct HeldLock {
     file: File,
@@ -110,10 +119,12 @@ fn open_lock(parent: &Path, name: &str) -> io::Result<File> {
         .read(true)
         .write(true)
         .open(&path)?;
+    // A poisoned/garbage lock body is irrelevant: the kernel lock is the
+    // authority, never parsed content. Only the file's SHAPE is checked.
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "lock is not a file",
+            "lock is not a regular file",
         ));
     }
     Ok(file)
@@ -132,10 +143,12 @@ fn try_hold(file: File) -> io::Result<HeldLock> {
 
 /// Acquire before reading recovery scratch, creating the materialization,
 /// opening LMDB, or deleting anything in it. The stable lock lives beside
-/// the directory: `parent/~lease/name/owner.lock`, not inside it. Existing
-/// filesystem case/normalization aliases therefore name the same lock too.
-/// The parent is a trusted local namespace; replacing it concurrently as
-/// the OS user is outside this advisory-lock contract.
+/// the directory: `parent/~lease/name/owner.lock`, not inside it, so
+/// renaming/replacing the materialization cannot mint a second lock inode
+/// for the same authority. Existing filesystem case/normalization aliases
+/// name the same lock too. The parent is a trusted local namespace;
+/// replacing it concurrently as the OS user is outside this advisory-lock
+/// contract.
 ///
 /// # Errors
 /// Returns `WouldBlock` immediately while another handle owns the path.
@@ -167,22 +180,23 @@ pub fn acquire_directory(directory: &Path) -> io::Result<DirectoryLock> {
     })
 }
 
-/// Hold exclusion through the entire filesystem-emulator mutation. An
-/// exhausted wait returns `WouldBlock`; it never authorizes a takeover.
+/// Hold exclusion through one entire filesystem-store conditional mutation.
+/// An exhausted wait returns `WouldBlock`; it never authorizes a takeover.
 /// No routine constructor/cleanup removes this lock or its ancestors.
 ///
 /// # Errors
 /// Invalid keys, lock contention and filesystem failures are explicit.
-pub fn acquire_mutation(root: &Path, key: &StoreKey) -> io::Result<HeldLock> {
+pub fn acquire_mutation(root: &Path, key: &str) -> io::Result<HeldLock> {
     acquire_mutation_checked(root, key, None).map_err(WorkIoError::into_io)
 }
 
-/// The same lock and legacy wait ceiling, with an operation's earlier stop.
+/// The same lock and wait ceiling, with an operation's earlier stop.
+///
 /// # Errors
-/// Refuses filesystem errors, exhausted legacy wait, cancellation or deadline.
+/// Refuses filesystem errors, exhausted wait, cancellation or deadline.
 pub fn acquire_mutation_with(
     root: &Path,
-    key: &StoreKey,
+    key: &str,
     work: &WorkContext,
 ) -> Result<HeldLock, WorkIoError> {
     acquire_mutation_checked(root, key, Some(work))
@@ -190,25 +204,35 @@ pub fn acquire_mutation_with(
 
 pub(crate) fn acquire_mutation_checked(
     root: &Path,
-    key: &StoreKey,
+    key: &str,
     work: Option<&WorkContext>,
 ) -> Result<HeldLock, WorkIoError> {
     checkpoint(work)?;
+    if !key_ok(key) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid store key").into());
+    }
     let _paths = work
         .map(|work| {
-            let root = root.as_os_str().len() as u64;
-            let key = key.as_str().len() as u64;
-            let bytes = root
+            let root_len = root.as_os_str().len() as u64;
+            let key_len = key.len() as u64;
+            let bytes = root_len
                 .checked_mul(3)
-                .and_then(|bytes| key.checked_mul(2).and_then(|key| bytes.checked_add(key)))
+                .and_then(|bytes| {
+                    key_len
+                        .checked_mul(2)
+                        .and_then(|key| bytes.checked_add(key))
+                })
                 .and_then(|bytes| bytes.checked_add(96))
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "lock path size overflow"))?;
-            work.reserve(ByteKind::Working, bytes).map_err(WorkIoError::from)
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "lock path size overflow")
+                })?;
+            work.reserve(ByteKind::Working, bytes)
+                .map_err(WorkIoError::from)
         })
         .transpose()?;
     let namespace = root.join(LEASE_NAMESPACE);
     refuse_symlink(&namespace)?;
-    let file = open_lock(&namespace.join(key.as_str()), "mutation.lock")?;
+    let file = open_lock(&namespace.join(key), "mutation.lock")?;
     let start = Instant::now();
     loop {
         checkpoint(work)?;

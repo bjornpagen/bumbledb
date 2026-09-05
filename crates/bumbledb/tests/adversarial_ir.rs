@@ -15,7 +15,7 @@ bumbledb::schema! {
     closed relation Kind as KindId = { Meeting, Focus, Travel };
 
     relation Busy {
-        id: u64 as ClaimId, fresh,
+        id: u64 as ClaimId,
         person: u64,
         during: interval<u64>,
         kind: u64 as KindId,
@@ -246,13 +246,16 @@ fn random_query(rng: &mut Rng) -> Query {
 fn random_interior(rng: &mut Rng) -> Interior {
     Interior {
         rules: (0..rng.below(3))
-            .map(|_| ProjectionRule {
-                finds: (0..rng.below(3))
-                    .map(|_| VarId(u16::try_from(rng.below(5)).expect("small")))
-                    .collect(),
-                atoms: (0..rng.below(4)).map(|_| atom(rng)).collect(),
-                negated: (0..rng.below(3)).map(|_| atom(rng)).collect(),
-                conditions: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
+            .map(|_| {
+                ProjectionRule {
+                    finds: (0..rng.below(3))
+                        .map(|_| VarId(u16::try_from(rng.below(5)).expect("small")))
+                        .collect(),
+                    atoms: (0..rng.below(4)).map(|_| atom(rng)).collect(),
+                    negated: (0..rng.below(3)).map(|_| atom(rng)).collect(),
+                    conditions: (0..rng.below(3)).map(|_| tree(rng, 4)).collect(),
+                }
+                .to_rule()
             })
             .collect(),
     }
@@ -700,12 +703,15 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
     };
     let interiors: Vec<Interior> = (0..100_000)
         .map(|_| Interior {
-            rules: vec![ProjectionRule {
-                finds: vec![VarId(0)],
-                atoms: rule.atoms.clone(),
-                negated: vec![],
-                conditions: vec![],
-            }],
+            rules: vec![
+                ProjectionRule {
+                    finds: vec![VarId(0)],
+                    atoms: rule.atoms.clone(),
+                    negated: vec![],
+                    conditions: vec![],
+                }
+                .to_rule(),
+            ],
         })
         .collect();
     let query = Query {

@@ -1,289 +1,117 @@
-//! Single-process semantics of the five verbs over `MemStore`, plus the
-//! retry-law helpers that never needed a disk.
+//! The object-layer composition over the deterministic store: verified puts
+//! and gets, immutable-conflict refusal, ambiguous-store resolution, and the
+//! bounded decision epoch probe (C07 grammar; STORE-05/06 shapes).
+//! Verification: `NotRun` (F1 authors, does not execute).
 
-use std::io;
-use std::sync::Mutex;
-
-use bumbledb_log::store::fs::content_etag;
-use bumbledb_log::store::mem::MemStore;
+use bumbledb_log::history::DecisionDigest;
+use bumbledb_log::store::mem::{Behavior, MemStore, Op};
 use bumbledb_log::store::{
-    Create, CreateProbe, Etag, Fenced, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey,
-    Swap, SwapProbe, resolve_ambiguous_create, resolve_ambiguous_swap, retry_read,
+    ConditionalStore as _, ObjectError, ObjectKind, ObjectRef, fetch_decision, get_verified,
+    object_digest, put_verified,
 };
 
 #[test]
-fn get_missing_is_none() {
+fn put_verified_resolves_ambiguity_by_content_and_refuses_conflicts() {
     let store = MemStore::new();
+    // Applied-but-unacknowledged: resolved by reading identical content back.
+    store.fail_next(Op::PutObject, Behavior::IndeterminateApplied);
+    let reference = put_verified(&store, "t", 1, ObjectKind::Chunk, b"bytes")
+        .expect("ambiguity resolves by content equality");
     assert_eq!(
-        store
-            .get(&StoreKey::of("log/c00000001/nothing"))
-            .expect("get"),
-        None
+        get_verified(&store, "t", &reference).expect("get"),
+        b"bytes"
+    );
+    // Dropped-and-unacknowledged: the read-back finds nothing — unresolved,
+    // never claimed durable.
+    let store = MemStore::new();
+    store.fail_next(Op::PutObject, Behavior::IndeterminateDropped);
+    let unresolved = put_verified(&store, "t", 1, ObjectKind::Chunk, b"bytes");
+    assert!(
+        matches!(unresolved, Err(ObjectError::Unverified { .. })),
+        "{unresolved:?}"
+    );
+    // A conflicting payload at the same immutable name refuses: plant foreign
+    // bytes at the content address, then attempt the honest put ambiguously.
+    let store = MemStore::new();
+    let honest = ObjectRef::of(1, ObjectKind::Chunk, b"honest");
+    store
+        .put_object(&honest.key("t"), b"conflicting occupant")
+        .expect("planted");
+    store.fail_next(Op::PutObject, Behavior::IndeterminateDropped);
+    let conflict = put_verified(&store, "t", 1, ObjectKind::Chunk, b"honest");
+    assert!(
+        matches!(conflict, Err(ObjectError::ImmutableConflict { .. })),
+        "creation never overwrites a colliding payload: {conflict:?}"
     );
 }
 
 #[test]
-fn put_create_wins_once_and_reports_content_etag() {
+fn get_verified_checks_length_and_domain_separated_digest_before_returning() {
     let store = MemStore::new();
-    let key = StoreKey::of("log/c00000001/slot-a");
-    let body = b"first writer's batch".as_slice();
-    let outcome = store.put_create(&key, body).expect("create");
-    assert_eq!(outcome, Create::Created(content_etag(body)));
-
-    let second = store
-        .put_create(&key, b"second writer's batch")
-        .expect("create");
-    assert_eq!(second, Create::Exists);
-
-    let fetched = store.get(&key).expect("get").expect("present");
-    assert_eq!(fetched.bytes, body);
-    assert_eq!(fetched.etag, content_etag(body));
-}
-
-#[test]
-fn get_if_changed_distinguishes_304_from_change() {
-    let store = MemStore::new();
-    let key = StoreKey::of("manifest");
-    let body = br#"{"v":2}"#.as_slice();
-    let Create::Created(etag) = store.put_create(&key, body).expect("create") else {
-        panic!("fresh key must be Created");
-    };
+    let reference =
+        put_verified(&store, "t", 2, ObjectKind::Checkpoint, b"manifest bytes").expect("stored");
     assert_eq!(
-        store.get_if_changed(&key, &etag).expect("poll"),
-        Poll::Unchanged
+        get_verified(&store, "t", &reference).expect("verified"),
+        b"manifest bytes"
     );
-
-    let stale = content_etag(b"some other body");
-    let Poll::Changed(fetched) = store.get_if_changed(&key, &stale).expect("poll") else {
-        panic!("stale etag must observe the change");
-    };
-    assert_eq!(fetched.bytes, body);
-    assert_eq!(fetched.etag, etag);
-}
-
-#[test]
-fn put_swap_swaps_on_match_and_moves_on_mismatch() {
-    let store = MemStore::new();
-    let key = StoreKey::of("manifest");
-    let Create::Created(birth) = store.put_create(&key, b"v1").expect("create") else {
-        panic!("fresh key must be Created");
-    };
-
-    let swapped = store.put_swap(&key, b"v2", &birth).expect("swap");
-    assert_eq!(swapped, Swap::Swapped(content_etag(b"v2")));
-    assert_eq!(store.get(&key).expect("get").expect("present").bytes, b"v2");
-
-    let moved = store.put_swap(&key, b"v3", &birth).expect("swap");
-    assert_eq!(moved, Swap::Moved);
-    assert_eq!(store.get(&key).expect("get").expect("present").bytes, b"v2");
-}
-
-#[test]
-fn put_swap_on_missing_key_is_moved() {
-    let store = MemStore::new();
-    let etag = content_etag(b"anything");
-    assert_eq!(
-        store
-            .put_swap(&StoreKey::of("manifest"), b"v1", &etag)
-            .expect("swap"),
-        Swap::Moved
-    );
-}
-
-#[test]
-fn delete_is_unconditional_and_idempotent() {
-    let store = MemStore::new();
-    let key = StoreKey::of("log/c00000001/gc-victim");
-    store.put_create(&key, b"doomed").expect("create");
-    store.delete(&key).expect("delete");
-    assert_eq!(store.get(&key).expect("get"), None);
-    store.delete(&key).expect("delete of absent key");
-}
-
-#[test]
-fn put_swap_serializes_across_threads_without_lost_updates() {
-    let store = std::sync::Arc::new(MemStore::new());
+    // Corrupted content: digest refusal.
+    assert!(store.corrupt_object(&reference.key("t"), |bytes| bytes[0] ^= 0xff));
     assert!(matches!(
-        store
-            .put_create(&StoreKey::of("manifest"), b"0")
-            .expect("birth"),
-        Create::Created(_)
+        get_verified(&store, "t", &reference),
+        Err(ObjectError::WrongDigest { .. })
     ));
-    let threads: Vec<_> = (0..4u64)
-        .map(|_| {
-            let store = std::sync::Arc::clone(&store);
-            std::thread::spawn(move || {
-                let mut landed = 0u64;
-                while landed < 8 {
-                    let current = store
-                        .get(&StoreKey::of("manifest"))
-                        .expect("get")
-                        .expect("present");
-                    let value: u64 = String::from_utf8(current.bytes)
-                        .expect("utf8")
-                        .parse()
-                        .expect("decimal");
-                    let next = (value + 1).to_string();
-                    if let Swap::Swapped(_) = store
-                        .put_swap(&StoreKey::of("manifest"), next.as_bytes(), &current.etag)
-                        .expect("swap")
-                    {
-                        landed += 1;
-                    }
-                }
-            })
+    // Truncated content: length refusal (checked before the digest).
+    assert!(store.corrupt_object(&reference.key("t"), |bytes| {
+        bytes.truncate(3);
+    }));
+    assert!(matches!(
+        get_verified(&store, "t", &reference),
+        Err(ObjectError::WrongLength { .. })
+    ));
+    // Absent: definite missing, not a transport error.
+    let ghost = ObjectRef::of(2, ObjectKind::Chunk, b"never stored");
+    assert!(matches!(
+        get_verified(&store, "t", &ghost),
+        Err(ObjectError::Missing { .. })
+    ));
+    // A wrong-kind reference to the same bytes is a different address.
+    let as_chunk = ObjectRef {
+        kind: ObjectKind::Chunk,
+        ..reference
+    };
+    assert!(get_verified(&store, "t", &as_chunk).is_err());
+}
+
+#[test]
+fn fetch_decision_probes_the_bounded_epoch_window_newest_first() {
+    let store = MemStore::new();
+    let body = b"decision bytes stand-in";
+    let digest = DecisionDigest::from_bytes(object_digest(ObjectKind::Decision, body));
+    // Staged under epoch 3 of a [1, 5] window.
+    let key = bumbledb_log::store::decision_key("t", 3, &digest);
+    store.put_object(&key, body).expect("stored");
+    let (epoch, bytes) = fetch_decision(&store, "t", 1, 5, &digest).expect("found");
+    assert_eq!(epoch, 3);
+    assert_eq!(bytes, body);
+    // Absent across the whole window: definite missing after bounded probes.
+    let ghost = DecisionDigest::from_bytes([9; 32]);
+    let missing = fetch_decision(&store, "t", 1, 5, &ghost);
+    assert!(matches!(missing, Err(ObjectError::Missing { .. })));
+    let probes = store
+        .operations()
+        .into_iter()
+        .filter(|(op, key)| {
+            *op == Op::GetObject && key.contains(&bumbledb_log::store::hex32(ghost.as_bytes()))
         })
-        .collect();
-    for handle in threads {
-        handle.join().expect("thread");
-    }
-    let total: u64 = String::from_utf8(
-        store
-            .get(&StoreKey::of("manifest"))
-            .expect("get")
-            .expect("present")
-            .bytes,
-    )
-    .expect("utf8")
-    .parse()
-    .expect("decimal");
-    assert_eq!(total, 32, "no swap was lost and none applied twice");
-}
-
-#[test]
-fn retry_read_recovers_from_transient_failures() {
-    let mut failures_left = 2u32;
-    let value = retry_read(|| {
-        if failures_left > 0 {
-            failures_left -= 1;
-            Err(StoreError {
-                op: "get",
-                key: "flaky".to_string(),
-                source: io::Error::from(io::ErrorKind::ConnectionReset),
-            })
-        } else {
-            Ok(7u32)
-        }
-    })
-    .expect("recovers");
-    assert_eq!(value, 7);
-    assert_eq!(failures_left, 0);
-}
-
-#[test]
-fn retry_read_surfaces_err_after_six_attempts() {
-    let mut attempts = 0u32;
-    let outcome: Result<()> = retry_read(|| {
-        attempts += 1;
-        Err(StoreError {
-            op: "get",
-            key: "down".to_string(),
-            source: io::Error::from(io::ErrorKind::ConnectionReset),
-        })
-    });
-    assert!(outcome.is_err());
-    assert_eq!(attempts, 6);
-}
-
-/// A store whose `get` fails a fixed number of times before delegating.
-struct Flaky {
-    inner: MemStore,
-    failures_left: Mutex<u32>,
-}
-
-impl Flaky {
-    fn failing(failures: u32) -> Self {
-        Self {
-            inner: MemStore::new(),
-            failures_left: Mutex::new(failures),
-        }
-    }
-}
-
-impl ObjectStore for Flaky {
-    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>> {
-        let mut left = self.failures_left.lock().expect("lock");
-        if *left > 0 {
-            *left -= 1;
-            return Err(StoreError {
-                op: "get",
-                key: key.to_string(),
-                source: io::Error::from(io::ErrorKind::TimedOut),
-            });
-        }
-        self.inner.get(key)
-    }
-
-    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll> {
-        self.inner.get_if_changed(key, etag)
-    }
-
-    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
-        self.inner.put_create(key, body)
-    }
-
-    fn put_swap<'a>(
-        &self,
-        key: &StoreKey,
-        body: impl Into<Fenced<'a>>,
-        etag: &Etag,
-    ) -> Result<Swap> {
-        self.inner.put_swap(key, body, etag)
-    }
-
-    fn delete(&self, key: &StoreKey) -> Result<()> {
-        self.inner.delete(key)
-    }
-}
-
-#[test]
-fn ambiguous_create_resolves_by_content_comparison() {
-    let store = Flaky::failing(1);
-    let key = StoreKey::of("log/c00000001/slot-b");
-
+        .count();
     assert_eq!(
-        resolve_ambiguous_create(&store, &key, b"mine").expect("probe"),
-        CreateProbe::Absent
+        probes, 5,
+        "exactly the window [floor, ceiling], never a slot scan"
     );
-
-    store.put_create(&key, b"mine").expect("create");
-    assert_eq!(
-        resolve_ambiguous_create(&store, &key, b"mine").expect("probe"),
-        CreateProbe::Landed(content_etag(b"mine"))
-    );
-
-    let CreateProbe::Lost(winner) =
-        resolve_ambiguous_create(&store, &key, b"theirs").expect("probe")
-    else {
-        panic!("foreign bytes must resolve as a lost slot");
-    };
-    assert_eq!(winner.bytes, b"mine");
-}
-
-#[test]
-fn ambiguous_swap_resolves_by_etag_reread() {
-    let store = Flaky::failing(1);
-    let key = StoreKey::of("manifest");
-
-    assert_eq!(
-        resolve_ambiguous_swap(&store, &key, b"v2").expect("probe"),
-        SwapProbe::Absent
-    );
-
-    let Create::Created(birth) = store.put_create(&key, b"v1").expect("create") else {
-        panic!("fresh key must be Created");
-    };
-    store.put_swap(&key, b"v2", &birth).expect("swap");
-
-    assert_eq!(
-        resolve_ambiguous_swap(&store, &key, b"v2").expect("probe"),
-        SwapProbe::Landed(content_etag(b"v2"))
-    );
-
-    let SwapProbe::Lost(current) = resolve_ambiguous_swap(&store, &key, b"v9").expect("probe")
-    else {
-        panic!("unmatched bytes must resolve as lost");
-    };
-    assert_eq!(current.bytes, b"v2");
-    assert_eq!(current.etag, content_etag(b"v2"));
+    // Corrupt bytes at the address refuse rather than returning.
+    assert!(store.corrupt_object(&key, |bytes| bytes[0] ^= 0xff));
+    assert!(matches!(
+        fetch_decision(&store, "t", 1, 5, &digest),
+        Err(ObjectError::WrongDigest { .. })
+    ));
 }

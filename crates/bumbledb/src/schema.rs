@@ -4,7 +4,17 @@
 //! [`SchemaDescriptor`] and its descriptor family, [`LiteralSet`]/[`Side`],
 //! the [`spec`] lowering, and the shared [`value_matches`] check — lives in
 //! `bumbledb-theory` (the parity roster is normative there) and is
+/// The canonical bounded rejection-evidence codec (C01/C03): the one byte
+/// spelling of a complete violated-statement set with labeled examples and
+/// truncation evidence. The log frames these bytes verbatim into decisions
+/// and receipts; strict decode plus schema interpretation reproduces the
+/// judge's verdict or the public [`crate::Violations`] value.
+pub mod evidence;
 pub mod fingerprint;
+/// The reference final-state judge and the candidate-state interface
+/// (contract C03): the semantic denotation the physical commit path and
+/// the independent models both answer to.
+pub mod judge;
 pub mod manifest;
 pub mod render;
 
@@ -15,18 +25,17 @@ mod validate;
 mod wire;
 
 use crate::encoding::FactLayout;
-use crate::error::{DynIdError, FactShapeError};
 // `super::Value`, exactly as before the theory extraction.
 use bumbledb_theory::Value;
 
 pub use bumbledb_theory::schema::spec;
 pub use bumbledb_theory::schema::{
-    Bound, Extension, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet,
+    Bound, Extension, FieldDescriptor, FieldId, FixedIntervalElement, IntervalElement, LiteralSet,
     MAX_EXTENSION_ROWS, RelationDescriptor, RelationId, Row, SchemaDescriptor, SealedField, Side,
     StatementDescriptor, StatementId, StatementKind, ValueType, Weight,
 };
 
-pub(crate) use bumbledb_theory::schema::{ValueMismatch, value_matches};
+pub use bumbledb_theory::schema::{ValueMismatch, value_matches};
 
 pub use manifest::{
     FieldManifest, Manifest, ManifestDescriptor, RelationManifest, RowManifest, StatementManifest,
@@ -50,64 +59,6 @@ pub struct ContainmentId(pub(crate) u16);
 /// Witness index into [`Schema::capacities`] — minted only by validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CapacityId(pub(crate) u16);
-
-/// A witness that `(relation, field)` names a `Fresh`-generation field of
-/// ([`crate::WriteTx::reserve_at`]). Fields are private and
-/// [`crate::Db::fresh_field`] is the one construction site; the ETL access
-/// The witness carries a **binding** proof: `S` is the resolving handle's
-/// schema typestate, so a witness of one `schema!` schema cannot reach a
-/// transaction of another — a compile error, the hard-structural-typing
-/// answer (nominal safety = host Rust newtypes; pinned by
-/// `tests/schema-compile-fail/foreign_fresh_witness.rs`). This REVERSES
-pub struct FreshField<S> {
-    relation: RelationId,
-    field: FieldId,
-
-    marker: std::marker::PhantomData<fn() -> S>,
-}
-
-impl<S> std::fmt::Debug for FreshField<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FreshField")
-            .field("relation", &self.relation)
-            .field("field", &self.field)
-            .finish()
-    }
-}
-
-impl<S> Clone for FreshField<S> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<S> Copy for FreshField<S> {}
-
-impl<S> PartialEq for FreshField<S> {
-    fn eq(&self, other: &Self) -> bool {
-        self.relation == other.relation && self.field == other.field
-    }
-}
-
-impl<S> Eq for FreshField<S> {}
-
-impl<S> FreshField<S> {
-    pub(crate) fn new(relation: RelationId, field: FieldId) -> Self {
-        Self {
-            relation,
-            field,
-            marker: std::marker::PhantomData,
-        }
-    }
-
-    pub(crate) fn relation(self) -> RelationId {
-        self.relation
-    }
-
-    pub(crate) fn field(self) -> FieldId {
-        self.field
-    }
-}
 
 /// A named theory — a schema names a theory (relations plus statements)
 /// and a store models it: the
@@ -134,7 +85,10 @@ impl Theory for SchemaDescriptor {
 impl Schema {
     #[expect(
         clippy::unused_self,
-        reason = "the schema is the witness's minting authority — readers go through it"
+        dead_code,
+        reason = "the schema is the witness's minting authority — readers go through \
+                  it; consumed by the recorded C03/C05 acceleration follow-up \
+                  (implementation/packets/P02.md)"
     )]
     pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<ValueType> {
         key.tail()
@@ -145,6 +99,11 @@ impl Schema {
 pub(crate) struct DisjointDeterminantProof(());
 
 impl DisjointDeterminantProof {
+    #[expect(
+        dead_code,
+        reason = "the coverage authorization the recorded C03/C05 acceleration \
+                  follow-up consumes (implementation/packets/P02.md)"
+    )]
     pub(crate) const fn authorize_coverage(self) {
         let Self(()) = self;
     }
@@ -180,6 +139,11 @@ impl Enforcement {
         }
     }
 
+    #[expect(
+        dead_code,
+        reason = "compiled containment plan read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) fn key_projection(&self) -> Option<&[FieldId]> {
         match self {
             Self::ScalarProbe { key_projection, .. }
@@ -202,6 +166,11 @@ pub(crate) enum CapacityEnforcement {
 }
 
 impl CapacityEnforcement {
+    #[expect(
+        dead_code,
+        reason = "compiled capacity plan read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) fn key_projection(&self) -> Option<&[FieldId]> {
         match self {
             Self::ScalarProbe { key_projection, .. } => Some(key_projection),
@@ -331,6 +300,11 @@ pub(crate) enum CompiledSide {
 }
 
 impl CompiledSide {
+    #[expect(
+        dead_code,
+        reason = "compiled selection plans read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) fn ordinary(&self) -> Option<&[CompiledCheck]> {
         match self {
             Self::Ordinary(checks) => Some(checks),
@@ -338,6 +312,11 @@ impl CompiledSide {
         }
     }
 
+    #[expect(
+        dead_code,
+        reason = "compiled selection plans read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) fn closed(&self) -> Option<&[EncodableCheck]> {
         match self {
             Self::Closed(checks) => Some(checks),
@@ -345,6 +324,11 @@ impl CompiledSide {
         }
     }
 
+    #[expect(
+        dead_code,
+        reason = "compiled selection plans read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Self::Ordinary(checks) => checks.is_empty(),
@@ -359,16 +343,13 @@ pub(crate) struct CompiledSides {
     pub(crate) target: CompiledSide,
 }
 
-/// The sealed key form: three behaviors, three arms. Fresh-row ×
-/// pointwise is unrepresentable; the disjointness proof lives on the
-/// Pointwise arm that needs it (CONTRACT C9).
+/// The sealed key form: two behaviors, two arms. There is no fresh-row
+/// arm — the database issues no identity, and every key is an ordinary
+/// declared law over application-supplied values. The disjointness proof
+/// lives on the Pointwise arm that needs it (CONTRACT C9).
 #[allow(private_interfaces)]
 #[derive(Debug, Clone)]
 pub enum KeyForm {
-    FreshRow {
-        field: FieldId,
-    },
-
     Scalar,
 
     Pointwise {
@@ -393,6 +374,11 @@ impl KeyStatement {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "pointwise-tail accessor for the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) fn tail(&self) -> Option<ValueType> {
         self.form.as_pointwise()
     }
@@ -400,23 +386,20 @@ impl KeyStatement {
 
 impl KeyForm {
     #[must_use]
-    pub const fn as_fresh_row(&self) -> Option<FieldId> {
-        match *self {
-            Self::FreshRow { field } => Some(field),
-            Self::Scalar | Self::Pointwise { .. } => None,
-        }
-    }
-
-    #[must_use]
     pub const fn is_pointwise(&self) -> bool {
         matches!(self, Self::Pointwise { .. })
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "pointwise-tail accessor for the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) const fn as_pointwise(&self) -> Option<ValueType> {
         match *self {
             Self::Pointwise { tail, .. } => Some(tail),
-            Self::FreshRow { .. } | Self::Scalar => None,
+            Self::Scalar => None,
         }
     }
 }
@@ -430,8 +413,18 @@ pub struct ContainmentStatement {
     pub target: Side,
     pub(crate) enforcement: Enforcement,
 
+    #[expect(
+        dead_code,
+        reason = "compiled judgment-survivor plan read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) survivors: Survivors,
 
+    #[expect(
+        dead_code,
+        reason = "compiled selection plans read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) checks: CompiledSides,
 
     pub pairing: Pairing,
@@ -488,6 +481,11 @@ impl SealedBound {
     }
 
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "bound-shape probe for the recorded C03/C05 acceleration \
+                  follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) const fn needs_parent_fact(self) -> bool {
         matches!(self, Self::TargetField(_) | Self::Duration { .. })
     }
@@ -518,8 +516,22 @@ pub struct CapacityStatement {
     pub hi: SealedBound,
     pub source: Side,
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "compiled capacity plan read by the recorded C03/C05 \
+                      acceleration follow-up (implementation/packets/P02.md); \
+                      the obligation-roster tests classify through it"
+        )
+    )]
     pub(crate) enforcement: CapacityEnforcement,
 
+    #[expect(
+        dead_code,
+        reason = "compiled selection plans read by the recorded C03/C05 \
+                  acceleration follow-up (implementation/packets/P02.md)"
+    )]
     pub(crate) checks: CompiledSides,
 }
 
@@ -575,11 +587,11 @@ pub struct SealedRow {
 }
 
 /// The sealed relation kind (CONTRACT C9). Shared layout lives on
-/// [`Relation`]; the kind-carrying payloads (`fresh` vs `extension`)
-/// live in the arms. Closed cannot be written.
+/// [`Relation`]; the extension payload lives in the closed arm. Closed
+/// cannot be written.
 #[derive(Debug, Clone)]
 pub enum RelationBody {
-    Ordinary { fresh: Option<KeyId> },
+    Ordinary,
 
     Closed { extension: Box<[SealedRow]> },
 }
@@ -589,7 +601,7 @@ impl RelationBody {
     pub fn closed_rows(&self) -> Option<&[SealedRow]> {
         match self {
             Self::Closed { extension } => Some(extension),
-            Self::Ordinary { .. } => None,
+            Self::Ordinary => None,
         }
     }
 }
@@ -643,24 +655,6 @@ impl Schema {
     #[must_use]
     pub fn relation_checked(&self, id: RelationId) -> Option<&Relation> {
         self.relations.get(id.0 as usize)
-    }
-
-    /// # Errors
-    pub(crate) fn check_fresh_field(
-        &self,
-        relation: RelationId,
-        field: FieldId,
-    ) -> Result<(), FactShapeError> {
-        let Some(rel) = self.relation_checked(relation) else {
-            return Err(DynIdError::UnknownRelation { relation }.into());
-        };
-        let Some(descriptor) = rel.fields().get(usize::from(field.0)) else {
-            return Err(DynIdError::UnknownField { relation, field }.into());
-        };
-        if descriptor.generation != Generation::Fresh {
-            return Err(DynIdError::NotAFreshField { relation, field }.into());
-        }
-        Ok(())
     }
 
     #[must_use]
@@ -719,6 +713,10 @@ impl Schema {
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "roster identity; tests and later consumers")
+    )]
     pub(crate) fn cite(&self, id: StatementId) -> StatementRef {
         self.order[usize::from(id.0)]
     }
@@ -766,6 +764,10 @@ impl Schema {
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "roster identity; tests and later consumers")
+    )]
     pub(crate) fn complete_obligations(&self) -> CompleteObligations<'_> {
         CompleteObligations { schema: self }
     }
@@ -780,22 +782,21 @@ impl Schema {
     pub fn dependents_checked(&self, id: KeyId) -> Option<&[ContainmentId]> {
         self.dependents.get(usize::from(id.0)).map(AsRef::as_ref)
     }
-
-    #[must_use]
-    pub(crate) fn fresh_mint_field(&self, id: RelationId) -> Option<FieldId> {
-        let key = self.relation(id).fresh_key()?;
-        match self.key(key).form() {
-            KeyForm::FreshRow { field } => Some(*field),
-            KeyForm::Scalar | KeyForm::Pointwise { .. } => None,
-        }
-    }
 }
 
 /// Hand-enumerated rosters beside this spine are refused.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "roster identity; tests and later consumers")
+)]
 pub(crate) struct CompleteObligations<'schema> {
     schema: &'schema Schema,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "roster identity; tests and later consumers")
+)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CompleteObligation<'schema> {
     Key {
@@ -840,6 +841,10 @@ impl CompleteObligation<'_> {
     }
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "roster identity; tests and later consumers")
+)]
 impl<'schema> CompleteObligations<'schema> {
     pub(crate) fn iter(&self) -> impl Iterator<Item = CompleteObligation<'schema>> + '_ {
         self.schema.order.iter().copied().filter_map(|slot| {
@@ -855,7 +860,7 @@ impl<'schema> CompleteObligations<'schema> {
     fn classify(view: StatementView<'schema>) -> CompleteObligation<'schema> {
         match view {
             StatementView::Key(id, statement) => match statement.form() {
-                KeyForm::FreshRow { .. } | KeyForm::Scalar | KeyForm::Pointwise { .. } => {
+                KeyForm::Scalar | KeyForm::Pointwise { .. } => {
                     CompleteObligation::Key { id, statement }
                 }
             },

@@ -9,15 +9,22 @@ use std::collections::BTreeMap;
 use super::{
     AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
     CompiledSide, CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof,
-    EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, Generation, KeyForm, KeyId,
+    EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, KeyForm, KeyId,
     KeyStatement, LiteralSet, MemberSet, Pairing, Relation, RelationBody, RelationDescriptor,
     RelationId, Schema, SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor,
     StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
-use crate::storage::keys::MAX_DETERMINANT_WIDTH;
 use bumbledb_theory::Value;
+
+/// Maximum determinant width a schema may declare, in canonical encoded
+/// bytes. Historically the LMDB key-embedding bound (511-byte key minus
+/// the old `R` key's 15-byte overhead); the successor store fingerprints
+/// determinants instead of embedding them, but the 496-byte admission
+/// ceiling stays contract — `StatementErrorKind::DeterminantKeyTooWide`
+/// and the corpus generator's `ARITY_WIDTH_BOUND` both pin it.
+pub(crate) const MAX_DETERMINANT_WIDTH: usize = 496;
 
 /// The admission boundary as an extension trait: [`SchemaDescriptor`] is
 /// theory data (hosted in `bumbledb-theory`), so the engine-side sealing
@@ -114,16 +121,7 @@ impl ValidateDescriptor for SchemaDescriptor {
                             FunctionalityEvidence::Pointwise(disjoint, tail) => {
                                 KeyForm::Pointwise { tail, disjoint }
                             }
-                            FunctionalityEvidence::Scalar => {
-                                let mint = first_fresh_field(&relations[relation.0 as usize]);
-                                if projection.len() == 1 && mint == Some(projection[0]) {
-                                    KeyForm::FreshRow {
-                                        field: projection[0],
-                                    }
-                                } else {
-                                    KeyForm::Scalar
-                                }
-                            }
+                            FunctionalityEvidence::Scalar => KeyForm::Scalar,
                         },
                     });
                     StatementRef::Key(key_id)
@@ -227,11 +225,6 @@ impl ValidateDescriptor for SchemaDescriptor {
             relation.outgoing = outgoing.into_boxed_slice();
             relation.capacity_sources = capacity_sources.into_boxed_slice();
             relation.capacity_targets = capacity_targets.into_boxed_slice();
-            if let RelationBody::Ordinary { fresh } = &mut relation.body {
-                *fresh = relation.keys.iter().copied().find(|&key_id| {
-                    matches!(keys[usize::from(key_id.0)].form, KeyForm::FreshRow { .. })
-                });
-            }
         }
 
         let schema = Schema {
@@ -398,6 +391,8 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             Value::IntervalU64(_) => 5,
             Value::IntervalI64(_) => 6,
             Value::F64(_) => 7,
+            Value::Id128(_) => 8,
+            Value::IntervalF64(_) => 9,
         }
     }
     match (a, b) {
@@ -405,12 +400,16 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),
         (Value::F64(x), Value::F64(y)) => x.cmp(y),
+        (Value::Id128(x), Value::Id128(y)) => x.cmp(y),
         (Value::String(x), Value::String(y)) => x.cmp(y),
         (Value::FixedBytes(x), Value::FixedBytes(y)) => x.cmp(y),
         (Value::IntervalU64(x), Value::IntervalU64(y)) => {
             (x.start(), x.end()).cmp(&(y.start(), y.end()))
         }
         (Value::IntervalI64(x), Value::IntervalI64(y)) => {
+            (x.start(), x.end()).cmp(&(y.start(), y.end()))
+        }
+        (Value::IntervalF64(x), Value::IntervalF64(y)) => {
             (x.start(), x.end()).cmp(&(y.start(), y.end()))
         }
         _ => rank(a).cmp(&rank(b)),
@@ -735,17 +734,16 @@ fn validate_capacity(
 
     // duplicate spelling (`lean/Bumbledb/Subsumption.lean:
 
-    match hi {
-        Some(Bound::Lit(hi)) if hi < lo => {
-            return Err(StatementErrorKind::CapacityInvertedWindow { lo, hi }.at(id));
-        }
-        None if lo == 0 => {
-            return Err(StatementErrorKind::CapacityVacuousWindow.at(id));
-        }
-        None if lo == 1 && weight == Weight::Unit => {
-            return Err(StatementErrorKind::CapacityContainmentWindow.at(id));
-        }
-        _ => {}
+    // Only genuinely different semantics refuse: an inverted literal window
+    // admits nothing. Vacuous `{0..*}` and unit-floor windows are accepted
+    // canonical grouped-measure laws — equivalent spellings normalized at
+    // the authoring surface, never a per-client ban table (a confirmed P00
+    // decision; the trivially satisfied law keeps its authored statement
+    // id and attribution).
+    if let Some(Bound::Lit(hi)) = hi
+        && hi < lo
+    {
+        return Err(StatementErrorKind::CapacityInvertedWindow { lo, hi }.at(id));
     }
 
     let target_projection = validate_side_pair(id, source, target, relations)?;
@@ -779,7 +777,11 @@ fn validate_capacity(
         }
         Weight::DurationOf(field) => {
             let descriptor = known_field(id, source.relation, field, relations)?;
-            if !descriptor.value_type.is_interval() {
+            // Exact integer duration only: a dense float interval has a
+            // numerical length, never an exact capacity weight. Float
+            // capacity is refused at schema validation, not judged with
+            // rounding (chapter 11).
+            if !descriptor.value_type.is_discrete_interval() {
                 return Err(StatementErrorKind::CapacityWeightNotDuration {
                     relation: source.relation,
                     field,
@@ -812,7 +814,8 @@ fn validate_capacity(
         }
         Some(Bound::TargetDuration(field)) => {
             let descriptor = known_field(id, target.relation, field, relations)?;
-            if !descriptor.value_type.is_interval() {
+            // The same discreteness rule as the weight: no float-length bound.
+            if !descriptor.value_type.is_discrete_interval() {
                 return Err(StatementErrorKind::CapacityBoundNotDuration {
                     relation: target.relation,
                     field,
@@ -855,13 +858,9 @@ fn validate_capacity(
                 continue;
             }
 
-            let resolved_hi = crate::storage::commit::judgment::resolve_bound(
-                sealed_hi,
-                &target_relation.layout,
-                &parent.fact,
-                id,
-            )
-            .expect("sealed extension rows carry no ray or inverted intervals");
+            let resolved_hi =
+                sealed_resolve_bound(sealed_hi, &target_relation.layout, &parent.fact)
+                    .expect("sealed extension rows carry no ray or inverted intervals");
             let measure: u128 = source_rows
                 .iter()
                 .filter(|child| {
@@ -880,13 +879,8 @@ fn validate_capacity(
                 })
                 .map(|child| {
                     u128::from(
-                        crate::storage::commit::judgment::measure_weight(
-                            sealed_weight,
-                            source_layout,
-                            &child.fact,
-                            id,
-                        )
-                        .expect("sealed extension rows carry no ray or inverted intervals"),
+                        sealed_measure_weight(sealed_weight, source_layout, &child.fact)
+                            .expect("sealed extension rows carry no ray or inverted intervals"),
                     )
                 })
                 .sum();
@@ -1018,6 +1012,62 @@ fn sealed_satisfies(checks: &[EncodableCheck], layout: &FactLayout, fact: &[u8])
 
 fn decoded_word(layout: &FactLayout, field: FieldId, fact: &[u8]) -> u64 {
     u64::from_be_bytes(field_word_bytes(layout.encoded(fact), usize::from(field.0)))
+}
+
+/// The sealed-extension twin of the judge's weight law
+/// (`schema/judge.rs::capacity`): one source row's measure read off its
+/// sealed dense bytes. `Unit` is 1; `Field` reads the u64-encoded source
+/// position; `Duration` reads the interval position's measure in encoded
+/// word space (`end − start` — both element encodings preserve
+/// differences). `None` only for a ray or inverted interval, which a
+/// validated extension refuses at sealing — callers expect.
+fn sealed_measure_weight(weight: SealedWeight, layout: &FactLayout, fact: &[u8]) -> Option<u64> {
+    match weight {
+        SealedWeight::Unit => Some(1),
+        SealedWeight::Field(field) => Some(decoded_word(layout, field, fact)),
+        SealedWeight::Duration { field, tail } => {
+            sealed_interval_measure(tail, layout, field, fact)
+        }
+    }
+}
+
+/// The sealed-extension twin of the judge's ceiling resolution: a literal
+/// passes through; a dependent bound reads the named TARGET-row field —
+/// u64 word or interval measure — off the sealed parent fact in hand.
+fn sealed_resolve_bound(
+    bound: SealedBound,
+    layout: &FactLayout,
+    parent_fact: &[u8],
+) -> Option<super::BoundCeiling> {
+    match bound {
+        SealedBound::Unbounded => Some(super::BoundCeiling::Unbounded),
+        SealedBound::Lit(n) => Some(super::BoundCeiling::Finite(n)),
+        SealedBound::TargetField(field) => Some(super::BoundCeiling::Finite(decoded_word(
+            layout,
+            field,
+            parent_fact,
+        ))),
+        SealedBound::Duration { field, tail } => {
+            sealed_interval_measure(tail, layout, field, parent_fact)
+                .map(super::BoundCeiling::Finite)
+        }
+    }
+}
+
+fn sealed_interval_measure(
+    tail: ValueType,
+    layout: &FactLayout,
+    field: FieldId,
+    fact: &[u8],
+) -> Option<u64> {
+    let (start, end) = crate::encoding::interval_words(
+        tail,
+        crate::encoding::field_bytes(layout.encoded(fact), usize::from(field.0)),
+    )?;
+    if end == u64::MAX {
+        return None; // a ray has no finite measure
+    }
+    end.checked_sub(start)
 }
 
 fn known_relation(
@@ -1482,7 +1532,9 @@ fn derived_columns(decl: &RelationDescriptor) -> usize {
             .fields
             .iter()
             .map(|field| match field.value_type {
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. } => 2,
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Id128 => {
+                    2
+                }
                 ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(len).max(1),
                 _ => 1,
             })
@@ -1504,7 +1556,6 @@ fn validate_relation(
         fields.push(FieldDescriptor {
             name: "id".into(),
             value_type: ValueType::U64,
-            generation: Generation::None,
         });
     }
     fields.extend(declared);
@@ -1537,39 +1588,23 @@ fn validate_relation(
                 });
             }
         }
-        if field.generation == Generation::Fresh && field.value_type != ValueType::U64 {
-            return Err(SchemaError::FreshOnNonU64 {
+
+        // intrinsic-vs-policy law). `str` is refused — the handle IS the
+        // dictionary writes at open. No `fresh` refusal survives: the
+        // generation attribute itself is deleted (ENG-004/ENG-007).
+
+        if extension.is_some() && field.value_type == ValueType::String {
+            return Err(SchemaError::StrOnClosedRelation {
                 relation: rel_id,
                 field: field_id,
             });
-        }
-
-        // intrinsic-vs-policy law). `str` is refused — the handle IS the
-
-        // dictionary writes at open; `fresh` is refused — identity is the
-
-        // no refusal anymore: a reference to a closed relation is a plain
-
-        if extension.is_some() {
-            if field.value_type == ValueType::String {
-                return Err(SchemaError::StrOnClosedRelation {
-                    relation: rel_id,
-                    field: field_id,
-                });
-            }
-            if field.generation == Generation::Fresh {
-                return Err(SchemaError::FreshOnClosedRelation {
-                    relation: rel_id,
-                    field: field_id,
-                });
-            }
         }
     }
 
     let layout = FactLayout::new(&fields.iter().map(|f| f.value_type).collect::<Vec<_>>());
 
     let body = match extension {
-        None => RelationBody::Ordinary { fresh: None },
+        None => RelationBody::Ordinary,
         Some(rows) => RelationBody::Closed {
             extension: validate_extension(rel_id, &fields, &layout, &rows)?,
         },
@@ -1585,16 +1620,6 @@ fn validate_relation(
         capacity_targets: Box::new([]),
         body,
     })
-}
-
-/// The FIRST `Fresh`-generation field of a relation — used only while sealing
-/// keys, before the ordinary arm's `fresh: Option<KeyId>` is minted.
-fn first_fresh_field(relation: &Relation) -> Option<FieldId> {
-    relation
-        .fields()
-        .iter()
-        .position(|f| f.generation == Generation::Fresh)
-        .map(|idx| FieldId(u16::try_from(idx).expect("field count fits u16")))
 }
 
 /// The extension roster: ground axioms validated through the one shared
@@ -1653,6 +1678,10 @@ fn validate_extension(
             let is_ray = match value {
                 Value::IntervalU64(interval) => interval.is_ray(),
                 Value::IntervalI64(interval) => interval.is_ray(),
+                // A sealed ground axiom's dense interval must be bounded:
+                // unbounded endpoints have no exact sealed measure and the
+                // closed-row judgment walks assume bounded words.
+                Value::IntervalF64(interval) => !interval.is_bounded(),
                 _ => false,
             };
             if is_ray {

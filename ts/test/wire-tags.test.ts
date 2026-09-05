@@ -11,10 +11,12 @@ import type {
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
+	NumericCastIr,
 	OpenKind,
 	PrepareKind,
 	QueryIr,
 	QueryParam,
+	ScalarExprIr,
 	StatementKindTag,
 	TaggedValue,
 	TermIr,
@@ -36,9 +38,9 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 type Expect<T extends true> = T extends true ? true : never
 
 const ROSTERS = {
-	value: ["bool", "u64", "i64", "f64", "string", "fixedBytes", "intervalU64", "intervalI64"],
-	valueType: ["bool", "u64", "i64", "f64", "string", "fixedBytes", "interval"],
-	intervalElement: ["u64", "i64"],
+	value: ["bool", "u64", "i64", "f64", "id128", "string", "fixedBytes", "intervalU64", "intervalI64", "intervalF64"],
+	valueType: ["bool", "u64", "i64", "f64", "id128", "string", "fixedBytes", "interval"],
+	intervalElement: ["u64", "i64", "f64"],
 	literal: ["handle", "value"],
 	literalSet: ["one", "many"],
 	capacityWindow: ["exact", "range", "floor"],
@@ -47,9 +49,11 @@ const ROSTERS = {
 	statement: ["fd", "containment", "capacity"],
 	statementKind: ["functionality", "containment", "capacity"],
 	term: ["var", "param", "paramSet", "literal"],
+	scalarExpr: ["var", "literal", "negate", "add", "subtract", "multiply", "divide", "cast", "isNaN", "isFinite"],
+	numericCast: ["toF64", "toF64Exact", "toI64Exact", "toU64Exact"],
 	aggregateOp: ["sum", "mean", "min", "max", "count", "pack"],
-	headTerm: ["var", "aggregate"],
-	findTerm: ["var", "count", "aggregate", "pack"],
+	headTerm: ["var", "compute", "aggregate"],
+	findTerm: ["var", "compute", "count", "aggregate", "pack"],
 	atomSource: ["edb", "interior"],
 	cmpOp: ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	condition: ["leaf", "and", "or"],
@@ -69,7 +73,6 @@ const ROSTERS = {
 		"schema",
 		"validation",
 		"factShape",
-		"freshExhausted",
 		"closedRelationWrite",
 		"commitSync",
 		"transactionPoisoned",
@@ -79,12 +82,13 @@ const ROSTERS = {
 		"capacityRayMeasure",
 		"derivedBudgetExceeded",
 		"overflow",
+		"scalar",
 		"resultBytesOverflow",
 		"corruption"
 	],
 	admissionTag: ["accepted", "rejected"],
 	writeTag: ["accepted", "rejected", "abandoned", "moved"],
-	openKind: ["schemaError", "newtypeMismatch", "fingerprintMismatch"],
+	openKind: ["schemaError", "newtypeMismatch", "fingerprintMismatch", "destinationExists"],
 	prepareKind: ["irError"]
 } as const
 
@@ -100,6 +104,8 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.statement)[number], StatementSpec["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.statementKind)[number], StatementKindTag>>,
 	Expect<Equal<(typeof ROSTERS.term)[number], TermIr["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.scalarExpr)[number], ScalarExprIr["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.numericCast)[number], NumericCastIr>>,
 	Expect<Equal<(typeof ROSTERS.aggregateOp)[number], AggOpIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.aggregateOp)[number], HeadOpIr>>,
 	Expect<Equal<(typeof ROSTERS.headTerm)[number], HeadTermIr["kind"]>>,
@@ -114,6 +120,8 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.errorFamily)[number], ErrorFamilyKind>>,
 	Expect<Equal<(typeof ROSTERS.admissionTag)[number], AdmissionTag>>,
 	Expect<Equal<(typeof ROSTERS.writeTag)[number], WriteTag>>,
+	// The P06R seam note is RESOLVED: the bridge's open_kind table adopted
+	// `destinationExists` (tags.rs), so the two rosters are one again.
 	Expect<Equal<(typeof ROSTERS.openKind)[number], OpenKind>>,
 	Expect<Equal<(typeof ROSTERS.prepareKind)[number], PrepareKind>>
 ]

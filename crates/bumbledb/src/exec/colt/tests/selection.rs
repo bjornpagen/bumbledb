@@ -2,10 +2,9 @@ use super::*;
 
 #[test]
 fn selection_levels_probe_to_the_filtered_subtrie() {
-    let dir = TempDir::new("colt-select");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
 
     let mut colt = Colt::new(all(&view), &scalars(&[0]), vec![vec![1]]);
     let cursor = colt.select(&[vec![7]]).expect("key 7 exists");
@@ -19,10 +18,9 @@ fn selection_levels_probe_to_the_filtered_subtrie() {
 
 #[test]
 fn chained_selections_intersect_and_contradict() {
-    let dir = TempDir::new("colt-select-chain");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..100).map(|i| (i % 10, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
 
     let mut colt = Colt::new(all(&view), &scalars(&[0, 1]), vec![vec![]]);
     let cursor = colt.select(&[vec![3], vec![13]]).expect("(3, 13) exists");
@@ -34,10 +32,9 @@ fn chained_selections_intersect_and_contradict() {
 
 #[test]
 fn zero_selection_tries_are_the_old_tries() {
-    let dir = TempDir::new("colt-select-zero");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..200).map(|i| (i % 20, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut plain = Colt::new(all(&view), &scalars(&[]), vec![vec![0], vec![1]]);
     let mut selected = Colt::new(all(&view), &scalars(&[]), vec![vec![0], vec![1]]);
     assert_eq!(selected.start(), Colt::root());
@@ -54,10 +51,9 @@ fn zero_selection_tries_are_the_old_tries() {
 
 #[test]
 fn key_count_labels_below_selections() {
-    let dir = TempDir::new("colt-select-count");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &scalars(&[0]), vec![vec![1]]);
     let cursor = colt.select(&[vec![7]]).expect("key 7 exists");
 
@@ -69,10 +65,9 @@ fn key_count_labels_below_selections() {
 
 #[test]
 fn reset_retains_selection_capacity() {
-    let dir = TempDir::new("colt-select-reset");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..500).map(|i| (i % 5, i)).collect();
-    let image = view_of(&dir, &schema, &rows);
+    let image = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&image), &scalars(&[0]), vec![vec![1]]);
     colt.select(&[vec![3]]).expect("key 3 exists");
     let first = colt.watermark();
@@ -84,9 +79,8 @@ fn reset_retains_selection_capacity() {
 
 #[test]
 fn start_before_select_panics() {
-    let dir = TempDir::new("colt-hard-start");
     let schema = schema();
-    let view = view_of(&dir, &schema, &[(1, 5)]);
+    let view = view_of(&schema, &[(1, 5)]);
     let colt = Colt::new(all(&view), &scalars(&[0]), vec![vec![1]]);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| colt.start()))
         .expect_err("unselected start must panic");
@@ -103,10 +97,9 @@ fn start_before_select_panics() {
 
 #[test]
 fn set_probes_union_survivors_per_element() {
-    let dir = TempDir::new("colt-select-set");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &set_level(0), vec![vec![1]]);
     let cursor = colt.select(&[vec![3, 7]]).expect("both keys exist");
     let entries = drain(&mut colt, cursor, 0);
@@ -127,9 +120,8 @@ fn set_probes_union_survivors_per_element() {
 
 #[test]
 fn a_single_position_union_pins_a_row() {
-    let dir = TempDir::new("colt-select-set-pin");
     let schema = schema();
-    let view = view_of(&dir, &schema, &[(1, 10), (2, 20), (3, 30)]);
+    let view = view_of(&schema, &[(1, 10), (2, 20), (3, 30)]);
     let mut colt = Colt::new(all(&view), &set_level(0), vec![vec![1]]);
     let cursor = colt.select(&[vec![2, 9]]).expect("key 2 exists");
     assert!(matches!(cursor, Cursor::Row(_)), "one survivor pins");
@@ -140,11 +132,10 @@ fn a_single_position_union_pins_a_row() {
 
 #[test]
 fn set_levels_chain_with_scalar_levels() {
-    let dir = TempDir::new("colt-select-set-chain");
     let schema = schema();
 
     let rows: Vec<(u64, u64)> = (0..100).map(|i| (i % 10, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(
         all(&view),
         &[
@@ -164,10 +155,9 @@ fn set_levels_chain_with_scalar_levels() {
 
 #[test]
 fn set_rebinds_reach_a_pool_fixpoint() {
-    let dir = TempDir::new("colt-select-set-fixpoint");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &set_level(0), vec![vec![1]]);
     let run = |colt: &mut Colt, words: Vec<u64>| {
         let cursor = colt.select(&[words]).expect("keys exist");

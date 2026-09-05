@@ -61,9 +61,8 @@ fn pinned_run_matches_the_recursive_path() {
         }],
     ] {
         let n_residuals = residuals.len();
-        let dir = TempDir::new("pinned-run");
         let schema = schema(1);
-        let views = views_of(&dir, &schema, std::slice::from_ref(&rows));
+        let views = views_of(&schema, std::slice::from_ref(&rows));
         let query = normalized(vec![occurrence(0, 0, &[(0, 0), (1, 1)])], residuals);
         let plan = split_plan(&query, &schema);
 
@@ -112,9 +111,8 @@ fn pinned_run_matches_the_recursive_path() {
 #[test]
 fn pinned_run_partitioning_is_transparent() {
     let rows = vec![(1u64, 10u64), (1, 11), (1, 12), (2, 1), (3, 2), (3, 6)];
-    let dir = TempDir::new("pinned-run-parts");
     let schema = schema(1);
-    let views = views_of(&dir, &schema, std::slice::from_ref(&rows));
+    let views = views_of(&schema, std::slice::from_ref(&rows));
     let query = normalized(vec![occurrence(0, 0, &[(0, 0), (1, 1)])], vec![]);
     let plan = split_plan(&query, &schema);
     let key_slots = vec![plan.slot_of(VarId(0)), plan.slot_of(VarId(1))];

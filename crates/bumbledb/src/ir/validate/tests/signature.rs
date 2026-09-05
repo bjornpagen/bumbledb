@@ -2,15 +2,13 @@ use crate::ir::{Atom, FindTerm, FoldOp, Query, Rule, Term, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
 fn sig_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -20,7 +18,6 @@ fn sig_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Fresh,
                 },
                 field("b", ValueType::Bool),
                 field("u", ValueType::U64),

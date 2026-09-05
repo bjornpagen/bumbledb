@@ -1,228 +1,88 @@
-//! The embedding surface: [`Db`],
-//! the read/write transaction closures, the typed write path, and export.
-//! handle is `Send + Sync`; readers run concurrently on LMDB snapshots;
-//! writes queue on one mutex. A write transaction is a [`WriteDelta`]
-//! — in-memory set arithmetic, nothing touches LMDB until commit, and an
-//! abort (error or panic) never wrote a fact: the one thing every abort
-//! `EscapedIdBurn` drop guard (`db/write.rs`) — the never-reissue law
+//! The embedding surface over the successor store: [`Db`], the read/write
+//! transaction closures, the typed write path, heap instances and export.
+//!
+//! One storage engine remains (`crate::storage::store`): canonical rows
+//! with inline text, exact-checked 16-byte fingerprint buckets, an elastic
+//! map, coherent owned snapshots, and the private candidate
+//! prepare → judge → seal → commit protocol. The old dictionary/delta
+//! machinery — intern ids in facts, fresh reservation, the separately
+//! committed generation — is deleted, not wrapped.
+//!
+//! Concurrency shape: the handle is `Send + Sync`; readers run concurrently
+//! on owned LMDB snapshots; writes serialize on the store's one writer
+//! capability. A write transaction is an in-memory net delta over the
+//! committed parent — set arithmetic, nothing touches LMDB until commit,
+//! and an abort (error or panic) never wrote a fact. Judgment sees the
+//! complete proposed final state before any commit capability exists.
+
 use std::marker::PhantomData;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::time::Duration;
 
-use crate::encoding::{InternId, ValueRef};
-use crate::error::Result;
-use crate::image::cache::ImageCache;
+use crate::error::{Error, Result};
 use crate::schema::Schema;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::{Environment, ReadTxn};
-use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
+use crate::work::{ExecutionPolicy, WorkContext};
+use bumbledb_theory::schema::{RelationId, StatementId};
 
-mod apply;
 mod builder;
 mod catalog_digest;
+mod closed;
 mod collection;
-mod delete;
-mod delete_dyn;
 mod get;
-mod insert;
-mod insert_dyn;
-mod instance;
 mod maintain;
 mod mutation;
-mod mutation_core;
 mod open;
 mod owned;
-mod prepare;
+/// `schema!` expansion plumbing: the generated `Fact` impls call these.
+/// Not API — no stability promises.
+#[doc(hidden)]
+pub mod plumbing;
 mod read;
 mod read_instance;
-mod reserve;
+mod row_reader;
 pub(crate) mod session;
+mod tx;
+mod violations;
 mod write;
 
 pub use builder::InstanceBuilder;
-
 pub use collection::{AcceptedCollection, CollectionBuilder};
-pub use mutation::{FreshRange, FreshRangeIter, MutationReport};
+pub use mutation::MutationReport;
 pub use owned::OwnedInstance;
+pub use read_instance::ReadInstance;
+pub use row_reader::RowReader;
+pub use tx::WriteTx;
 pub use write::Witness;
 
-/// House `PutOutcome` applied to the codec: a dictionary miss proves the
-/// fact (or determinant) absent rather than a Boolean whose polarity
-/// callers must remember.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Probe {
-    Encoded,
-    ProvablyAbsent,
-}
-
-mod codec_seal {
-    pub trait Sealed {}
-}
-
-/// Codec dependencies for encode-probe and decode. Names are
-/// dependencies, not backends — a codec generic over this cannot branch
-/// on the concrete catalog.
-#[doc(hidden)]
-pub trait CodecRead<S>: codec_seal::Sealed {
-    fn schema(&self) -> &Schema;
-    fn lookup_str(&self, value: &str) -> Result<Option<InternId>>;
-    fn resolve_str(&self, id: InternId) -> Result<&str>;
-
-    fn decode_bool_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<bool> {
-        Ok(crate::encoding::decode_bool_at(
-            view(self.schema(), relation, fact),
-            idx,
-        )?)
-    }
-
-    fn decode_u64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<u64> {
-        Ok(crate::encoding::decode_u64(
-            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
-        ))
-    }
-
-    fn decode_i64_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<i64> {
-        Ok(crate::encoding::decode_i64(
-            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
-        ))
-    }
-
-    fn decode_f64_field(
-        &self,
-        relation: RelationId,
-        fact: &[u8],
-        idx: usize,
-    ) -> Result<bumbledb_theory::F64> {
-        Ok(crate::encoding::decode_f64(
-            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
-        )?)
-    }
-
-    fn decode_str_field(&self, relation: RelationId, fact: &[u8], idx: usize) -> Result<&str> {
-        let id = InternId::from_raw(crate::encoding::decode_u64(
-            crate::encoding::field_word_bytes(view(self.schema(), relation, fact), idx),
-        ));
-        self.resolve_str(id)
-    }
-
-    fn decode_fixed_bytes_field<'f>(
-        &self,
-        relation: RelationId,
-        fact: &'f [u8],
-        idx: usize,
-    ) -> Result<&'f [u8]> {
-        Ok(crate::encoding::decode_fixed_bytes(
-            view(self.schema(), relation, fact),
-            idx,
-        )?)
-    }
-
-    fn decode_interval_u64_field(
-        &self,
-        relation: RelationId,
-        fact: &[u8],
-        idx: usize,
-    ) -> Result<crate::Interval<u64>> {
-        Ok(crate::encoding::decode_interval_u64(
-            view(self.schema(), relation, fact),
-            idx,
-        )?)
-    }
-
-    fn decode_interval_i64_field(
-        &self,
-        relation: RelationId,
-        fact: &[u8],
-        idx: usize,
-    ) -> Result<crate::Interval<i64>> {
-        Ok(crate::encoding::decode_interval_i64(
-            view(self.schema(), relation, fact),
-            idx,
-        )?)
-    }
-}
-
-/// Codec write dependency: mint intern ids. Extends [`CodecRead`] so
-/// insert encoding cannot branch on a backend the type does not name.
-#[doc(hidden)]
-pub trait CodecWrite<S>: CodecRead<S> {
-    fn intern_str(&mut self, value: &str) -> Result<InternId>;
-}
-
-fn view<'s, 'f>(
-    schema: &'s Schema,
-    relation: RelationId,
-    fact: &'f [u8],
-) -> crate::encoding::FactView<'f, 's> {
-    schema.relation(relation).layout().encoded(fact)
-}
-
-/// One typed fact struct, as generated by the `schema!` macro. The write
-/// side encodes against a [`CodecWrite`] (interning novel strings); the
-/// probe side encodes against a [`CodecRead`] and reports a never-interned
-/// value as [`Probe::ProvablyAbsent`].
-/// `'a` is the decode lifetime: variable-width fields (`&'a str` /
-/// `&'a [u8]`) borrow from the resolver — the snapshot's committed
-/// dictionary (mmap pages, txn-stable by LMDB `CoW`) or the write
-/// transaction's pending interns (delta arena). A struct with no
+/// One typed fact struct, as generated by the `schema!` macro (P07 owns the
+/// macro; this trait roster is the C-contract it targets).
+///
+/// The encode side appends the fact's canonical [`crate::Value`]s in sealed
+/// field order — text and fixed bytes are owned by the value, there is no
+/// dictionary and no intern id. The decode side reads a [`RowReader`] over
+/// the stored canonical row bytes; `&'a str` / `&'a [u8]` fields borrow
+/// directly from the storage snapshot's mapped pages (transaction-stable by
+/// LMDB `CoW`) or a transaction's pending row bytes.
 pub trait Fact<'a>: Sized {
     type Schema;
 
     const RELATION: RelationId;
 
+    /// Append this fact's field values in sealed order.
     /// # Errors
-    fn encode_insert<C>(&self, context: &mut C, out: &mut Vec<u8>) -> Result<()>
-    where
-        C: CodecWrite<Self::Schema>;
+    /// A value refused at the typed boundary (for example a fixed-width
+    /// interval whose width is not the declared width).
+    fn append_values(&self, out: &mut Vec<crate::Value>) -> Result<()>;
 
+    /// Decode one stored canonical row.
     /// # Errors
-    fn encode_probe<C>(&self, context: &C, out: &mut Vec<u8>) -> Result<Probe>
-    where
-        C: CodecRead<Self::Schema>;
-
-    /// # Errors
-    fn decode<C>(context: &'a C, fact: &[u8]) -> Result<Self>
-    where
-        C: CodecRead<Self::Schema>;
+    /// Corruption: the reader refuses malformed bytes.
+    fn decode(row: RowReader<'a>) -> Result<Self>;
 }
 
 /// A typed key value: one key FD's determinant, carrying the relation's
 /// fact type — `snap.get(key)` / `tx.get(key)` return `Option<Self::Fact>`.
-/// Generated by `schema!`: every fresh newtype implements it (reading
-/// through its auto-materialized `R(field) -> R`), and every declared
-/// `R(x,..) -> R` statement yields a generated key struct (KG-2).
-/// `'a` is the RESULT borrow (the snapshot's dictionary / the write
-/// transaction's pending interns), independent of any borrow the key
-/// value itself carries.
-/// ```compile_fail
-/// bumbledb::schema! {
-///     pub SchemaA;
-///     relation Left { id: u64 as LeftId, fresh }
-/// }
-/// bumbledb::schema! {
-///     pub SchemaB;
-///     relation Right { id: u64 as RightId, fresh }
-/// }
-/// // A key of `SchemaA` cannot read through a `Db<SchemaB>` read lease:
-/// // `LeftId: Key<'_, Schema = SchemaB>` does not hold.
-/// fn cross(db: &bumbledb::Db<SchemaB>, id: LeftId) -> bumbledb::Result<Option<Left>> {
-///     db.read(|snap| snap.get(id))
-/// }
-/// ```
-/// carries the fact type, so the call is `tx.get(id)`:
-/// ```compile_fail
-/// bumbledb::schema! {
-///     pub Ledger;
-///     relation Account { id: u64 as AccountId, fresh, balance: i64 }
-/// }
-/// fn probe(db: &bumbledb::Db<Ledger>, id: AccountId) -> bumbledb::Result<()> {
-///     db.write(|tx| {
-///         // (`::` spaced apart: the repo bans the dead spelling textually)
-///         let _ = tx.get :: <Account>(id)?;
-///         Ok(())
-///     })
-/// }
-/// ```
+/// Generated by `schema!` for every declared `R(x, ..) -> R` statement.
 pub trait Key<'a>: Sized {
     type Schema;
 
@@ -230,253 +90,65 @@ pub trait Key<'a>: Sized {
 
     const STATEMENT: StatementId;
 
+    /// Append the determinant values in projection order.
     /// # Errors
-    fn encode_determinant<C>(&self, context: &C, out: &mut Vec<u8>) -> Result<Probe>
-    where
-        C: CodecRead<Self::Schema>;
+    /// A key value refused at the typed boundary.
+    fn append_key_values(&self, out: &mut Vec<crate::Value>) -> Result<()>;
 }
 
-/// A fresh-minted newtype, as generated by the `schema!` macro for a
-/// `fresh` field declared `as NewType`: [`WriteTx::reserve`] mints the next
-/// values with the field already known.
-pub trait Fresh: Sized + Copy {
-    type Schema;
-
-    const RELATION: RelationId;
-
-    const FIELD: FieldId;
-
-    fn from_fresh(raw: u64) -> Self;
-
-    fn fresh(self) -> u64;
-}
-
-/// The database handle: the LMDB environment, the image cache, and the
-/// writer mutex. Shareable across threads (`Send + Sync`); dropping the
-/// handle closes the environment.
+/// The database handle: the successor store owner plus the validated
+/// schema. Shareable across threads (`Send + Sync`); dropping the last
+/// handle closes the environment and releases the kernel directory lock.
 /// `S` is the schema definition ([`crate::Theory`]) the database was
-/// [`WriteTx`], [`ReadInstance`], and [`crate::PreparedQuery`], so a fact or
-/// (compile error, not a runtime width check). The validated
-/// [`Schema`] itself is owned by the handle: `create`/`open` validate the
-/// definition's descriptor and surface an invalid declaration as the
+/// created/opened with — the typestate carried by [`WriteTx`],
+/// [`ReadInstance`] and [`crate::PreparedQuery`], so a fact or key of a
+/// different schema is a compile error, not a runtime width check.
 pub struct Db<S> {
-    /// The reader cache: one parked LMDB read
-    /// Declared BEFORE `env` — fields drop in declaration order, and
-    /// before `env` releases the advisory lock, or the drop opens a
-    read_cache: Mutex<Option<ParkedReader>>,
-    env: Environment,
-    cache: ImageCache,
-    writer: Mutex<()>,
-
-    writer_thread: std::sync::atomic::AtomicU64,
-
-    generation: std::sync::atomic::AtomicU64,
+    store: crate::storage::store::Store,
     schema: Arc<Schema>,
-
-    /// [`Db::read`] and taken back after the lease — one pool, no
-    scratch: Mutex<Option<ScratchPool>>,
-
+    closed: Arc<closed::ClosedRows>,
     marker: PhantomData<fn() -> S>,
 }
 
 impl<S> Db<S> {
-    /// The LMDB environment (reader: `crate::verify_store` — the sweeper
-    pub(crate) fn env(&self) -> &Environment {
-        &self.env
-    }
-
     #[must_use]
     pub fn schema(&self) -> &Schema {
         self.schema.as_ref()
     }
-}
 
-struct ParkedReader {
-    txn: heed::RoTxn<'static, heed::WithoutTls>,
-    generation: crate::GenerationId,
-}
-
-#[derive(Default)]
-pub(crate) struct ReadScratch {
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) refs: Vec<ValueRef>,
-}
-
-pub(crate) struct ScratchPool(Mutex<Vec<ReadScratch>>);
-
-impl ScratchPool {
-    pub(crate) fn new() -> Self {
-        Self(Mutex::new(Vec::new()))
+    pub(crate) fn schema_arc(&self) -> &Arc<Schema> {
+        &self.schema
     }
 
-    fn take(&self) -> ReadScratch {
-        self.0
-            .try_lock()
-            .ok()
-            .and_then(|mut pool| pool.pop())
-            .unwrap_or_default()
-    }
-
-    fn restore(&self, mut scratch: ReadScratch) {
-        scratch.bytes.clear();
-        scratch.refs.clear();
-        if let Ok(mut pool) = self.0.try_lock() {
-            pool.push(scratch);
-        }
+    /// The successor store owner (C04). Native/log integration and the
+    /// offline sweeper read through this; it is not embedding API.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn integration_store(&self) -> &crate::storage::store::Store {
+        &self.store
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ThreadKey(std::num::NonZeroU64);
-
-impl ThreadKey {
-    fn mint() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(1);
-        thread_local! {
-            static KEY: ThreadKey = {
-                let raw = NEXT.fetch_add(1, Ordering::Relaxed);
-                ThreadKey(std::num::NonZeroU64::new(raw).expect("thread-key mint starts at 1"))
-            };
-        }
-        KEY.with(|key| *key)
+/// The embedded-process work allowance: the host's own process is the
+/// budget authority for direct Rust embedding, so the built-in closures run
+/// under an effectively unbounded ledger (cancellation and native budgets
+/// arrive through the integration surface's caller-supplied
+/// [`WorkContext`]). Zero is never used as "unlimited" — the allowances are
+/// explicit maxima.
+pub(crate) fn embedded_work() -> Result<WorkContext> {
+    ExecutionPolicy {
+        input_bytes: u64::MAX,
+        working_bytes: u64::MAX,
+        scratch_bytes: u64::MAX,
+        result_bytes: u64::MAX,
+        rows: u64::MAX,
+        work_units: u64::MAX,
+        // Far beyond any embedded call, far below the monotonic clock range.
+        timeout: Duration::from_hours(24 * 365),
     }
-
-    fn load(
-        cell: &std::sync::atomic::AtomicU64,
-        order: std::sync::atomic::Ordering,
-    ) -> Option<Self> {
-        std::num::NonZeroU64::new(cell.load(order)).map(Self)
-    }
-
-    fn store(
-        cell: &std::sync::atomic::AtomicU64,
-        key: Option<Self>,
-        order: std::sync::atomic::Ordering,
-    ) {
-        cell.store(key.map_or(0, |ThreadKey(n)| n.get()), order);
-    }
-}
-
-struct WriterThreadReset<'a>(&'a std::sync::atomic::AtomicU64);
-
-/// One admitted LMDB read lease: executes prepared queries and exports
-/// relations. Handed to [`Db::read`] closures. The transaction borrows
-/// the environment; the lease is invalidated by Rust lifetime when the
-/// callback returns. `!Send + !Sync` — a read lease does not cross
-/// threads.
-/// ```compile_fail
-/// fn require_send<T: Send>() {}
-/// require_send::<bumbledb::ReadInstance<'static, ()>>();
-/// ```
-/// ```compile_fail
-/// fn require_sync<T: Sync>() {}
-/// require_sync::<bumbledb::ReadInstance<'static, ()>>();
-/// ```
-/// ```compile_fail
-/// fn require_insert(instance: &mut bumbledb::ReadInstance<'_, ()>) {
-///     let _ = instance.insert;
-/// }
-/// ```
-pub struct ReadInstance<'txn, S> {
-    pub(super) core: instance::InstanceCore<crate::image::LmdbSource<'txn>, S>,
-    thread_bound: PhantomData<Rc<()>>,
-}
-
-impl<'txn, S> ReadInstance<'txn, S> {
-    pub(crate) fn txn(&self) -> &ReadTxn<'_> {
-        self.core.source.txn()
-    }
-
-    pub(crate) fn cache(&self) -> &'txn ImageCache {
-        self.core.source.cache()
-    }
-
-    /// # Errors
-    pub fn generation(&self) -> Result<crate::GenerationId> {
-        self.txn().generation()
-    }
-
-    fn with_scratch<R>(&self, body: impl FnOnce(&mut ReadScratch) -> Result<R>) -> Result<R> {
-        self.core.with_scratch(body)
-    }
-}
-
-/// One write transaction: an in-memory write delta over a read view. Operations
-/// are in-memory set arithmetic — order is semantically irrelevant, and
-/// `delete(old); insert(new)` in either order is the blessed mutation
-/// idiom. Handed to [`Db::write`] closures; offers no queries — point
-/// reads only ([`WriteTx::contains`] / [`WriteTx::get`] /
-/// [`WriteTx::get_dyn`]), which observe the final-state view the judgment
-/// phase will judge. No prepared-query or [`ReadInstance`] is reachable from
-/// here. Carries the handle's schema typestate `S`:
-pub struct WriteTx<'a, S> {
-    mutation: mutation_core::MutationCore<mutation_core::StoreMutation<'a>, S>,
-}
-
-impl<'a, S> WriteTx<'a, S> {
-    fn into_store(self) -> (ReadTxn<'a>, WriteDelta<'a>) {
-        self.mutation.into_store()
-    }
-
-    fn poisoned(&self) -> Option<&crate::error::Error> {
-        self.mutation.poisoned()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn delta(&self) -> &WriteDelta<'a> {
-        &self.mutation.backend.delta
-    }
-}
-
-/// `schema!` expansion plumbing: the generated `Fact` impls call these.
-/// Not API — no stability promises; nothing here is reachable from the
-/// documented surface.
-#[doc(hidden)]
-pub mod plumbing;
-
-impl<S> codec_seal::Sealed for ReadInstance<'_, S> {}
-impl<S> codec_seal::Sealed for WriteTx<'_, S> {}
-
-impl<S> CodecRead<S> for ReadInstance<'_, S> {
-    fn schema(&self) -> &Schema {
-        self.core.schema.as_ref()
-    }
-
-    fn lookup_str(&self, value: &str) -> Result<Option<InternId>> {
-        self.core.source.catalog().dict_lookup(value.as_bytes())
-    }
-
-    fn resolve_str(&self, id: InternId) -> Result<&str> {
-        plumbing::resolve_string(self, id)
-    }
-}
-
-impl<S> CodecRead<S> for WriteTx<'_, S> {
-    fn schema(&self) -> &Schema {
-        self.mutation.schema()
-    }
-
-    fn lookup_str(&self, value: &str) -> Result<Option<InternId>> {
-        CodecRead::lookup_str(&self.mutation, value)
-    }
-
-    fn resolve_str(&self, id: InternId) -> Result<&str> {
-        CodecRead::resolve_str(&self.mutation, id)
-    }
-}
-
-impl<S> CodecWrite<S> for WriteTx<'_, S> {
-    fn intern_str(&mut self, value: &str) -> Result<InternId> {
-        CodecWrite::intern_str(&mut self.mutation, value)
-    }
+    .start()
+    .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))
 }
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod append_tests;
-
-#[cfg(all(test, feature = "trace"))]
-mod trace_tests;

@@ -8,17 +8,37 @@ use std::sync::Arc;
 
 use super::run_join::run_join;
 use super::{
-    Bindings, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
-    ProjectionSink, RecArm,
+    Bindings, EitherSink, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery,
+    PreparedRule, ProjectionSink, RecArm,
 };
 use crate::error::{Error, Result};
 use crate::exec::run::Counters;
-use crate::image::ImageBind;
+use crate::exec::sink::FindSpec;
+use crate::image::SourceImages;
+use crate::image::intern::InternerHandle;
 use crate::image::view::Const;
 use crate::image::{RelationImage, TransientImage};
 use crate::schema::Schema;
-use crate::storage::catalog::CatalogRead;
 use bumbledb_theory::schema::ValueType;
+
+/// The one aim surface the derived rule loop needs: reach's sink stays a
+/// plain projection (the recursive cycle is projection-only by type),
+/// while an interior's stage sink is the full [`EitherSink`].
+pub(super) trait StageSink: crate::exec::run::Sink {
+    fn aim_stage(&mut self, finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]);
+}
+
+impl StageSink for ProjectionSink {
+    fn aim_stage(&mut self, finds: &[FindSpec], slot_count: usize, _spans: &[(usize, usize)]) {
+        self.aim(finds, slot_count);
+    }
+}
+
+impl StageSink for EitherSink {
+    fn aim_stage(&mut self, finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]) {
+        self.aim(finds, slot_count, spans);
+    }
+}
 
 /// The default rec-round budget. Generous by the safety theorem's own
 /// measure: a real closure's round count is its graph's diameter.
@@ -76,7 +96,7 @@ enum DerivedBind<'a> {
 #[derive(Default)]
 pub(super) struct DerivedImages {
     working: Vec<TransientImage>,
-    published: Vec<Arc<RelationImage>>,
+    pub(super) published: Vec<Arc<RelationImage>>,
     pub(super) occ_images: OccImages,
     pub(super) retired: Vec<Vec<u32>>,
 }
@@ -89,20 +109,139 @@ impl DerivedImages {
         self.retired.clear();
     }
 
+    /// Seal one finished projection stage/rec table: drains the sink's
+    /// distinct rows ACROSS BOTH TIERS (a spilled rec seen-set refills the
+    /// sealed image from its scratch log), with the image slabs charged
+    /// before allocation.
     fn stash_finished(
         &mut self,
         id: usize,
         field_types: &[ValueType],
-        sink: &ProjectionSink,
-    ) -> Arc<RelationImage> {
+        sink: &mut ProjectionSink,
+        work: &crate::work::WorkContext,
+    ) -> Result<Arc<RelationImage>> {
         debug_assert_eq!(
             self.published.len(),
             id,
             "derived tables seal in declaration order"
         );
-        let image = self.working[id].refill(field_types, sink.len(), sink.answers_since(0));
+        let rows = sink.len();
+        let image =
+            self.working[id].refill_drained(Some(work), field_types, rows, |_, write| {
+                sink.drain_since(0, write)
+            })?;
         self.published.push(image.clone());
-        image
+        Ok(image)
+    }
+
+    /// Seal an aggregate/computed stage's finalized rows (flat, row-major
+    /// in `scratch`, `row_words` words each). Slabs charged before
+    /// allocation, like every other image build.
+    fn stash_rows(
+        &mut self,
+        id: usize,
+        field_types: &[ValueType],
+        scratch: &[u64],
+        row_words: usize,
+        work: &crate::work::WorkContext,
+    ) -> Result<Arc<RelationImage>> {
+        debug_assert_eq!(
+            self.published.len(),
+            id,
+            "derived tables seal in declaration order"
+        );
+        let count = if row_words == 0 {
+            0
+        } else {
+            debug_assert_eq!(scratch.len() % row_words, 0, "whole finalized rows");
+            scratch.len() / row_words
+        };
+        let image =
+            self.working[id].refill_drained(Some(work), field_types, count, |_, write| {
+                for row in scratch.chunks_exact(row_words) {
+                    write(row);
+                }
+                Ok(())
+            })?;
+        self.published.push(image.clone());
+        Ok(image)
+    }
+}
+
+/// One stage's row width in image words: the same slot arithmetic the
+/// binding layout uses (interval/Pack and Id128 columns are two words).
+fn stage_row_words(field_types: &[ValueType]) -> usize {
+    field_types
+        .iter()
+        .map(|ty| crate::ir::normalize::SlotWidth::of(ty).slots())
+        .sum()
+}
+
+/// Seal one finished interior: a projection stage refills straight from
+/// its sink; an aggregate/computed stage FINALIZES here — its overflow /
+/// cardinality / scalar errors surface now, before any consumer runs
+/// (the producer error boundary; a later filter cannot hide them).
+/// Returns the sealed row count for the derived-tuples budget.
+fn seal_interior(
+    interior: &mut PreparedInterior,
+    id: usize,
+    derived: &mut DerivedImages,
+    answer_scratch: &mut Vec<u64>,
+    tuples_so_far: u64,
+    tuples_budget: u64,
+    work: &crate::work::WorkContext,
+) -> Result<u64> {
+    // The derived-tuples budget is judged BEFORE finalization/refill
+    // materializes anything further (charge before growth, Q-BUDGET);
+    // group counts and projection lengths are already known.
+    let over = |rows: u64| -> Result<()> {
+        let total = tuples_so_far.saturating_add(rows);
+        if total > tuples_budget {
+            return Err(Error::DerivedBudgetExceeded {
+                rounds: 0,
+                tuples: total,
+            });
+        }
+        Ok(())
+    };
+    let row_words = stage_row_words(&interior.field_types);
+    let field_types = &interior.field_types;
+    let scratch = &mut interior.row_scratch;
+    let mut seal_aggregate = |sink: &mut crate::exec::sink::AggregateSink| -> Result<u64> {
+        over(sink.group_count() as u64)?;
+        scratch.clear();
+        sink.finalize_into(answer_scratch, |row| {
+            scratch.extend_from_slice(row);
+            Ok(())
+        })?;
+        let image = derived.stash_rows(id, field_types, scratch, row_words, work)?;
+        Ok(image.row_count() as u64)
+    };
+    match &mut interior.sink {
+        EitherSink::Projection(sink) => {
+            let rows = sink.len() as u64;
+            over(rows)?;
+            derived.stash_finished(id, field_types, sink, work)?;
+            Ok(rows)
+        }
+        EitherSink::Computed(computed) => {
+            if let Some(error) = &computed.error {
+                return Err(error.clone());
+            }
+            match &mut computed.inner {
+                EitherSink::Projection(sink) => {
+                    let rows = sink.len() as u64;
+                    over(rows)?;
+                    derived.stash_finished(id, field_types, sink, work)?;
+                    Ok(rows)
+                }
+                EitherSink::Aggregate(sink) => seal_aggregate(sink),
+                EitherSink::Computed(_) => {
+                    unreachable!("the computed adapter never nests itself")
+                }
+            }
+        }
+        EitherSink::Aggregate(sink) => seal_aggregate(sink),
     }
 }
 
@@ -142,13 +281,44 @@ impl RecPingPong {
 }
 
 #[derive(Clone, Copy)]
-struct RunCtx<'a, Cat, Img> {
+struct RunCtx<'a> {
     schema: &'a Schema,
-    catalog: &'a Cat,
-    images: &'a Img,
+    images: &'a SourceImages<'a>,
+    interner: &'a InternerHandle<'a>,
     resolved_params: &'a [Const],
     missed_params: &'a [bool],
     fast_eligible: bool,
+    /// Route Free Join rules through the cursor fallback (Q-FALLBACK
+    /// forcing, or the one bounded restart after reservation refusal).
+    fallback: bool,
+}
+
+/// The fallback's derived-source resolver over sealed stage tables
+/// (interiors and the finished rec read `Finished(id)`).
+pub(super) fn finished_resolver(
+    published: &[Arc<RelationImage>],
+) -> impl Fn(crate::ir::normalize::OccBind) -> Option<Arc<RelationImage>> + '_ {
+    |bind| match bind {
+        crate::ir::normalize::OccBind::Finished(id) => published.get(id.index()).cloned(),
+        crate::ir::normalize::OccBind::Edb(_)
+        | crate::ir::normalize::OccBind::RecDelta(_)
+        | crate::ir::normalize::OccBind::RecAcc(_) => None,
+    }
+}
+
+/// As [`finished_resolver`], plus the current round's Δ/accumulated rec
+/// tables for rec arms.
+fn rec_resolver<'a>(
+    published: &'a [Arc<RelationImage>],
+    delta: &'a Arc<RelationImage>,
+    acc: &'a Arc<RelationImage>,
+) -> impl Fn(crate::ir::normalize::OccBind) -> Option<Arc<RelationImage>> + 'a {
+    move |bind| match bind {
+        crate::ir::normalize::OccBind::Finished(id) => published.get(id.index()).cloned(),
+        crate::ir::normalize::OccBind::RecDelta(_) => Some(Arc::clone(delta)),
+        crate::ir::normalize::OccBind::RecAcc(_) => Some(Arc::clone(acc)),
+        crate::ir::normalize::OccBind::Edb(_) => None,
+    }
 }
 
 impl<S> PreparedQuery<S> {
@@ -156,10 +326,9 @@ impl<S> PreparedQuery<S> {
         clippy::too_many_lines,
         reason = "the derived phase reads as one protocol: interiors, then rec"
     )]
-    pub(super) fn run_derived<Cnt: Counters, C: CatalogRead, I: ImageBind>(
+    pub(super) fn run_derived<Cnt: Counters>(
         &mut self,
-        catalog: &C,
-        images: &I,
+        images: &SourceImages<'_>,
         counters: &mut Cnt,
     ) -> Result<bool> {
         let derived_count = match &self.pipeline {
@@ -184,6 +353,7 @@ impl<S> PreparedQuery<S> {
         let mut latched = 0u32;
         let mut ran = false;
         let mut derived_tuples: u64 = 0;
+        let interner = InternerHandle::new(self.cache.interner(), images.source().work());
 
         let n_interiors = self.pipeline.interiors().len();
         if n_interiors > 0 {
@@ -197,11 +367,12 @@ impl<S> PreparedQuery<S> {
                 }
                 let ctx = RunCtx {
                     schema: self.schema.as_ref(),
-                    catalog,
                     images,
+                    interner: &interner,
                     resolved_params: &self.resolved_params,
                     missed_params: &self.missed_params,
                     fast_eligible,
+                    fallback: self.forced_fallback,
                 };
                 let rule_count = self.pipeline.interiors()[i].rules.len();
                 for rule_idx in 0..rule_count {
@@ -214,8 +385,10 @@ impl<S> PreparedQuery<S> {
                     let interiors = self.pipeline.interiors_mut();
                     let units = interiors[i].units;
                     let interior = &mut interiors[i];
+                    let resolver = finished_resolver(&self.derived.published);
                     ran |= run_into_projection(
                         &ctx,
+                        &resolver,
                         &mut interior.rules,
                         rule_idx,
                         units,
@@ -223,26 +396,32 @@ impl<S> PreparedQuery<S> {
                         &mut retired,
                         &mut interior.sink,
                         &mut self.bindings,
-                        &mut self.determinant_key,
+                        &mut self.key_scratch,
                         &mut latched,
                         counters,
                     )?;
                     self.derived.occ_images = occ_images;
                     self.derived.retired = retired;
                 }
-                derived_tuples += self.pipeline.interiors()[i].sink.len() as u64;
-                interior_emits += self.pipeline.interiors()[i].sink.len() as u64;
-                if derived_tuples > self.tuples_budget {
-                    return Err(Error::DerivedBudgetExceeded {
-                        rounds: 0,
-                        tuples: derived_tuples,
-                    });
-                }
-                self.derived.stash_finished(
-                    i,
-                    &self.pipeline.interiors()[i].field_types,
-                    &self.pipeline.interiors()[i].sink,
-                );
+                // Seal the stage: aggregate/computed stages finalize HERE,
+                // so a required producer error (overflow, cardinality,
+                // scalar failure) fails the query before any consumer
+                // could discard it (the stage error boundary, Q-IR).
+                let sealed = {
+                    let tuples_budget = self.tuples_budget;
+                    let interiors = self.pipeline.interiors_mut();
+                    seal_interior(
+                        &mut interiors[i],
+                        i,
+                        &mut self.derived,
+                        &mut self.answer_scratch,
+                        derived_tuples,
+                        tuples_budget,
+                        images.source().work(),
+                    )?
+                };
+                derived_tuples += sealed;
+                interior_emits += sealed;
             }
             interiors_span.set_pair(n_interiors as u64, interior_emits);
         }
@@ -260,15 +439,17 @@ impl<S> PreparedQuery<S> {
                     rec_id,
                     *rounds_budget,
                     self.tuples_budget,
+                    self.sink_ram,
                     &mut self.derived,
                     &mut self.bindings,
-                    &mut self.determinant_key,
+                    &mut self.key_scratch,
                     self.schema.as_ref(),
-                    catalog,
                     images,
+                    &interner,
                     &self.resolved_params,
                     &self.missed_params,
                     fast_eligible,
+                    self.forced_fallback,
                     counters,
                     &mut latched,
                     derived_tuples,
@@ -299,20 +480,22 @@ impl<S> PreparedQuery<S> {
     clippy::too_many_lines,
     reason = "the driver reads as one protocol: reset, round 0, Δ loop, budget"
 )]
-fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
+fn run_reach<Cnt: Counters>(
     driver: &mut ReachDriver,
     rec_id: usize,
     rounds_budget: u32,
     tuples_budget: u64,
+    sink_ram: usize,
     derived: &mut DerivedImages,
     bindings: &mut Bindings,
-    determinant_key: &mut Vec<u8>,
+    key_scratch: &mut Vec<u64>,
     schema: &Schema,
-    catalog: &C,
-    images: &I,
+    images: &SourceImages<'_>,
+    interner: &InternerHandle<'_>,
     resolved_params: &[Const],
     missed_params: &[bool],
     fast_eligible: bool,
+    forced_fallback: bool,
     counters: &mut Cnt,
     latched: &mut u32,
     mut derived_tuples: u64,
@@ -321,6 +504,13 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
     let mut reach_span = crate::obs::span(crate::obs::names::REACH);
 
     driver.sink.reset();
+    // The rec seen/frontier state is charged like the main sink's distinct
+    // state: past this execution's RAM allowance it continues in the one
+    // scratch map, and the watermark drains below read across both tiers.
+    driver.sink.begin(Some(crate::exec::sink::SinkBudget {
+        work: images.source().work().clone(),
+        ram_bytes: sink_ram,
+    }));
     driver.scratch.begin();
     for rule in &mut driver.base {
         if let PreparedRule::FreeJoin(fj) = rule {
@@ -333,11 +523,12 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
 
     let ctx = RunCtx {
         schema,
-        catalog,
         images,
+        interner,
         resolved_params,
         missed_params,
         fast_eligible,
+        fallback: forced_fallback,
     };
 
     let mut round_span = Some(crate::obs::span(crate::obs::names::FIXPOINT_ROUND));
@@ -345,8 +536,10 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
 
     for rule_idx in 0..driver.base.len() {
         fill_finished_images(&driver.base[rule_idx], derived);
+        let resolver = finished_resolver(&derived.published);
         ran |= run_into_projection(
             &ctx,
+            &resolver,
             &mut driver.base,
             rule_idx,
             driver.units,
@@ -354,7 +547,7 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
             &mut derived.retired,
             &mut driver.sink,
             bindings,
-            determinant_key,
+            key_scratch,
             latched,
             counters,
         )?;
@@ -372,7 +565,10 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         let tuples = derived_tuples + len as u64;
         let any_delta = len > driver.scratch.watermark;
         if !any_delta {
-            derived.stash_finished(rec_id, &driver.field_types, &driver.sink);
+            let ReachDriver {
+                sink, field_types, ..
+            } = &mut *driver;
+            derived.stash_finished(rec_id, field_types, sink, images.source().work())?;
             reach_span.set_pair(u64::from(rounds), tuples);
             break;
         }
@@ -385,18 +581,33 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
         let flip = usize::from(driver.scratch.flip);
         let since = driver.scratch.watermark;
         counters.fixpoint_delta((len - since) as u64);
-        let round_delta = driver.scratch.delta_mut().refill(
-            &driver.field_types,
-            len - since,
-            driver.sink.answers_since(since),
-        );
-        let filled = driver.scratch.acc_filled[flip];
-        let round_acc = driver
-            .scratch
-            .acc_mut()
-            .append(&driver.field_types, filled, len, |from| {
-                driver.sink.answers_since(from)
-            });
+        // Δ/accumulated images drain the seen-set across both tiers (the
+        // frontier keeps its watermark contract after a spill) and charge
+        // their slabs before allocation.
+        let (round_delta, round_acc) = {
+            let ReachDriver {
+                sink,
+                scratch,
+                field_types,
+                ..
+            } = &mut *driver;
+            let work = images.source().work();
+            let round_delta = scratch.delta_mut().refill_drained(
+                Some(work),
+                field_types,
+                len - since,
+                |_, write| sink.drain_since(since, write),
+            )?;
+            let filled = scratch.acc_filled[flip];
+            let round_acc = scratch.acc_mut().append_drained(
+                Some(work),
+                field_types,
+                filled,
+                len,
+                |from, write| sink.drain_since(from, write),
+            )?;
+            (round_delta, round_acc)
+        };
         driver.scratch.acc_filled[flip] = len;
         driver.scratch.flip = !driver.scratch.flip;
         driver.scratch.watermark = len;
@@ -410,8 +621,10 @@ fn run_reach<Cnt: Counters, C: CatalogRead, I: ImageBind>(
                     acc: &round_acc,
                 },
             );
+            let resolver = rec_resolver(&derived.published, &round_delta, &round_acc);
             ran |= run_free_join_into_projection(
                 &ctx,
+                &resolver,
                 &mut driver.rec[arm_idx].rule,
                 driver.units,
                 &derived.occ_images,
@@ -509,16 +722,17 @@ fn fill_plan_images(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-fn run_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
-    ctx: &RunCtx<'_, Cat, Img>,
+fn run_into_projection<S: StageSink, Cnt: Counters>(
+    ctx: &RunCtx<'_>,
+    derived_resolver: &dyn Fn(crate::ir::normalize::OccBind) -> Option<Arc<RelationImage>>,
     rules: &mut [PreparedRule],
     rule_idx: usize,
     units: usize,
     occ_images: &OccImages,
     retired: &mut Vec<Vec<u32>>,
-    sink: &mut ProjectionSink,
+    sink: &mut S,
     bindings: &mut Bindings,
-    determinant_key: &mut Vec<u8>,
+    key_scratch: &mut Vec<u64>,
     latched: &mut u32,
     counters: &mut Cnt,
 ) -> Result<bool> {
@@ -527,14 +741,15 @@ fn run_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
         PreparedRule::KeyProbe(rule) => {
             bindings.resize(rule.plan.slot_count());
             if multi_unit {
-                sink.aim(&rule.finds, rule.plan.slot_count());
+                sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
             }
             crate::exec::dispatch::execute_key_probe(
                 &rule.plan,
-                ctx.catalog,
+                ctx.images.source(),
                 ctx.schema,
+                ctx.interner,
                 ctx.resolved_params,
-                determinant_key,
+                key_scratch,
                 bindings,
                 sink,
                 counters,
@@ -542,7 +757,16 @@ fn run_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
             Ok(true)
         }
         PreparedRule::FreeJoin(rule) => run_free_join_into_projection(
-            ctx, rule, units, occ_images, retired, sink, bindings, latched, counters,
+            ctx,
+            derived_resolver,
+            rule,
+            units,
+            occ_images,
+            retired,
+            sink,
+            bindings,
+            latched,
+            counters,
         ),
     }
 }
@@ -551,24 +775,40 @@ fn run_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-fn run_free_join_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind>(
-    ctx: &RunCtx<'_, Cat, Img>,
+fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
+    ctx: &RunCtx<'_>,
+    derived_resolver: &dyn Fn(crate::ir::normalize::OccBind) -> Option<Arc<RelationImage>>,
     rule: &mut FreeJoinRule,
     units: usize,
     occ_images: &OccImages,
     retired: &mut Vec<Vec<u32>>,
-    sink: &mut ProjectionSink,
+    sink: &mut S,
     bindings: &mut Bindings,
     latched: &mut u32,
     counters: &mut Cnt,
 ) -> Result<bool> {
     let multi_unit = units > 1;
     bindings.resize(rule.plan.slot_count());
+    if ctx.fallback {
+        if multi_unit {
+            sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
+        }
+        let fallback_ctx = super::fallback::FallbackCtx {
+            source: ctx.images.source(),
+            schema: ctx.schema,
+            interner: ctx.interner,
+            params: ctx.resolved_params,
+            missed: ctx.missed_params,
+            derived: derived_resolver,
+        };
+        super::fallback::run_fallback(&mut rule.fallback, &fallback_ctx, bindings, sink, latched)?;
+        return Ok(true);
+    }
     let resolved = if ctx.fast_eligible && rule.resolution == super::ResolutionState::Complete {
         true
     } else {
         let complete = super::bind::resolve_filters(
-            ctx.catalog,
+            ctx.interner,
             &mut rule.plan,
             ctx.resolved_params,
             ctx.missed_params,
@@ -588,7 +828,7 @@ fn run_free_join_into_projection<Cnt: Counters, Cat: CatalogRead, Img: ImageBind
     }
     rule.executor.bind_allen_masks(ctx.resolved_params);
     if multi_unit {
-        sink.aim(&rule.finds, rule.plan.slot_count());
+        sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
     }
     run_join(
         &rule.plan,

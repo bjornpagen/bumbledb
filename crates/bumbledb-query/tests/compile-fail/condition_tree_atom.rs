@@ -19,4 +19,5 @@ pub fn q() -> bumbledb::Query {
               or(Parent(child: p),
                  c == 1);
     })
+    .into_query()
 }

@@ -18,4 +18,5 @@ pub fn q() -> bumbledb::Query {
         interior reach(c, a) | Parent(child: c, parent: a);
         (c, a) | reach(c, 1: a);
     })
+    .into_query()
 }

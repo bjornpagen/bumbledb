@@ -9,7 +9,7 @@ use bumbledb::{
 };
 
 use crate::differential::{Answers, engine_query};
-use crate::fixture::{TempDir, atom, field, fresh, side, var};
+use crate::fixture::{TempDir, atom, field, side, var};
 use crate::naive::{Delta, NaiveDb};
 
 fn stores(
@@ -49,8 +49,11 @@ fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: 
     assert!(!rows.is_empty(), "the fixture produces rows ({fallen})");
 }
 
-/// Posting(id fresh, account u64, amount i64); Account(id fresh, holder u64);
-/// Posting(account) <= Account(id) — statement 2 after the two fresh auto-keys.
+/// Posting(id u64, account u64, amount i64); Account(id u64, holder u64) —
+/// application-owned ids with DECLARED keys (the successor has no fresh
+/// generation attribute; entity identity is ordinary supplied data), then
+/// Posting(account) <= Account(id) as statement 2 after the two declared
+/// id keys, preserving the historical statement numbering.
 fn walk_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -58,7 +61,7 @@ fn walk_descriptor() -> SchemaDescriptor {
                 extension: None,
                 name: "Posting".into(),
                 fields: vec![
-                    fresh("id"),
+                    field("id", ValueType::U64),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                 ],
@@ -66,13 +69,23 @@ fn walk_descriptor() -> SchemaDescriptor {
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
-                fields: vec![fresh("id"), field("holder", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("holder", ValueType::U64)],
             },
         ],
-        statements: vec![StatementDescriptor::Containment {
-            source: side(RelationId(0), &[1], &[]),
-            target: side(RelationId(1), &[0], &[]),
-        }],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(RelationId(0), &[1], &[]),
+                target: side(RelationId(1), &[0], &[]),
+            },
+        ],
     }
 }
 
@@ -127,17 +140,18 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     three_way(&db, &naive, &aggregate, "Account");
 }
 
-/// Grading(id fresh, kind u64 — 0 = Det, 1 = Custom); Det(grading u64, rate
-/// i64) with the declared key Det(grading) -> Det and the pair `Grading(id |
-/// kind == Det) == Det(grading)` as its two containments — statements 1, 2, 3
-/// after Grading's auto-key.
+/// Grading(id u64 — application-owned, declared key; kind u64 — 0 = Det,
+/// 1 = Custom); Det(grading u64, rate i64) with the declared key
+/// Det(grading) -> Det and the pair `Grading(id | kind == Det) ==
+/// Det(grading)` as its two containments — statements 1, 2, 3 after
+/// Grading's declared id key, preserving the historical numbering.
 fn du_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "Grading".into(),
-                fields: vec![fresh("id"), field("kind", ValueType::U64)],
+                fields: vec![field("id", ValueType::U64), field("kind", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -149,6 +163,10 @@ fn du_descriptor() -> SchemaDescriptor {
             },
         ],
         statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),

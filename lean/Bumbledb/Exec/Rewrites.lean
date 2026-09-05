@@ -1278,7 +1278,8 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
   /-- Positive only — no anti-joins on the fast path. -/
   negated : r.negated = []
   /-- The key resolves against a declared functionality statement
- (`key_probe_candidate`; fresh auto-keys included). Interior
+ (`key_probe_candidate`; the successor has only declared keys — the
+ retired fresh auto-keys are gone with their mint). Interior
  key-probe is unrepresentable — statements name stored relations. -/
   declared : ∃ R, a.source = .edb R ∧
     Statement.functionality R K ∈ T.statements

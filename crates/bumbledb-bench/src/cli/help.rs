@@ -15,7 +15,7 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20          lawful.md + lawful.json)\n\
     \x20 sweep-commit  the T8 commit-size sweep: judgment spans by\n\
     \x20          touched-parent count, delta vs key-sorted probe order\n\
-    \x20          (ephemeral windowed twins; needs --features obs)\n\
+    \x20          (scratch windowed twins; needs --features obs)\n\
     \x20 merge    min-of-runs table from N run dirs' report.json\n\
     \x20 storage  on-disk bytes per corpus scale, both engines\n\
     \x20          (report-class; no timing)\n\
@@ -29,6 +29,13 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 primerlane  the Primer-shaped attribution lane: builder/delta\n\
     \x20          write lanes + the scan read lane over the synthetic\n\
     \x20          Primer corpus (report-class)\n\
+    \x20 corpus-float  deterministic float fixture corpus (canon/order/\n\
+    \x20          arith/agg) with oracle expectations; writes line-hex\n\
+    \x20          files (a generator, never a measurement)\n\
+    \x20 hash-probe  BLAKE3/AEGIS candidate probe: equivalence, KATs and\n\
+    \x20          per-size timing before the format freeze (report-class)\n\
+    \x20 app-perf application regimes: cold-open, warm, post-write first\n\
+    \x20          read, large-result split, tenant churn (report-class)\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
@@ -61,9 +68,6 @@ pub fn help() -> String {
          \x20 --samples N     measured samples per read family (default 256)\n\
          \x20 --trace         capture one traced warm+cold sample per family\n\
          \x20 --alloc         allocation windows (needs the obs feature build)\n\
-         \x20 --nosync        time against Db::open_nosync (hidden NOSYNC\n\
-         \x20                 attach over the stamped durable-shaped store)\n\
-         \x20 --ephemeral     alias of --nosync (historical spelling)\n\
          \x20 --proxy-per-rep per-sample GHz stamps + normalized p50 (confirm runs)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>)\n\
          \x20 --i-am-lying    skip the stamp gate; the report reads UNVERIFIED\n\
@@ -105,8 +109,8 @@ pub fn help() -> String {
          \x20 --scale S|M|L   corpus scale             (default S)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      scratch root             (default bench-data)\n\
-         \x20 --lanes a,b     durability lanes, run order: durable, nosync\n\
-         \x20                 (default nosync,durable — fsync shadows last)\n\
+         \x20 --lanes a       durability lanes (only `durable` exists —\n\
+         \x20                 ENG-008 retired the engine's no-sync surface)\n\
          \x20 --batches a,b   rows per commit          (default 1,10,100,1000)\n\
          \x20 --samples N     measured samples per cell\n\
          \x20 --trace         per-cell traced twin samples (.json + .folded)\n\
@@ -133,7 +137,7 @@ pub fn help() -> String {
          \x20 --vacuum-every N  SQLite VACUUM stride   (default 500)\n\
          \x20 --analyze-every N SQLite ANALYZE stride  (default 500)\n\
          \x20 --runs a,b      run only these runs\n\
-         \x20                 (default steady,nosync,delete-heavy)\n\
+         \x20                 (default steady,delete-heavy)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-churn)\n\
          \x20 report-class; series artifact churn-report.json — never a gate\n\
          \n\
@@ -156,6 +160,31 @@ pub fn help() -> String {
          \x20                 obs; exclusive with --alloc)\n\
          \x20 --alloc         per-phase alloc windows (needs obs)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-primerlane)\n\
+         \n\
+         CORPUS-FLOAT:\n\
+         \x20 --seed N        walk seed (decimal or 0x-hex; default 0xB0B)\n\
+         \x20 --random N      random canon/arith cases   (default 1024)\n\
+         \x20 --groups N      aggregate groups           (default 128)\n\
+         \x20 --group-size N  payloads per group, min 1  (default 12)\n\
+         \x20 --out PATH      fixture dir (default fixtures/float)\n\
+         \n\
+         HASH-PROBE:\n\
+         \x20 --seed N        input-corpus seed        (default 1)\n\
+         \x20 --samples N     timed samples per cell   (default 64)\n\
+         \x20 --kat PATH      known-answer vector file; absent = KAT NotRun\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-hash-probe)\n\
+         \n\
+         APP-PERF:\n\
+         \x20 --scale S|M|L   corpus scale             (default S)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \x20 --regimes a,b   warm, cold-open, post-write, large-result,\n\
+         \x20                 tenant-churn (default all; selective lives in\n\
+         \x20                 `bench --families`, hosted/maintenance in the\n\
+         \x20                 log lanes)\n\
+         \x20 --samples N     measured samples per regime cell\n\
+         \x20 --tenants N     churn tenant count       (default 8, min 2)\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-app-perf)\n\
          \n\
          SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\
          \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\

@@ -3,7 +3,7 @@ use bumbledb::Db;
 use crate::fixture::TempDir;
 
 use super::{
-    ID_BASE, Mass, child_fact_bytes, grind_children, hash_rank_word, load, model_fact_hash,
+    ID_BASE, Mass, child_fact_bytes, grind_children, hash_rank_word, load, model_fact_fingerprint,
     pin_hash_model, run_with_floor, shuffled_ranks, slab, world,
 };
 use crate::corpus_gen::Rng;
@@ -11,8 +11,8 @@ use crate::corpus_gen::Rng;
 #[test]
 fn the_hash_model_matches_the_engine() {
     let dir = TempDir::new("sweep-pin");
-    let db = Db::create_nosync(dir.path(), world::WindowedWorld)
-        .expect("nosync")
+    let db = Db::create(dir.path(), world::WindowedWorld)
+        .expect("create")
         .expect("accepted");
     load(&db, Mass::unit()).expect("load the unit mass");
     pin_hash_model(&db).expect("the sweep's hash model matches the engine");
@@ -25,9 +25,9 @@ fn grading_engineers_the_sorted_probe_order() {
     let mut next_id = ID_BASE;
     let children = grind_children(&parents, &ranks, &mut next_id);
     assert_eq!(children.len(), parents.len());
-    let hashes: Vec<[u8; 32]> = children
+    let hashes: Vec<[u8; super::MODEL_FINGERPRINT_LEN]> = children
         .iter()
-        .map(|&(id, parent)| model_fact_hash(&child_fact_bytes(id, parent, 0)))
+        .map(|&(id, parent)| model_fact_fingerprint(&child_fact_bytes(id, parent, 0)))
         .collect();
     for (i, pair) in hashes.windows(2).enumerate() {
         assert!(
@@ -41,7 +41,7 @@ fn grading_engineers_the_sorted_probe_order() {
 
     assert_eq!(slab(0, 8), 0);
     assert_eq!(slab(u64::MAX, 8), 7);
-    let probe = model_fact_hash(&child_fact_bytes(1, 2, 0));
+    let probe = model_fact_fingerprint(&child_fact_bytes(1, 2, 0));
     assert_eq!(
         hash_rank_word(&probe),
         u64::from_be_bytes(probe[..8].try_into().expect("8 bytes"))

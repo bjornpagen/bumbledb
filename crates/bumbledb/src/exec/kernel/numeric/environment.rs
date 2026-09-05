@@ -133,7 +133,7 @@ macro_rules! binary {
             }
         }
         /// Internal operation body. The owning engine/evaluator operation
-        /// holds a NumericalGuard; never call this across a host callback.
+        /// holds a `NumericalGuard`; never call this across a host callback.
         pub(crate) fn $name(left: F64, right: F64) -> F64 {
                 #[cfg(target_arch = "aarch64")]
                 {

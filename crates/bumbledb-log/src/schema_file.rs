@@ -1,19 +1,32 @@
-//! Parse a theory file at the duty boundary. The spelling is the
-//! crate's corpus schema object — `{relations, statements}` — so a
-//! second descriptor grammar cannot exist.
+//! The one native canonical schema-file grammar. The spelling is the
+//! crate's corpus schema object — `{relations, statements}` — so a second
+//! descriptor grammar cannot exist: the duty boundary, the migration
+//! snapshots (`meta/NNNN.schema.json`) and the TypeScript generator all
+//! read and write exactly this text through these entrypoints (C11).
+//!
+//! [`parse`] is the strict reader, [`render`] the deterministic writer
+//! (`parse(render(d)) == d`, byte-stable output), and [`schema_id`] the
+//! canonical identity: core validation plus the core v6 schema fingerprint.
+//! There is no per-field generation attribute — the fresh machinery is
+//! deleted, and a `"generation"` key refuses loudly rather than being
+//! silently ignored.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::ops::Index;
 use std::path::Path;
 
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
-    RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, FixedIntervalElement, IntervalElement, LiteralSet,
+    RelationDescriptor, RelationId, Row, SchemaDescriptor, Side, StatementDescriptor,
+    ValidateDescriptor as _, ValueType, Weight,
 };
-use bumbledb::{F64, Interval, Value};
+use bumbledb::{SchemaFingerprint, Value};
+
+use crate::migration::json::{
+    Json, pair2, parse_u64, parse_value, push_hex, push_indent, push_string, read_tree,
+    render_value,
+};
 
 /// Why a theory file refused to become a descriptor.
 #[derive(Debug)]
@@ -48,268 +61,260 @@ pub fn load(path: &Path) -> Result<SchemaDescriptor, TheoryFile> {
 ///
 /// # Errors
 pub fn parse(raw: &str) -> Result<SchemaDescriptor, TheoryFile> {
-    parse_schema(&read_tree(raw)?)
+    parse_schema(&read_tree(raw).map_err(TheoryFile::Json)?)
 }
 
-enum Json {
-    Null,
-    Bool(bool),
-    U64(u64),
-    String(String),
-    Array(Vec<Json>),
-    Object(BTreeMap<String, Json>),
+/// The canonical schema identity: validate the descriptor with the core and
+/// fingerprint the sealed schema (the core v6 canonical stream). This is the
+/// `SchemaId` every plan, manifest and history record cites; the log never
+/// re-hashes schema text.
+///
+/// # Errors
+/// The core's typed validation refusal for an inadmissible declaration.
+pub fn schema_id(descriptor: &SchemaDescriptor) -> Result<SchemaFingerprint, bumbledb::Error> {
+    let schema = descriptor.clone().validate()?;
+    Ok(bumbledb::schema::fingerprint::fingerprint(&schema))
 }
 
-const NULL: Json = Json::Null;
-
-impl Json {
-    fn as_bool(&self) -> Option<bool> {
-        match self {
-            Self::Bool(v) => Some(*v),
-            _ => None,
+/// Render the deterministic canonical text for a descriptor: fixed key
+/// order, two-space indentation, one trailing newline. `parse(render(d))`
+/// reproduces `d` exactly; repo snapshot files are byte-stable.
+#[must_use]
+pub fn render(descriptor: &SchemaDescriptor) -> String {
+    let mut out = String::new();
+    out.push_str("{\n  \"relations\": [");
+    for (index, relation) in descriptor.relations.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
         }
+        out.push('\n');
+        render_relation(&mut out, relation);
     }
-
-    fn as_u64(&self) -> Option<u64> {
-        match self {
-            Self::U64(v) => Some(*v),
-            _ => None,
+    if descriptor.relations.is_empty() {
+        out.push_str("],\n");
+    } else {
+        out.push_str("\n  ],\n");
+    }
+    out.push_str("  \"statements\": [");
+    for (index, statement) in descriptor.statements.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
         }
+        out.push('\n');
+        push_indent(&mut out, 2);
+        render_statement(&mut out, statement);
     }
-
-    fn as_str(&self) -> Option<&str> {
-        match self {
-            Self::String(v) => Some(v),
-            _ => None,
-        }
+    if descriptor.statements.is_empty() {
+        out.push_str("]\n}\n");
+    } else {
+        out.push_str("\n  ]\n}\n");
     }
-
-    fn as_array(&self) -> Option<&Vec<Json>> {
-        match self {
-            Self::Array(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    fn as_object(&self) -> Option<&BTreeMap<String, Json>> {
-        match self {
-            Self::Object(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    fn get(&self, key: &str) -> Option<&Json> {
-        self.as_object().and_then(|object| object.get(key))
-    }
-
-    const fn is_null(&self) -> bool {
-        matches!(self, Self::Null)
-    }
+    out
 }
 
-impl Index<&str> for Json {
-    type Output = Json;
-
-    fn index(&self, key: &str) -> &Json {
-        self.get(key).unwrap_or(&NULL)
-    }
-}
-
-struct Cursor<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-fn read_tree(raw: &str) -> Result<Json, TheoryFile> {
-    let mut cur = Cursor {
-        bytes: raw.as_bytes(),
-        at: 0,
-    };
-    let value = cur.value()?;
-    cur.skip_ws();
-    if cur.at != cur.bytes.len() {
-        return Err(TheoryFile::Json("trailing"));
-    }
-    Ok(value)
-}
-
-impl Cursor<'_> {
-    fn skip_ws(&mut self) {
-        while self.bytes.get(self.at).is_some_and(u8::is_ascii_whitespace) {
-            self.at += 1;
+fn render_relation(out: &mut String, relation: &RelationDescriptor) {
+    push_indent(out, 2);
+    out.push_str("{\n");
+    push_indent(out, 3);
+    out.push_str("\"name\": ");
+    push_string(out, &relation.name);
+    out.push_str(",\n");
+    push_indent(out, 3);
+    out.push_str("\"fields\": [");
+    for (index, field) in relation.fields.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
         }
+        out.push('\n');
+        push_indent(out, 4);
+        out.push_str("{\"name\":");
+        push_string(out, &field.name);
+        out.push_str(",\"type\":");
+        render_type(out, &field.value_type);
+        out.push('}');
     }
-
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.at).copied()
+    if relation.fields.is_empty() {
+        out.push(']');
+    } else {
+        out.push('\n');
+        push_indent(out, 3);
+        out.push(']');
     }
-
-    fn bump(&mut self) -> Result<u8, TheoryFile> {
-        let byte = self.peek().ok_or(TheoryFile::Json("truncated"))?;
-        self.at += 1;
-        Ok(byte)
-    }
-
-    fn eat(&mut self, want: u8) -> Result<(), TheoryFile> {
-        if self.bump()? == want {
-            Ok(())
+    if let Some(rows) = &relation.extension {
+        out.push_str(",\n");
+        push_indent(out, 3);
+        out.push_str("\"extension\": [");
+        for (index, row) in rows.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push('\n');
+            push_indent(out, 4);
+            out.push_str("{\"handle\":");
+            push_string(out, &row.handle);
+            out.push_str(",\"values\":[");
+            for (value_index, value) in row.values.iter().enumerate() {
+                if value_index > 0 {
+                    out.push(',');
+                }
+                render_value(out, value);
+            }
+            out.push_str("]}");
+        }
+        if rows.is_empty() {
+            out.push(']');
         } else {
-            Err(TheoryFile::Json("token"))
+            out.push('\n');
+            push_indent(out, 3);
+            out.push(']');
         }
     }
+    out.push('\n');
+    push_indent(out, 2);
+    out.push('}');
+}
 
-    fn lit(&mut self, want: &[u8]) -> Result<(), TheoryFile> {
-        if self
-            .bytes
-            .get(self.at..)
-            .is_some_and(|rest| rest.starts_with(want))
-        {
-            self.at += want.len();
-            if matches!(
-                self.peek(),
-                Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
-            ) {
-                return Err(TheoryFile::Json("token"));
-            }
-            Ok(())
-        } else {
-            Err(TheoryFile::Json("token"))
+fn render_type(out: &mut String, value_type: &ValueType) {
+    match value_type {
+        ValueType::Bool => out.push_str("\"bool\""),
+        ValueType::U64 => out.push_str("\"u64\""),
+        ValueType::I64 => out.push_str("\"i64\""),
+        ValueType::F64 => out.push_str("\"f64\""),
+        ValueType::String => out.push_str("\"string\""),
+        ValueType::Id128 => out.push_str("\"id128\""),
+        ValueType::FixedBytes { len } => {
+            out.push_str("{\"fixedBytes\":");
+            out.push_str(&len.to_string());
+            out.push('}');
+        }
+        ValueType::Interval { element } => {
+            out.push_str("{\"interval\":");
+            out.push_str(match element {
+                IntervalElement::U64 => "\"u64\"",
+                IntervalElement::I64 => "\"i64\"",
+                IntervalElement::F64 => "\"f64\"",
+            });
+            out.push('}');
+        }
+        ValueType::FixedInterval { element, width } => {
+            out.push_str("{\"fixedInterval\":{\"element\":");
+            out.push_str(match element {
+                FixedIntervalElement::U64 => "\"u64\"",
+                FixedIntervalElement::I64 => "\"i64\"",
+            });
+            out.push_str(",\"width\":\"");
+            out.push_str(&width.to_string());
+            out.push_str("\"}}");
         }
     }
+}
 
-    fn value(&mut self) -> Result<Json, TheoryFile> {
-        self.skip_ws();
-        match self.peek() {
-            Some(b'{') => Ok(Json::Object(self.object()?)),
-            Some(b'[') => Ok(Json::Array(self.array()?)),
-            Some(b'"') => Ok(Json::String(self.string()?)),
-            Some(b't') => {
-                self.lit(b"true")?;
-                Ok(Json::Bool(true))
-            }
-            Some(b'f') => {
-                self.lit(b"false")?;
-                Ok(Json::Bool(false))
-            }
-            Some(b'n') => {
-                self.lit(b"null")?;
-                Ok(Json::Null)
-            }
-            Some(b'0'..=b'9') => Ok(Json::U64(self.number()?)),
-            _ => Err(TheoryFile::Json("value")),
+fn render_statement(out: &mut String, statement: &StatementDescriptor) {
+    match statement {
+        StatementDescriptor::Functionality {
+            relation,
+            projection,
+        } => {
+            out.push_str("{\"functionality\":{\"relation\":");
+            out.push_str(&relation.0.to_string());
+            out.push_str(",\"projection\":");
+            render_projection(out, projection);
+            out.push_str("}}");
         }
-    }
-
-    fn object(&mut self) -> Result<BTreeMap<String, Json>, TheoryFile> {
-        self.eat(b'{')?;
-        self.skip_ws();
-        let mut map = BTreeMap::new();
-        if self.peek() == Some(b'}') {
-            self.at += 1;
-            return Ok(map);
+        StatementDescriptor::Containment { source, target } => {
+            out.push_str("{\"containment\":{\"source\":");
+            render_side(out, source);
+            out.push_str(",\"target\":");
+            render_side(out, target);
+            out.push_str("}}");
         }
-        loop {
-            self.skip_ws();
-            let key = self.string()?;
-            self.skip_ws();
-            self.eat(b':')?;
-            let value = self.value()?;
-            map.insert(key, value);
-            self.skip_ws();
-            match self.bump()? {
-                b',' => {}
-                b'}' => return Ok(map),
-                _ => return Err(TheoryFile::Json("object")),
-            }
-        }
-    }
-
-    fn array(&mut self) -> Result<Vec<Json>, TheoryFile> {
-        self.eat(b'[')?;
-        self.skip_ws();
-        let mut items = Vec::new();
-        if self.peek() == Some(b']') {
-            self.at += 1;
-            return Ok(items);
-        }
-        loop {
-            items.push(self.value()?);
-            self.skip_ws();
-            match self.bump()? {
-                b',' => {}
-                b']' => return Ok(items),
-                _ => return Err(TheoryFile::Json("array")),
-            }
-        }
-    }
-
-    fn string(&mut self) -> Result<String, TheoryFile> {
-        self.eat(b'"')?;
-        let mut out = Vec::new();
-        loop {
-            match self.bump()? {
-                b'"' => {
-                    return String::from_utf8(out).map_err(|_| TheoryFile::Json("utf8"));
+        StatementDescriptor::Capacity {
+            target,
+            weight,
+            lo,
+            hi,
+            source,
+        } => {
+            out.push_str("{\"capacity\":{\"target\":");
+            render_side(out, target);
+            out.push_str(",\"weight\":");
+            match weight {
+                Weight::Unit => out.push_str("\"unit\""),
+                Weight::Field(field) => {
+                    out.push_str("{\"field\":");
+                    out.push_str(&field.0.to_string());
+                    out.push('}');
                 }
-                b'\\' => match self.bump()? {
-                    b'"' => out.push(b'"'),
-                    b'\\' => out.push(b'\\'),
-                    b'/' => out.push(b'/'),
-                    b'n' => out.push(b'\n'),
-                    b'r' => out.push(b'\r'),
-                    b't' => out.push(b'\t'),
-                    b'b' => out.push(0x08),
-                    b'f' => out.push(0x0c),
-                    b'u' => {
-                        let scalar = self.hex4()?;
-                        let ch = char::from_u32(scalar).ok_or(TheoryFile::Json("unicode"))?;
-                        let mut buf = [0; 4];
-                        out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-                    }
-                    _ => return Err(TheoryFile::Json("escape")),
-                },
-                byte if byte < 0x20 => return Err(TheoryFile::Json("control")),
-                byte => out.push(byte),
-            }
-        }
-    }
-
-    fn hex4(&mut self) -> Result<u32, TheoryFile> {
-        let mut n = 0u32;
-        for _ in 0..4 {
-            let digit = match self.bump()? {
-                b @ b'0'..=b'9' => u32::from(b - b'0'),
-                b @ b'a'..=b'f' => u32::from(b - b'a' + 10),
-                b @ b'A'..=b'F' => u32::from(b - b'A' + 10),
-                _ => return Err(TheoryFile::Json("hex")),
-            };
-            n = (n << 4) | digit;
-        }
-        Ok(n)
-    }
-
-    fn number(&mut self) -> Result<u64, TheoryFile> {
-        let start = self.at;
-        match self.bump()? {
-            b'0' => {
-                if matches!(self.peek(), Some(b'0'..=b'9')) {
-                    return Err(TheoryFile::Json("number"));
+                Weight::DurationOf(field) => {
+                    out.push_str("{\"durationOf\":");
+                    out.push_str(&field.0.to_string());
+                    out.push('}');
                 }
             }
-            b'1'..=b'9' => {
-                while matches!(self.peek(), Some(b'0'..=b'9')) {
-                    self.at += 1;
+            out.push_str(",\"lo\":\"");
+            out.push_str(&lo.to_string());
+            out.push_str("\",\"hi\":");
+            match hi {
+                None => out.push_str("null"),
+                Some(Bound::Lit(value)) => {
+                    out.push_str("{\"lit\":\"");
+                    out.push_str(&value.to_string());
+                    out.push_str("\"}");
+                }
+                Some(Bound::TargetField(field)) => {
+                    out.push_str("{\"targetField\":");
+                    out.push_str(&field.0.to_string());
+                    out.push('}');
+                }
+                Some(Bound::TargetDuration(field)) => {
+                    out.push_str("{\"targetDuration\":");
+                    out.push_str(&field.0.to_string());
+                    out.push('}');
                 }
             }
-            _ => return Err(TheoryFile::Json("number")),
+            out.push_str(",\"source\":");
+            render_side(out, source);
+            out.push_str("}}");
         }
-        if matches!(self.peek(), Some(b'.' | b'e' | b'E' | b'-' | b'+')) {
-            return Err(TheoryFile::Json("number"));
-        }
-        let text = std::str::from_utf8(&self.bytes[start..self.at])
-            .map_err(|_| TheoryFile::Json("number"))?;
-        text.parse().map_err(|_| TheoryFile::Json("number"))
     }
+}
+
+fn render_projection(out: &mut String, projection: &[FieldId]) {
+    out.push('[');
+    for (index, field) in projection.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&field.0.to_string());
+    }
+    out.push(']');
+}
+
+fn render_side(out: &mut String, side: &Side) {
+    out.push_str("{\"relation\":");
+    out.push_str(&side.relation.0.to_string());
+    out.push_str(",\"projection\":");
+    render_projection(out, &side.projection);
+    if !side.selection.is_empty() {
+        out.push_str(",\"selection\":[");
+        for (index, (field, literals)) in side.selection.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push('[');
+            out.push_str(&field.0.to_string());
+            out.push_str(",[");
+            for (literal_index, literal) in literals.literals().iter().enumerate() {
+                if literal_index > 0 {
+                    out.push(',');
+                }
+                render_value(out, literal);
+            }
+            out.push_str("]]");
+        }
+        out.push(']');
+    }
+    out.push('}');
 }
 
 fn parse_schema(json: &Json) -> Result<SchemaDescriptor, TheoryFile> {
@@ -331,14 +336,14 @@ fn parse_relation(json: &Json) -> Result<RelationDescriptor, TheoryFile> {
     let fields = arr(json, "fields")?
         .iter()
         .map(|field| {
+            if field.get("generation").is_some() {
+                // Fresh issuance is deleted with the successor; silently
+                // ignoring the old spelling would silently change meaning.
+                return Err(TheoryFile::Shape("fresh generation is deleted"));
+            }
             Ok(FieldDescriptor {
                 name: text(field, "name")?.into(),
                 value_type: parse_type(&field["type"])?,
-                generation: match field.get("generation").and_then(Json::as_str) {
-                    Some("fresh") => Generation::Fresh,
-                    Some(_) => return Err(TheoryFile::Shape("unknown generation")),
-                    None => Generation::None,
-                },
             })
         })
         .collect::<Result<_, _>>()?;
@@ -362,7 +367,7 @@ fn parse_relation(json: &Json) -> Result<RelationDescriptor, TheoryFile> {
 fn parse_row(json: &Json) -> Result<Row, TheoryFile> {
     let values = arr(json, "values")?
         .iter()
-        .map(parse_value)
+        .map(|value| parse_value(value).map_err(TheoryFile::Shape))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Row {
         handle: text(json, "handle")?.into(),
@@ -378,6 +383,7 @@ fn parse_type(json: &Json) -> Result<ValueType, TheoryFile> {
             "i64" => Ok(ValueType::I64),
             "f64" => Ok(ValueType::F64),
             "string" => Ok(ValueType::String),
+            "id128" => Ok(ValueType::Id128),
             _ => Err(TheoryFile::Shape("unknown scalar type")),
         };
     }
@@ -394,8 +400,8 @@ fn parse_type(json: &Json) -> Result<ValueType, TheoryFile> {
     }
     if let Some(fixed) = object.get("fixedInterval") {
         return Ok(ValueType::FixedInterval {
-            element: parse_element(&fixed["element"])?,
-            width: parse_u64(&fixed["width"])?,
+            element: parse_fixed_element(&fixed["element"])?,
+            width: parse_u64(&fixed["width"]).map_err(TheoryFile::Shape)?,
         });
     }
     Err(TheoryFile::Shape("unknown type"))
@@ -405,7 +411,18 @@ fn parse_element(json: &Json) -> Result<IntervalElement, TheoryFile> {
     match json.as_str() {
         Some("u64") => Ok(IntervalElement::U64),
         Some("i64") => Ok(IntervalElement::I64),
+        Some("f64") => Ok(IntervalElement::F64),
         _ => Err(TheoryFile::Shape("interval element")),
+    }
+}
+
+fn parse_fixed_element(json: &Json) -> Result<FixedIntervalElement, TheoryFile> {
+    match json.as_str() {
+        Some("u64") => Ok(FixedIntervalElement::U64),
+        Some("i64") => Ok(FixedIntervalElement::I64),
+        // `fixedInterval<f64>` is unrepresentable by the descriptor family;
+        // this grammar refuses the spelling rather than inventing a type.
+        _ => Err(TheoryFile::Shape("fixed interval element")),
     }
 }
 
@@ -427,7 +444,7 @@ fn parse_statement(json: &Json) -> Result<StatementDescriptor, TheoryFile> {
         return Ok(StatementDescriptor::Capacity {
             target: parse_side(&body["target"])?,
             weight: parse_weight(&body["weight"])?,
-            lo: parse_u64(&body["lo"])?,
+            lo: parse_u64(&body["lo"]).map_err(TheoryFile::Shape)?,
             hi: parse_bound(&body["hi"])?,
             source: parse_side(&body["source"])?,
         });
@@ -451,13 +468,13 @@ fn parse_side(json: &Json) -> Result<Side, TheoryFile> {
             .ok_or(TheoryFile::Shape("selection"))?
             .iter()
             .map(|binding| {
-                let pair = pair2(binding)?;
+                let pair = pair2(binding).map_err(TheoryFile::Shape)?;
                 let field = FieldId(as_u16(&pair[0], "field")?);
                 let literals: Vec<Value> = pair[1]
                     .as_array()
                     .ok_or(TheoryFile::Shape("literals"))?
                     .iter()
-                    .map(parse_value)
+                    .map(|value| parse_value(value).map_err(TheoryFile::Shape))
                     .collect::<Result<_, _>>()?;
                 let set = if literals.len() == 1 {
                     LiteralSet::One(literals.into_iter().next().expect("one literal"))
@@ -495,7 +512,7 @@ fn parse_bound(json: &Json) -> Result<Option<Bound>, TheoryFile> {
     }
     let object = json.as_object().ok_or(TheoryFile::Shape("bound"))?;
     if let Some(lit) = object.get("lit") {
-        return Ok(Some(Bound::Lit(parse_u64(lit)?)));
+        return Ok(Some(Bound::Lit(parse_u64(lit).map_err(TheoryFile::Shape)?)));
     }
     if let Some(field) = object.get("targetField") {
         return Ok(Some(Bound::TargetField(FieldId(as_u16(field, "field")?))));
@@ -506,103 +523,6 @@ fn parse_bound(json: &Json) -> Result<Option<Bound>, TheoryFile> {
         )?))));
     }
     Err(TheoryFile::Shape("unknown bound"))
-}
-
-fn parse_value(json: &Json) -> Result<Value, TheoryFile> {
-    let object = json.as_object().ok_or(TheoryFile::Shape("value"))?;
-    if object.len() != 1 {
-        return Err(TheoryFile::Shape("value arm"));
-    }
-    let (kind, body) = object.iter().next().ok_or(TheoryFile::Shape("value arm"))?;
-    match kind.as_str() {
-        "bool" => Ok(Value::Bool(
-            body.as_bool().ok_or(TheoryFile::Shape("bool"))?,
-        )),
-        "u64" => Ok(Value::U64(parse_u64(body)?)),
-        "i64" => Ok(Value::I64(parse_i64(body)?)),
-        "$f64" => {
-            let hex = body.as_str().ok_or(TheoryFile::Shape("f64 hex"))?;
-            if hex.len() != 16
-                || !hex
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-            {
-                return Err(TheoryFile::Shape("f64 hex"));
-            }
-            let bytes = unhex(hex)?;
-            F64::try_from(bytes.as_slice())
-                .map(Value::F64)
-                .map_err(|_| TheoryFile::Shape("noncanonical f64"))
-        }
-        "string" => Ok(Value::String(
-            body.as_str().ok_or(TheoryFile::Shape("string"))?.into(),
-        )),
-        "fixedBytes" => Ok(Value::FixedBytes(
-            unhex(body.as_str().ok_or(TheoryFile::Shape("hex"))?)?.into_boxed_slice(),
-        )),
-        "intervalU64" => {
-            let pair = pair2(body)?;
-            Interval::new(parse_u64(&pair[0])?, parse_u64(&pair[1])?)
-                .map(Value::IntervalU64)
-                .ok_or(TheoryFile::Shape("interval"))
-        }
-        "intervalI64" => {
-            let pair = pair2(body)?;
-            Interval::new(parse_i64(&pair[0])?, parse_i64(&pair[1])?)
-                .map(Value::IntervalI64)
-                .ok_or(TheoryFile::Shape("interval"))
-        }
-        _ => Err(TheoryFile::Shape("unknown value arm")),
-    }
-}
-
-fn parse_u64(json: &Json) -> Result<u64, TheoryFile> {
-    json.as_str()
-        .ok_or(TheoryFile::Shape("decimal string"))?
-        .parse()
-        .map_err(|_| TheoryFile::Shape("u64"))
-}
-
-fn parse_i64(json: &Json) -> Result<i64, TheoryFile> {
-    json.as_str()
-        .ok_or(TheoryFile::Shape("decimal string"))?
-        .parse()
-        .map_err(|_| TheoryFile::Shape("i64"))
-}
-
-fn unhex(text: &str) -> Result<Vec<u8>, TheoryFile> {
-    let bytes = text.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return Err(TheoryFile::Shape("even hex length"));
-    }
-    bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| {
-            let hi = hex_nibble(pair[0])?;
-            let lo = hex_nibble(pair[1])?;
-            Ok((hi << 4) | lo)
-        })
-        .collect()
-}
-
-fn hex_nibble(byte: u8) -> Result<u8, TheoryFile> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(TheoryFile::Shape("hex byte")),
-    }
-}
-
-fn pair2(json: &Json) -> Result<&[Json], TheoryFile> {
-    let pair = json.as_array().ok_or(TheoryFile::Shape("pair"))?;
-    if pair.len() == 2 {
-        Ok(pair)
-    } else {
-        Err(TheoryFile::Shape("pair"))
-    }
 }
 
 fn arr<'a>(json: &'a Json, field: &'static str) -> Result<&'a Vec<Json>, TheoryFile> {
@@ -629,9 +549,17 @@ fn as_u16(json: &Json, field: &'static str) -> Result<u16, TheoryFile> {
     u16::try_from(as_u64(json, field)?).map_err(|_| TheoryFile::Shape(field))
 }
 
+/// A stable hex spelling for schema identities in generated artifacts.
+#[must_use]
+pub fn fingerprint_hex(fingerprint: &SchemaFingerprint) -> String {
+    let mut out = String::with_capacity(64);
+    push_hex(&mut out, &fingerprint.0);
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TheoryFile, parse};
+    use super::{TheoryFile, parse, render, schema_id};
 
     #[test]
     fn a_multi_arm_value_is_shape() {
@@ -653,9 +581,56 @@ mod tests {
 
     #[test]
     fn note_theory_is_a_descriptor() {
-        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"u64"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
+        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"id128"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
         let schema = parse(raw).expect("note theory");
         assert_eq!(schema.relations.len(), 1);
         assert_eq!(schema.statements.len(), 1);
+    }
+
+    #[test]
+    fn the_fresh_generation_spelling_refuses_instead_of_being_ignored() {
+        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"id","type":"u64","generation":"fresh"}]}],"statements":[]}"#;
+        assert!(matches!(
+            parse(raw),
+            Err(TheoryFile::Shape("fresh generation is deleted"))
+        ));
+    }
+
+    #[test]
+    fn successor_types_parse_and_fixed_f64_refuses() {
+        let raw = r#"{"relations":[{"name":"n","fields":[{"name":"a","type":"id128"},{"name":"b","type":{"interval":"f64"}},{"name":"c","type":{"fixedInterval":{"element":"i64","width":"4"}}}]}],"statements":[]}"#;
+        let schema = parse(raw).expect("successor types");
+        assert_eq!(schema.relations[0].fields.len(), 3);
+        let bad = r#"{"relations":[{"name":"n","fields":[{"name":"c","type":{"fixedInterval":{"element":"f64","width":"4"}}}]}],"statements":[]}"#;
+        assert!(matches!(
+            parse(bad),
+            Err(TheoryFile::Shape("fixed interval element"))
+        ));
+    }
+
+    #[test]
+    fn render_is_a_deterministic_left_inverse_of_parse() {
+        let raw = r#"{"relations":[{"name":"kind","fields":[{"name":"label","type":"string"}],"extension":[{"handle":"a","values":[{"string":"alpha"}]},{"handle":"b","values":[{"string":"beta"}]}]},{"name":"note","fields":[{"name":"id","type":"id128"},{"name":"kind","type":"u64"},{"name":"score","type":"f64"},{"name":"span","type":{"interval":"u64"}}]}],"statements":[{"functionality":{"relation":1,"projection":[0]}},{"containment":{"source":{"relation":1,"projection":[1]},"target":{"relation":0,"projection":[0]}}},{"capacity":{"target":{"relation":0,"projection":[0]},"weight":"unit","lo":"0","hi":{"lit":"5"},"source":{"relation":1,"projection":[1],"selection":[[2,[{"u64":"1"},{"u64":"2"}]]]}}}]}"#;
+        let descriptor = parse(raw).expect("kitchen descriptor");
+        let text = render(&descriptor);
+        let reparsed = parse(&text).expect("rendered text parses");
+        assert_eq!(reparsed, descriptor);
+        assert_eq!(render(&reparsed), text, "byte-stable");
+        assert!(text.ends_with('\n'));
+    }
+
+    #[test]
+    fn schema_id_is_the_core_fingerprint_and_validation_refuses_junk() {
+        let raw = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"u64"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
+        let descriptor = parse(raw).expect("note theory");
+        let id = schema_id(&descriptor).expect("valid schema");
+        // Determinism through render/parse: identity never depends on text.
+        let again = schema_id(&parse(&render(&descriptor)).unwrap()).unwrap();
+        assert_eq!(id, again);
+        // A statement citing a missing relation refuses with the core error.
+        let bad =
+            r#"{"relations":[],"statements":[{"functionality":{"relation":7,"projection":[0]}}]}"#;
+        let bad = parse(bad).expect("well-formed shape");
+        assert!(schema_id(&bad).is_err());
     }
 }

@@ -81,7 +81,7 @@ mod tests {
     use super::cmd_churn;
 
     #[test]
-    fn churn_cmd_nosync_smoke_writes_artifacts() {
+    fn churn_cmd_smoke_writes_artifacts() {
         let scratch = std::env::temp_dir().join("bumbledb-bench-churn-cmd-scratch");
         let out = std::env::temp_dir().join("bumbledb-bench-churn-cmd-out");
         let _ = std::fs::remove_dir_all(&scratch);
@@ -96,7 +96,7 @@ mod tests {
             sample_every: 2,
             vacuum_every: 2,
             analyze_every: 2,
-            runs: Some(vec!["nosync".into()]),
+            runs: Some(vec!["delete-heavy".into()]),
             out: Some(out.clone()),
         };
         let code = cmd_churn(&args).expect("the smoke run completes");

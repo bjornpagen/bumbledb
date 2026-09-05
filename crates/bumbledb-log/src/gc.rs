@@ -1,588 +1,633 @@
-//! Retention and point-in-time restore. The retention law: delete log
-//! objects and checkpoints older than window R, always exempting the
-//! current checkpoint and every log object at or above its vector per
-//! braid; a store whose manifest still says `checkpoint: null` has
-//! nothing gc-eligible, by the same rule. Restore points are vectors —
-//! braids are independent (L9), so every pointwise combination of braid
-//! prefixes is a real serial state — discovered by walking the
-//! checkpoint backlink chain from the manifest with GETs alone (no LIST
-//! exists). Crash-stranded candidates live in the reserved-namespace
-//! scratch lease; the successor GETs that known document at open and
-//! deletes the named objects. GET-only GC does not LIST-delete the
-//! complement of the reachable spine. The gc window is also the audit
-//! window: history nobody replays again is vouched for by its publisher
-//! alone.
+//! Epoch-barrier garbage collection: one active barrier, immutable mark
+//! evidence, resumable durable sweep progress (chapter 21; GC-01..13).
+//!
+//! The complete persistent GC state lives in the head. No collector owns
+//! authority by a wall-clock lease; multiple collectors may duplicate safe
+//! work and the head CAS selects durable progress. A stale collector
+//! receives `CollectionMoved`/`AlreadyFinished`, never unconditional
+//! installation of old progress. Rebase preserves intervening data changes
+//! but cannot regress a cursor, revive a completed barrier, clear a newer
+//! barrier, or swap in another job's mark evidence.
+//!
+//! Deleted 0.x mechanisms: the 90-day wall-clock retention window, restore
+//! vectors, GET-only backlink walks, scratch-lease deletion authority and
+//! historical token/slot scans. Listing enumerates actual extant names:
+//! cost tracks retained/orphan objects, never historical slot count.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::BTreeSet;
 
-use bumbledb::{Db, Theory, Violations};
+use bumbledb::{WorkContext, WorkError};
 
-use crate::apply::{Applied, ApplyRefusal, apply};
-use crate::braids::BraidId;
-use crate::codec::Codec;
-use crate::manifest::{
-    Checkpoint, CheckpointError, Manifest, ManifestError, ckpt_doc_key, ckpt_mdb_key, log_key,
-    manifest_key,
+use crate::checkpointer::read_live_head;
+use crate::codec::{StreamLimits, decode_manifest};
+use crate::history::command::Limits;
+use crate::history::decision;
+use crate::history::{FrameError, OperationId};
+use crate::manifest::wire::{self, Reader};
+use crate::manifest::{Barrier, GcPhase, HeadError, HeadRecord, RecoveryRoot, encode_head};
+use crate::store::{
+    BackendError, ConditionalOutcome, ConditionalStore, ObjectError, ObjectKind, ObjectRef,
+    backend as backend_error, fetch_decision, get_verified, head_key, objects_prefix,
+    parse_object_key, put_verified,
 };
-use crate::replica::{
-    Fault, OpenRefusal, Vector, derive_codec, fetch_checkpoint_bytes, write_checkpoint_bytes,
-};
-use crate::sidecar::{Chain, ChainEntry};
-use crate::store::{ObjectStore, Result as StoreResult};
 
-/// Retention window R in milliseconds. 10-protocol owns the ninety-day
-/// value; consumer: the duty binary's one sweep after the cadence check.
-pub const CHECKPOINT_RETAIN_MS: u64 = 90 * 24 * 60 * 60 * 1000;
+pub const MARK_FAMILY: &[u8] = b"bumbledb.mark.v1\0";
+pub const MARK_LAYOUT: u16 = 1;
+const MARK_KIND: u8 = 1;
 
-/// What one sweep deleted. `checkpoints_deleted` is the dropped
-/// checkpoint identities. `swept_below` is the exclusive end of the
-/// contiguous deleted prefix per braid — the next sweep resumes there.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Sweep {
-    pub log_deleted: Vec<String>,
-    pub checkpoints_deleted: Vec<[u8; 32]>,
-    pub swept_below: BTreeMap<BraidId, u64>,
+#[derive(Debug, Clone, Copy)]
+pub struct GcPolicy {
+    pub head_cap: usize,
+    pub stream: StreamLimits,
+    /// Mark-set budget in encoded bytes, charged before growth. Exceeding it
+    /// is a typed refusal without deletion, never silent truncation.
+    pub mark_budget_bytes: u64,
+    /// Bounded CAS attempts for each durable progress transition.
+    pub cas_attempts: u32,
+    /// Bounded decision-walk budget per protected root.
+    pub walk_budget: u64,
 }
 
-/// The checkpointer's trusted publish clock. Age is
-/// `now_ms.saturating_sub(publish_ms)`; `publish_ms` is the instant the
-/// current checkpoint entered reachable history.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PublishClock {
-    pub now_ms: u64,
-    pub publish_ms: u64,
-}
-
-/// Window plus clock. `gc()` sets both hands equal, so a slot ages
-/// against its batch timestamp; `gc_at` with a distinct publish stamp
-/// ages the below-floor prefix as one unit.
-#[derive(Clone, Copy)]
-struct Age {
-    window_ms: u64,
-    clock: PublishClock,
-}
-
-impl Age {
-    fn log_eligible(self, timestamp: u64) -> bool {
-        if self.clock.publish_ms == self.clock.now_ms {
-            self.clock.now_ms.saturating_sub(timestamp) > self.window_ms
-        } else {
-            self.clock.now_ms.saturating_sub(self.clock.publish_ms) > self.window_ms
-        }
-    }
-
-    fn checkpoints_old(self) -> bool {
-        if self.clock.publish_ms == self.clock.now_ms {
-            self.clock.now_ms > self.window_ms
-        } else {
-            self.clock.now_ms.saturating_sub(self.clock.publish_ms) > self.window_ms
-        }
-    }
-}
-
-/// Why the sweep refused to run at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GcRefusal {
-    ManifestMissing,
-    Manifest(ManifestError),
-    CheckpointDocMissing {
-        digest: [u8; 32],
-    },
-    Checkpoint {
-        digest: [u8; 32],
-        error: CheckpointError,
-    },
-}
-
-/// Outcome of the gc verb.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Gc {
-    Swept(Sweep),
-    /// The manifest says `checkpoint: null` — nothing has ever been
-    /// gc-eligible.
-    NothingEligible,
-    Refused(GcRefusal),
-}
-
-/// The gc verb: one sweep under window `window_ms`. Each log object
-/// ages against `now_ms` by its batch timestamp; a distinct publish
-/// stamp is [`gc_at`].
-///
-/// # Errors
-pub fn gc<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    codec: &Codec,
-    window_ms: u64,
-    now_ms: u64,
-) -> StoreResult<Gc> {
-    gc_at(
-        store,
-        prefix,
-        codec,
-        window_ms,
-        PublishClock {
-            now_ms,
-            publish_ms: now_ms,
-        },
-    )
-}
-
-/// One sweep under `window_ms` at `clock`. Log objects strictly below
-/// the current checkpoint's vector whose publish age exceeds the window
-/// die, walking each braid upward from the swept-below marker toward
-/// the floor so the deleted region is the contiguous prefix `[0, marker)`.
-/// A missing slot advances the marker; a young or undecodable slot
-/// stops that braid. Checkpoints behind the current one die by the same
-/// clock: the sweep walks the Merkle backlink, then deletes the mdb and
-/// the document as one unit from the tail so an interrupted sweep leaves
-/// a walkable document, never an orphan mdb. Crash-stranded candidates are
-/// not this walk: they are named in the scratch lease and reclaimed at
-/// open.
-///
-/// # Errors
-pub fn gc_at<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    codec: &Codec,
-    window_ms: u64,
-    clock: PublishClock,
-) -> StoreResult<Gc> {
-    let Some(fetched) = store.get(&manifest_key(prefix))? else {
-        return Ok(Gc::Refused(GcRefusal::ManifestMissing));
+impl GcPolicy {
+    pub const DEFAULT: Self = Self {
+        head_cap: 1024 * 1024,
+        stream: StreamLimits::DEFAULT,
+        mark_budget_bytes: 256 * 1024 * 1024,
+        cas_attempts: 16,
+        walk_budget: 1_048_576,
     };
-    let manifest = match Manifest::parse(&fetched.bytes) {
-        Ok(manifest) => manifest,
-        Err(error) => return Ok(Gc::Refused(GcRefusal::Manifest(error))),
-    };
-    let Some(current) = manifest.checkpoint else {
-        return Ok(Gc::NothingEligible);
-    };
-    let doc = match fetch_doc(store, prefix, current, codec)? {
-        Ok(doc) => doc,
-        Err(refusal) => return Ok(Gc::Refused(refusal)),
-    };
-
-    let mut sweep = Sweep::default();
-    let age = Age { window_ms, clock };
-
-    for (braid, head) in &doc.braids {
-        let marker = sweep_log_braid(store, prefix, codec, *braid, head.g, age, &mut sweep)?;
-        sweep.swept_below.insert(*braid, marker);
-    }
-
-    sweep_checkpoints(
-        store,
-        prefix,
-        codec,
-        doc.prev,
-        age.checkpoints_old(),
-        &mut sweep,
-    )?;
-
-    Ok(Gc::Swept(sweep))
 }
 
-/// Walks slots `[1, floor)` upward. Missing objects are already in the
-/// deleted prefix and advance the marker; an undecodable object blocks
-/// the braid.
-fn sweep_log_braid<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    codec: &Codec,
-    braid: BraidId,
-    floor: u64,
-    age: Age,
-    sweep: &mut Sweep,
-) -> StoreResult<u64> {
-    let mut marker = 0;
-    let mut slot = 1;
-    while slot < floor {
-        let key = log_key(prefix, braid, slot);
-        match store.get(&key)? {
-            None => {
-                marker = slot + 1;
-                slot += 1;
-            }
-            Some(object) => {
-                let Ok(batch) = codec.decode(&object.bytes) else {
-                    break;
-                };
-                if !age.log_eligible(batch.header.timestamp) {
-                    break;
-                }
-                store.delete(&key)?;
-                sweep.log_deleted.push(key.to_string());
-                marker = slot + 1;
-                slot += 1;
-            }
-        }
-    }
-    Ok(marker)
-}
-
-/// Walks the Merkle backlink from `start`, then deletes old nodes from
-/// the tail. A missing document still drops its mdb; a corrupt document
-/// stops the walk.
-fn sweep_checkpoints<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    codec: &Codec,
-    start: Option<[u8; 32]>,
-    old: bool,
-    sweep: &mut Sweep,
-) -> StoreResult<()> {
-    let mut chain = Vec::new();
-    let mut digest = start;
-    while let Some(prior) = digest {
-        let Some(object) = store.get(&ckpt_doc_key(prefix, &prior))? else {
-            store.delete(&ckpt_mdb_key(prefix, &prior))?;
-            break;
-        };
-        let Ok(prior_doc) = Checkpoint::parse(&object.bytes, codec.braids()) else {
-            break;
-        };
-        digest = prior_doc.prev;
-        chain.push(prior);
-    }
-    if !old {
-        return Ok(());
-    }
-    for prior in chain.into_iter().rev() {
-        delete_checkpoint_unit(store, prefix, &prior)?;
-        sweep.checkpoints_deleted.push(prior);
-    }
-    Ok(())
-}
-
-fn delete_checkpoint_unit<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    digest: &[u8; 32],
-) -> StoreResult<()> {
-    store.delete(&ckpt_mdb_key(prefix, digest))?;
-    store.delete(&ckpt_doc_key(prefix, digest))?;
-    Ok(())
-}
-
-fn fetch_doc<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    digest: [u8; 32],
-    codec: &Codec,
-) -> StoreResult<Result<Checkpoint, GcRefusal>> {
-    let Some(object) = store.get(&ckpt_doc_key(prefix, &digest))? else {
-        return Ok(Err(GcRefusal::CheckpointDocMissing { digest }));
-    };
-    match Checkpoint::parse(&object.bytes, codec.braids()) {
-        Ok(doc) => Ok(Ok(doc)),
-        Err(error) => Ok(Err(GcRefusal::Checkpoint { digest, error })),
-    }
-}
-
-/// Why a restore refused.
 #[derive(Debug)]
-pub enum RestoreRefusal {
-    Open(OpenRefusal),
-    /// The backlink walk hit a gc'd checkpoint document before finding
-    /// a qualifying base — the target predates retention.
-    BeyondRetention {
-        digest: [u8; 32],
+pub enum GcError {
+    Object(ObjectError),
+    Frame(FrameError),
+    Head(HeadError),
+    Work(WorkError),
+    /// Another collector/maintenance moved the collection state; re-read and
+    /// resume from the durable head, never install stale progress.
+    CollectionMoved,
+    /// The barrier this collector was driving is already complete.
+    AlreadyFinished,
+    /// A required protected dependency is malformed/missing: GC stops
+    /// without deletion; the tenant needs repair evidence, not a sweep.
+    Corruption(&'static str),
+    /// The bounded mark budget was exhausted; no deletion certificate exists.
+    MarkBudget,
+    /// One eligible deletion failed. Durable progress was NOT advanced past
+    /// it; resume retries the same key.
+    DeleteFailed {
+        key: String,
     },
-    /// A slot the replay needs is gone (gc'd or never existed).
-    SlotMissing {
-        braid: BraidId,
-        slot: u64,
-    },
-    /// A slot refused to apply — the log itself is corrupt there.
-    Corrupt(ApplyRefusal),
-    /// A slot the engine rejected — impossible for honest writers.
-    Rejected {
-        braid: BraidId,
-        slot: u64,
-        violations: Violations,
-    },
-    /// The restore destination already exists; restores materialize
-    /// into fresh directories only.
-    DirExists,
-    /// A braid id the schema's own decomposition does not mint.
-    UnknownBraid {
-        got: u32,
-    },
+    /// Bounded CAS attempts exhausted by contention.
+    CasExhausted,
+    Checkpoint(crate::checkpointer::CheckpointError),
 }
 
-/// Outcome of a restore: the opened store and the restored vector —
-/// the vector, not any wall-clock instant, is the truth the restore
-/// reports.
-pub enum Restore<T> {
-    Restored { db: Box<Db<T>>, vector: Vector },
-    Refused(RestoreRefusal),
+impl From<ObjectError> for GcError {
+    fn from(error: ObjectError) -> Self {
+        Self::Object(error)
+    }
 }
 
-/// Restores to `target`: walks the checkpoint backlink chain from the
-/// manifest to the first checkpoint whose vector is pointwise at or
-/// below the target (bootstrapping from zero when the walk runs out at
-/// the first checkpoint), opens it at `dir`, then replays each braid to
-/// its target — braid order irrelevant (L8).
+impl From<FrameError> for GcError {
+    fn from(error: FrameError) -> Self {
+        Self::Frame(error)
+    }
+}
+
+impl From<HeadError> for GcError {
+    fn from(error: HeadError) -> Self {
+        Self::Head(error)
+    }
+}
+
+impl From<WorkError> for GcError {
+    fn from(error: WorkError) -> Self {
+        Self::Work(error)
+    }
+}
+
+impl From<crate::checkpointer::CheckpointError> for GcError {
+    fn from(error: crate::checkpointer::CheckpointError) -> Self {
+        Self::Checkpoint(error)
+    }
+}
+
+/// One durable-progress CAS: read the exact current head, let `compose`
+/// build the successor from it (preserving intervening data changes), and
+/// conditionally replace. `compose` refuses with `CollectionMoved` when the
+/// observed state is no longer the one this collector is driving.
+fn cas_head<B: ConditionalStore>(
+    backend: &B,
+    prefix: &str,
+    policy: &GcPolicy,
+    work: &WorkContext,
+    mut compose: impl FnMut(&HeadRecord) -> Result<HeadRecord, GcError>,
+) -> Result<HeadRecord, GcError>
+where
+    B::Error: BackendError,
+{
+    for _ in 0..policy.cas_attempts {
+        work.checkpoint()?;
+        let (current, version) = read_live_head(backend, prefix, policy.head_cap)?;
+        let proposed = compose(&current)?;
+        let body = encode_head(&proposed, policy.head_cap)?;
+        match backend
+            .replace_head(&head_key(prefix), &version, &body)
+            .map_err(backend_error)
+            .map_err(GcError::Object)?
+        {
+            ConditionalOutcome::Published { .. } => return Ok(proposed),
+            ConditionalOutcome::PreconditionFailed => {}
+            ConditionalOutcome::Indeterminate => {
+                let (observed, _) = read_live_head(backend, prefix, policy.head_cap)?;
+                if observed.gc == proposed.gc && observed.object_epoch == proposed.object_epoch {
+                    return Ok(observed);
+                }
+                // Not observably ours; retry against the durable state.
+            }
+        }
+    }
+    Err(GcError::CasExhausted)
+}
+
+/// Close the open object epoch: from the exact head with epoch E and
+/// `gc = Idle`, capture the immutable protected closure (live recovery root
+/// if any, plus every explicitly retained named root), then CAS `E+1` and
+/// `Marking { barrier }`. A tombstoned head contributes no live root; an
+/// empty closure is valid. Every old publication attempt is invalidated at
+/// this CAS; commands continue under the new epoch.
 ///
 /// # Errors
-pub fn restore_to_vector<T: Theory + Clone, S: ObjectStore>(
-    store: &S,
+/// A running collection refuses with `CollectionMoved`.
+pub fn close_epoch<B: ConditionalStore>(
+    backend: &B,
     prefix: &str,
-    dir: &Path,
-    theory: &T,
-    target: &Vector,
-) -> Result<Restore<T>, Fault> {
-    let (codec, fingerprint, _) = match derive_codec(theory) {
-        Ok(derived) => derived,
-        Err(refusal) => return Ok(Restore::Refused(RestoreRefusal::Open(refusal))),
-    };
-    let manifest = match read_manifest(store, prefix, fingerprint)? {
-        Ok(manifest) => manifest,
-        Err(refusal) => return Ok(Restore::Refused(refusal)),
-    };
-    if dir.exists() {
-        return Ok(Restore::Refused(RestoreRefusal::DirExists));
-    }
-    for braid in target.braids() {
-        if codec.braids().parse(braid.raw()).is_none() {
-            return Ok(Restore::Refused(RestoreRefusal::UnknownBraid {
-                got: braid.raw(),
-            }));
-        }
-    }
-
-    let mut base: Option<([u8; 32], Checkpoint)> = None;
-    let mut cursor = manifest.checkpoint;
-    while let Some(digest) = cursor {
-        let Some(object) = store.get(&ckpt_doc_key(prefix, &digest))? else {
-            return Ok(Restore::Refused(RestoreRefusal::BeyondRetention { digest }));
-        };
-        let doc = match Checkpoint::parse(&object.bytes, codec.braids()) {
-            Ok(doc) => doc,
-            Err(error) => {
-                return Ok(Restore::Refused(RestoreRefusal::Open(
-                    OpenRefusal::Checkpoint { digest, error },
-                )));
-            }
-        };
-        if target.dominates(&doc.vector()) {
-            base = Some((digest, doc));
-            break;
-        }
-        cursor = doc.prev;
-    }
-
-    let (db, mut chain) = match seed_restore(store, prefix, dir, theory, base.as_ref())? {
-        Ok(seeded) => seeded,
-        Err(refusal) => return Ok(Restore::Refused(refusal)),
-    };
-
-    let braids: Vec<BraidId> = codec.braids().components().keys().copied().collect();
-    for braid in braids {
-        let goal = target.at(braid);
-        while chain.position(braid).g < goal {
-            let slot = chain.position(braid).g + 1;
-            let key = log_key(prefix, braid, slot);
-            let Some(object) = store.get(&key)? else {
-                return Ok(Restore::Refused(RestoreRefusal::SlotMissing {
-                    braid,
-                    slot,
-                }));
-            };
-            match apply(&db, &mut chain, &codec, braid, slot, &object.bytes)? {
-                Applied::Advanced { .. } | Applied::Absorbed { .. } => {}
-                Applied::Refused(refusal) => {
-                    return Ok(Restore::Refused(RestoreRefusal::Corrupt(refusal)));
+    operation: OperationId,
+    policy: &GcPolicy,
+    work: &WorkContext,
+) -> Result<Barrier, GcError>
+where
+    B::Error: BackendError,
+{
+    let mut barrier_out = None;
+    cas_head(backend, prefix, policy, work, |current| {
+        match &current.gc {
+            GcPhase::Idle => {}
+            GcPhase::Marking { barrier } | GcPhase::Sweeping { barrier, .. } => {
+                if barrier.id == operation {
+                    barrier_out = Some(barrier.clone());
+                    return Err(GcError::AlreadyFinished);
                 }
-                Applied::Rejected(violations) => {
-                    return Ok(Restore::Refused(RestoreRefusal::Rejected {
-                        braid,
-                        slot,
-                        violations,
-                    }));
-                }
+                return Err(GcError::CollectionMoved);
             }
         }
-    }
-    chain.write_atomic(dir)?;
-    Ok(Restore::Restored {
-        db: Box::new(db),
-        vector: chain.vector(),
+        let barrier = Barrier {
+            id: operation,
+            cutoff_epoch: current.object_epoch,
+            protected: current.protected_closure().into_boxed_slice(),
+        };
+        barrier_out = Some(barrier.clone());
+        // Tombstones still advance their epoch for collection: use the raw
+        // record fields (control untouched except revision maintenance where
+        // live; deleted controls keep their recorded revision).
+        let control = match current.control.maintained() {
+            Ok(control) => control,
+            // A tombstone cannot be "maintained"; its GC bookkeeping rides
+            // the same head object without an authority transition.
+            Err(_) => current.control,
+        };
+        Ok(HeadRecord {
+            control,
+            recovery: current.recovery,
+            roots: current.roots.clone(),
+            object_epoch: current
+                .object_epoch
+                .checked_add(1)
+                .ok_or(GcError::Corruption("object epoch exhausted"))?,
+            gc: GcPhase::Marking { barrier },
+        })
     })
+    .map(|_| ())
+    .or_else(|error| match (&error, &barrier_out) {
+        (GcError::AlreadyFinished, Some(_)) => Ok(()),
+        _ => Err(error),
+    })?;
+    barrier_out.ok_or(GcError::CollectionMoved)
 }
 
-/// Maps a wall-clock instant through the batch timestamps — per braid
-/// the largest g with `ts ≤ T`; timestamps are clamped monotone per
-/// braid at publish, so the mapped set is a prefix by construction —
-/// then restores to the mapped vector. Cross-braid, wall clocks are
-/// writer-local: the restored vector, not the instant, is the reported
-/// truth.
+/// Walk one protected recovery root's exact dependency closure into `marks`.
+/// Validates every object hash/length and bounded grammar before following
+/// nested references; a malformed/missing required dependency stops GC
+/// without deletion. Chunk leaves are named by a verified manifest and are
+/// marked without a body download (they carry no nested references).
+#[expect(clippy::too_many_arguments, reason = "one bounded mark walk")]
+fn mark_root<B: ConditionalStore>(
+    backend: &B,
+    prefix: &str,
+    root: &RecoveryRoot,
+    cutoff: u64,
+    limits: Limits,
+    policy: &GcPolicy,
+    budget: &mut u64,
+    marks: &mut BTreeSet<String>,
+    work: &WorkContext,
+) -> Result<(), GcError>
+where
+    B::Error: BackendError,
+{
+    let charge = |key: &String, budget: &mut u64| -> Result<(), GcError> {
+        let cost = key.len() as u64 + 16;
+        if *budget < cost {
+            return Err(GcError::MarkBudget);
+        }
+        *budget -= cost;
+        Ok(())
+    };
+    if let Some(checkpoint) = &root.checkpoint {
+        let bytes = get_verified(backend, prefix, checkpoint)
+            .map_err(|_| GcError::Corruption("protected checkpoint manifest unavailable"))?;
+        let manifest = decode_manifest(&bytes, policy.stream)?;
+        let key = checkpoint.key(prefix);
+        charge(&key, budget)?;
+        marks.insert(key);
+        for chunk in &manifest.chunks {
+            work.step(1)?;
+            let key = chunk.key(prefix);
+            charge(&key, budget)?;
+            marks.insert(key);
+        }
+    }
+    // Decisions of exactly the tail (base, tip]; a genesis root (no
+    // checkpoint) retains its whole chain down to the sequence-zero sentinel,
+    // which has no object.
+    let mut cursor = root.tip;
+    let mut steps = 0u64;
+    while cursor != root.base && cursor.seq > 0 {
+        work.checkpoint()?;
+        steps += 1;
+        if steps > policy.walk_budget {
+            return Err(GcError::MarkBudget);
+        }
+        let (epoch, bytes) =
+            fetch_decision(backend, prefix, root.epoch_floor, cutoff, &cursor.hash)
+                .map_err(|_| GcError::Corruption("protected tail decision unavailable"))?;
+        let envelope = decision::decode_decision(&bytes, limits)
+            .map_err(|_| GcError::Corruption("protected tail decision malformed"))?;
+        if envelope.stamp() != cursor {
+            return Err(GcError::Corruption("protected tail digest mismatch"));
+        }
+        let key = crate::store::decision_key(prefix, epoch, &cursor.hash);
+        charge(&key, budget)?;
+        marks.insert(key);
+        cursor = envelope.parent;
+    }
+    if cursor != root.base {
+        return Err(GcError::Corruption("tail walk did not reach its base"));
+    }
+    Ok(())
+}
+
+/// # Errors
+/// Oversized mark sets refuse before encoding.
+fn encode_marks(barrier: &Barrier, marks: &BTreeSet<String>) -> Result<Vec<u8>, GcError> {
+    let mut out = wire::frame_header(MARK_FAMILY, MARK_LAYOUT, MARK_KIND);
+    out.extend_from_slice(barrier.id.as_core().as_bytes());
+    out.extend_from_slice(&barrier.cutoff_epoch.to_be_bytes());
+    out.extend_from_slice(&(marks.len() as u64).to_be_bytes());
+    for key in marks {
+        let len =
+            u16::try_from(key.len()).map_err(|_| GcError::Frame(FrameError::LengthOverflow))?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(key.as_bytes());
+    }
+    Ok(out)
+}
+
+/// # Errors
+/// Malformed mark manifests and foreign barriers refuse.
+pub fn decode_marks(
+    bytes: &[u8],
+    expected_barrier: OperationId,
+    cap: usize,
+) -> Result<BTreeSet<String>, GcError> {
+    let mut input = Reader::begin(bytes, MARK_FAMILY, MARK_LAYOUT, MARK_KIND, cap)?;
+    let id = OperationId::from_core(bumbledb::Id128::from_bytes(
+        input.array().map_err(GcError::Frame)?,
+    ));
+    if id != expected_barrier {
+        // Mark evidence from another job can never certify this sweep.
+        return Err(GcError::CollectionMoved);
+    }
+    let _cutoff = input.u64().map_err(GcError::Frame)?;
+    let count = input.u64().map_err(GcError::Frame)?;
+    let mut marks = BTreeSet::new();
+    for _ in 0..count {
+        let len = usize::from(u16::from_be_bytes(input.array().map_err(GcError::Frame)?));
+        let key = input.take(len).map_err(GcError::Frame)?;
+        marks.insert(
+            std::str::from_utf8(key)
+                .map_err(|_| GcError::Corruption("mark key not utf-8"))?
+                .to_string(),
+        );
+    }
+    input.end().map_err(GcError::Frame)?;
+    Ok(marks)
+}
+
+/// Mark the exact dependency closure of the current barrier and publish the
+/// immutable mark manifest, transitioning `Marking → Sweeping`. Only a
+/// complete verified mark set can enable a sweep; partial work or a crashed
+/// mark task is not a deletion certificate — re-running restarts marking
+/// from the durable barrier.
 ///
 /// # Errors
-pub fn restore_by_time<T: Theory + Clone, S: ObjectStore>(
-    store: &S,
+/// Corruption stops GC without deletion; stale collectors get
+/// `CollectionMoved`/`AlreadyFinished`.
+pub fn mark<B: ConditionalStore>(
+    backend: &B,
     prefix: &str,
-    dir: &Path,
-    theory: &T,
-    t_ms: u64,
-) -> Result<Restore<T>, Fault> {
-    let (codec, fingerprint, _) = match derive_codec(theory) {
-        Ok(derived) => derived,
-        Err(refusal) => return Ok(Restore::Refused(RestoreRefusal::Open(refusal))),
+    limits: Limits,
+    policy: &GcPolicy,
+    work: &WorkContext,
+) -> Result<ObjectRef, GcError>
+where
+    B::Error: BackendError,
+{
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let barrier = match &head.gc {
+        GcPhase::Marking { barrier } => barrier.clone(),
+        GcPhase::Sweeping { marks, .. } => return Ok(*marks),
+        GcPhase::Idle => return Err(GcError::AlreadyFinished),
     };
-    let manifest = match read_manifest(store, prefix, fingerprint)? {
-        Ok(manifest) => manifest,
-        Err(refusal) => return Ok(Restore::Refused(refusal)),
-    };
-
-    let mut base_vector: Vector = codec
-        .braids()
-        .components()
-        .keys()
-        .map(|braid| (*braid, 0))
-        .collect();
-    let mut cursor = manifest.checkpoint;
-    while let Some(digest) = cursor {
-        let Some(object) = store.get(&ckpt_doc_key(prefix, &digest))? else {
-            return Ok(Restore::Refused(RestoreRefusal::BeyondRetention { digest }));
-        };
-        let doc = match Checkpoint::parse(&object.bytes, codec.braids()) {
-            Ok(doc) => doc,
-            Err(error) => {
-                return Ok(Restore::Refused(RestoreRefusal::Open(
-                    OpenRefusal::Checkpoint { digest, error },
-                )));
-            }
-        };
-        if doc.braids.values().all(|head| head.ts <= t_ms) {
-            base_vector = doc.vector();
-            break;
-        }
-        cursor = doc.prev;
+    let mut marks = BTreeSet::new();
+    let mut budget = policy.mark_budget_bytes;
+    for root in &barrier.protected {
+        mark_root(
+            backend,
+            prefix,
+            root,
+            barrier.cutoff_epoch,
+            limits,
+            policy,
+            &mut budget,
+            &mut marks,
+            work,
+        )?;
     }
-
-    let mut target = Vector::new();
-    for (braid, start) in base_vector.iter() {
-        let mut g = start;
-        loop {
-            let key = log_key(prefix, braid, g + 1);
-            let Some(object) = store.get(&key)? else {
-                break;
-            };
-            let batch = match codec.decode(&object.bytes) {
-                Ok(batch) => batch,
-                Err(error) => {
-                    return Ok(Restore::Refused(RestoreRefusal::Corrupt(
-                        ApplyRefusal::Decode(error),
-                    )));
-                }
-            };
-            if batch.header.timestamp > t_ms {
-                break;
-            }
-            g += 1;
-        }
-        target.set(braid, g);
-    }
-
-    restore_to_vector(store, prefix, dir, theory, &target)
-}
-
-fn read_manifest<S: ObjectStore>(
-    store: &S,
-    prefix: &str,
-    fingerprint: [u8; 32],
-) -> Result<Result<Manifest, RestoreRefusal>, Fault> {
-    let Some(fetched) = store.get(&manifest_key(prefix))? else {
-        return Ok(Err(RestoreRefusal::Open(OpenRefusal::ManifestMissing)));
-    };
-    let manifest = match Manifest::parse(&fetched.bytes) {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            return Ok(Err(RestoreRefusal::Open(OpenRefusal::Manifest(error))));
-        }
-    };
-    if manifest.fingerprint != fingerprint {
-        return Ok(Err(RestoreRefusal::Open(
-            OpenRefusal::FingerprintMismatch {
-                manifest: manifest.fingerprint,
-                derived: fingerprint,
+    // New mark-work objects live in the current (open) epoch, outside the
+    // collection cutoff, so a concurrent collector cannot collect them.
+    let bytes = encode_marks(&barrier, &marks)?;
+    let (current, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let marks_ref = put_verified(
+        backend,
+        prefix,
+        current.object_epoch,
+        ObjectKind::Mark,
+        &bytes,
+    )?;
+    let installed = cas_head(backend, prefix, policy, work, |current| match &current.gc {
+        GcPhase::Marking { barrier: recorded } if recorded.id == barrier.id => Ok(HeadRecord {
+            control: current.control,
+            recovery: current.recovery,
+            roots: current.roots.clone(),
+            object_epoch: current.object_epoch,
+            gc: GcPhase::Sweeping {
+                barrier: recorded.clone(),
+                marks: marks_ref,
+                cursor: None,
             },
-        )));
+        }),
+        GcPhase::Sweeping {
+            barrier: recorded,
+            marks,
+            ..
+        } if recorded.id == barrier.id => {
+            // Another collector completed marking first; its evidence wins.
+            let _ = marks;
+            Err(GcError::CollectionMoved)
+        }
+        _ => Err(GcError::CollectionMoved),
+    });
+    match installed {
+        Ok(head) => match head.gc {
+            GcPhase::Sweeping { marks, .. } => Ok(marks),
+            _ => Err(GcError::Corruption("sweeping install lost its phase")),
+        },
+        Err(GcError::CollectionMoved) => {
+            // Re-read: duplicated safe work is fine; durable evidence wins.
+            let (observed, _) = read_live_head(backend, prefix, policy.head_cap)?;
+            match observed.gc {
+                GcPhase::Sweeping {
+                    barrier: recorded,
+                    marks,
+                    ..
+                } if recorded.id == barrier.id => Ok(marks),
+                _ => Err(GcError::CollectionMoved),
+            }
+        }
+        Err(error) => Err(error),
     }
-    Ok(Ok(manifest))
 }
 
-fn seed_restore<T: Theory + Clone, S: ObjectStore>(
-    store: &S,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SweepReport {
+    pub deleted: u64,
+    pub retained_marked: u64,
+    pub retained_newer: u64,
+    pub retained_unparsed: u64,
+    pub pages: u64,
+    pub finished: bool,
+}
+
+/// Sweep only closed names: delete a key exactly when its parsed epoch is
+/// `≤ cutoff` AND it is absent from the complete verified mark set. `HEAD`,
+/// unknown/unparseable namespaces, newer epochs and marked objects are never
+/// deleted. Progress persists in the head by exact CAS after each page; a
+/// failed deletion never advances durable progress past itself.
+///
+/// # Errors
+/// Stale collectors get `CollectionMoved`; failed deletions return
+/// `DeleteFailed` with resumable durable progress retained.
+pub fn sweep<B: ConditionalStore>(
+    backend: &B,
     prefix: &str,
-    dir: &Path,
-    theory: &T,
-    base: Option<&([u8; 32], Checkpoint)>,
-) -> Result<Result<(Db<T>, Chain), RestoreRefusal>, Fault> {
-    let Some((digest, doc)) = base else {
-        let db = match Db::create(dir, theory.clone())? {
-            bumbledb::Admission::Accepted(db) => db,
-            bumbledb::Admission::Rejected(violations) => {
-                return Ok(Err(RestoreRefusal::Open(OpenRefusal::TheoryRejected(
-                    violations,
-                ))));
+    policy: &GcPolicy,
+    work: &WorkContext,
+) -> Result<SweepReport, GcError>
+where
+    B::Error: BackendError,
+{
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (barrier, marks_ref, mut cursor) = match &head.gc {
+        GcPhase::Sweeping {
+            barrier,
+            marks,
+            cursor,
+        } => (barrier.clone(), *marks, cursor.clone()),
+        GcPhase::Marking { .. } => return Err(GcError::CollectionMoved),
+        GcPhase::Idle => return Err(GcError::AlreadyFinished),
+    };
+    let marks_bytes = get_verified(backend, prefix, &marks_ref)
+        .map_err(|_| GcError::Corruption("mark manifest unavailable"))?;
+    let marks = decode_marks(&marks_bytes, barrier.id, policy.stream.manifest_bytes)?;
+    let mut report = SweepReport::default();
+    let listing_prefix = objects_prefix(prefix);
+    loop {
+        work.checkpoint()?;
+        let page = backend
+            .list_objects(&listing_prefix, cursor.as_deref())
+            .map_err(backend_error)
+            .map_err(GcError::Object)?;
+        report.pages += 1;
+        let mut last_processed: Option<String> = None;
+        for key in &page.keys {
+            work.step(1)?;
+            match parse_object_key(prefix, key) {
+                None => {
+                    // Never delete an unknown or unparseable namespace.
+                    report.retained_unparsed += 1;
+                }
+                Some((epoch, _, _)) if epoch > barrier.cutoff_epoch => {
+                    report.retained_newer += 1;
+                }
+                Some(_) if marks.contains(key) => {
+                    report.retained_marked += 1;
+                }
+                Some(_) => {
+                    if let Ok(()) = backend.delete_object(key) {
+                        report.deleted += 1;
+                    } else {
+                        // Persist progress up to (not past) the failure,
+                        // then surface the retryable evidence.
+                        if let Some(done) = &last_processed {
+                            persist_cursor(
+                                backend,
+                                prefix,
+                                policy,
+                                work,
+                                &barrier,
+                                marks_ref,
+                                Some(done.as_bytes()),
+                            )?;
+                        }
+                        return Err(GcError::DeleteFailed { key: key.clone() });
+                    }
+                }
             }
-        };
-        let (codec, _, _) = derive_codec(theory).expect("derived once already");
-        return Ok(Ok((db, Chain::genesis(codec.braids()))));
-    };
-    let bytes = match fetch_checkpoint_bytes(store, prefix, *digest)? {
-        Ok(bytes) => bytes,
-        Err(refusal) => return Ok(Err(RestoreRefusal::Open(refusal))),
-    };
-    write_checkpoint_bytes(dir, &bytes)?;
-    let db = match Db::open(dir, theory.clone()) {
-        Ok(db) => db,
-        Err(error @ (bumbledb::Error::Io(_) | bumbledb::Error::EnvironmentLocked)) => {
-            return Err(Fault::Engine(error));
+            last_processed = Some(key.clone());
         }
-        Err(error) => {
-            return Ok(Err(RestoreRefusal::Open(OpenRefusal::CheckpointOpen {
-                digest: *digest,
-                error,
-            })));
+        match page.next {
+            Some(next) => {
+                persist_cursor(
+                    backend,
+                    prefix,
+                    policy,
+                    work,
+                    &barrier,
+                    marks_ref,
+                    Some(&next),
+                )?;
+                cursor = Some(next);
+            }
+            None => break,
         }
-    };
-    let opened = db.generation()?.value();
-    if opened != doc.sum() {
-        return Ok(Err(RestoreRefusal::Open(OpenRefusal::CheckpointState {
-            digest: *digest,
-            opened,
-            sum: doc.sum(),
-        })));
     }
-    let computed = db.catalog_digest()?;
-    if computed != doc.catalog {
-        return Ok(Err(RestoreRefusal::Open(OpenRefusal::CatalogMismatch {
-            digest: *digest,
-            writer: doc.writer,
-            carried: doc.catalog,
-            computed,
-        })));
-    }
-    let chain = Chain::Settled {
-        entries: doc
-            .braids
-            .iter()
-            .map(|(braid, head)| {
-                (
-                    *braid,
-                    ChainEntry {
-                        g: head.g,
-                        prev: head.hash,
-                        ts: head.ts,
-                    },
-                )
+    // Finish: CAS gc = Idle, retaining the monotone object epoch. The mark
+    // manifest becomes an ordinary unreachable object for a later pass.
+    cas_head(backend, prefix, policy, work, |current| match &current.gc {
+        GcPhase::Sweeping {
+            barrier: recorded, ..
+        } if recorded.id == barrier.id => Ok(HeadRecord {
+            control: current.control,
+            recovery: current.recovery,
+            roots: current.roots.clone(),
+            object_epoch: current.object_epoch,
+            gc: GcPhase::Idle,
+        }),
+        GcPhase::Idle => Err(GcError::AlreadyFinished),
+        _ => Err(GcError::CollectionMoved),
+    })
+    .map(|_| ())
+    .or_else(|error| match error {
+        GcError::AlreadyFinished => Ok(()),
+        other => Err(other),
+    })?;
+    report.finished = true;
+    Ok(report)
+}
+
+fn persist_cursor<B: ConditionalStore>(
+    backend: &B,
+    prefix: &str,
+    policy: &GcPolicy,
+    work: &WorkContext,
+    barrier: &Barrier,
+    marks_ref: ObjectRef,
+    cursor: Option<&[u8]>,
+) -> Result<(), GcError>
+where
+    B::Error: BackendError,
+{
+    cas_head(backend, prefix, policy, work, |current| match &current.gc {
+        GcPhase::Sweeping {
+            barrier: recorded,
+            marks,
+            cursor: held_cursor,
+        } if recorded.id == barrier.id && *marks == marks_ref => {
+            // A cursor never regresses: durable progress wins over a stale
+            // collector's older page.
+            if let (Some(held_cursor), Some(proposed)) = (held_cursor.as_deref(), cursor)
+                && held_cursor > proposed
+            {
+                return Err(GcError::CollectionMoved);
+            }
+            Ok(HeadRecord {
+                control: current.control,
+                recovery: current.recovery,
+                roots: current.roots.clone(),
+                object_epoch: current.object_epoch,
+                gc: GcPhase::Sweeping {
+                    barrier: recorded.clone(),
+                    marks: *marks,
+                    cursor: cursor.map(Box::from),
+                },
             })
-            .collect(),
-    };
-    Ok(Ok((db, chain)))
+        }
+        _ => Err(GcError::CollectionMoved),
+    })
+    .map(|_| ())
+}
+
+/// One complete collection pass: close the epoch (or adopt the running
+/// barrier), mark, sweep. Resumable at every durable boundary.
+///
+/// # Errors
+/// Every phase's typed refusal propagates with durable progress retained.
+pub fn run_collection<B: ConditionalStore>(
+    backend: &B,
+    prefix: &str,
+    operation: OperationId,
+    limits: Limits,
+    policy: &GcPolicy,
+    work: &WorkContext,
+) -> Result<SweepReport, GcError>
+where
+    B::Error: BackendError,
+{
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    match &head.gc {
+        GcPhase::Idle => {
+            close_epoch(backend, prefix, operation, policy, work)?;
+        }
+        GcPhase::Marking { .. } | GcPhase::Sweeping { .. } => {
+            // Resume the running collection; duplicated work is safe.
+        }
+    }
+    let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    if matches!(head.gc, GcPhase::Marking { .. }) {
+        mark(backend, prefix, limits, policy, work)?;
+    }
+    sweep(backend, prefix, policy, work)
 }

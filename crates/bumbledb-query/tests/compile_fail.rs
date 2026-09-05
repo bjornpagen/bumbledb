@@ -317,6 +317,10 @@ fn compile_fail_fixtures() {
     // an unbound head variable, a
     // negative `u64`, a foreign integer suffix, a binding's `in` without
     // its ?param, a numeric label on a relation atom, a third Arg
-    // position after the key.
-    assert_eq!(seen, 32, "the compile-fail roster has thirty-two fixtures");
+    // position after the key, a malformed id128 literal, an inverted dense
+    // float interval, a `use` import after a rule — plus the typed-template
+    // walls (chapter 34): an unknown `params!` name, a missing param
+    // (typestate), a doubled `params!` name, a scalar-and-set mixed param,
+    // and a keyword param name.
+    assert_eq!(seen, 40, "the compile-fail roster has forty fixtures");
 }

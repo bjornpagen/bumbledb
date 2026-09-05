@@ -8,7 +8,7 @@ import { test } from "node:test"
 const packageRoot = path.join(import.meta.dirname, "..")
 const cookbookPath = path.join(packageRoot, "COOKBOOK.md")
 
-const RECIPE_COUNT = 32
+const RECIPE_COUNT = 12
 
 function tsFences(markdown: string): string[] {
 	const fences: string[] = []
@@ -54,7 +54,7 @@ test("every ts fence in COOKBOOK.md type-checks against src/index.ts at HEAD, se
 	const recipes = parts.filter(function isRecipe(section) {
 		return /^## \d+\. /.test(section.heading)
 	})
-	assert.equal(recipes.length, RECIPE_COUNT, "the cookbook holds all 32 recipes")
+	assert.equal(recipes.length, RECIPE_COUNT, "the cookbook holds the full recipe roster")
 	recipes.forEach(function numbered(section, index) {
 		assert.ok(
 			section.heading.startsWith(`## ${index + 1}. `),

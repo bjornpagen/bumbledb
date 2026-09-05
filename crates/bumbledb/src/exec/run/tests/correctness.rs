@@ -3,7 +3,6 @@ use crate::ir::WordCmp;
 
 #[test]
 fn clover_on_the_papers_instance() {
-    let dir = TempDir::new("run-clover");
     let schema = schema(3);
     let n = 20u64;
 
@@ -18,7 +17,7 @@ fn clover_on_the_papers_instance() {
         t.push((3, 300 + i));
         t.push((1, 300 + n + i));
     }
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone(), t.clone()]);
 
     let normalized = normalized(
         vec![
@@ -47,12 +46,11 @@ fn clover_on_the_papers_instance() {
 
 #[test]
 fn chain_query_matches_the_nested_loop_oracle() {
-    let dir = TempDir::new("run-chain");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..10).map(|i| (i, i + 1)).collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i + 1, i + 2)).collect();
     let t: Vec<(u64, u64)> = (0..10).map(|i| (i + 2, i + 3)).collect();
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone(), t.clone()]);
 
     let normalized = normalized(
         vec![
@@ -81,11 +79,10 @@ fn chain_query_matches_the_nested_loop_oracle() {
 
 #[test]
 fn self_join_grandparent() {
-    let dir = TempDir::new("run-grandparent");
     let schema = schema(1);
 
     let edges = vec![(0u64, 1u64), (1, 2), (2, 3), (4, 1)];
-    let views = views_of(&dir, &schema, std::slice::from_ref(&edges));
+    let views = views_of(&schema, std::slice::from_ref(&edges));
 
     let normalized = normalized(
         vec![
@@ -112,13 +109,12 @@ fn self_join_grandparent() {
 
 #[test]
 fn triangle_is_wcoj_honest() {
-    let dir = TempDir::new("run-triangle");
     let schema = schema(3);
 
     let r: Vec<(u64, u64)> = (0..6).flat_map(|x| (0..6).map(move |y| (x, y))).collect();
     let s: Vec<(u64, u64)> = (0..6).map(|y| (y, (y + 1) % 6)).collect();
     let t: Vec<(u64, u64)> = (0..6).map(|z| (z, (z + 2) % 6)).collect();
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone(), t.clone()]);
 
     let normalized = normalized(
         vec![
@@ -147,13 +143,11 @@ fn triangle_is_wcoj_honest() {
 
 #[test]
 fn zero_binding_atom_gates_the_query() {
-    let dir = TempDir::new("run-gate");
     let schema = schema(2);
     let r = vec![(1u64, 2u64), (3, 4)];
 
     for (gate_rows, expect_rows) in [(vec![(9u64, 9u64)], 2usize), (vec![], 0)] {
-        let dir2 = TempDir::new(&format!("run-gate-{expect_rows}"));
-        let views = views_of(&dir2, &schema, &[r.clone(), gate_rows]);
+        let views = views_of(&schema, &[r.clone(), gate_rows]);
         let normalized = normalized(
             vec![occurrence(0, 0, &[(0, 0), (1, 1)]), occurrence(1, 1, &[])],
             vec![],
@@ -162,14 +156,12 @@ fn zero_binding_atom_gates_the_query() {
         let results = run(&plan, &views);
         assert_eq!(results.len(), expect_rows, "gate case {expect_rows}");
     }
-    drop(dir);
 }
 
 #[test]
 fn empty_relations_yield_empty_results() {
-    let dir = TempDir::new("run-empty");
     let schema = schema(2);
-    let views = views_of(&dir, &schema, &[vec![(1, 2)], vec![]]);
+    let views = views_of(&schema, &[vec![(1, 2)], vec![]]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -183,12 +175,11 @@ fn empty_relations_yield_empty_results() {
 
 #[test]
 fn duplicate_heavy_skew_collapses_to_the_distinct_binding_set() {
-    let dir = TempDir::new("run-skew");
     let schema = schema(2);
 
     let r: Vec<(u64, u64)> = (0..50).map(|i| (i % 2, i % 3)).collect();
     let s: Vec<(u64, u64)> = (0..50).map(|i| (i % 3, i % 5)).collect();
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone()]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -211,11 +202,10 @@ fn duplicate_heavy_skew_collapses_to_the_distinct_binding_set() {
 
 #[test]
 fn residuals_filter_across_atoms() {
-    let dir = TempDir::new("run-residuals");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..10).map(|i| (i, i)).collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i, 9 - i)).collect();
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone()]);
 
     let normalized = normalized(
         vec![
@@ -270,8 +260,7 @@ fn randomized_differential_against_the_nested_loop_oracle() {
             rel.dedup();
             data.push(rel);
         }
-        let dir = TempDir::new(&format!("run-differential-{case}"));
-        let views = views_of(&dir, &schema, &data);
+        let views = views_of(&schema, &data);
 
         let shape = case % 3;
         let occurrences = match shape {

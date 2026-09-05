@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use bumbledb::Id128;
 use bumbledb_log::history::admission::{AdmissionView, Refusal, Submission};
 use bumbledb_log::history::{
-    AccessMode, CommandDigest, CommandId, CommandRef, Condition, DatabaseId, DatabaseIdentity,
-    DecisionDigest, DecisionStamp, EmptyResult, IncarnationId, ReceiptEpoch, ReceiptPolicy,
+    AccessMode, CommandDigest, CommandId, CommandRef, CommandResult, Condition, DatabaseId,
+    DatabaseIdentity, DecisionDigest, DecisionStamp, IncarnationId, ReceiptEpoch, ReceiptPolicy,
     RequestId, SchemaId, StateStamp, TerminalOutcome, TerminalReceipt,
 };
 
@@ -526,7 +526,7 @@ fn compare_guard(model: &Model, intent: &Intent, stored: u8) {
             data_revision: 0,
         },
         outcome: TerminalOutcome::NoChange {
-            result: EmptyResult,
+            result: CommandResult::empty(),
         },
     });
     let condition = intent

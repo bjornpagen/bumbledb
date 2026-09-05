@@ -12,13 +12,14 @@ fn interior_atom(id: u32, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     }
 }
 
-fn proj(finds: Vec<VarId>, atoms: Vec<crate::ir::Atom>) -> ProjectionRule {
+fn proj(finds: Vec<VarId>, atoms: Vec<crate::ir::Atom>) -> Rule {
     ProjectionRule {
         finds,
         atoms,
         negated: vec![],
         conditions: vec![],
     }
+    .to_rule()
 }
 
 fn rule(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Rule {

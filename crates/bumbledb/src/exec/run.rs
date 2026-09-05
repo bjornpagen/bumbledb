@@ -395,7 +395,7 @@ struct NodeScratch {
 
     point_checks: Vec<(usize, usize, u64)>,
 
-    point_sources: Vec<(usize, usize, Source)>,
+    point_sources: Vec<(usize, usize, Source, bool)>,
 
     point_rows: Vec<u32>,
 
@@ -538,7 +538,7 @@ struct AntiProbeSpec {
     occ: usize,
     form: AntiProbeForm,
 
-    point_parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
+    point_parts: Vec<(usize, usize, crate::ir::VarId, usize, bool)>,
 }
 
 impl AntiProbeSpec {
@@ -553,7 +553,7 @@ impl AntiProbeSpec {
 struct PointProbeSpec {
     occ: usize,
 
-    parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
+    parts: Vec<(usize, usize, crate::ir::VarId, usize, bool)>,
 }
 
 enum LeafPrecompute {

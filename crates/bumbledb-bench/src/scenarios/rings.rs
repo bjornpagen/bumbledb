@@ -16,11 +16,11 @@ bumbledb::schema! {
     pub Rings;
 
     relation Party {
-        id: u64 as RgPartyId, fresh,
+        id: u64 as RgPartyId,
         kind: u64 as RgPartyKindId,
     }
     relation Transfer {
-        id: u64 as RgTransferId, fresh,
+        id: u64 as RgTransferId,
         src: u64 as RgPartyId,
         dst: u64 as RgPartyId,
         amount: i64,
@@ -36,6 +36,12 @@ bumbledb::schema! {
     }
 
     closed relation Kind as RgPartyKindId = { Person, Company, Exchange, Mixer };
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Party(id)    -> Party;
+    Transfer(id) -> Transfer;
 
     Party(kind) <= Kind(id);
     Transfer(src) <= Party(id);

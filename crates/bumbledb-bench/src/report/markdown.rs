@@ -165,12 +165,7 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         "- bumbledb file (compacted): {} bytes",
         report.store.db_bytes
     );
-    let _ = writeln!(out, "- sqlite file: {} bytes", report.store.sqlite_bytes);
-    let _ = writeln!(
-        out,
-        "- image cache: {} images, {} bytes\n",
-        report.store.cache_images, report.store.cache_bytes
-    );
+    let _ = writeln!(out, "- sqlite file: {} bytes\n", report.store.sqlite_bytes);
 
     let stamped: Vec<(&str, GhzReport, Option<u64>)> = report
         .reads

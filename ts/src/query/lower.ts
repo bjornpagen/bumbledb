@@ -1,7 +1,16 @@
 import { sealedFieldsOf } from "#closed.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
-import { assertDeclarationOrderKey, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
+import {
+	assertDeclarationOrderKey,
+	f64 as f64Field,
+	isFloatIntervalValue,
+	isIntervalValue,
+	literalShapeError,
+	rosterOf,
+	u64 as u64Field
+} from "#fields.ts"
+import { Id128 } from "#id128.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AtomIr,
@@ -13,6 +22,7 @@ import type {
 	ParsedQuery,
 	QueryParam,
 	RuleIr,
+	ScalarExprIr,
 	TaggedValue,
 	TermIr
 } from "#native.ts"
@@ -44,6 +54,8 @@ import type {
 	RuleItem
 } from "#query/atom.ts"
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
+import type { ComputeData } from "#query/compute.ts"
+import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -62,8 +74,12 @@ import {
 	fieldAntiJoins,
 	fieldJoins,
 	headFieldJoins,
+	importFacadeOf,
+	importFacadeOfOwner,
 	inferred,
+	isImportedSource,
 	isTerm,
+	labelImport,
 	makeParam,
 	makeSetParam,
 	renderFieldKind,
@@ -148,11 +164,24 @@ interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaCla
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
 
+	/**
+	 * Nonrecursive composition (chapter 34): a typed query template of the
+	 * SAME schema is a relation expression — its whole body splices as a
+	 * derived stage; every head column must be bound to a variable minted
+	 * by `v(imported)`. Naming materializes nothing.
+	 */
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
+		imported: Q,
+		bindings: B
+	): QueryRuleChain<Rels, Record<never, never>, Classes>
+
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
 	): QueryRuleChain<Rels, Record<never, never>, Classes>
 }
+
+type ImportMatchShape<Q extends AnyQuery> = Readonly<Record<keyof RowOf<Q> & string, AnyVar>>
 
 interface QueryRuleChain<
 	Rels extends SchemaRelations,
@@ -176,6 +205,8 @@ interface QueryRuleChain<
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): QueryRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
+
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(imported: Q, bindings: B): QueryRuleChain<Rels, P, Classes>
 
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
@@ -207,6 +238,10 @@ interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends Schema
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): InteriorRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
+		imported: Q,
+		bindings: B
+	): InteriorRuleChain<Rels, Record<never, never>, Classes>
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
@@ -234,6 +269,10 @@ interface InteriorRuleChain<
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): InteriorRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
+		imported: Q,
+		bindings: B
+	): InteriorRuleChain<Rels, P, Classes>
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
 	): InteriorRuleChain<Rels, Flatten<P & CondParamsShape<C>>, Classes>
@@ -241,7 +280,11 @@ interface InteriorRuleChain<
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
 	): InteriorRuleChain<Rels, P, Classes>
-	find<const F extends FindShape>(entries: F & CheckRecFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
+	/**
+	 * Nonrecursive derived stages emit aggregate/computed outputs too
+	 * (C05): only the RECURSIVE head stays projection-only.
+	 */
+	find<const F extends FindShape>(entries: F & CheckFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
 interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses> extends TermOps {
@@ -261,6 +304,11 @@ interface RecRuleScope<Rels extends SchemaRelations, Classes extends SchemaClass
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
+	/** Frozen finite nonrecursive imports may feed base/step (chapter 34). */
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(
+		imported: Q,
+		bindings: B
+	): RecRuleChain<Rels, Record<never, never>, Classes>
 	interior<const B extends Readonly<Record<string, AnyVar>>>(
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
@@ -288,6 +336,7 @@ interface RecRuleChain<
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): RecRuleChain<Rels, Flatten<P & BindParamsShape<MatchFields<R>, B>>, Classes>
+	match<Q extends AnyQuery, const B extends ImportMatchShape<Q>>(imported: Q, bindings: B): RecRuleChain<Rels, P, Classes>
 	where<const C extends AnyCond>(
 		cond: CheckCond<Classes, C> & C
 	): RecRuleChain<Rels, Flatten<P & CondParamsShape<C>>, Classes>
@@ -336,6 +385,9 @@ interface Query<
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
 	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes>
+
+	/** A diagnostic name for composition/tracing — never a schema relation. */
+	named(label: string): Query<Rels, Row, Params, Classes>
 
 	interior(name: string, ...builds: never[]): never
 
@@ -430,6 +482,19 @@ interface ResolvedBindings {
  * cross-binding joins mutually class-equal by transitivity.
  */
 function mintSlotOf(context: ChainContext, ref: AnyVar): ClassedField {
+	const facade = importFacadeOfOwner(ref.owner)
+	if (facade !== undefined) {
+		// An import var's mint slot is the imported head column's slot:
+		// the descriptor it projected and the carrier class that survived
+		// the projection (aggregate outputs are bare derived scalars).
+		const column = facade.columns.get(ref.column)
+		if (column === undefined || (facade.source.schema as AnySchema) !== context.theory) {
+			throw new AuthoringError({
+				message: `the variable ${ref.label} was minted from a query template schema ${context.theory.name} does not own`
+			})
+		}
+		return column.slot ?? { field: ref.field, class: undefined }
+	}
 	if (context.theory.relations[ref.owner.name] !== ref.owner) {
 		throw new AuthoringError({
 			message: `the variable ${ref.label} was minted from a relation schema ${context.theory.name} does not declare — mint variables with v() from the schema's own relations`
@@ -754,7 +819,15 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 			})
 		}
 		throw new AuthoringError({
-			message: `find ${name}: a ${entry[term]} is not projectable — find takes variables or aggregates`
+			message: `find ${name}: a ${entry[term]} is not projectable — find takes variables, aggregates or Compute expressions`
+		})
+	}
+	if (isComputeExpr(entry)) {
+		return Object.freeze({
+			name,
+			entry: Object.freeze({ kind: "compute" as const, expr: entry.node, result: entry.result }),
+			closed: undefined,
+			slot: undefined
 		})
 	}
 	if (isAggregateEntry(entry)) {
@@ -765,7 +838,9 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 			slot: undefined
 		})
 	}
-	throw new AuthoringError({ message: `find ${name}: not a find entry — find takes variables or aggregates` })
+	throw new AuthoringError({
+		message: `find ${name}: not a find entry — find takes variables, aggregates or Compute expressions`
+	})
 }
 
 /**
@@ -813,12 +888,34 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
 	}
 }
 
+/**
+ * The head column's slot: a projected variable keeps its mint slot; an
+ * aggregate output is a NEW derived scalar — its descriptor follows the
+ * aggregate's typing (count is u64, mean is f64, sum/min/max keep the
+ * input's scalar kind, pack keeps the interval kind) and its class is
+ * BARE: a derived value is not the carrier the class law tracked.
+ */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
 	if (entry.kind === "var") {
 		return mintSlotOf(context, entry.over)
 	}
-	return undefined
+	if (entry.kind === "compute") {
+		return { field: computeFieldOf(entry.result), class: undefined }
+	}
+	const agg = entry.agg
+	switch (agg.op) {
+		case "count":
+			return { field: u64Field, class: undefined }
+		case "fold": {
+			if (agg.fold === "mean") {
+				return { field: f64Field, class: undefined }
+			}
+			return { field: agg.over.field, class: undefined }
+		}
+		case "pack":
+			return { field: agg.over.field, class: undefined }
+	}
 }
 
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
@@ -826,6 +923,15 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 	const entry = column.entry
 	if (entry.kind === "var") {
 		assertBound(where, bound, entry.over)
+		return
+	}
+	if (entry.kind === "compute") {
+		// Kind agreement, closed-reference and depth walls hold at
+		// construction (#query/compute.ts); boundness is a RULE property,
+		// judged here like every other term position.
+		for (const ref of computeVarsOf(entry.expr)) {
+			assertBound(where, bound, ref)
+		}
 		return
 	}
 	const agg = entry.agg
@@ -967,14 +1073,14 @@ function makeRuleValue<Row, P extends ParamsRecord>(rule: RuleData): RuleValue<R
 }
 
 interface RawChain {
-	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
+	match(relation: MatchOwner | AnyQuery, bindings: Readonly<Record<string, unknown>>): RawChain
 	where(cond: AnyCond): RawChain
 	interior(name: string, bindings: Readonly<Record<string, unknown>>): RawChain
 	find(entries: Readonly<Record<string, unknown>>): RuleValue<never, never>
 }
 
 interface RawScope extends TermOps {
-	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
+	match(relation: MatchOwner | AnyQuery, bindings: Readonly<Record<string, unknown>>): RawChain
 	interior(name: string, bindings: Readonly<Record<string, unknown>>): RawChain
 }
 
@@ -1048,6 +1154,159 @@ function interiorAdvance(
 	return advanceInterior(state, lookupDerived(context, name), bindings, "interior")
 }
 
+/**
+ * Imported query templates as relation-expression sources (chapter 34's
+ * nonrecursive composition). The imported CQ's whole body — its inner
+ * interiors plus its main rules as one derived table — is SPLICED into the
+ * consuming query's interior roster at assembly ({@link makeRawQuery});
+ * naming does not materialize anything, and the imported template keeps its
+ * owned immutable IR. One entry is minted per imported query VALUE, so two
+ * references to the same template read one derived table.
+ */
+interface ImportEntry {
+	readonly table: InteriorData
+	readonly inner: readonly InteriorData[]
+}
+
+const importEntries = new WeakMap<object, ImportEntry>()
+const importTables = new WeakSet<InteriorData>()
+
+function importEntryOf(context: ChainContext, imported: AnyQuery): ImportEntry {
+	const cached = importEntries.get(imported)
+	if (cached !== undefined) {
+		if (imported.schema !== context.theory) {
+			throw new AuthoringError({
+				message: `${contextLabel(context)}: the imported query belongs to schema ${imported.schema.name}, not ${context.theory.name} — templates compose within one schema`
+			})
+		}
+		return cached
+	}
+	if (imported.schema !== context.theory) {
+		throw new AuthoringError({
+			message: `${contextLabel(context)}: the imported query belongs to schema ${imported.schema.name}, not ${context.theory.name} — templates compose within one schema`
+		})
+	}
+	if (imported.data.kind === "reach") {
+		throw new AuthoringError({
+			message: `${contextLabel(context)}: a recursive query is not importable as a relation expression yet — declare the recursion on the consuming query (C05 boundary, recorded)`
+		})
+	}
+	const userParams = imported.data.params.filter(function userSupplied(entry) {
+		return entry.membership === undefined
+	})
+	if (userParams.length > 0) {
+		throw new AuthoringError({
+			message: `${contextLabel(context)}: the imported query takes parameters (${userParams
+				.map((entry) => entry.name)
+				.join(", ")}) — bind an import's meaning at declaration; parameterized imports are not supported`
+		})
+	}
+	const facade = importFacadeOf(imported)
+	const table: InteriorData = Object.freeze({
+		name: facade.owner.name,
+		finds: imported.data.finds,
+		rules: imported.data.rules
+	})
+	const entry: ImportEntry = Object.freeze({ table, inner: imported.data.interiors })
+	importEntries.set(imported, entry)
+	importTables.add(table)
+	importInner.set(table, entry.inner)
+	return entry
+}
+
+const importInner = new WeakMap<InteriorData, readonly InteriorData[]>()
+
+/**
+ * Every import table the assembled query references, in first-reference
+ * order (declared interiors first, then rec arms, then main rules — the
+ * lowering walk), deduplicated by table identity.
+ */
+function referencedImports(
+	interiors: readonly InteriorData[],
+	rec: RecData | undefined,
+	rules: readonly RuleData[]
+): readonly InteriorData[] {
+	const seen = new Set<InteriorData>()
+	const out: InteriorData[] = []
+	function walk(ruleList: readonly RuleData[]): void {
+		for (const rule of ruleList) {
+			for (const item of rule.items) {
+				if (item.kind !== "interior" && item.kind !== "negatedInterior") {
+					continue
+				}
+				const target = item.target as InteriorData
+				if (importTables.has(target) && !seen.has(target)) {
+					seen.add(target)
+					out.push(target)
+				}
+			}
+		}
+	}
+	for (const interior of interiors) {
+		walk(interior.rules)
+	}
+	if (rec !== undefined) {
+		walk(rec.base)
+		walk(rec.rec)
+	}
+	walk(rules)
+	return out
+}
+
+/**
+ * Splices referenced imports ahead of the declared interiors: each import's
+ * inner interiors first (its rules read them), then the import's own table.
+ * Interior prior-ness is preserved — declared interiors never read imports
+ * they could not have named, and main/rec rules may read anything earlier.
+ * Duplicate names across the final roster refuse.
+ */
+function spliceImports(
+	interiors: readonly InteriorData[],
+	rec: RecData | undefined,
+	rules: readonly RuleData[]
+): readonly InteriorData[] {
+	const imports = referencedImports(interiors, rec, rules)
+	if (imports.length === 0) {
+		return interiors
+	}
+	const spliced: InteriorData[] = []
+	const names = new Set<string>()
+	const added = new Set<InteriorData>()
+	function add(table: InteriorData): void {
+		if (added.has(table)) {
+			return
+		}
+		if (names.has(table.name)) {
+			throw new AuthoringError({
+				message: `query: the derived-table name ${table.name} appears twice after import splicing — rename the colliding interior (names are unique)`
+			})
+		}
+		added.add(table)
+		names.add(table.name)
+		spliced.push(table)
+	}
+	for (const table of imports) {
+		for (const inner of importInner.get(table) ?? []) {
+			add(inner)
+		}
+		add(table)
+	}
+	for (const declared of interiors) {
+		add(declared)
+	}
+	return Object.freeze(spliced)
+}
+
+function importAdvance(
+	context: ChainContext,
+	state: RuleBuildState,
+	imported: AnyQuery,
+	bindings: Readonly<Record<string, unknown>>
+): RuleBuildState {
+	const entry = importEntryOf(context, imported)
+	return advanceInterior(state, entry.table, bindings, "interior")
+}
+
 function notInteriorAdvance(
 	context: ChainContext,
 	state: RuleBuildState,
@@ -1064,15 +1323,18 @@ function notInteriorAdvance(
 
 function findColumns(context: ChainContext, entries: Readonly<Record<string, unknown>>): FindColumn[] {
 	const columns: FindColumn[] = []
-	const derivedHead = context.kind !== "query"
+	// Nonrecursive derived stages (interiors) may emit aggregate/computed
+	// outputs (C05: "do not leave Interior.rules projection only"); ONLY the
+	// recursive feedback cycle stays projection-only — no aggregate,
+	// arithmetic-created value or negation flows through it.
+	const recName = context.kind === "rec-base" || context.kind === "rec-arm" ? context.self.name : undefined
 	for (const [name, entry] of Object.entries(entries)) {
 		if (entry === undefined) {
 			continue
 		}
-		if (derivedHead && !(isTerm(entry) && entry[term] === "var")) {
-			const who = context.kind === "interior" ? `interior ${context.self}` : `rec ${context.self.name}`
+		if (recName !== undefined && !(isTerm(entry) && entry[term] === "var")) {
 			throw new AuthoringError({
-				message: `${who}: a rec head projects bound variables only — aggregates and the measure read finished sets (unwritable here)`
+				message: `rec ${recName}: a rec head projects bound variables only — no aggregate or arithmetic-created value flows through the feedback cycle (compute over the finished set in the main rules)`
 			})
 		}
 		columns.push(findColumnOf(name, entry))
@@ -1083,7 +1345,10 @@ function findColumns(context: ChainContext, entries: Readonly<Record<string, unk
 function makeRawChain(context: ChainContext, state: RuleBuildState): RawChain {
 	const chain: RawChain = {
 		match(relation, bindings) {
-			return makeRawChain(context, advanceMatch(context, state, relation, bindings))
+			if (isImportedSource(relation)) {
+				return makeRawChain(context, importAdvance(context, state, relation as unknown as AnyQuery, bindings))
+			}
+			return makeRawChain(context, advanceMatch(context, state, relation as MatchOwner, bindings))
 		},
 		where(cond) {
 			return makeRawChain(context, advanceWhere(context, state, cond))
@@ -1103,7 +1368,10 @@ function makeRawScope(context: ChainContext): RawScope {
 	const scope: RawScope = {
 		...termOps,
 		match(relation, bindings) {
-			return makeRawChain(context, advanceMatch(context, EMPTY_RULE, relation, bindings))
+			if (isImportedSource(relation)) {
+				return makeRawChain(context, importAdvance(context, EMPTY_RULE, relation as unknown as AnyQuery, bindings))
+			}
+			return makeRawChain(context, advanceMatch(context, EMPTY_RULE, relation as MatchOwner, bindings))
 		},
 		interior(name, bindings) {
 			return makeRawChain(context, interiorAdvance(context, EMPTY_RULE, name, bindings))
@@ -1197,6 +1465,9 @@ function headSignature(column: FindColumn): string {
 	const entry = column.entry
 	if (entry.kind === "var") {
 		return `${column.name}:var`
+	}
+	if (entry.kind === "compute") {
+		return `${column.name}:compute`
 	}
 	const agg = entry.agg
 	if (agg.op === "fold") {
@@ -1321,6 +1592,7 @@ interface RawQuery {
 	readonly schema: AnySchema
 	readonly data: QueryData
 	rule(build: (r: RawScope) => RuleValue<never, never>): RawQuery
+	named(label: string): RawQuery
 	interior(name: string, ...builds: never[]): never
 	reach(name: string, arms: never): never
 }
@@ -1403,9 +1675,10 @@ function makeRawQuery(
 		throw new AuthoringError({ message: "a query needs at least one rule" })
 	}
 	const env: DerivedEnv = rec === undefined ? { interiors } : { interiors, rec }
-	const frozenInteriors = Object.freeze([...interiors])
+	const allInteriors = spliceImports(interiors, rec, rules)
+	const frozenInteriors = Object.freeze([...allInteriors])
 	const frozenRules = Object.freeze([...rules])
-	const params = paramRegistryOf(interiors, rec, rules)
+	const params = paramRegistryOf(allInteriors, rec, rules)
 	const data: QueryData =
 		rec === undefined
 			? Object.freeze({
@@ -1429,6 +1702,12 @@ function makeRawQuery(
 		rule(build) {
 			const built = build(makeRawScope({ kind: "query", classes: theory.classes, theory, ...env }))
 			return makeRawQuery(theory, interiors, rec, [...rules, built.rule])
+		},
+		named(label) {
+			// A diagnostic name for composition/tracing — not a schema
+			// relation, a persistent view or a separate CTE type.
+			labelImport(value, label)
+			return value
 		},
 		interior() {
 			throw afterMainError("interior")
@@ -1616,7 +1895,23 @@ function taggedHandleId(
 	return { kind: "u64", value: BigInt(id) }
 }
 
-function taggedAtElementDomain(context: string, element: "u64" | "i64", value: unknown): TaggedValue {
+function taggedAtElementDomain(context: string, element: "u64" | "i64" | "f64", value: unknown): TaggedValue {
+	if (element === "f64") {
+		if (typeof value === "number") {
+			return { kind: "f64", value }
+		}
+		if (isFloatIntervalValue(value)) {
+			if (Number.isNaN(value.start) || Number.isNaN(value.end) || !(value.start < value.end)) {
+				throw literalShapeError(context, "a nonempty float interval with non-NaN endpoints", value)
+			}
+			return {
+				kind: "intervalF64",
+				start: Object.is(value.start, -0) ? 0 : value.start,
+				end: Object.is(value.end, -0) ? 0 : value.end
+			}
+		}
+		throw literalShapeError(context, "number (point) or { start, end } numbers (interval)", value)
+	}
 	if (typeof value === "bigint") {
 		if (element === "u64") {
 			return { kind: "u64", value }
@@ -1662,6 +1957,12 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
 			}
 			return { kind: "f64", value }
 		}
+		case "id128": {
+			if (!Id128.isId128(value)) {
+				throw literalShapeError(context, "an Id128 (32 lowercase hex characters)", value)
+			}
+			return { kind: "id128", value }
+		}
 		case "str": {
 			if (typeof value !== "string") {
 				throw literalShapeError(context, "string", value)
@@ -1702,6 +2003,9 @@ function taggedCmpLiteral(context: string, sibling: AnyField, value: unknown, op
 		isIntervalValue(value)
 	) {
 		return taggedAtElementDomain(context, sibling.kind, value)
+	}
+	if (op === "pointIn" && rosterOf(sibling) === undefined && sibling.kind === "f64" && isFloatIntervalValue(value)) {
+		return taggedAtElementDomain(context, "f64", value)
 	}
 	return taggedLiteral(context, sibling, value)
 }
@@ -1871,9 +2175,50 @@ function lowerCondition(ctx: LowerContext, cond: CondData, ids: VarIds): Conditi
 	}
 }
 
+/**
+ * Lowers one computed scalar node to the C05 wire (`#native.ts`'s
+ * `ScalarExprIr` — the `FindTermIr` compute arm's payload): variables
+ * resolve through the rule's first-use `VarId` table like every other
+ * term position; literals are already tagged; the operator arms pass
+ * through 1:1 onto `bumbledb::ScalarExpr`. The depth wall mirrors the
+ * bridge/engine 128-node scalar bound (held at construction; re-judged
+ * here so structurally-forged data cannot bypass it).
+ */
+function lowerComputeNode(node: ComputeData, ids: VarIds, depth: number): ScalarExprIr {
+	if (depth > MAX_COMPUTE_DEPTH) {
+		throw new AuthoringError({
+			message: `query lowering: a compute expression is deeper than ${MAX_COMPUTE_DEPTH} nodes (the engine's scalar depth bound)`
+		})
+	}
+	switch (node.kind) {
+		case "var":
+			return { kind: "var", var: ids.of(node.ref) }
+		case "literal":
+			return { kind: "literal", value: node.value }
+		case "negate":
+		case "isNaN":
+		case "isFinite":
+			return { kind: node.kind, expr: lowerComputeNode(node.expr, ids, depth + 1) }
+		case "cast":
+			return { kind: "cast", cast: node.cast, expr: lowerComputeNode(node.expr, ids, depth + 1) }
+		case "add":
+		case "subtract":
+		case "multiply":
+		case "divide":
+			return {
+				kind: node.kind,
+				left: lowerComputeNode(node.left, ids, depth + 1),
+				right: lowerComputeNode(node.right, ids, depth + 1)
+			}
+	}
+}
+
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 	if (entry.kind === "var") {
 		return { kind: "var", var: ids.of(entry.over) }
+	}
+	if (entry.kind === "compute") {
+		return { kind: "compute", expr: lowerComputeNode(entry.expr, ids, 1) }
 	}
 	const agg = entry.agg
 	switch (agg.op) {
@@ -1901,6 +2246,9 @@ function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
 	if (entry.kind === "var") {
 		return { kind: "var" }
+	}
+	if (entry.kind === "compute") {
+		return { kind: "compute" }
 	}
 	return { kind: "aggregate", op: headOpOf(entry.agg) }
 }

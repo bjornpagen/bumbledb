@@ -3,7 +3,6 @@ use crate::ir::WordCmp;
 
 #[test]
 fn pipelined_executor_matches_oracle() {
-    let _dir = TempDir::new("run-pipeline-equiv");
     let schema = schema(3);
 
     for (n_r, n_s, n_t) in [(127u64, 128, 129), (5, 300, 40), (1, 1, 1), (200, 0, 10)] {
@@ -19,8 +18,7 @@ fn pipelined_executor_matches_oracle() {
         let mut t = t;
         t.sort_unstable();
         t.dedup();
-        let dir2 = TempDir::new(&format!("run-pipeline-{n_r}-{n_s}-{n_t}"));
-        let views = views_of(&dir2, &schema, &[r.clone(), s.clone(), t.clone()]);
+        let views = views_of(&schema, &[r.clone(), s.clone(), t.clone()]);
         let normalized = normalized(
             vec![
                 occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -114,13 +112,12 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
         }
     }
 
-    let dir = TempDir::new("run-pipeline-batching");
     let schema = schema(3);
 
     let r: Vec<(u64, u64)> = (0..1000).map(|i| (i % 4, i)).collect();
     let s: Vec<(u64, u64)> = (0..1000).map(|i| (i, i % 5)).collect();
     let t: Vec<(u64, u64)> = (0..5).map(|i| (i, i)).collect();
-    let views = views_of(&dir, &schema, &[r, s, t]);
+    let views = views_of(&schema, &[r, s, t]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -208,8 +205,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
         let plan = planned_with_sinks(&normalized, &schema, &order, &sinks);
         for present in [true, false] {
             let gate_rows = if present { gate.clone() } else { Vec::new() };
-            let dir = TempDir::new(&format!("run-gate-{}-{}", order[2], usize::from(present)));
-            let views = views_of(&dir, &schema, &[r.clone(), gate_rows, t.clone()]);
+            let views = views_of(&schema, &[r.clone(), gate_rows, t.clone()]);
             let mut executor = Executor::new(&plan);
             assert!(
                 matches!(executor.drive, super::super::Drive::Pipeline(_)),
@@ -282,14 +278,13 @@ fn deep_nodes_accumulate_full_batches_across_pump_returns() {
         }
     }
 
-    let dir = TempDir::new("run-deep-accumulation");
     let schema = schema(4);
 
     let r0: Vec<(u64, u64)> = (0..2048).map(|i| (i, i)).collect();
     let r1: Vec<(u64, u64)> = (0..2048).filter(|i| i % 2 == 0).map(|i| (i, i)).collect();
     let r2: Vec<(u64, u64)> = (0..2048).filter(|i| i % 4 == 0).map(|i| (i, i)).collect();
     let r3: Vec<(u64, u64)> = (0..2048).map(|i| (i, i % 5)).collect();
-    let views = views_of(&dir, &schema, &[r0, r1, r2, r3]);
+    let views = views_of(&schema, &[r0, r1, r2, r3]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),

@@ -9,8 +9,8 @@ import { AuthoringError } from "#errors.ts"
  * NAME everywhere — statements (`on(R, "holder")`), selections, and match
  * records all spell the field's own name, checked by type
  * (`FaceFields`/`MatchShape`). `Fact<>` is the inferred row object type
- * at BARE structural value types (no brands): every field is present,
- * including fresh cells. Mint with `tx.reserve` before insert.
+ * at BARE structural value types: every field is present. Identities are
+ * ordinary application-owned values (`Id128`); the database mints none.
  */
 
 import { type AnyField, assertDeclarationOrderKey, assertDeclarationRecord, type Infer, literalOf } from "#fields.ts"
@@ -116,10 +116,6 @@ type Fact<R extends AnyRelation> = {
 	[K in keyof RelationFields<R>]: Infer<RelationFields<R>[K]>
 }
 
-type FreshKeys<R extends AnyRelation> = {
-	[K in keyof RelationFields<R>]: RelationFields<R>[K] extends { readonly fresh: true } ? K : never
-}[keyof RelationFields<R>]
-
 function relation<const Name extends string, Fields extends FieldsShape>(
 	name: Name,
 	fields: Fields
@@ -153,7 +149,6 @@ export type {
 	AnySelected,
 	Fact,
 	FieldsShape,
-	FreshKeys,
 	Relation,
 	RelationData,
 	RelationField,

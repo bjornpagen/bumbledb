@@ -344,10 +344,12 @@ impl Executor {
         for spec in &self.precompute[node_idx].point_probes {
             let cover_vars = &node.subatoms[cover_sub].vars;
             scratch.point_sources.clear();
-            for (start_col, end_col, var, slot) in &spec.parts {
+            for (start_col, end_col, var, slot, dense) in &spec.parts {
                 let src = super::word_base(cover_vars, *var, |v| self.width_of(v))
                     .map_or(Source::Slot(*slot), Source::Batch);
-                scratch.point_sources.push((*start_col, *end_col, src));
+                scratch
+                    .point_sources
+                    .push((*start_col, *end_col, src, *dense));
             }
             let cursor_src = scratch.cursor_srcs[spec.occ];
             let n = scratch.survivors.len();
@@ -377,10 +379,16 @@ impl Executor {
                     continue;
                 }
                 scratch.point_checks.clear();
-                for &(start_col, end_col, src) in &scratch.point_sources {
+                for &(start_col, end_col, src, dense) in &scratch.point_sources {
                     let point = match src {
                         Source::Batch(base) => scratch.entry_keys[element * arity + base],
                         Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
+                    };
+                    // The dense finite-probe guard (chapter 10 §2).
+                    let point = if dense {
+                        crate::image::view::dense_probe_word(point)
+                    } else {
+                        point
                     };
                     scratch.point_checks.push((start_col, end_col, point));
                 }
@@ -392,7 +400,7 @@ impl Executor {
             if m > 0 {
                 grow_scratch(&mut scratch.allen_gather, 2 * m);
                 let (starts, ends) = scratch.allen_gather[..2 * m].split_at_mut(m);
-                for &(start_col, end_col, src) in &scratch.point_sources {
+                for &(start_col, end_col, src, dense) in &scratch.point_sources {
                     colts[spec.occ].gather_interval_pair(
                         start_col,
                         end_col,
@@ -410,6 +418,12 @@ impl Executor {
                             Source::Slot(slot) => {
                                 scratch.pending_bindings[parent * slot_count + slot]
                             }
+                        };
+                        // The dense finite-probe guard (chapter 10 §2).
+                        let point = if dense {
+                            crate::image::view::dense_probe_word(point)
+                        } else {
+                            point
                         };
                         scratch.mask[k] &= u8::from(starts[j] <= point) & u8::from(point < ends[j]);
                     }

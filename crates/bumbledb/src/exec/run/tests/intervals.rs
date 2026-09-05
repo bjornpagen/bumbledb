@@ -14,14 +14,12 @@ fn tagged_interval_schema(relations: usize) -> Schema {
                     FieldDescriptor {
                         name: "tag".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb_theory::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             })
@@ -33,39 +31,63 @@ fn tagged_interval_schema(relations: usize) -> Schema {
 }
 
 fn tagged_interval_views(
-    dir: &TempDir,
     schema: &Schema,
     data: &[Vec<(u64, u64, u64)>],
 ) -> Vec<Arc<crate::image::RelationImage>> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, rows) in data.iter().enumerate() {
-        let rel_id = RelationId(u32::try_from(rel).expect("small"));
-        for (tag, start, end) in rows {
-            let mut bytes = Vec::new();
-            encode_fact(
-                &[
-                    ValueRef::U64(*tag),
-                    ValueRef::IntervalU64(
-                        bumbledb_theory::Interval::<u64>::new(*start, *end)
-                            .expect("nonempty interval"),
-                    ),
-                ],
-                schema.relation(rel_id).layout(),
-                &mut bytes,
-            );
-            delta.insert(&view, rel_id, &bytes).expect("insert");
-        }
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    (0..data.len())
-        .map(|rel| {
+    let rows: Vec<(RelationId, Vec<Vec<crate::ir::Value>>)> = data
+        .iter()
+        .enumerate()
+        .map(|(rel, rows)| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
+            let facts = rows
+                .iter()
+                .map(|(tag, start, end)| {
+                    vec![
+                        crate::ir::Value::U64(*tag),
+                        crate::ir::Value::IntervalU64(
+                            bumbledb_theory::Interval::<u64>::new(*start, *end)
+                                .expect("nonempty interval"),
+                        ),
+                    ]
+                })
+                .collect();
+            (rel_id, facts)
         })
+        .collect();
+    let source = TestSource::new(schema, &rows);
+    let cache = crate::image::cache::ImageCache::new(schema);
+    (0..data.len())
+        .map(|rel| source.image(&cache, RelationId(u32::try_from(rel).expect("small"))))
+        .collect()
+}
+
+fn span_rows(rows: &[(u64, u64, u64)]) -> Vec<Vec<crate::ir::Value>> {
+    rows.iter()
+        .map(|(tag, start, end)| {
+            vec![
+                crate::ir::Value::U64(*tag),
+                crate::ir::Value::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty interval"),
+                ),
+            ]
+        })
+        .collect()
+}
+
+fn pairs(rows: &[(u64, u64)]) -> Vec<Vec<crate::ir::Value>> {
+    rows.iter()
+        .map(|(a, b)| vec![crate::ir::Value::U64(*a), crate::ir::Value::U64(*b)])
+        .collect()
+}
+
+fn source_views(
+    schema: &Schema,
+    rows: &[(RelationId, Vec<Vec<crate::ir::Value>>)],
+) -> Vec<Arc<crate::image::RelationImage>> {
+    let source = TestSource::new(schema, rows);
+    let cache = crate::image::cache::ImageCache::new(schema);
+    rows.iter()
+        .map(|(relation, _)| source.image(&cache, *relation))
         .collect()
 }
 
@@ -132,9 +154,9 @@ fn surviving_tags(
     allen_residuals: Vec<FilterPredicate>,
     order: &[u16],
 ) -> BTreeSet<u64> {
-    let dir = TempDir::new(name);
+    let _ = name;
     let schema = tagged_interval_schema(2);
-    let views = tagged_interval_views(&dir, &schema, &[ALLEN.to_vec(), vec![(100, 10, 20)]]);
+    let views = tagged_interval_views(&schema, &[ALLEN.to_vec(), vec![(100, 10, 20)]]);
     let query = interval_pair_query(word_residuals, allen_residuals);
     let plan = planned_with_sinks(&query, &schema, order, &all_vars(&query));
     let rows = run(&plan, &views);
@@ -265,14 +287,12 @@ fn membership_schema() -> Schema {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb_theory::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -283,12 +303,10 @@ fn membership_schema() -> Schema {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "at".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -301,26 +319,9 @@ fn membership_schema() -> Schema {
 
 #[test]
 fn membership_point_var_join_keeps_exactly_the_contained_events() {
-    let dir = TempDir::new("run-membership");
     let schema = membership_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for (emp, start, end) in [(1u64, 10u64, 20u64), (2, 30, 40)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(emp),
-                ValueRef::IntervalU64(
-                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
-                ),
-            ],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    for (emp, at) in [
+    let payroll = span_rows(&[(1u64, 10u64, 20u64), (2, 30, 40)]);
+    let events = pairs(&[
         (1u64, 9u64),
         (1, 10),
         (1, 15),
@@ -330,21 +331,11 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         (2, 39),
         (2, 40),
         (3, 35),
-    ] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(emp), ValueRef::U64(at)],
-            schema.relation(RelationId(1)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(1), &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let views: Vec<Arc<crate::image::RelationImage>> = (0..2)
-        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
-        .collect();
+    ]);
+    let views = source_views(
+        &schema,
+        &[(RelationId(0), payroll), (RelationId(1), events)],
+    );
 
     let x = VarId(0);
     let t = VarId(1);
@@ -355,7 +346,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
             filters: vec![],
-            point_vars: vec![(FieldId(1), t)],
+            point_vars: vec![(FieldId(1), t, false)],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -386,7 +377,10 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         let plan = planned_with_sinks(&query, &schema, &order, &all_vars(&query));
 
         assert!(plan.occurrences()[0].filters.is_empty());
-        assert_eq!(plan.occurrences()[0].point_filters, vec![(FieldId(1), t)]);
+        assert_eq!(
+            plan.occurrences()[0].point_filters,
+            vec![(FieldId(1), t, false)]
+        );
         assert_eq!(
             plan.nodes()
                 .iter()
@@ -410,8 +404,6 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
     reason = "the linear table or protocol is clearer kept together"
 )]
 fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
-    let dir = TempDir::new("run-membership-carried");
-
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -421,14 +413,12 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb_theory::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -439,12 +429,10 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "dept".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -455,12 +443,10 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "at".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -469,45 +455,18 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
     }
     .validate()
     .expect("valid fixture");
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for (emp, start, end) in [(1u64, 10u64, 20u64), (2, 30, 40)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(emp),
-                ValueRef::IntervalU64(
-                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
-                ),
-            ],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    for (rel, rows) in [
-        (1u32, vec![(1u64, 100u64), (2, 200), (3, 300)]),
-        (2, vec![(1, 9), (1, 10), (1, 19), (1, 20), (2, 39), (3, 15)]),
-    ] {
-        for (a, b) in rows {
-            let mut bytes = Vec::new();
-            encode_fact(
-                &[ValueRef::U64(a), ValueRef::U64(b)],
-                schema.relation(RelationId(rel)).layout(),
-                &mut bytes,
-            );
-            delta
-                .insert(&view, RelationId(rel), &bytes)
-                .expect("insert");
-        }
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let views: Vec<Arc<crate::image::RelationImage>> = (0..3)
-        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
-        .collect();
+    let payroll = span_rows(&[(1u64, 10u64, 20u64), (2, 30, 40)]);
+    let views = source_views(
+        &schema,
+        &[
+            (RelationId(0), payroll),
+            (RelationId(1), pairs(&[(1u64, 100u64), (2, 200), (3, 300)])),
+            (
+                RelationId(2),
+                pairs(&[(1, 9), (1, 10), (1, 19), (1, 20), (2, 39), (3, 15)]),
+            ),
+        ],
+    );
 
     let (x, d, t) = (VarId(0), VarId(1), VarId(2));
     let occurrences = vec![
@@ -517,7 +476,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
             filters: vec![],
-            point_vars: vec![(FieldId(1), t)],
+            point_vars: vec![(FieldId(1), t, false)],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -577,41 +536,13 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
 
 #[test]
 fn negated_membership_rejects_only_covered_events() {
-    let dir = TempDir::new("run-anti-membership");
     let schema = membership_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for (emp, start, end) in [(1u64, 10u64, 20u64), (2, 30, 40)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(emp),
-                ValueRef::IntervalU64(
-                    bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
-                ),
-            ],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    let events = [(1u64, 9u64), (1, 10), (1, 19), (1, 20), (2, 35), (3, 15)];
-    for (emp, at) in events {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(emp), ValueRef::U64(at)],
-            schema.relation(RelationId(1)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(1), &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let views: Vec<Arc<crate::image::RelationImage>> = (0..2)
-        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
-        .collect();
+    let payroll = span_rows(&[(1u64, 10u64, 20u64), (2, 30, 40)]);
+    let events = pairs(&[(1u64, 9u64), (1, 10), (1, 19), (1, 20), (2, 35), (3, 15)]);
+    let views = source_views(
+        &schema,
+        &[(RelationId(0), payroll), (RelationId(1), events)],
+    );
 
     let (x, t) = (VarId(0), VarId(1));
 
@@ -630,7 +561,7 @@ fn negated_membership_rejects_only_covered_events() {
             role: Role::Negated,
             vars: vec![(FieldId(0), x)],
             filters: vec![],
-            point_vars: vec![(FieldId(1), t)],
+            point_vars: vec![(FieldId(1), t, false)],
         },
     ];
     let query = NormalizedQuery {
@@ -715,12 +646,11 @@ fn mask_suite(state: &mut u64) -> Vec<AllenMask> {
 
 #[test]
 fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
-    let dir = TempDir::new("run-allen-naive");
     let schema = tagged_interval_schema(2);
     let mut state = 0x04C0_FFEE_u64;
     let a_rows = random_interval_rows(24, 1, &mut state);
     let b_rows = random_interval_rows(20, 1001, &mut state);
-    let views = tagged_interval_views(&dir, &schema, &[a_rows.clone(), b_rows.clone()]);
+    let views = tagged_interval_views(&schema, &[a_rows.clone(), b_rows.clone()]);
     for mask in mask_suite(&mut state) {
         let query = interval_pair_query(vec![], allen_residual(mask));
         let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
@@ -748,19 +678,16 @@ fn keyed_span_schema(relations: usize) -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "key".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb_theory::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             })
@@ -772,40 +699,30 @@ fn keyed_span_schema(relations: usize) -> Schema {
 }
 
 fn keyed_span_views(
-    dir: &TempDir,
     schema: &Schema,
     data: &[&[(u64, u64, u64, u64)]],
 ) -> Vec<Arc<crate::image::RelationImage>> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, rows) in data.iter().enumerate() {
-        let rel_id = RelationId(u32::try_from(rel).expect("small"));
-        for (id, key, start, end) in *rows {
-            let mut bytes = Vec::new();
-            encode_fact(
-                &[
-                    ValueRef::U64(*id),
-                    ValueRef::U64(*key),
-                    ValueRef::IntervalU64(
-                        bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty"),
-                    ),
-                ],
-                schema.relation(rel_id).layout(),
-                &mut bytes,
-            );
-            delta.insert(&view, rel_id, &bytes).expect("insert");
-        }
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    (0..data.len())
-        .map(|rel| {
+    let rows: Vec<(RelationId, Vec<Vec<crate::ir::Value>>)> = data
+        .iter()
+        .enumerate()
+        .map(|(rel, rows)| {
             let rel_id = RelationId(u32::try_from(rel).expect("small"));
-            crate::image::build(&txn.catalog(), schema, rel_id).expect("build")
+            let facts = rows
+                .iter()
+                .map(|(id, key, start, end)| {
+                    vec![
+                        crate::ir::Value::U64(*id),
+                        crate::ir::Value::U64(*key),
+                        crate::ir::Value::IntervalU64(
+                            bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty"),
+                        ),
+                    ]
+                })
+                .collect();
+            (rel_id, facts)
         })
-        .collect()
+        .collect();
+    source_views(schema, &rows)
 }
 
 fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> NormalizedQuery {
@@ -949,11 +866,10 @@ fn run_tallied(
 #[test]
 fn keyed_overlap_self_join_agrees_with_the_naive_model() {
     use bumbledb_theory::allen::Basic;
-    let dir = TempDir::new("run-overlap-keyed");
     let schema = keyed_span_schema(1);
     let mut state = 0x07E2_u64;
     let rows = keyed_span_corpus(&mut state);
-    let views = keyed_span_views(&dir, &schema, &[&rows]);
+    let views = keyed_span_views(&schema, &[&rows]);
     let masks = [
         AllenMask::INTERSECTS,
         AllenMask::new(Basic::During.bit()).expect("singleton"),
@@ -989,7 +905,6 @@ type SpanWindow<'a> = &'a dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool;
 #[test]
 #[allow(clippy::too_many_lines)]
 fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
-    let dir = TempDir::new("run-overlap-tally");
     let schema = keyed_span_schema(3);
     let mut state = 0x7A11_u64;
     let inner = keyed_span_corpus(&mut state);
@@ -1016,7 +931,7 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
             (k, k, s, e)
         })
         .collect();
-    let views = keyed_span_views(&dir, &schema, &[&twice, &inner, &once]);
+    let views = keyed_span_views(&schema, &[&twice, &inner, &once]);
     let group_size = |key: u64| inner.iter().filter(|r| r.1 == key).count() as u64;
 
     let tally_for = |probes: u64, window: SpanWindow<'_>| -> u64 {
@@ -1137,11 +1052,10 @@ impl Counters for PhasePairs {
 
 #[test]
 fn the_overlap_enumeration_is_attributed_to_the_iter_phase() {
-    let dir = TempDir::new("run-overlap-phase");
     let schema = keyed_span_schema(1);
     let mut state = 0x7A11_u64;
     let rows = keyed_span_corpus(&mut state);
-    let views = keyed_span_views(&dir, &schema, &[&rows]);
+    let views = keyed_span_views(&schema, &[&rows]);
     let query = keyed_span_query(&[AllenMask::INTERSECTS]);
     let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
     let mut colts = colts_for(&plan, &views);
@@ -1170,7 +1084,6 @@ fn the_overlap_enumeration_is_attributed_to_the_iter_phase() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn const_side_touching_residuals_conjoin_into_one_window_query() {
-    let dir = TempDir::new("run-overlap-conjoin");
     let schema = tagged_interval_schema(3);
     let mut state = 0x2026_0803_u64;
 
@@ -1189,11 +1102,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
     let a_rows = spans(4, 1, &mut state);
     let b_rows = spans(4, 101, &mut state);
     let c_rows = spans(40, 1001, &mut state);
-    let views = tagged_interval_views(
-        &dir,
-        &schema,
-        &[a_rows.clone(), b_rows.clone(), c_rows.clone()],
-    );
+    let views = tagged_interval_views(&schema, &[a_rows.clone(), b_rows.clone(), c_rows.clone()]);
     assert!(
         c_rows.len() as u64 >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER,
         "the leaf group takes the index"
@@ -1317,17 +1226,12 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
 /// same answers as the naive model, mask by mask.
 #[test]
 fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
-    let dir = TempDir::new("run-allen-naive-pipe");
     let schema = tagged_interval_schema(3);
     let mut state = 0x0BEE_5EED_u64;
     let a_rows = random_interval_rows(16, 1, &mut state);
     let b_rows = random_interval_rows(12, 1001, &mut state);
     let c_rows = random_interval_rows(2, 5001, &mut state);
-    let views = tagged_interval_views(
-        &dir,
-        &schema,
-        &[a_rows.clone(), b_rows.clone(), c_rows.clone()],
-    );
+    let views = tagged_interval_views(&schema, &[a_rows.clone(), b_rows.clone(), c_rows.clone()]);
     let occurrences = (0..3u16)
         .map(|occ| Occurrence {
             occ_id: OccId(occ),
@@ -1494,9 +1398,8 @@ fn overlap_profile() {
         let mut state = 0x0C10_55E0_u64 ^ per_key;
 
         let rows = uniform_keyed_corpus(keys, per_key, per_key * 40, &mut state);
-        let dir = TempDir::new(&format!("run-overlap-prof-{per_key}"));
         let schema = keyed_span_schema(1);
-        let views = keyed_span_views(&dir, &schema, &[&rows]);
+        let views = keyed_span_views(&schema, &[&rows]);
         let query = keyed_span_query(&index_masks);
         let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
         let (index_p50, index_answers) = timed_run(&plan, &views, 7);
@@ -1513,9 +1416,8 @@ fn overlap_profile() {
 
     let mut state = 0x07E2_5CA1_u64;
     let rows = uniform_keyed_corpus(400, 75, 3000, &mut state);
-    let dir = TempDir::new("run-overlap-prof-t2");
     let schema = keyed_span_schema(1);
-    let views = keyed_span_views(&dir, &schema, &[&rows]);
+    let views = keyed_span_views(&schema, &[&rows]);
     for (name, masks) in [("generic", generic_masks), ("index", index_masks)] {
         let query = keyed_span_query(&masks);
         let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));

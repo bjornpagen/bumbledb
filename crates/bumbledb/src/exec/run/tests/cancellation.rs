@@ -2,13 +2,12 @@ use super::*;
 
 #[test]
 fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
-    let dir = TempDir::new("run-pipe-d2");
     let schema = schema(3);
 
     let r: Vec<(u64, u64)> = vec![(1, 10), (1, 11), (2, 10)];
     let s: Vec<(u64, u64)> = (0..40).map(|i| (10 + (i % 2), i)).collect();
     let t: Vec<(u64, u64)> = (0..40).map(|i| (i, 900 + i)).collect();
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone(), t.clone()]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -63,8 +62,7 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
             rel.dedup();
             data.push(rel);
         }
-        let dir = TempDir::new(&format!("run-d2-diff-{case}"));
-        let views = views_of(&dir, &schema, &data);
+        let views = views_of(&schema, &data);
         let shape = case % 3;
         let occurrences = match shape {
             0 => vec![
@@ -233,12 +231,11 @@ fn whole_execution_skip_stops_the_cover_draw_mid_entry() {
         fn skip(&mut self, _: usize) {}
     }
 
-    let dir = TempDir::new("run-whole-skip");
     let schema = schema(2);
 
     let r: Vec<(u64, u64)> = (0..600).map(|i| (i, i % 7)).collect();
     let s: Vec<(u64, u64)> = (0..7).map(|y| (y, 900 + y)).collect();
-    let views = views_of(&dir, &schema, &[r, s]);
+    let views = views_of(&schema, &[r, s]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),

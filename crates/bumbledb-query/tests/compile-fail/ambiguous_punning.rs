@@ -22,4 +22,5 @@ pub fn q() -> bumbledb::Query {
         (person) | Busy(person, during: d),
                    Ooo(person);
     })
+    .into_query()
 }

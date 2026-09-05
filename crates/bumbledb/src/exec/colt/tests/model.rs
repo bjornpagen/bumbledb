@@ -2,7 +2,6 @@ use super::*;
 
 #[test]
 fn bucket_probes_match_the_model_under_adversarial_keys() {
-    let dir = TempDir::new("colt-bucket-model");
     let schema = schema();
 
     let mut rows: Vec<(u64, u64)> = Vec::new();
@@ -12,7 +11,7 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
     }
     rows.sort_unstable();
     rows.dedup();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
     colt.ensure_forced(root, 0);
@@ -49,8 +48,6 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
     reason = "the linear table or protocol is clearer kept together"
 )]
 fn hoisted_gathers_match_the_per_position_reference() {
-    let dir = TempDir::new("colt-hoisted-gather");
-
     let schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -59,17 +56,14 @@ fn hoisted_gathers_match_the_per_position_reference() {
                 FieldDescriptor {
                     name: "k".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "v".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "b".into(),
                     value_type: ValueType::Bool,
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -83,22 +77,18 @@ fn hoisted_gathers_match_the_per_position_reference() {
         .collect();
     rows.sort_unstable();
     rows.dedup();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let txn0 = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for (k, v, b) in &rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(*k), ValueRef::U64(*v), ValueRef::Bool(*b)],
-            schema.relation(R).layout(),
-            &mut bytes,
-        );
-        delta.insert(&txn0, R, &bytes).expect("insert");
-    }
-    drop(txn0);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let image = crate::image::build(&txn.catalog(), &schema, R).expect("build");
+    let facts: Vec<Vec<crate::ir::Value>> = rows
+        .iter()
+        .map(|(k, v, b)| {
+            vec![
+                crate::ir::Value::U64(*k),
+                crate::ir::Value::U64(*v),
+                crate::ir::Value::Bool(*b),
+            ]
+        })
+        .collect();
+    let source = crate::image::testsupport::TestSource::new(&schema, &[(R, facts)]);
+    let (_cache, image) = source.image_with_cache(R);
 
     let k_col: Vec<u64> = image.column_words(0).to_vec();
     let v_col: Vec<u64> = image.column_words(1).to_vec();
@@ -168,12 +158,11 @@ fn hoisted_gathers_match_the_per_position_reference() {
 
 #[test]
 fn get_and_iter_agree_with_a_naive_oracle() {
-    let dir = TempDir::new("colt-oracle");
     let schema = schema();
 
     let mut rows: Vec<(u64, u64)> = (0..2_000u64).map(|i| (i % 17, i)).collect();
     rows.extend((100..110u64).map(|k| (k, k * 1000)));
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut oracle: HashMap<u64, Vec<u64>> = HashMap::new();
     for (k, v) in &rows {
         oracle.entry(*k).or_default().push(*v);

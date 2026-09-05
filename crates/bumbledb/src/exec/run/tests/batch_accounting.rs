@@ -5,7 +5,6 @@ use bumbledb_theory::schema::ValueType;
 #[test]
 #[allow(clippy::too_many_lines)]
 fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
-    let dir = TempDir::new("run-membership-batched");
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -15,14 +14,12 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb_theory::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -33,12 +30,10 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "dept".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -49,12 +44,10 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "at".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -63,59 +56,47 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
     }
     .validate()
     .expect("valid fixture");
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-
-    for (emp, start, end) in [(1u64, 10u64, 20u64), (1, 30, 40), (2, 50, 60)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(emp),
-                ValueRef::IntervalU64(
+    let payroll: Vec<Vec<crate::ir::Value>> = [(1u64, 10u64, 20u64), (1, 30, 40), (2, 50, 60)]
+        .into_iter()
+        .map(|(emp, start, end)| {
+            vec![
+                crate::ir::Value::U64(emp),
+                crate::ir::Value::IntervalU64(
                     bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval"),
                 ),
-            ],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    for (rel, rows) in [
-        (1u32, vec![(1u64, 100u64), (2, 200), (3, 300)]),
-        (
-            2,
-            vec![
-                (1u64, 9u64),
-                (1, 10),
-                (1, 25),
-                (1, 30),
-                (1, 39),
-                (1, 40),
-                (2, 50),
-                (2, 55),
-                (2, 60),
-                (3, 5),
-            ],
-        ),
-    ] {
-        for (a, b) in rows {
-            let mut bytes = Vec::new();
-            encode_fact(
-                &[ValueRef::U64(a), ValueRef::U64(b)],
-                schema.relation(RelationId(rel)).layout(),
-                &mut bytes,
-            );
-            delta
-                .insert(&view, RelationId(rel), &bytes)
-                .expect("insert");
-        }
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
+            ]
+        })
+        .collect();
+    let pairs = |rows: &[(u64, u64)]| -> Vec<Vec<crate::ir::Value>> {
+        rows.iter()
+            .map(|(a, b)| vec![crate::ir::Value::U64(*a), crate::ir::Value::U64(*b)])
+            .collect()
+    };
+    let source = TestSource::new(
+        &schema,
+        &[
+            (RelationId(0), payroll),
+            (RelationId(1), pairs(&[(1u64, 100u64), (2, 200), (3, 300)])),
+            (
+                RelationId(2),
+                pairs(&[
+                    (1u64, 9u64),
+                    (1, 10),
+                    (1, 25),
+                    (1, 30),
+                    (1, 39),
+                    (1, 40),
+                    (2, 50),
+                    (2, 55),
+                    (2, 60),
+                    (3, 5),
+                ]),
+            ),
+        ],
+    );
+    let cache = crate::image::cache::ImageCache::new(&schema);
     let views: Vec<Arc<crate::image::RelationImage>> = (0..3)
-        .map(|rel| crate::image::build(&txn.catalog(), &schema, RelationId(rel)).expect("build"))
+        .map(|rel| source.image(&cache, RelationId(rel)))
         .collect();
 
     let (x, d, t) = (VarId(0), VarId(1), VarId(2));
@@ -126,7 +107,7 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
             filters: vec![],
-            point_vars: vec![(FieldId(1), t)],
+            point_vars: vec![(FieldId(1), t, false)],
         },
         Occurrence {
             occ_id: OccId(1),
@@ -201,14 +182,13 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
 #[cfg(feature = "trace")]
 #[test]
 fn pump_gather_windows_are_attributed() {
-    let dir = TempDir::new("run-gather-phase");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..64u64).map(|i| (i, i % 8)).collect();
     let s: Vec<(u64, u64)> = (0..8u64)
         .flat_map(|y| (0..8u64).map(move |j| (y, y * 8 + j)))
         .collect();
     let t: Vec<(u64, u64)> = (0..64u64).map(|z| (z, z)).collect();
-    let views = views_of(&dir, &schema, &[r, s, t]);
+    let views = views_of(&schema, &[r, s, t]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -278,7 +258,6 @@ fn zero_yield_draws_are_not_batches() {
         fn skip(&mut self, _: usize) {}
     }
 
-    let dir = TempDir::new("run-batch-accounting");
     let schema = schema(3);
 
     // resume the counter must not book.
@@ -287,7 +266,7 @@ fn zero_yield_draws_are_not_batches() {
         .flat_map(|y| (0..4u64).map(move |j| (y, y * 4 + j)))
         .collect();
     let t: Vec<(u64, u64)> = (0..8u64).map(|z| (z, z)).collect();
-    let views = views_of(&dir, &schema, &[r, s, t]);
+    let views = views_of(&schema, &[r, s, t]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),

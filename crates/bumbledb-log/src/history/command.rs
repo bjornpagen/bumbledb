@@ -1,14 +1,20 @@
-//! Versioned envelope framing only. Application changes and rejection evidence
-//! remain borrowed core-owned byte spans until the core decoder verifies them.
-//! No decoded value in this module is an executable command or trusted receipt.
+//! Versioned envelope framing only. Application changes, declared result
+//! bytes and rejection evidence remain borrowed core-owned byte spans until
+//! the core decoder verifies them. No decoded value in this module is an
+//! executable command or trusted receipt.
 
-use bumbledb::{ChangeError, ChangeSet, Id128, Schema, WorkContext, WorkError};
+use bumbledb::{ChangeError, ChangeSet, Schema, WorkContext, WorkError};
 
-use super::{
-    ChangeSummary, CommandDigest, CommandId, CommandRef, Condition, DatabaseId, DatabaseIdentity,
-    DecisionDigest, DecisionStamp, EmptyResult, IncarnationId, ReceiptEpoch, RequestId, SchemaId,
-    StateStamp,
+use super::frame::{
+    self, Reader, begin_frame, check_limit, frame_len, put_id, put_identity, put_span, put_state,
+    put_u64,
 };
+use super::{
+    ChangeSummary, CommandDigest, CommandId, CommandRef, CommandResult, Condition,
+    DatabaseIdentity, DecisionStamp, StateStamp,
+};
+
+pub use super::frame::FrameError;
 
 pub const FAMILY: &[u8] = b"bumbledb.command.v1\0";
 pub const LAYOUT: u16 = 1;
@@ -50,17 +56,20 @@ impl From<WorkError> for CommandError {
 pub struct Command {
     metadata: CommandMetadata,
     changes: ChangeSet,
+    result: CommandResult,
     reference: CommandRef,
 }
 
 impl Command {
-    /// Retain already checked core ownership and bind every command field.
-    /// Hashing checks the shared work allowance at bounded byte intervals.
+    /// Retain already checked core ownership and bind every command field,
+    /// including the bounded declared result metadata. Hashing checks the
+    /// shared work allowance at bounded byte intervals.
     /// # Errors
     /// Refuses mismatched schema/witness, frame limits or exhausted work.
     pub fn seal(
         metadata: CommandMetadata,
         changes: ChangeSet,
+        result: CommandResult,
         limits: Limits,
         work: &WorkContext,
     ) -> Result<Self, CommandError> {
@@ -68,9 +77,9 @@ impl Command {
         if metadata.identity.schema_id != changes.schema() {
             return Err(CommandError::SchemaMismatch);
         }
-        command_size(metadata, changes.as_bytes(), limits)?;
+        command_size(metadata, changes.as_bytes(), result.as_bytes(), limits)?;
         let mut hasher = blake3::Hasher::new_derive_key(COMMAND_DIGEST_DOMAIN);
-        command_parts(metadata, changes.as_bytes(), |part| {
+        command_parts(metadata, changes.as_bytes(), result.as_bytes(), |part| {
             for chunk in part.chunks(HASH_QUANTUM) {
                 work.step(1)?;
                 hasher.update(chunk);
@@ -85,6 +94,7 @@ impl Command {
         Ok(Self {
             metadata,
             changes,
+            result,
             reference,
         })
     }
@@ -100,13 +110,19 @@ impl Command {
         work: &WorkContext,
     ) -> Result<Self, CommandError> {
         work.checkpoint()?;
-        let (metadata, core_changes) = parse_command_fields(bytes, limits)?;
+        let (metadata, core_changes, result) = parse_command_fields(bytes, limits)?;
         if metadata.identity.schema_id != bumbledb::schema::fingerprint::fingerprint(schema) {
             return Err(CommandError::SchemaMismatch);
         }
         work.input((bytes.len() - core_changes.len()) as u64)?;
         let changes = ChangeSet::parse(schema, core_changes, work)?;
-        Self::seal(metadata, changes, limits, work)
+        Self::seal(
+            metadata,
+            changes,
+            CommandResult::from_canonical_bytes(Box::from(result)),
+            limits,
+            work,
+        )
     }
 
     #[must_use]
@@ -120,8 +136,25 @@ impl Command {
     }
 
     #[must_use]
+    pub fn result(&self) -> &CommandResult {
+        &self.result
+    }
+
+    #[must_use]
     pub const fn command_ref(&self) -> CommandRef {
         self.reference
+    }
+
+    /// The exact canonical envelope bytes whose digest is `command_ref`.
+    /// # Errors
+    /// Refuses oversized frames and allocation failure.
+    pub fn encode(&self, limits: Limits) -> Result<Vec<u8>, FrameError> {
+        encode_command_with_result(
+            self.metadata,
+            self.changes.as_bytes(),
+            self.result.as_bytes(),
+            limits,
+        )
     }
 }
 
@@ -132,26 +165,7 @@ pub struct Limits {
     pub envelope_bytes: usize,
     pub change_bytes: usize,
     pub evidence_bytes: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameError {
-    LimitExceeded,
-    LengthOverflow,
-    Allocation,
-    Truncated { at: usize },
-    Family,
-    Layout { got: u16 },
-    Kind { got: u8 },
-    Tag { at: usize, got: u8 },
-    InvalidEpoch,
-    StateIdentityMismatch,
-    NonemptyResultUnsupported,
-    EmptyChangeSummary,
-    EmptyEvidence,
-    InvalidTerminalStamp,
-    InvalidPreconditionEvidence,
-    TrailingBytes { at: usize },
+    pub result_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +181,7 @@ pub struct CommandMetadata {
 pub struct UnverifiedCommandEnvelope<'a> {
     pub metadata: CommandMetadata,
     pub core_changes: &'a [u8],
-    pub result: EmptyResult,
+    pub result: &'a [u8],
     digest: CommandDigest,
 }
 
@@ -195,10 +209,10 @@ pub struct ReceiptMetadata {
 pub enum UnverifiedOutcome<'a> {
     Committed {
         changed: ChangeSummary,
-        result: EmptyResult,
+        result: &'a [u8],
     },
     NoChange {
-        result: EmptyResult,
+        result: &'a [u8],
     },
     PreconditionFailed {
         expected: StateStamp,
@@ -216,6 +230,8 @@ pub struct UnverifiedReceiptEnvelope<'a> {
 }
 
 /// Encode borrowed core bytes with no log-level scalar/fact interpretation.
+/// The declared result is empty here; [`encode_command_with_result`] frames a
+/// nonempty bounded canonical result.
 /// # Errors
 /// Refuses mismatched witness identity, oversized frames and allocation failure.
 pub fn encode_command(
@@ -223,9 +239,20 @@ pub fn encode_command(
     core_changes: &[u8],
     limits: Limits,
 ) -> Result<Vec<u8>, FrameError> {
-    let len = command_size(metadata, core_changes, limits)?;
-    let mut out = allocate_frame(len, limits)?;
-    command_parts(metadata, core_changes, |part| {
+    encode_command_with_result(metadata, core_changes, &[], limits)
+}
+
+/// # Errors
+/// Refuses mismatched witness identity, oversized frames and allocation failure.
+pub fn encode_command_with_result(
+    metadata: CommandMetadata,
+    core_changes: &[u8],
+    result: &[u8],
+    limits: Limits,
+) -> Result<Vec<u8>, FrameError> {
+    let len = command_size(metadata, core_changes, result, limits)?;
+    let mut out = frame::allocate_frame(len, limits.envelope_bytes)?;
+    command_parts(metadata, core_changes, result, |part| {
         out.extend_from_slice(part);
         Ok::<_, FrameError>(())
     })?;
@@ -236,16 +263,21 @@ pub fn encode_command(
 fn command_size(
     metadata: CommandMetadata,
     core_changes: &[u8],
+    result: &[u8],
     limits: Limits,
 ) -> Result<usize, FrameError> {
     validate_condition(metadata.identity, metadata.condition)?;
     check_limit(core_changes.len(), limits.change_bytes)?;
+    check_limit(result.len(), limits.result_bytes)?;
     let condition_len = if matches!(metadata.condition, Condition::Unconditional) {
         1
     } else {
         25
     };
-    let len = frame_len(&[88, condition_len, 8, core_changes.len(), 8])?;
+    let len = frame_len(
+        FAMILY.len(),
+        &[88, condition_len, 8, core_changes.len(), 8, result.len()],
+    )?;
     check_limit(len, limits.envelope_bytes)?;
     Ok(len)
 }
@@ -254,6 +286,7 @@ fn command_size(
 fn command_parts<E>(
     metadata: CommandMetadata,
     core_changes: &[u8],
+    result: &[u8],
     mut part: impl FnMut(&[u8]) -> Result<(), E>,
 ) -> Result<(), E> {
     part(FAMILY)?;
@@ -274,31 +307,31 @@ fn command_parts<E>(
     }
     part(&(core_changes.len() as u64).to_be_bytes())?;
     part(core_changes)?;
-    part(&0_u64.to_be_bytes()) // Only empty result metadata in this packet.
+    part(&(result.len() as u64).to_be_bytes())?;
+    part(result)
 }
 
 /// Borrow an exactly framed command and compute its domain-separated binding.
 /// # Errors
-/// Refuses malformed/oversized framing, trailing bytes and unsupported results.
+/// Refuses malformed/oversized framing, trailing bytes and oversized results.
 pub fn decode_command(
     bytes: &[u8],
     limits: Limits,
 ) -> Result<UnverifiedCommandEnvelope<'_>, FrameError> {
-    let (metadata, core_changes) = parse_command_fields(bytes, limits)?;
+    let (metadata, core_changes, result) = parse_command_fields(bytes, limits)?;
     let digest = CommandDigest::from_bytes(blake3::derive_key(COMMAND_DIGEST_DOMAIN, bytes));
     Ok(UnverifiedCommandEnvelope {
         metadata,
         core_changes,
-        result: EmptyResult,
+        result,
         digest,
     })
 }
 
-fn parse_command_fields(
-    bytes: &[u8],
-    limits: Limits,
-) -> Result<(CommandMetadata, &[u8]), FrameError> {
-    let mut input = Reader::begin(bytes, COMMAND, limits)?;
+type CommandFields<'a> = (CommandMetadata, &'a [u8], &'a [u8]);
+
+fn parse_command_fields(bytes: &[u8], limits: Limits) -> Result<CommandFields<'_>, FrameError> {
+    let mut input = Reader::begin(bytes, FAMILY, LAYOUT, COMMAND, limits.envelope_bytes)?;
     let identity = input.identity()?;
     let id = input.id()?;
     let condition = match input.tag()? {
@@ -308,7 +341,7 @@ fn parse_command_fields(
     };
     validate_condition(identity, condition)?;
     let core_changes = input.span(limits.change_bytes)?;
-    input.empty_result()?;
+    let result = input.span(limits.result_bytes)?;
     input.end()?;
     Ok((
         CommandMetadata {
@@ -317,11 +350,12 @@ fn parse_command_fields(
             condition,
         },
         core_changes,
+        result,
     ))
 }
 
 /// Encode outcome metadata and opaque core rejection evidence. This cannot
-/// serialize `Violations` until the core owns its canonical evidence codec.
+/// interpret core `Violations`; canonical evidence bytes are core-owned.
 /// # Errors
 /// Refuses invalid metadata, empty evidence, oversized frames and allocation.
 pub fn encode_receipt(
@@ -329,9 +363,41 @@ pub fn encode_receipt(
     limits: Limits,
 ) -> Result<Vec<u8>, FrameError> {
     validate_receipt(receipt)?;
-    let outcome_len = match receipt.outcome {
-        UnverifiedOutcome::Committed { .. } => 25,
-        UnverifiedOutcome::NoChange { .. } => 9,
+    let outcome_len = outcome_len(receipt.outcome, limits)?;
+    let len = frame_len(FAMILY.len(), &[120, 40, 24, outcome_len])?;
+    let mut out = begin_frame(FAMILY, LAYOUT, RECEIPT, len, limits.envelope_bytes)?;
+    let metadata = receipt.metadata;
+    put_identity(&mut out, metadata.command.identity);
+    put_id(&mut out, metadata.command.id);
+    out.extend_from_slice(metadata.command.digest.as_bytes());
+    put_u64(&mut out, metadata.decision_at.seq);
+    out.extend_from_slice(metadata.decision_at.hash.as_bytes());
+    put_state(&mut out, metadata.state_at);
+    put_outcome(&mut out, receipt.outcome)?;
+    debug_assert_eq!(out.len(), len);
+    Ok(out)
+}
+
+/// The framed byte length of one outcome section, checked against limits.
+pub(crate) fn outcome_len(
+    outcome: UnverifiedOutcome<'_>,
+    limits: Limits,
+) -> Result<usize, FrameError> {
+    Ok(match outcome {
+        UnverifiedOutcome::Committed { result, .. } => {
+            check_limit(result.len(), limits.result_bytes)?;
+            result
+                .len()
+                .checked_add(25)
+                .ok_or(FrameError::LengthOverflow)?
+        }
+        UnverifiedOutcome::NoChange { result } => {
+            check_limit(result.len(), limits.result_bytes)?;
+            result
+                .len()
+                .checked_add(9)
+                .ok_or(FrameError::LengthOverflow)?
+        }
         UnverifiedOutcome::PreconditionFailed { .. } => 49,
         UnverifiedOutcome::InvariantRejected { core_evidence } => {
             check_limit(core_evidence.len(), limits.evidence_bytes)?;
@@ -340,73 +406,53 @@ pub fn encode_receipt(
                 .checked_add(9)
                 .ok_or(FrameError::LengthOverflow)?
         }
-    };
-    let len = frame_len(&[120, 40, 24, outcome_len])?;
-    let mut out = begin(RECEIPT, len, limits)?;
-    let metadata = receipt.metadata;
-    put_identity(&mut out, metadata.command.identity);
-    put_id(&mut out, metadata.command.id);
-    out.extend_from_slice(metadata.command.digest.as_bytes());
-    put_u64(&mut out, metadata.decision_at.seq);
-    out.extend_from_slice(metadata.decision_at.hash.as_bytes());
-    put_state(&mut out, metadata.state_at);
-    match receipt.outcome {
-        UnverifiedOutcome::Committed { changed, .. } => {
+    })
+}
+
+pub(crate) fn put_outcome(
+    out: &mut Vec<u8>,
+    outcome: UnverifiedOutcome<'_>,
+) -> Result<(), FrameError> {
+    match outcome {
+        UnverifiedOutcome::Committed { changed, result } => {
             out.push(0);
-            put_u64(&mut out, changed.added());
-            put_u64(&mut out, changed.removed());
-            put_u64(&mut out, 0);
+            put_u64(out, changed.added());
+            put_u64(out, changed.removed());
+            put_span(out, result)?;
         }
-        UnverifiedOutcome::NoChange { .. } => {
+        UnverifiedOutcome::NoChange { result } => {
             out.push(1);
-            put_u64(&mut out, 0);
+            put_span(out, result)?;
         }
         UnverifiedOutcome::PreconditionFailed { expected, observed } => {
             out.push(2);
-            put_state(&mut out, expected);
-            put_state(&mut out, observed);
+            put_state(out, expected);
+            put_state(out, observed);
         }
         UnverifiedOutcome::InvariantRejected { core_evidence } => {
             out.push(3);
-            put_span(&mut out, core_evidence)?;
+            put_span(out, core_evidence)?;
         }
     }
-    debug_assert_eq!(out.len(), len);
-    Ok(out)
+    Ok(())
 }
 
-/// Decode outcome spans without admitting a durable receipt or core evidence.
-/// # Errors
-/// Refuses malformed/oversized framing, trailing bytes and unsupported results.
-pub fn decode_receipt(
-    bytes: &[u8],
+pub(crate) fn read_outcome<'a>(
+    input: &mut Reader<'a>,
     limits: Limits,
-) -> Result<UnverifiedReceiptEnvelope<'_>, FrameError> {
-    let mut input = Reader::begin(bytes, RECEIPT, limits)?;
-    let identity = input.identity()?;
-    let id = input.id()?;
-    let digest = CommandDigest::from_bytes(input.array()?);
-    let decision_at = DecisionStamp {
-        seq: input.u64()?,
-        hash: DecisionDigest::from_bytes(input.array()?),
-    };
-    let state_at = input.state()?;
-    let outcome = match input.tag()? {
+) -> Result<UnverifiedOutcome<'a>, FrameError> {
+    Ok(match input.tag()? {
         (_, 0) => {
             let changed = ChangeSummary::new(input.u64()?, input.u64()?)
                 .ok_or(FrameError::EmptyChangeSummary)?;
-            input.empty_result()?;
             UnverifiedOutcome::Committed {
                 changed,
-                result: EmptyResult,
+                result: input.span(limits.result_bytes)?,
             }
         }
-        (_, 1) => {
-            input.empty_result()?;
-            UnverifiedOutcome::NoChange {
-                result: EmptyResult,
-            }
-        }
+        (_, 1) => UnverifiedOutcome::NoChange {
+            result: input.span(limits.result_bytes)?,
+        },
         (_, 2) => UnverifiedOutcome::PreconditionFailed {
             expected: input.state()?,
             observed: input.state()?,
@@ -415,7 +461,23 @@ pub fn decode_receipt(
             core_evidence: input.span(limits.evidence_bytes)?,
         },
         (at, got) => return Err(FrameError::Tag { at, got }),
-    };
+    })
+}
+
+/// Decode outcome spans without admitting a durable receipt or core evidence.
+/// # Errors
+/// Refuses malformed/oversized framing, trailing bytes and oversized spans.
+pub fn decode_receipt(
+    bytes: &[u8],
+    limits: Limits,
+) -> Result<UnverifiedReceiptEnvelope<'_>, FrameError> {
+    let mut input = Reader::begin(bytes, FAMILY, LAYOUT, RECEIPT, limits.envelope_bytes)?;
+    let identity = input.identity()?;
+    let id = input.id()?;
+    let digest = CommandDigest::from_bytes(input.array()?);
+    let decision_at = input.stamp()?;
+    let state_at = input.state()?;
+    let outcome = read_outcome(&mut input, limits)?;
     input.end()?;
     let receipt = UnverifiedReceiptEnvelope {
         metadata: ReceiptMetadata {
@@ -433,7 +495,10 @@ pub fn decode_receipt(
     Ok(receipt)
 }
 
-fn validate_condition(identity: DatabaseIdentity, condition: Condition) -> Result<(), FrameError> {
+pub(crate) fn validate_condition(
+    identity: DatabaseIdentity,
+    condition: Condition,
+) -> Result<(), FrameError> {
     if let Condition::ExactState(state) = condition
         && state.incarnation != identity.incarnation_id
     {
@@ -442,7 +507,7 @@ fn validate_condition(identity: DatabaseIdentity, condition: Condition) -> Resul
     Ok(())
 }
 
-fn validate_receipt(receipt: UnverifiedReceiptEnvelope<'_>) -> Result<(), FrameError> {
+pub(crate) fn validate_receipt(receipt: UnverifiedReceiptEnvelope<'_>) -> Result<(), FrameError> {
     let metadata = receipt.metadata;
     if metadata.decision_at.seq == 0
         || metadata.state_at.data_revision > metadata.decision_at.seq
@@ -467,156 +532,4 @@ fn validate_receipt(receipt: UnverifiedReceiptEnvelope<'_>) -> Result<(), FrameE
         _ => {}
     }
     Ok(())
-}
-
-fn check_limit(length: usize, cap: usize) -> Result<(), FrameError> {
-    if length > cap {
-        Err(FrameError::LimitExceeded)
-    } else {
-        Ok(())
-    }
-}
-
-fn frame_len(parts: &[usize]) -> Result<usize, FrameError> {
-    parts.iter().try_fold(FAMILY.len() + 3, |sum, part| {
-        sum.checked_add(*part).ok_or(FrameError::LengthOverflow)
-    })
-}
-
-fn begin(kind: u8, len: usize, limits: Limits) -> Result<Vec<u8>, FrameError> {
-    let mut out = allocate_frame(len, limits)?;
-    out.extend_from_slice(FAMILY);
-    out.extend_from_slice(&LAYOUT.to_be_bytes());
-    out.push(kind);
-    Ok(out)
-}
-
-fn allocate_frame(len: usize, limits: Limits) -> Result<Vec<u8>, FrameError> {
-    check_limit(len, limits.envelope_bytes)?;
-    let mut out = Vec::new();
-    out.try_reserve_exact(len)
-        .map_err(|_| FrameError::Allocation)?;
-    Ok(out)
-}
-
-fn put_identity(out: &mut Vec<u8>, identity: DatabaseIdentity) {
-    out.extend_from_slice(identity.database_id.as_core().as_bytes());
-    out.extend_from_slice(identity.incarnation_id.as_core().as_bytes());
-    out.extend_from_slice(&identity.schema_id.0);
-}
-
-fn put_id(out: &mut Vec<u8>, id: CommandId) {
-    put_u64(out, id.receipt_epoch.get());
-    out.extend_from_slice(id.request_id.as_core().as_bytes());
-}
-
-fn put_state(out: &mut Vec<u8>, state: StateStamp) {
-    out.extend_from_slice(state.incarnation.as_core().as_bytes());
-    put_u64(out, state.data_revision);
-}
-
-fn put_u64(out: &mut Vec<u8>, value: u64) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-
-fn put_span(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), FrameError> {
-    put_u64(
-        out,
-        u64::try_from(bytes.len()).map_err(|_| FrameError::LengthOverflow)?,
-    );
-    out.extend_from_slice(bytes);
-    Ok(())
-}
-
-struct Reader<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn begin(bytes: &'a [u8], kind: u8, limits: Limits) -> Result<Self, FrameError> {
-        check_limit(bytes.len(), limits.envelope_bytes)?;
-        let mut input = Self { bytes, at: 0 };
-        if input.take(FAMILY.len())? != FAMILY {
-            return Err(FrameError::Family);
-        }
-        let version = u16::from_be_bytes(input.array()?);
-        if version != LAYOUT {
-            return Err(FrameError::Layout { got: version });
-        }
-        let (_, got) = input.tag()?;
-        if got != kind {
-            return Err(FrameError::Kind { got });
-        }
-        Ok(input)
-    }
-
-    fn take(&mut self, len: usize) -> Result<&'a [u8], FrameError> {
-        let end = self.at.checked_add(len).ok_or(FrameError::LengthOverflow)?;
-        let bytes = self
-            .bytes
-            .get(self.at..end)
-            .ok_or(FrameError::Truncated { at: self.at })?;
-        self.at = end;
-        Ok(bytes)
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], FrameError> {
-        let mut array = [0; N];
-        array.copy_from_slice(self.take(N)?);
-        Ok(array)
-    }
-
-    fn u64(&mut self) -> Result<u64, FrameError> {
-        Ok(u64::from_be_bytes(self.array()?))
-    }
-
-    fn tag(&mut self) -> Result<(usize, u8), FrameError> {
-        let at = self.at;
-        Ok((at, self.array::<1>()?[0]))
-    }
-
-    fn identity(&mut self) -> Result<DatabaseIdentity, FrameError> {
-        Ok(DatabaseIdentity {
-            database_id: DatabaseId::from_core(Id128::from_bytes(self.array()?)),
-            incarnation_id: IncarnationId::from_core(Id128::from_bytes(self.array()?)),
-            schema_id: SchemaId(self.array()?),
-        })
-    }
-
-    fn id(&mut self) -> Result<CommandId, FrameError> {
-        Ok(CommandId {
-            receipt_epoch: ReceiptEpoch::new(self.u64()?).ok_or(FrameError::InvalidEpoch)?,
-            request_id: RequestId::from_core(Id128::from_bytes(self.array()?)),
-        })
-    }
-
-    fn state(&mut self) -> Result<StateStamp, FrameError> {
-        Ok(StateStamp {
-            incarnation: IncarnationId::from_core(Id128::from_bytes(self.array()?)),
-            data_revision: self.u64()?,
-        })
-    }
-
-    fn span(&mut self, cap: usize) -> Result<&'a [u8], FrameError> {
-        let len = usize::try_from(self.u64()?).map_err(|_| FrameError::LengthOverflow)?;
-        check_limit(len, cap)?;
-        self.take(len)
-    }
-
-    fn empty_result(&mut self) -> Result<(), FrameError> {
-        if self.u64()? == 0 {
-            Ok(())
-        } else {
-            Err(FrameError::NonemptyResultUnsupported)
-        }
-    }
-
-    fn end(self) -> Result<(), FrameError> {
-        if self.at == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(FrameError::TrailingBytes { at: self.at })
-        }
-    }
 }

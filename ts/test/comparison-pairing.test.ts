@@ -24,7 +24,7 @@ import { ALLEN, bool, i64, interval, query, relation, schema, u64, v } from "#in
 import { allen, lt, pointIn } from "#query/atom.ts"
 
 const Reading = relation("Reading", {
-	id: u64.fresh,
+	id: u64,
 	flag: bool,
 	count: u64,
 	delta: i64,

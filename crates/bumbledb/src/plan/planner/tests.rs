@@ -7,8 +7,8 @@ use crate::ir::normalize::{NormalizedQuery, OccBind, Occurrence, Role, SlotWidth
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    StatementDescriptor, ValueType,
 };
 use std::collections::BTreeMap;
 
@@ -22,11 +22,6 @@ fn schema(n: usize, arity: usize) -> Schema {
                     .map(|f| FieldDescriptor {
                         name: format!("f{f}").into(),
                         value_type: ValueType::U64,
-                        generation: if f == 0 {
-                            Generation::Fresh
-                        } else {
-                            Generation::None
-                        },
                     })
                     .collect(),
             })
@@ -202,12 +197,10 @@ fn pointwise_schema() -> Schema {
                     FieldDescriptor {
                         name: "acct".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "p".into(),
                         value_type: interval,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -218,12 +211,10 @@ fn pointwise_schema() -> Schema {
                     FieldDescriptor {
                         name: "acct".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "period".into(),
                         value_type: interval,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -313,7 +304,6 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
                 fields: vec![FieldDescriptor {
                     name: "acct".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 }],
             },
             RelationDescriptor {
@@ -323,12 +313,10 @@ fn eq_pinned_key_fields_count_toward_key_coverage() {
                     FieldDescriptor {
                         name: "acct".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "day".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },

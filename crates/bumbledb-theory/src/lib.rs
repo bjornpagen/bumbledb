@@ -17,6 +17,6 @@ pub mod value;
 pub use allen::{AllenMask, Basic};
 pub use float::{F64, F64CastError, F64ParseError};
 pub use id128::{Id128, Id128ParseError};
-pub use interval::Interval;
+pub use interval::{Discrete, Element, FloatMeasureError, Interval};
 pub use schema::ValueType;
 pub use value::Value;

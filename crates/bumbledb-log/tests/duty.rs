@@ -1,293 +1,213 @@
-//! The duty body over `FsStore`: one cadence check, compact under the
-//! checkpoint order, the retention sweep, and the same body through
-//! the `duty` binary's `--once` arm.
+//! The duty maintenance CLI over a real `FsStore` layout: status, GC, roots,
+//! backup, verify-backup, erase and the explicit finite argument grammar
+//! (OPS-TEST-01 shape at the CLI boundary). The binary is an adapter over
+//! the same library implementation, not a second machine. Verification:
+//! `NotRun` (F1 authors, does not execute).
 
-mod lane_e_support;
+mod lane_support;
 
 use std::path::Path;
 use std::process::Command;
 
-use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor as Desc,
-    StatementDescriptor, ValueType,
-};
-use bumbledb::{Admission, SchemaDescriptor};
-use bumbledb_log::checkpointer::{Checkpointer, CheckpointerOpened, Compact, Ran};
-use bumbledb_log::gc::Gc;
-use bumbledb_log::manifest::{Manifest, manifest_key};
-use bumbledb_log::store::ObjectStore;
+use bumbledb_log::checkpointer::{CheckpointKind, CheckpointPolicy, publish_checkpoint};
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::writer::{CHECKPOINT_EVERY_BYTES, Options, Writer, WriterOpened};
-use lane_e_support::{NOTE, note_row, temp_dir, theory};
+use lane_support::{HEAD_CAP, LIMITS, Mirror, insert_user, temp_dir, work};
 
-fn open_writer(root: &std::path::Path, dir: &std::path::Path) -> Writer<SchemaDescriptor, FsStore> {
-    match Writer::open(
-        FsStore::new(root.to_path_buf()),
-        "",
-        dir,
-        theory(),
-        Options::new(17),
+fn duty(args: &[&str]) -> (bool, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_duty"))
+        .args(args)
+        .env_remove("AWS_ACCESS_KEY_ID")
+        .env_remove("AWS_SECRET_ACCESS_KEY")
+        .output()
+        .expect("duty runs");
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
     )
-    .expect("open writer")
-    {
-        WriterOpened::Ready(writer) => writer,
-        WriterOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
-    }
 }
 
-fn open_duty(
-    root: &std::path::Path,
-    dir: &std::path::Path,
-) -> Checkpointer<SchemaDescriptor, FsStore> {
-    match Checkpointer::open(FsStore::new(root.to_path_buf()), "", dir, theory(), 17)
-        .expect("open checkpointer")
-    {
-        CheckpointerOpened::Ready(duty) => *duty,
-        CheckpointerOpened::Refused(refusal) => panic!("open refused: {refusal:?}"),
-    }
+fn fs_args<'a>(root: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
+    let mut args = rest.to_vec();
+    args.extend_from_slice(&["--fs-root", root, "--prefix", "t"]);
+    args
 }
 
-fn commit_notes(writer: &Writer<SchemaDescriptor, FsStore>, count: u64) {
-    for id in 0..count {
-        assert!(matches!(
-            writer
-                .commit(|batch| {
-                    batch.insert(NOTE, [note_row(id, "duty")]);
-                    Ok(())
-                })
-                .expect("commit"),
-            Admission::Accepted(_)
-        ));
-    }
-    writer.quiesce();
-}
-
-fn manifest_checkpoint(root: &std::path::Path) -> Option<[u8; 32]> {
-    let store = FsStore::new(root.to_path_buf());
-    let fetched = store
-        .get(&manifest_key(""))
-        .expect("get")
-        .expect("manifest");
-    Manifest::parse(&fetched.bytes)
-        .expect("manifest parses")
-        .checkpoint
-}
-
-#[test]
-fn under_cadence_the_body_is_quiet() {
-    let root = temp_dir("duty_quiet");
-    let writer = open_writer(&root, &root.join("w"));
-    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    commit_notes(&writer, 1);
-    drop(writer);
-
-    let mut duty = open_duty(&root, &root.join("d"));
-    duty.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    match duty.run().expect("run") {
-        Ran::Ready {
-            compact: Compact::Quiet,
-            gc: Gc::NothingEligible,
-        } => {}
-        other => panic!("quiet expected, got {other:?}"),
-    }
-    assert!(manifest_checkpoint(&root).is_none());
-}
-
-#[test]
-fn crossing_the_sum_cadence_publishes() {
-    let root = temp_dir("duty_sum");
-    let writer = open_writer(&root, &root.join("w"));
-    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    commit_notes(&writer, 2);
-    drop(writer);
-
-    let mut duty = open_duty(&root, &root.join("d"));
-    duty.set_checkpoint_cadence(2, u64::MAX);
-    match duty.run().expect("run") {
-        Ran::Ready {
-            compact: Compact::Published(_),
-            gc,
-        } => {
-            assert!(matches!(gc, Gc::Swept(_) | Gc::NothingEligible));
-        }
-        other => panic!("publish expected, got {other:?}"),
-    }
-    assert!(manifest_checkpoint(&root).is_some());
-}
-
-#[test]
-fn a_second_run_is_quiet_and_keeps_the_incumbent() {
-    let root = temp_dir("duty_idem");
-    let writer = open_writer(&root, &root.join("w"));
-    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    commit_notes(&writer, 2);
-    drop(writer);
-
-    let mut duty = open_duty(&root, &root.join("d"));
-    duty.set_checkpoint_cadence(2, u64::MAX);
-    duty.run().expect("first");
-    let first = manifest_checkpoint(&root).expect("published");
-    match duty.run().expect("second") {
-        Ran::Ready {
-            compact: Compact::Quiet,
-            ..
-        } => {}
-        other => panic!("second run is quiet, got {other:?}"),
-    }
-    assert_eq!(manifest_checkpoint(&root), Some(first));
-}
-
-const NOTE_THEORY: &str = r#"{"relations":[{"name":"note","fields":[{"name":"id","type":"u64"},{"name":"body","type":"string"}]}],"statements":[{"functionality":{"relation":0,"projection":[0]}}]}"#;
-
-fn note_only() -> Desc {
-    Desc {
-        relations: vec![RelationDescriptor {
-            name: "note".into(),
-            fields: vec![
-                FieldDescriptor {
-                    name: "id".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::None,
-                },
-                FieldDescriptor {
-                    name: "body".into(),
-                    value_type: ValueType::String,
-                    generation: Generation::None,
-                },
-            ],
-            extension: None,
-        }],
-        statements: vec![StatementDescriptor::Functionality {
-            relation: RelationId(0),
-            projection: Box::from([FieldId(0)]),
-        }],
-    }
-}
-
-fn write_theory(root: &Path) -> std::path::PathBuf {
-    let path = root.join("theory.json");
-    std::fs::write(&path, NOTE_THEORY).expect("write theory");
-    path
-}
-
-fn note_writer(root: &Path) -> Writer<Desc, FsStore> {
-    match Writer::open(
-        FsStore::new(root.to_path_buf()),
-        "",
-        &root.join("w"),
-        note_only(),
-        Options::new(17),
+/// A real FsStore-hosted tenant with two decisions and a checkpoint.
+fn fixture(tag: &str) -> (std::path::PathBuf, FsStore) {
+    let root = temp_dir(tag);
+    let store = FsStore::new(&root);
+    let mut mirror = Mirror::create(tag, &store, "t");
+    let identity = mirror.identity;
+    mirror.submit(&insert_user(mirror.db(), identity, 1, 10));
+    mirror.submit(&insert_user(mirror.db(), identity, 2, 20));
+    publish_checkpoint(
+        mirror.db(),
+        &store,
+        "t",
+        LIMITS,
+        CheckpointKind::Ordinary,
+        &CheckpointPolicy {
+            chunk_bytes: 4_096,
+            head_cap: HEAD_CAP,
+            ..CheckpointPolicy::DEFAULT
+        },
+        &work(),
     )
-    .expect("open")
-    {
-        WriterOpened::Ready(writer) => writer,
-        WriterOpened::Refused(refusal) => panic!("refused: {refusal:?}"),
+    .expect("checkpoint");
+    (root, store)
+}
+
+fn root_str(root: &Path) -> &str {
+    root.to_str().expect("utf-8 test path")
+}
+
+#[test]
+fn unknown_commands_and_arguments_refuse_with_usage_and_do_nothing() {
+    let root = temp_dir("duty-grammar");
+    let (ok, _, err) = duty(&["frobnicate", "--fs-root", root_str(&root), "--prefix", "t"]);
+    assert!(!ok);
+    assert!(err.contains("usage:"), "{err}");
+    let (ok, _, err) = duty(&fs_args(root_str(&root), &["status", "--bogus-flag"]));
+    assert!(!ok);
+    assert!(err.contains("unknown argument"), "{err}");
+    let (ok, _, err) = duty(&["gc", "--fs-root", root_str(&root), "--prefix", "t"]);
+    assert!(!ok, "gc without --op refuses");
+    assert!(err.contains("--op"), "{err}");
+    // A malformed operation ID refuses before any backend work.
+    let (ok, _, err) = duty(&fs_args(root_str(&root), &["gc", "--op", "not-hex"]));
+    assert!(!ok);
+    assert!(err.contains("32 hex characters"), "{err}");
+}
+
+#[test]
+fn status_renders_the_bounded_redacted_report() {
+    let (root, _store) = fixture("duty-status");
+    let (ok, out, err) = duty(&fs_args(root_str(&root), &["status"]));
+    assert!(ok, "{err}");
+    assert!(out.contains("condition:"), "{out}");
+    assert!(out.contains("head-revision:"), "{out}");
+    assert!(out.contains("roots: 0 held"), "{out}");
+    // Redaction: no credentials vocabulary, no fact payload spellings.
+    for banned in ["AKIA", "secret_access", "10", "20"] {
+        assert!(
+            !out.lines()
+                .any(|line| line.split(':').nth(1).is_some_and(|v| v.trim() == banned)),
+            "{banned} must not appear as a value: {out}"
+        );
     }
+    // A missing database is reported, never created.
+    let empty = temp_dir("duty-status-empty");
+    let (ok, out, _) = duty(&fs_args(root_str(&empty), &["status"]));
+    assert!(ok);
+    assert!(
+        out.contains("Missing"),
+        "a missing head is definite absence: {out}"
+    );
 }
 
-fn cross_the_byte_cadence(writer: &Writer<Desc, FsStore>) {
-    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    let body = "p".repeat(usize::try_from(CHECKPOINT_EVERY_BYTES).expect("cadence fits"));
-    assert!(matches!(
-        writer
-            .commit(|batch| {
-                batch.insert(RelationId(0), [note_row(1, &body)]);
-                Ok(())
-            })
-            .expect("commit"),
-        Admission::Accepted(_)
+#[test]
+fn gc_roots_backup_verify_and_erase_arms_run_the_real_operations() {
+    let (root, _store) = fixture("duty-ops");
+    let root_text = root_str(&root).to_string();
+    let op_hex = "000000000000000000000000000000aa";
+    let root_id = "000000000000000000000000000000bb";
+    // root-add / root-release.
+    let (ok, out, err) = duty(&fs_args(
+        &root_text,
+        &[
+            "root-add",
+            "--root-id",
+            root_id,
+            "--op",
+            op_hex,
+            "--label",
+            "pin",
+        ],
     ));
-    writer.quiesce();
-}
-
-fn duty_cmd(root: &Path, theory_path: &Path) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_duty"));
-    cmd.args([
-        "--store",
-        "fs",
-        "--root",
-        root.to_str().expect("utf8"),
-        "--dir",
-        root.join("d").to_str().expect("utf8"),
-        "--theory",
-        theory_path.to_str().expect("utf8"),
-    ]);
-    cmd
-}
-
-#[test]
-fn the_once_binary_publishes_and_exits_zero() {
-    let root = temp_dir("duty_bin_pub");
-    let theory_path = write_theory(&root);
-    let writer = note_writer(&root);
-    cross_the_byte_cadence(&writer);
-    drop(writer);
-
-    let out = duty_cmd(&root, &theory_path)
-        .arg("--once")
-        .output()
-        .expect("spawn duty");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "publish must exit 0: {stderr}");
-    assert!(
-        stderr.is_empty(),
-        "Replaced + successful sweep is silent, got {stderr}"
-    );
-    assert!(
-        manifest_checkpoint(&root).is_some(),
-        "duty --once must publish a checkpoint"
-    );
-}
-
-#[test]
-fn the_once_binary_is_quiet_under_cadence() {
-    let root = temp_dir("duty_bin_quiet");
-    let theory_path = write_theory(&root);
-    let writer = note_writer(&root);
-    writer.set_checkpoint_cadence(u64::MAX, u64::MAX);
-    assert!(matches!(
-        writer
-            .commit(|batch| {
-                batch.insert(RelationId(0), [note_row(1, "bin")]);
-                Ok(())
-            })
-            .expect("commit"),
-        Admission::Accepted(_)
+    assert!(ok, "{err}");
+    assert!(out.contains("root added"), "{out}");
+    // gc runs a full pass with the pin held.
+    let (ok, out, err) = duty(&fs_args(&root_text, &["gc", "--op", op_hex]));
+    assert!(ok, "{err}");
+    assert!(out.contains("finished true"), "{out}");
+    // backup into a separate destination; verify from the destination only.
+    let vault = temp_dir("duty-vault");
+    let vault_text = root_str(&vault).to_string();
+    let (ok, out, err) = duty(&fs_args(
+        &root_text,
+        &[
+            "backup",
+            "--op",
+            op_hex,
+            "--dest-fs-root",
+            &vault_text,
+            "--dest-prefix",
+            "vault",
+        ],
     ));
-    writer.quiesce();
-    drop(writer);
-
-    let out = duty_cmd(&root, &theory_path)
-        .arg("--once")
-        .output()
-        .expect("spawn duty");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "quiet must exit 0: {stderr}");
-    assert!(stderr.is_empty(), "Quiet is silent, got {stderr}");
+    assert!(ok, "{err}");
+    assert!(out.contains("backup complete"), "{out}");
+    let (ok, out, err) = duty(&fs_args(
+        &root_text,
+        &[
+            "verify-backup",
+            "--op",
+            op_hex,
+            "--dest-fs-root",
+            &vault_text,
+            "--dest-prefix",
+            "vault",
+        ],
+    ));
+    assert!(ok, "{err}");
+    assert!(out.contains("backup verified"), "{out}");
+    // The backup retry is idempotent evidence.
+    let (ok, out, err) = duty(&fs_args(
+        &root_text,
+        &[
+            "backup",
+            "--op",
+            op_hex,
+            "--dest-fs-root",
+            &vault_text,
+            "--dest-prefix",
+            "vault",
+        ],
+    ));
+    assert!(ok, "{err}");
+    assert!(out.contains("already complete"), "{out}");
+    // root-release, then erase; the residual report is honest.
+    let (ok, out, err) = duty(&fs_args(
+        &root_text,
+        &["root-release", "--root-id", root_id],
+    ));
+    assert!(ok, "{err}");
+    assert!(out.contains("released root"), "{out}");
+    let erase_op = "000000000000000000000000000000cc";
+    let (ok, out, err) = duty(&fs_args(&root_text, &["erase", "--op", erase_op]));
+    assert!(ok, "{err}");
+    assert!(out.contains("tombstone retained true"), "{out}");
     assert!(
-        manifest_checkpoint(&root).is_none(),
-        "under-cadence --once must not publish"
+        out.contains("backups/exports/blobs/keys untouched"),
+        "{out}"
     );
-}
-
-#[test]
-fn argv_refuses_an_unknown_flag() {
-    let out = Command::new(env!("CARGO_BIN_EXE_duty"))
-        .args(["--once", "--nope"])
-        .output()
-        .expect("spawn");
-    assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("unknown flag"), "{err}");
-}
-
-#[test]
-fn argv_refuses_a_flag_as_a_value() {
-    let out = Command::new(env!("CARGO_BIN_EXE_duty"))
-        .args(["--once", "--dir", "--theory", "/tmp/x"])
-        .output()
-        .expect("spawn");
-    assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("needs a value"), "{err}");
+    // After erasure, status reports the tombstone; the backup still verifies
+    // from its independent destination.
+    let (ok, out, err) = duty(&fs_args(&root_text, &["status"]));
+    assert!(ok, "{err}");
+    assert!(out.contains("Deleted"), "{out}");
+    let (ok, _, err) = duty(&fs_args(
+        &root_text,
+        &[
+            "verify-backup",
+            "--op",
+            op_hex,
+            "--dest-fs-root",
+            &vault_text,
+            "--dest-prefix",
+            "vault",
+        ],
+    ));
+    assert!(ok, "erasure never owns the backup namespace: {err}");
 }

@@ -1,23 +1,22 @@
 use super::super::{OccBind, OccId, Role, normalize_rules};
 use super::*;
 use crate::encoding::encode_i64;
+use crate::image::intern::SENTINEL_WORD as SENTINEL_ID;
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, VarId};
 use crate::ir::{CmpOp, WordCmp};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::dict::SENTINEL_ID;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
 };
 
 fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     let interval_i64 = ValueType::Interval {
         element: IntervalElement::I64,
@@ -31,7 +30,6 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     field("a", ValueType::I64),
                     field("k", ValueType::U64),

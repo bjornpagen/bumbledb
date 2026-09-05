@@ -13,6 +13,7 @@ fn element_type(element: IntervalElement) -> ValueType {
     match element {
         IntervalElement::U64 => ValueType::U64,
         IntervalElement::I64 => ValueType::I64,
+        IntervalElement::F64 => ValueType::F64,
     }
 }
 
@@ -28,6 +29,7 @@ fn literal_anchor_type(value: &Value) -> ValueType {
         Value::U64(_) => ValueType::U64,
         Value::I64(_) => ValueType::I64,
         Value::F64(_) => ValueType::F64,
+        Value::Id128(_) => ValueType::Id128,
         Value::String(_) => ValueType::String,
 
         Value::FixedBytes(raw) => ValueType::FixedBytes {
@@ -39,6 +41,9 @@ fn literal_anchor_type(value: &Value) -> ValueType {
         },
         Value::IntervalI64(..) => ValueType::Interval {
             element: IntervalElement::I64,
+        },
+        Value::IntervalF64(..) => ValueType::Interval {
+            element: IntervalElement::F64,
         },
     }
 }
@@ -66,8 +71,15 @@ fn check_interval_field_literal(
             }
         }
 
+        // A dense-line point probe: any canonical F64 is well-typed; a
+        // nonfinite point is an ordinary NONMATCH at execution (chapter
+        // 11 §5's membership rule), never a validation refusal — the
+        // dense line has no reserved ceiling point.
+        (Value::F64(_), IntervalElement::F64) => Ok(()),
+
         (Value::IntervalU64(_), IntervalElement::U64)
-        | (Value::IntervalI64(_), IntervalElement::I64) => match literal_matches(value, interval) {
+        | (Value::IntervalI64(_), IntervalElement::I64)
+        | (Value::IntervalF64(_), IntervalElement::F64) => match literal_matches(value, interval) {
             Ok(()) => Ok(()),
             Err(_) => Err(ValidationError::LiteralTypeMismatch {
                 atom: AtomIndex(atom),
@@ -927,12 +939,14 @@ impl Context {
                 Ok(ClassifiedComparison::PointInVarVar {
                     interval: *lhs,
                     point: *rhs,
+                    dense: matches!(element, IntervalElement::F64),
                 })
             }
             Shaped::PointInVarConst { var, constant } => {
                 let Some(element) = self.resolved_var_type(*var).interval_element() else {
                     return Err(ValidationError::IllegalComparison { index });
                 };
+                let dense = matches!(element, IntervalElement::F64);
                 match constant {
                     ConstSide::Param(param) => {
                         self.interval_position_params.insert(*param);
@@ -940,6 +954,7 @@ impl Context {
                         Ok(ClassifiedComparison::PointInVarPoint {
                             interval: *var,
                             point: SealedConst::Param(*param),
+                            dense,
                         })
                     }
                     ConstSide::Literal(value) => match (value, element) {
@@ -953,6 +968,17 @@ impl Context {
                             Ok(ClassifiedComparison::PointInVarPoint {
                                 interval: *var,
                                 point: SealedConst::Literal((*value).clone()),
+                                dense,
+                            })
+                        }
+                        // Dense point probes admit any canonical F64;
+                        // nonfinite literals are ordinary nonmatches at
+                        // execution — no ceiling refusal on the dense line.
+                        (Value::F64(_), IntervalElement::F64) => {
+                            Ok(ClassifiedComparison::PointInVarPoint {
+                                interval: *var,
+                                point: SealedConst::Literal((*value).clone()),
+                                dense,
                             })
                         }
                         _ => Err(ValidationError::IllegalComparison { index }),
@@ -964,6 +990,7 @@ impl Context {
                     let element = match self.resolved_var_type(*var) {
                         ValueType::U64 => IntervalElement::U64,
                         ValueType::I64 => IntervalElement::I64,
+                        ValueType::F64 => IntervalElement::F64,
                         _ => return Err(ValidationError::IllegalComparison { index }),
                     };
 
@@ -971,6 +998,7 @@ impl Context {
                     Ok(ClassifiedComparison::VarWithin {
                         var: *var,
                         outer: SealedConst::Param(*param),
+                        dense: matches!(element, IntervalElement::F64),
                     })
                 }
                 ConstSide::Literal(value) => {
@@ -983,6 +1011,7 @@ impl Context {
                     Ok(ClassifiedComparison::VarWithin {
                         var: *var,
                         outer: SealedConst::Literal((*value).clone()),
+                        dense: matches!(element, IntervalElement::F64),
                     })
                 }
             },

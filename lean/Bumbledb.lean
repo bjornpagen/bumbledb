@@ -1,6 +1,9 @@
 import Bumbledb.Values
+import Bumbledb.Float64.Sum
+import Bumbledb.FloatInterval
 import Bumbledb.Schema
 import Bumbledb.Capacity
+import Bumbledb.Query.Stages
 import Bumbledb.Dependencies
 import Bumbledb.Subsumption
 import Bumbledb.Query.Syntax
@@ -14,9 +17,8 @@ import Bumbledb.Exec.Reach
 import Bumbledb.Exec.SemiNaive
 import Bumbledb.Exec.Plan
 import Bumbledb.Txn
-import Bumbledb.Txn.Fresh
 import Bumbledb.Txn.DeltaRestriction
-import Bumbledb.Txn.Braids
+import Bumbledb.Txn.Support
 import Bumbledb.Decide
 import Bumbledb.Oracle
 import Bumbledb.Admission

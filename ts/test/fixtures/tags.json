@@ -1,24 +1,138 @@
 {
-	"value": ["bool", "u64", "i64", "f64", "string", "fixedBytes", "intervalU64", "intervalI64"],
-	"valueType": ["bool", "u64", "i64", "f64", "string", "fixedBytes", "interval"],
-	"intervalElement": ["u64", "i64"],
-	"literal": ["handle", "value"],
-	"literalSet": ["one", "many"],
-	"capacityWindow": ["exact", "range", "floor"],
-	"capacityBound": ["lit", "field", "durationField"],
-	"weight": ["unit", "field", "durationField"],
-	"statement": ["fd", "containment", "capacity"],
-	"statementKind": ["functionality", "containment", "capacity"],
-	"term": ["var", "param", "paramSet", "literal"],
-	"aggregateOp": ["sum", "mean", "min", "max", "count", "pack"],
-	"headTerm": ["var", "aggregate"],
-	"findTerm": ["var", "count", "aggregate", "pack"],
-	"atomSource": ["edb", "interior"],
-	"cmpOp": ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
-	"condition": ["leaf", "and", "or"],
-	"query": ["cq", "reach"],
-	"direction": ["sourceUnsatisfied", "targetRequired"],
-	"param": ["set"],
+	"value": [
+		"bool",
+		"u64",
+		"i64",
+		"f64",
+		"id128",
+		"string",
+		"fixedBytes",
+		"intervalU64",
+		"intervalI64",
+		"intervalF64"
+	],
+	"valueType": [
+		"bool",
+		"u64",
+		"i64",
+		"f64",
+		"id128",
+		"string",
+		"fixedBytes",
+		"interval"
+	],
+	"intervalElement": [
+		"u64",
+		"i64",
+		"f64"
+	],
+	"literal": [
+		"handle",
+		"value"
+	],
+	"literalSet": [
+		"one",
+		"many"
+	],
+	"capacityWindow": [
+		"exact",
+		"range",
+		"floor"
+	],
+	"capacityBound": [
+		"lit",
+		"field",
+		"durationField"
+	],
+	"weight": [
+		"unit",
+		"field",
+		"durationField"
+	],
+	"statement": [
+		"fd",
+		"containment",
+		"capacity"
+	],
+	"statementKind": [
+		"functionality",
+		"containment",
+		"capacity"
+	],
+	"term": [
+		"var",
+		"param",
+		"paramSet",
+		"literal"
+	],
+	"scalarExpr": [
+		"var",
+		"literal",
+		"negate",
+		"add",
+		"subtract",
+		"multiply",
+		"divide",
+		"cast",
+		"isNaN",
+		"isFinite"
+	],
+	"numericCast": [
+		"toF64",
+		"toF64Exact",
+		"toI64Exact",
+		"toU64Exact"
+	],
+	"aggregateOp": [
+		"sum",
+		"mean",
+		"min",
+		"max",
+		"count",
+		"pack"
+	],
+	"headTerm": [
+		"var",
+		"compute",
+		"aggregate"
+	],
+	"findTerm": [
+		"var",
+		"compute",
+		"count",
+		"aggregate",
+		"pack"
+	],
+	"atomSource": [
+		"edb",
+		"interior"
+	],
+	"cmpOp": [
+		"eq",
+		"ne",
+		"lt",
+		"le",
+		"gt",
+		"ge",
+		"allen",
+		"pointIn"
+	],
+	"condition": [
+		"leaf",
+		"and",
+		"or"
+	],
+	"query": [
+		"cq",
+		"reach"
+	],
+	"direction": [
+		"sourceUnsatisfied",
+		"targetRequired"
+	],
+	"param": [
+		"set"
+	],
 	"errorFamily": [
 		"formatMismatch",
 		"schemaMismatch",
@@ -32,7 +146,6 @@
 		"schema",
 		"validation",
 		"factShape",
-		"freshExhausted",
 		"closedRelationWrite",
 		"commitSync",
 		"transactionPoisoned",
@@ -42,11 +155,27 @@
 		"capacityRayMeasure",
 		"derivedBudgetExceeded",
 		"overflow",
+		"scalar",
 		"resultBytesOverflow",
 		"corruption"
 	],
-	"admissionTag": ["accepted", "rejected"],
-	"writeTag": ["accepted", "rejected", "abandoned", "moved"],
-	"openKind": ["schemaError", "newtypeMismatch", "fingerprintMismatch"],
-	"prepareKind": ["irError"]
+	"admissionTag": [
+		"accepted",
+		"rejected"
+	],
+	"writeTag": [
+		"accepted",
+		"rejected",
+		"abandoned",
+		"moved"
+	],
+	"openKind": [
+		"schemaError",
+		"newtypeMismatch",
+		"fingerprintMismatch",
+		"destinationExists"
+	],
+	"prepareKind": [
+		"irError"
+	]
 }

@@ -15,8 +15,8 @@ use bumbledb::ir::{
     Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db, NonEmpty, ProjectionRule};
 
@@ -261,7 +261,6 @@ fn u64_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::None,
     }
 }
 
@@ -275,18 +274,15 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     u64_field("account"),
                     FieldDescriptor {
                         name: "amount".into(),
                         value_type: ValueType::I64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "memo".into(),
                         value_type: ValueType::String,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -297,7 +293,6 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     u64_field("holder"),
                 ],
@@ -309,7 +304,6 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     u64_field("person"),
                     FieldDescriptor {
@@ -317,7 +311,6 @@ fn schema() -> SchemaDescriptor {
                         value_type: ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -753,12 +746,15 @@ fn interiors_only_query() -> Query {
     };
     Query {
         interiors: vec![Interior {
-            rules: vec![ProjectionRule {
-                finds: vec![VarId(0), VarId(1)],
-                atoms: join.atoms,
-                negated: join.negated,
-                conditions: join.conditions,
-            }],
+            rules: vec![
+                ProjectionRule {
+                    finds: vec![VarId(0), VarId(1)],
+                    atoms: join.atoms,
+                    negated: join.negated,
+                    conditions: join.conditions,
+                }
+                .to_rule(),
+            ],
         }],
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![Rule {
@@ -780,7 +776,7 @@ fn interiors_only_query() -> Query {
 bumbledb::schema! {
     pub CensusLedger;
     relation CItem {
-        id: u64 as CItemId, fresh,
+        id: u64 as CItemId,
         memo: str,
     }
 }
@@ -1096,8 +1092,6 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
 }
 
 fn flow_insert_and_scan() {
-    use bumbledb::Fresh as _;
-
     let dir = common::TempDir::new("census-insert");
     let db = Db::create(dir.path(), schema())
         .expect("create")
@@ -1146,7 +1140,7 @@ fn flow_insert_and_scan() {
             .write(|tx| {
                 let rows: Vec<_> = (0..10_000u64)
                     .map(|i| CItem {
-                        id: CItemId::from_fresh(i),
+                        id: CItemId(i),
                         memo: &memos[(i % 64) as usize],
                     })
                     .collect();

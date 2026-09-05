@@ -23,7 +23,7 @@ use bumbledb::ir::{HeadOp, HeadTerm};
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, FoldOp, Interior, InteriorId,
-    Query, Rec, RecRule, RecStep, Rule, Schema, Term, Theory, Value,
+    NumericCast, Query, Rec, RecRule, RecStep, Rule, ScalarExpr, Schema, Term, Theory, Value,
 };
 use bumbledb_query::query;
 
@@ -45,25 +45,25 @@ mod ledger {
         closed relation Tag as TagId = { Fee, Rebate, Adjustment };
 
         relation Holder {
-            id: u64 as HolderId, fresh,
+            id: u64 as HolderId,
             name: str,
         }
         relation Account {
-            id: u64 as AccountId, fresh,
+            id: u64 as AccountId,
             holder: u64 as HolderId,
             currency: u64 as CurrencyId,
         }
         relation Instrument {
-            id: u64 as InstrumentId, fresh,
+            id: u64 as InstrumentId,
             symbol: str,
         }
         relation JournalEntry {
-            id: u64 as JournalEntryId, fresh,
+            id: u64 as JournalEntryId,
             source: u64 as SourceId,
             created_at: i64,
         }
         relation Posting {
-            id: u64 as PostingId, fresh,
+            id: u64 as PostingId,
             entry: u64 as JournalEntryId,
             account: u64 as AccountId,
             instrument: u64 as InstrumentId,
@@ -75,7 +75,7 @@ mod ledger {
             tag: u64 as TagId,
         }
         relation Org {
-            id: u64 as OrgId, fresh,
+            id: u64 as OrgId,
             name: str,
         }
         relation OrgParent {
@@ -87,6 +87,16 @@ mod ledger {
             org: u64 as OrgId,
             active: interval<i64>,
         }
+
+        // Declared id keys FIRST (E-NO-RESERVE): the retired fresh
+        // auto-keys become ordinary declared statements, at the head so
+        // every later declared statement id keeps its historical position.
+        Holder(id)       -> Holder;
+        Account(id)      -> Account;
+        Instrument(id)   -> Instrument;
+        JournalEntry(id) -> JournalEntry;
+        Posting(id)      -> Posting;
+        Org(id)          -> Org;
 
         Account(holder)      <= Holder(id);
         Account(currency)    <= Currency(id);
@@ -179,6 +189,10 @@ fn value_json(value: &Value) -> String {
                 "a bytes literal has no canonical corpus JSON (Uint8Array does not JSON.stringify canonically) — keep bytes out of corpus cases"
             )
         }
+        Value::Id128(id) => format!("{{\"kind\":\"id128\",\"value\":\"{id}\"}}"),
+        Value::IntervalF64(_) => panic!(
+            "dense interval notation cases need the shared lossless JSON fixture adapter F64 cases need: JSON.stringify maps nonfinite endpoints to null"
+        ),
         Value::IntervalU64(interval) => format!(
             "{{\"kind\":\"intervalU64\",\"start\":\"{}\",\"end\":\"{}\"}}",
             interval.start(),
@@ -204,14 +218,69 @@ fn term_json(term: &Term) -> String {
 fn fold_op_json(op: FoldOp) -> String {
     match op {
         FoldOp::Sum => "{\"kind\":\"sum\"}".to_string(),
+        FoldOp::Mean => "{\"kind\":\"mean\"}".to_string(),
         FoldOp::Min => "{\"kind\":\"min\"}".to_string(),
         FoldOp::Max => "{\"kind\":\"max\"}".to_string(),
+    }
+}
+
+fn scalar_expr_json(expr: &ScalarExpr) -> String {
+    let binary = |kind: &str, left: &ScalarExpr, right: &ScalarExpr| {
+        format!(
+            "{{\"kind\":\"{kind}\",\"left\":{},\"right\":{}}}",
+            scalar_expr_json(left),
+            scalar_expr_json(right)
+        )
+    };
+    match expr {
+        ScalarExpr::Var(v) => format!("{{\"kind\":\"var\",\"var\":{}}}", v.0),
+        ScalarExpr::Literal(value) => {
+            format!("{{\"kind\":\"literal\",\"value\":{}}}", value_json(value))
+        }
+        ScalarExpr::Negate(inner) => {
+            format!(
+                "{{\"kind\":\"negate\",\"expr\":{}}}",
+                scalar_expr_json(inner)
+            )
+        }
+        ScalarExpr::Add(left, right) => binary("add", left, right),
+        ScalarExpr::Subtract(left, right) => binary("subtract", left, right),
+        ScalarExpr::Multiply(left, right) => binary("multiply", left, right),
+        ScalarExpr::Divide(left, right) => binary("divide", left, right),
+        ScalarExpr::Cast { kind, expr } => {
+            let cast = match kind {
+                NumericCast::ToF64 => "toF64",
+                NumericCast::ToF64Exact => "toF64Exact",
+                NumericCast::ToI64Exact => "toI64Exact",
+                NumericCast::ToU64Exact => "toU64Exact",
+            };
+            format!(
+                "{{\"kind\":\"cast\",\"cast\":\"{cast}\",\"expr\":{}}}",
+                scalar_expr_json(expr)
+            )
+        }
+        ScalarExpr::IsNaN(inner) => {
+            format!(
+                "{{\"kind\":\"isNaN\",\"expr\":{}}}",
+                scalar_expr_json(inner)
+            )
+        }
+        ScalarExpr::IsFinite(inner) => format!(
+            "{{\"kind\":\"isFinite\",\"expr\":{}}}",
+            scalar_expr_json(inner)
+        ),
     }
 }
 
 fn find_json(find: &FindTerm) -> String {
     match find {
         FindTerm::Var(v) => format!("{{\"kind\":\"var\",\"var\":{}}}", v.0),
+        FindTerm::Compute(expr) => {
+            format!(
+                "{{\"kind\":\"compute\",\"expr\":{}}}",
+                scalar_expr_json(expr)
+            )
+        }
         FindTerm::Count => "{\"kind\":\"count\"}".to_string(),
         FindTerm::Pack { over } => format!("{{\"kind\":\"pack\",\"over\":{}}}", over.0),
         FindTerm::Aggregate { op, over } => format!(
@@ -315,9 +384,11 @@ fn rule_json(rule: &Rule) -> String {
 fn head_term_json(term: HeadTerm) -> String {
     match term {
         HeadTerm::Var => "{\"kind\":\"var\"}".to_string(),
+        HeadTerm::Compute => "{\"kind\":\"compute\"}".to_string(),
         HeadTerm::Aggregate(op) => {
             let name = match op {
                 HeadOp::Sum => "sum",
+                HeadOp::Mean => "mean",
                 HeadOp::Min => "min",
                 HeadOp::Max => "max",
                 HeadOp::Count => "count",
@@ -340,7 +411,7 @@ fn interior_json(interior: &Interior) -> String {
         interior
             .rules
             .iter()
-            .map(|rule| rule_json(&rule.to_rule()))
+            .map(rule_json)
             .collect::<Vec<_>>()
             .join(",")
     )
@@ -455,7 +526,8 @@ macro_rules! corpus_case {
         let lowered = query!(Ledger { $($src)+ });
         let reparsed = query!(Ledger { $($norm)+ });
         assert_eq!(
-            reparsed, lowered,
+            reparsed.query(),
+            lowered.query(),
             "case {}: the normalized text reparses to the identical IR",
             $name
         );

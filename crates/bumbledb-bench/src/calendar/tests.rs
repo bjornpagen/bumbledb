@@ -70,7 +70,7 @@ fn the_schema_is_statement_complete() {
         {
             closed_keys += 1;
         } else {
-            // Fresh auto-keys lead; declared scalar keys are Attendance(event, person) and Claim(source).
+            // Declared id keys lead the ordinary-key roster; the declared scalar keys are Attendance(event, person) and Claim(source).
             if autos < 6 && scalar_keys == 0 {
                 autos += 1;
             } else {
@@ -81,7 +81,10 @@ fn the_schema_is_statement_complete() {
     for statement in s.containments() {
         containments.push((statement.source.relation, statement.target.relation));
     }
-    assert_eq!(autos, 6, "Account/Person/Calendar/Event/Attendance/Room");
+    assert_eq!(
+        autos, 6,
+        "the Account/Person/Calendar/Event/Attendance/Room declared id keys"
+    );
     assert_eq!(closed_keys, 2, "the Rsvp and Arm closed auto-keys");
     assert_eq!(
         scalar_keys, 2,

@@ -1,4 +1,4 @@
-use bumbledb::schema::{FieldDescriptor, Generation, ValueType};
+use bumbledb::schema::{FieldDescriptor, ValueType};
 use bumbledb::{Term, VarId};
 
 #[cfg(test)]
@@ -25,15 +25,6 @@ pub(crate) fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
-    }
-}
-
-pub(crate) fn fresh(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }
 }
 

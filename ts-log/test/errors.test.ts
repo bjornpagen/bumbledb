@@ -1,252 +1,136 @@
+/**
+ * One error vocabulary: `LogError = DbError | ProtocolError`. Core failures
+ * cross the log surface unchanged — never rewrapped, renamed or copied —
+ * and protocol reasons come only from the pinned roster. `.code` derives
+ * from the reason tag; there is no second classification authority.
+ * Maps to OPS-006 evidence rows and the API-04 certainty error carriage.
+ */
 import assert from "node:assert/strict"
-import * as fs from "node:fs"
-import * as path from "node:path"
 import { describe, test } from "node:test"
-import type {
-	Admission,
-	LogBatchDecodeKind,
-	LogBatchEncodeKind,
-	LogCheckpointKind,
-	LogManifestKind,
-	LogSidecarKind,
-	SchemaRelations
-} from "@bjornpagen/bumbledb"
-import { Result } from "effect"
-import type { LeaseRefusal, RefusalCause } from "#errors.ts"
-import { ErrRefused, ErrStore, LogInputError, refusalOf, refuse, wrapStore } from "#errors.ts"
-import type { RefreshOutcome, Waited } from "#replica.ts"
+import { DbError } from "@bjornpagen/bumbledb"
+import { protocolErrorCodes } from "#codes.ts"
+import { invalidInput, logFailure, ProtocolError, protocolError } from "#errors.ts"
 
-/** The generated identity table: the core's one speller per family. */
-const TABLE_PATH = path.resolve(import.meta.dirname, "../../crates/bumbledb-log/conformance/v3/identities.json")
-/** The bridge marshal's mint table, the same emission checked in twice. */
-const MINT_PATH = path.resolve(import.meta.dirname, "../../ts/crate/log-identities.json")
-const tableJson: Record<string, unknown> = JSON.parse(fs.readFileSync(TABLE_PATH, "utf8"))
-function rowsOf(family: string): readonly string[] {
-	const rows = tableJson[family]
-	assert.ok(Array.isArray(rows), `identities.json carries the ${family} family`)
-	return rows.map(function rowOf(row): string {
-		assert.equal(typeof row, "string", `${family} rows are identity strings`)
-		return String(row)
+describe("ProtocolError", function suite() {
+	test("reason tags come from the pinned roster and drive .code", function reasons() {
+		const error = protocolError("History.submit", "DatabaseFrozen")
+		assert.equal(error._tag, "ProtocolError")
+		assert.equal(error.code, "DatabaseFrozen")
+		assert.equal(error.operation, "History.submit")
+		assert.ok((protocolErrorCodes as readonly string[]).includes(error.code))
 	})
-}
-/**
- * One key per `RefusalCause` arm, in declaration order — the compile
- * side of the lock: an arm without a key here, or a key without an
- * arm, refuses to typecheck, the TS analog of the core's exhaustive
- * witness match.
- */
-const REFUSAL_CAUSE_KINDS: Record<RefusalCause["kind"], true> = {
-	Truncated: true,
-	BadMagic: true,
-	Version: true,
-	Flags: true,
-	FingerprintMismatch: true,
-	UnknownBraid: true,
-	UnknownOpKind: true,
-	UnknownRelation: true,
-	ClosedRelation: true,
-	OpRelationOutsideBraid: true,
-	TagMismatch: true,
-	BoolByte: true,
-	NonCanonicalF64: true,
-	InvalidUtf8: true,
-	EmptyInterval: true,
-	IntervalOverflow: true,
-	TrailingBytes: true,
-	Arity: true,
-	Value: true,
-	TooManyOps: true,
-	TooManyRows: true,
-	Malformed: true,
-	Overflow: true,
-	BraidSet: true,
-	Counter: true,
-	DigestWidth: true,
-	CheckpointDigest: true,
-	NoOpSlot: true
-}
-/**
- * The kinds with no identity-table row: `DigestWidth` is the codec
- * seat's short-digest gate (the corpus pins the name at
- * `batch/r_encode_short_prev`); `CheckpointDigest` and `NoOpSlot` are
- * the replica machine's own refusals — the machines keep two executors
- * and no bridge family.
- */
-const HOST_SIDE_KINDS: readonly RefusalCause["kind"][] = ["DigestWidth", "CheckpointDigest", "NoOpSlot"]
-/** The bridge families whose rows must all carry a `RefusalCause` arm. */
-const BRIDGE_FAMILIES = ["batchDecode", "batchEncode", "manifest", "checkpoint", "sidecar"] as const
-/** The `counter` family, arm for arm, core declaration order. */
-const LEASE_REFUSAL_KINDS: Record<LeaseRefusal["kind"], true> = {
-	Counter: true,
-	Exhausted: true,
-	OverWidth: true
-}
-// The bridge's kind unions in `ts/src/native.ts`, one key per literal
-// in core declaration order — the same compile lock, so a drifted
-// union refuses to typecheck here and a drifted table fails below.
-const BATCH_DECODE_KINDS: Record<LogBatchDecodeKind, true> = {
-	Truncated: true,
-	BadMagic: true,
-	Version: true,
-	Flags: true,
-	FingerprintMismatch: true,
-	UnknownBraid: true,
-	UnknownOpKind: true,
-	UnknownRelation: true,
-	ClosedRelation: true,
-	OpRelationOutsideBraid: true,
-	TagMismatch: true,
-	BoolByte: true,
-	NonCanonicalF64: true,
-	InvalidUtf8: true,
-	EmptyInterval: true,
-	IntervalOverflow: true,
-	TrailingBytes: true
-}
-const BATCH_ENCODE_KINDS: Record<LogBatchEncodeKind, true> = {
-	FingerprintMismatch: true,
-	UnknownBraid: true,
-	UnknownRelation: true,
-	ClosedRelation: true,
-	OpRelationOutsideBraid: true,
-	Arity: true,
-	Value: true,
-	TooManyOps: true,
-	TooManyRows: true
-}
-const MANIFEST_KINDS: Record<LogManifestKind, true> = {
-	Malformed: true,
-	Version: true
-}
-const CHECKPOINT_KINDS: Record<LogCheckpointKind, true> = {
-	Malformed: true,
-	Version: true,
-	Overflow: true,
-	UnknownBraid: true,
-	BraidSet: true
-}
-const SIDECAR_KINDS: Record<LogSidecarKind, true> = {
-	Malformed: true,
-	Version: true,
-	UnknownBraid: true,
-	Overflow: true
-}
-// The outcome families: the lowercase arm tags the tagged hosts narrow.
-const ADMISSION_TAGS: Record<Admission<SchemaRelations, unknown>["tag"], true> = {
-	accepted: true,
-	rejected: true
-}
-const WAITED_TAGS: Record<Waited["tag"], true> = {
-	reached: true,
-	wedged: true,
-	refused: true
-}
-const REFRESH_OUTCOME_TAGS: Record<RefreshOutcome["tag"], true> = {
-	advanced: true,
-	wedged: true,
-	reseed: true,
-	refused: true
-}
-describe("the identity-table lock", function suite() {
-	test("the bridge mint table is the conformance table, byte for byte", function twinTables() {
-		assert.ok(
-			fs.readFileSync(MINT_PATH).equals(fs.readFileSync(TABLE_PATH)),
-			"ts/crate/log-identities.json and conformance/v3/identities.json are one emission"
-		)
-	})
-	test("every RefusalCause kind is a table row or a pinned host-side kind", function everyArmIsARow() {
-		const rows = new Set<string>()
-		for (const family of [...BRIDGE_FAMILIES, "counter"]) {
-			for (const row of rowsOf(family)) {
-				rows.add(row)
-			}
-		}
-		const hostSide = new Set<string>(HOST_SIDE_KINDS)
-		for (const kind of Object.keys(REFUSAL_CAUSE_KINDS)) {
-			assert.ok(
-				rows.has(kind) || hostSide.has(kind),
-				`RefusalCause kind ${kind} is a table row or a pinned host-side kind`
-			)
-		}
-		for (const kind of hostSide) {
-			assert.ok(!rows.has(kind), `host-side kind ${kind} stays outside the table`)
-		}
-	})
-	test("every bridge-family row has a RefusalCause arm", function everyRowHasAnArm() {
-		const causeKinds = new Set<string>(Object.keys(REFUSAL_CAUSE_KINDS))
-		for (const family of BRIDGE_FAMILIES) {
-			for (const row of rowsOf(family)) {
-				assert.ok(causeKinds.has(row), `${family} row ${row} carries a RefusalCause arm`)
-			}
-		}
-	})
-	test("the counter family is LeaseRefusal, arm for arm, with the thrown Counter arm", function counterFamily() {
-		assert.deepEqual(Object.keys(LEASE_REFUSAL_KINDS), [...rowsOf("counter")])
-		assert.ok("Counter" in REFUSAL_CAUSE_KINDS, "the counter parse's thrown identity is a RefusalCause arm")
-	})
-	test("the bridge's kind unions match the table, row for row", function nativeUnions() {
-		assert.deepEqual(Object.keys(BATCH_DECODE_KINDS), [...rowsOf("batchDecode")])
-		assert.deepEqual(Object.keys(BATCH_ENCODE_KINDS), [...rowsOf("batchEncode")])
-		assert.deepEqual(Object.keys(MANIFEST_KINDS), [...rowsOf("manifest")])
-		assert.deepEqual(Object.keys(CHECKPOINT_KINDS), [...rowsOf("checkpoint")])
-		assert.deepEqual(Object.keys(SIDECAR_KINDS), [...rowsOf("sidecar")])
-	})
-	test("the outcome families match the tagged hosts", function outcomeFamilies() {
-		assert.deepEqual(Object.keys(ADMISSION_TAGS), [...rowsOf("admission")])
-		assert.deepEqual(Object.keys(WAITED_TAGS), [...rowsOf("waited")])
-		const refreshRows = rowsOf("refreshOutcome")
-		const refreshTags = Object.keys(REFRESH_OUTCOME_TAGS)
-		for (const row of refreshRows) {
-			assert.ok(refreshTags.includes(row), `refreshOutcome row ${row} is a RefreshOutcome arm`)
-		}
-		const hostLocal = refreshTags.filter(function outsideTable(tag) {
-			return !refreshRows.includes(tag)
+
+	test("structured reasons retain their bounded payload", function structured() {
+		const error = new ProtocolError({
+			operation: "History.snapshot",
+			reason: { _tag: "NotYetAvailable", requestedSeq: 9n, capturedSeq: 4n }
 		})
-		assert.deepEqual(hostLocal.sort(), ["reseed", "wedged"], "the replica machine's own refresh arms, pinned")
+		assert.equal(error.code, "NotYetAvailable")
+		assert.ok(error.reason._tag === "NotYetAvailable")
+		assert.equal(error.reason.requestedSeq, 9n)
+	})
+
+	test("MaintenanceRequired carries the exact tail envelope measures", function maintenance() {
+		const decoded = logFailure("History.submit", {
+			source: "protocol",
+			reason: { _tag: "MaintenanceRequired", count: 4096n, bytes: 1048576n }
+		})
+		assert.ok(decoded instanceof ProtocolError)
+		assert.equal(decoded.code, "MaintenanceRequired")
+		assert.ok(decoded.reason._tag === "MaintenanceRequired")
+		assert.equal(decoded.reason.count, 4096n)
+		assert.equal(decoded.reason.bytes, 1048576n)
+	})
+
+	test("MaterializationStale surfaces the native recovery guidance as data", function stale() {
+		// Hydration routing decision (P04R cross-lane note 3): the native side
+		// owns hydration; this layer surfaces the typed refusal whose detail
+		// routes the caller to reopen (history open / tenant acquire runs
+		// recovery). No JS repair path exists to invoke.
+		const decoded = logFailure("History.snapshot", {
+			source: "protocol",
+			reason: {
+				_tag: "MaterializationStale",
+				detail: "local materialization is behind the checkpoint base; reopen the history to hydrate"
+			}
+		})
+		assert.ok(decoded instanceof ProtocolError)
+		assert.equal(decoded.code, "MaterializationStale")
+		assert.ok(decoded.reason._tag === "MaterializationStale")
+		assert.match(decoded.reason.detail, /reopen/)
 	})
 })
-describe("the refusal identity", function suite() {
-	test("refuse mints ErrRefused carrying its typed cause", function typedCause() {
-		const caught = Result.try(function refuseIt() {
-			return refuse({ kind: "BraidSet" }, "checkpoint braid set drifts from the derived braids")
-		})
-		assert.ok(Result.isFailure(caught), "refuse throws")
-		assert.ok(caught.failure instanceof ErrRefused, "the thrown chain names ErrRefused")
-		assert.equal(refusalOf(caught.failure)?.kind, "BraidSet")
+
+describe("logFailure", function suite() {
+	test("typed errors pass through untouched", function passthrough() {
+		const core = invalidInput("x")
+		assert.equal(logFailure("y", core), core)
+		const protocol = protocolError("x", "Corruption")
+		assert.equal(logFailure("y", protocol), protocol)
 	})
-	test("a bare bridge kind is a complete cause; the detail rides the message", function bareKind() {
-		const caught = Result.try(function refuseIt() {
-			return refuse({ kind: "TooManyRows" }, "op 0 relation Booking carries 70000 rows")
+
+	test("the protocol wire frame decodes to ProtocolError", function protocolFrame() {
+		const decoded = logFailure("History.open", {
+			source: "protocol",
+			reason: { _tag: "DatabaseMissing" }
 		})
-		assert.ok(Result.isFailure(caught), "refuse throws")
-		const cause = refusalOf(caught.failure)
-		assert.ok(cause !== undefined, "the refusal carries its cause")
-		assert.deepEqual(cause, { kind: "TooManyRows" })
-		assert.ok(caught.failure instanceof ErrRefused)
-		assert.ok(caught.failure.message.includes("op 0 relation Booking carries 70000 rows"))
+		assert.ok(decoded instanceof ProtocolError)
+		assert.equal(decoded.code, "DatabaseMissing")
+	})
+
+	test("the core wire frame decodes to the exact core DbError", function coreFrame() {
+		const decoded = logFailure("History.open", {
+			source: "core",
+			reason: { _tag: "DirectoryBusy" }
+		})
+		assert.ok(decoded instanceof DbError)
+		assert.equal(decoded.code, "DirectoryBusy")
+	})
+
+	test("an unknown local throw becomes core Internal, never a fabricated protocol outcome", function unknownThrow() {
+		const decoded = logFailure("History.open", new Error("boom"))
+		assert.ok(decoded instanceof DbError)
+		assert.equal(decoded.code, "Internal")
+	})
+
+	test("a malformed protocol reason does not forge a roster code", function malformed() {
+		const decoded = logFailure("History.open", {
+			source: "protocol",
+			reason: { _tag: "NotARealCode" }
+		})
+		assert.ok(decoded instanceof DbError)
+		assert.equal(decoded.code, "Internal")
 	})
 })
-describe("the store failure identity", function suite() {
-	test("store failure preserves its tagged identity and original provider cause", function identity() {
-		const vendor = new Error("EACCES: permission denied, open '/bucket/x'")
-		const wrapped = wrapStore(vendor, "putCreate prod/main/log/c00000000/0000000000000001")
-		assert.ok(wrapped instanceof ErrStore)
-		assert.equal(wrapped.cause, vendor)
-		assert.equal(wrapped._tag, "LogStoreFailure")
+
+describe("roster hygiene", function suite() {
+	test("the roster count is pinned for the native speller twin", function count() {
+		// The native Rust test include_str!s codes.ts and compares literal-
+		// for-literal in order; this pin records the agreed size (33 after
+		// MaterializationStale landed beside MaintenanceRequired).
+		assert.equal(protocolErrorCodes.length, 33)
+		assert.equal(protocolErrorCodes.indexOf("MaterializationStale"), protocolErrorCodes.indexOf("MaintenanceRequired") + 1)
 	})
-	test("the vendor error's message rides the detail verbatim", function vendorMessage() {
-		const vendor = new Error("ENOSPC: no space left on device")
-		const wrapped = wrapStore(vendor, "putSwap prod/main/manifest")
-		assert.ok(wrapped.message.includes("ENOSPC: no space left on device"))
-		assert.ok(wrapped.message.includes("putSwap prod/main/manifest"))
-		assert.ok(String(wrapped).includes("LogStoreFailure"), "the rendered error names the store channel")
-	})
-	test("an unrelated error never matches the store error class", function unrelated() {
-		assert.equal(new LogInputError({ message: "not a store failure" }) instanceof ErrStore, false)
-	})
-	test("non-Error provider causes remain intact", function unknownCause() {
-		const cause = { $metadata: { httpStatusCode: 503 }, marker: "retained" }
-		assert.equal(wrapStore(cause, "get").cause, cause)
-		assert.equal(wrapStore(undefined, "get").cause, undefined)
+
+	test("the roster is unique and never respells a core code", function hygiene() {
+		assert.equal(new Set(protocolErrorCodes).size, protocolErrorCodes.length)
+		const coreCodes = [
+			"RuntimeAlreadyLive",
+			"ForeignRuntime",
+			"ClosedHandle",
+			"SpentHandle",
+			"QueueFull",
+			"InvalidArgument",
+			"Internal",
+			"DirectoryBusy",
+			"InvalidPath",
+			"Io",
+			"ResourceLimit",
+			"Cancelled",
+			"DeadlineExceeded"
+		]
+		for (const code of coreCodes) {
+			assert.ok(!(protocolErrorCodes as readonly string[]).includes(code), `core code respelled: ${code}`)
+		}
 	})
 })

@@ -67,12 +67,13 @@ describe("the three class laws", function laws() {
 			{ mastered: str },
 			{ Failed: { mastered: "no" }, DirectPass: { mastered: "yes" } }
 		)
-		const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
+		const Certificate = relation("Certificate", { id: u64, grade: Grade.id })
 		const Mastery = schema("Mastery", { Grade, Certificate }, [
 			contained(on(Certificate, "grade"), on(Grade.where({ mastered: "yes" }), "id"))
 		])
 		const probeGrade: Equal<(typeof Mastery)["classes"]["Certificate"]["grade"], "Grade.id"> = true
-		const probeId: Equal<(typeof Mastery)["classes"]["Certificate"]["id"], "Certificate.id"> = true
+		// An id in no law is BARE now — the fresh generator authority is deleted.
+		const probeId: Equal<(typeof Mastery)["classes"]["Certificate"]["id"], undefined> = true
 		const probeColumn: Equal<(typeof Mastery)["classes"]["Grade"]["mastered"], undefined> = true
 		assert.ok(probeGrade && probeId && probeColumn)
 		assert.equal(Mastery.classes.Certificate?.grade, "Grade.id")
@@ -80,7 +81,7 @@ describe("the three class laws", function laws() {
 	})
 
 	test("the selected-mirrors shape (Calendar): the mirrors law types the source column with the target's class", function selectedMirrors() {
-		const Booking = relation("Booking", { id: u64.fresh, room: u64 })
+		const Booking = relation("Booking", { id: u64, room: u64 })
 		const CalendarEntry = relation("CalendarEntry", { booking: u64, label: str })
 		const Calendar = schema("Calendar", { Booking, CalendarEntry }, [
 			key(CalendarEntry, ["booking"]),
@@ -96,78 +97,79 @@ describe("the three class laws", function laws() {
 	})
 })
 
-describe("the one-generator wall — two mints cannot share a carrier (the re-homed cross-domain probes)", function wall() {
-	const Left = relation("Left", { id: u64.fresh, peer: u64 })
-	const Right = relation("Right", { id: u64.fresh })
+describe("the generator authority after the fresh deletion — closed ids are the ONLY generators", function wall() {
+	const Left = relation("Left", { id: u64, peer: u64 })
+	const Right = relation("Right", { id: u64 })
 	const Vocab = closed("Vocab", ["Alpha", "Beta"])
 
-	test("the compile verdict is named and self-locating: the colliding generators and the paired slots", function verdictShape() {
-		const direct = [contained(on(Left, "id"), on(Right, "id"))] as const
+	test("unifying two ordinary id columns is LAWFUL now — no mint, no wall; least member names the class", function idsUnify() {
+		// With fresh deleted, an ordinary id is an application-owned value
+		// column like any other: pairing two of them is one class, not a
+		// two-mints collision (E-NO-RESERVE: the database issues no identity).
+		const direct = [key(Right, ["id"]), contained(on(Left, "id"), on(Right, "id"))] as const
 		type Verdict = LawfulStatements<{ Left: typeof Left; Right: typeof Right }, typeof direct>
-		type Located = Verdict extends ClassWall<infer G, infer Chain> ? readonly [G, Chain] : never
-		const probeGenerators: Equal<Located[0], "Left.id" | "Right.id"> = true
-		const probeChain: Equal<Located[1], readonly ["Left.id ~ Right.id"]> = true
-		assert.ok(probeGenerators && probeChain)
-
-		const lawful = [contained(on(Left, "peer"), on(Right, "id"))] as const
-		type Lawful = LawfulStatements<{ Left: typeof Left; Right: typeof Right }, typeof lawful>
-		const probeLawful: Equal<Lawful, unknown> = true
+		const probeLawful: Equal<Verdict, unknown> = true
 		assert.ok(probeLawful)
+		type NoWall = Verdict extends ClassWall<infer _G, infer _Chain> ? true : false
+		const probeNoWall: Equal<NoWall, false> = true
+		assert.ok(probeNoWall)
+
+		const Unified = schema("Unified", { Left, Right }, [
+			key(Right, ["id"]),
+			contained(on(Left, "id"), on(Right, "id"))
+		])
+		assert.equal(Unified.classes.Left?.id, "Left.id", "least member in declaration order names the class")
+		assert.equal(Unified.classes.Right?.id, "Left.id")
 	})
 
-	test("a containment unifying two fresh coordinates refuses at both tiers", function containedWall() {
-		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — the ClassWall verdict: Left.id and Right.id are both generators
-			schema("Broken", { Left, Right }, [contained(on(Left, "id"), on(Right, "id"))])
-		}, /the statements unify two generators into one class — Left\.id and Right\.id \(two mints cannot share a carrier\) — Left\(id\) <= Right\(id\)/)
+	test("mirrors and capacity pairings over ordinary ids are lawful classes too", function pairingsUnify() {
+		const Mirrored = schema("Mirrored", { Left, Right }, [
+			key(Left, ["id"]),
+			key(Right, ["id"]),
+			mirrors(on(Left, "id"), on(Right, "id"))
+		])
+		assert.equal(Mirrored.classes.Left?.id, Mirrored.classes.Right?.id)
+		const Capped = schema("Capped", { Left, Right }, [
+			key(Left, ["id"]),
+			capacity(on(Left, "id"), { from: on(Right, "id"), within: within(0n, 3n) })
+		])
+		assert.equal(Capped.classes.Left?.id, Capped.classes.Right?.id)
 	})
 
-	test("a mirrors bijection unifying two fresh coordinates refuses at both tiers", function mirrorsWall() {
+	test("a closed relation's id stays a generator — a bare column never pairs it (the roster wall, at construction)", function closedWall() {
 		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — the ClassWall verdict through the == abbreviation
-			schema("Broken", { Left, Right }, [mirrors(on(Left, "id"), on(Right, "id"))])
-		}, /two mints cannot share a carrier.*Left\(id\) == Right\(id\)/)
-	})
-
-	test("a capacity statement's grouping join unifying two fresh coordinates refuses at both tiers", function capacityWall() {
-		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — the ClassWall verdict through the capacity statement's positionwise pairing
-			schema("Broken", { Left, Right }, [capacity(on(Left, "id"), within(0n, 3n), on(Right, "id"))])
-		}, /two mints cannot share a carrier.*Left\(id\) <=\{0\.\.3\} Right\(id\)/)
-	})
-
-	test("a closed relation's id is a generator too — unifying it with a fresh coordinate refuses (the roster wall fires first, at construction)", function closedWall() {
-		// through a closed id — the refusal moved earlier and warmer.
-		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — a fresh u64 mint never pairs the closed [id]: the roster rides the face shape
+			// @ts-expect-error — a bare u64 never pairs the closed [id]: the roster rides the face shape
 			schema("Broken", { Vocab, Left }, [contained(on(Left, "id"), on(Vocab, "id"))])
 		}, /Left\.id is a bare column but Vocab\.id is a Vocab reference — closedness rides the descriptor/)
 	})
 
-	test("the wall fires through a TRANSITIVE chain, naming the statement that closed it", function transitiveWall() {
+	test("a transitive chain over ordinary ids is one lawful class, not a wall", function transitiveChain() {
 		const Bridge = relation("Bridge", { ref: u64 })
-		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — the second containment merges the two generator components
-			schema("Broken", { Left, Right, Bridge }, [
-				contained(on(Bridge, "ref"), on(Left, "id")),
-				contained(on(Bridge, "ref"), on(Right, "id"))
-			])
-		}, /two mints cannot share a carrier.*Bridge\(ref\) <= Right\(id\)/)
+		const Chained = schema("Chained", { Left, Right, Bridge }, [
+			key(Left, ["id"]),
+			key(Right, ["id"]),
+			contained(on(Bridge, "ref"), on(Left, "id")),
+			contained(on(Bridge, "ref"), on(Right, "id"))
+		])
+		assert.equal(Chained.classes.Bridge?.ref, "Left.id", "the merged class is named by its least member")
+		assert.equal(Chained.classes.Right?.id, "Left.id")
 	})
 })
 
 describe("the runtime/type agreement and the wire", function agreement() {
 	function buildFixture() {
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
-		const Holder = relation("Holder", { id: u64.fresh, name: str })
-		const Account = relation("Account", { id: u64.fresh, holder: u64, kind: Vocab.id, note: str })
+		const Holder = relation("Holder", { id: u64, name: str })
+		const Account = relation("Account", { id: u64, holder: u64, kind: Vocab.id, note: str })
 		const Terms = relation("Terms", { account: u64 })
 		return schema("Agreement", { Vocab, Holder, Account, Terms }, [
+			key(Holder, ["id"]),
+			key(Account, ["id"]),
 			key(Terms, ["account"]),
 			contained(on(Account, "holder"), on(Holder, "id")),
 			contained(on(Account, "kind"), on(Vocab, "id")),
 			mirrors(on(Account, "id"), on(Terms, "account")),
-			capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
+			capacity(on(Holder, "id"), { from: on(Account, "holder"), within: within(0n, 3n) })
 		])
 	}
 
@@ -188,6 +190,8 @@ describe("the runtime/type agreement and the wire", function agreement() {
 	test("the manifest golden: statements in == statements out — nothing synthesized, order preserved, count equal", function manifestGolden() {
 		const fixture = buildFixture()
 		const written = [
+			"Holder(id) -> Holder",
+			"Account(id) -> Account",
 			"Terms(account) -> Terms",
 			"Account(holder) <= Holder(id)",
 			"Account(kind) <= Vocab(id)",

@@ -3,18 +3,19 @@
 use bumbledb::Id128;
 use bumbledb_log::history::command::{
     CommandMetadata, FAMILY, FrameError, LAYOUT, Limits, ReceiptMetadata, UnverifiedOutcome,
-    UnverifiedReceiptEnvelope, decode_command, decode_receipt, encode_command, encode_receipt,
+    UnverifiedReceiptEnvelope, decode_command, decode_receipt, encode_command,
+    encode_command_with_result, encode_receipt,
 };
 use bumbledb_log::history::{
     ChangeSummary, CommandDigest, CommandId, Condition, DatabaseId, DatabaseIdentity,
-    DecisionDigest, DecisionStamp, EmptyResult, IncarnationId, ReceiptEpoch, RequestId, SchemaId,
-    StateStamp,
+    DecisionDigest, DecisionStamp, IncarnationId, ReceiptEpoch, RequestId, SchemaId, StateStamp,
 };
 
 const LIMITS: Limits = Limits {
     envelope_bytes: 1024,
     change_bytes: 256,
     evidence_bytes: 256,
+    result_bytes: 64,
 };
 const HEADER: usize = FAMILY.len() + 3;
 
@@ -198,6 +199,7 @@ fn byte_caps_are_checked_before_allocation_and_result_is_not_an_opaque_escape() 
         envelope_bytes: bytes.len(),
         change_bytes: 4,
         evidence_bytes: 0,
+        result_bytes: 0,
     };
     assert!(decode_command(&bytes, exact).is_ok());
     assert_eq!(
@@ -227,13 +229,31 @@ fn byte_caps_are_checked_before_allocation_and_result_is_not_an_opaque_escape() 
         decode_command(&huge, LIMITS),
         Err(FrameError::LimitExceeded)
     );
+    // A nonempty declared result is bounded canonical metadata, not an opaque
+    // escape: claiming a result length with no bytes truncates, and a result
+    // over the cap refuses at encode.
     let mut nonempty = bytes;
     let last = nonempty.len() - 1;
     nonempty[last] = 1;
     assert_eq!(
         decode_command(&nonempty, LIMITS),
-        Err(FrameError::NonemptyResultUnsupported)
+        Err(FrameError::Truncated { at: nonempty.len() })
     );
+    assert_eq!(
+        encode_command_with_result(
+            metadata(),
+            &[0xde, 0xad, 0xbe, 0xef],
+            &[1; 65],
+            Limits {
+                result_bytes: 64,
+                ..LIMITS
+            },
+        ),
+        Err(FrameError::LimitExceeded)
+    );
+    let framed =
+        encode_command_with_result(metadata(), &[0xde, 0xad, 0xbe, 0xef], &[7; 8], LIMITS).unwrap();
+    assert_eq!(decode_command(&framed, LIMITS).unwrap().result, &[7; 8]);
     let mut wrong_incarnation = metadata();
     wrong_incarnation.condition = Condition::ExactState(StateStamp {
         incarnation: IncarnationId::from_core(Id128::from_bytes([9; 16])),
@@ -250,11 +270,9 @@ fn all_terminal_envelopes_roundtrip_without_claiming_core_evidence_is_verified()
     let outcomes = [
         UnverifiedOutcome::Committed {
             changed: ChangeSummary::new(2, 1).unwrap(),
-            result: EmptyResult,
+            result: &[],
         },
-        UnverifiedOutcome::NoChange {
-            result: EmptyResult,
-        },
+        UnverifiedOutcome::NoChange { result: &[] },
         UnverifiedOutcome::PreconditionFailed {
             expected: state(3),
             observed: state(4),
@@ -295,7 +313,7 @@ fn receipt_tags_counts_state_and_evidence_limits_are_strict() {
         metadata: receipt_metadata(),
         outcome: UnverifiedOutcome::Committed {
             changed: ChangeSummary::new(1, 0).unwrap(),
-            result: EmptyResult,
+            result: &[],
         },
     };
     let mut bytes = encode_receipt(receipt, LIMITS).unwrap();

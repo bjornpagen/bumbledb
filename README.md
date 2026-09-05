@@ -90,6 +90,23 @@ The Rust engine is tested on macOS ARM64 and Linux x86-64. The Apple Silicon
 build uses explicit vectorized kernels; other 64-bit targets use portable
 implementations of the same operations.
 
+## Packages and supported platforms
+
+- Rust: the `bumbledb` core crate (source consumers; crate publication is
+  not yet authorized). The internal log crate is not a public Rust API.
+- TypeScript: `@bjornpagen/bumbledb` (core) and `@bjornpagen/bumbledb-log`
+  (durable named commands, backup/restore, generated migrations), both
+  Effect-native with an exact `effect@4.0.0-rc.112` peer.
+- One prebuilt native package per platform, shared by both TS packages:
+  `darwin-arm64` (macOS 14+), `linux-arm64` and `linux-x64`
+  (glibc 2.34 / Amazon Linux 2023 floor). Node 24 is the deployment
+  baseline. Edge/browser/mobile runtimes are unsupported.
+
+See `docs/reference/packaging.md` for the staging/pin design and
+`docs/reference/deployment.md` for the deployment contract and runbooks.
+The worked application example lives in `examples/notes`; installed-
+consumer syntax fixtures in `examples/consumers`.
+
 ## What the database provides
 
 Bumbledb is intended for normalized, read-heavy application data: ledgers,

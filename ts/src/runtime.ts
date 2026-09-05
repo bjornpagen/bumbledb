@@ -89,7 +89,13 @@ function failure(operation: string, cause: unknown): DbError {
 }
 
 function closeReport(operation: string, report: CloseWire): CloseReport {
-	return report.kind === "failed" ? { kind: "failed", error: dbError(operation, { _tag: "QueueFull" }) } : report
+	// A payload-less native "failed" drain (cleanup capacity exhausted, or
+	// owner teardown failed) is bounded diagnostic data per chapter 35's
+	// CloseReport policy: it decodes as the core `Internal` reason — the
+	// same mapping the log bridge applies, so one wire arm has one meaning.
+	// It is deliberately NOT `QueueFull`: a failed drain is never retryable
+	// submit backpressure.
+	return report.kind === "failed" ? { kind: "failed", error: dbError(operation, { _tag: "Internal" }) } : report
 }
 
 function drain(operation: string, start: (callback: (report: CloseWire) => void) => void): Effect.Effect<CloseReport> {

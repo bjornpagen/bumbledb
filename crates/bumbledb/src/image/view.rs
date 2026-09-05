@@ -11,16 +11,12 @@ mod eval;
 
 pub use apply::apply;
 pub(crate) use eval::{
-    Loaded, OperandAddr, Operands, holds, is_prepare_resolvable, render_filter, resolve_filter_into,
+    DENSE_NEG_INF_KEY, ImageRow, Loaded, OperandAddr, Operands, dense_probe_word,
+    element_probe_word, holds, is_prepare_resolvable, render_filter, resolve_filter_into,
 };
 
 #[cfg(test)]
-mod build_with_filters;
-#[cfg(test)]
 mod positions;
-
-#[cfg(test)]
-pub use build_with_filters::build_with_filters;
 
 /// The constant side of a lowered filter. `Word`/`Byte` are column form —
 /// the byte-order-normalized word for 8-byte columns, the raw byte for
@@ -122,11 +118,18 @@ pub enum FilterPredicate {
     PointIn {
         field: OperandAddr,
         point: ViewWordSource,
+        /// The field's element domain is the dense F64 line: nonfinite
+        /// probe words are ordinary NONMATCHES (chapter 10 §2), guarded
+        /// at evaluation (`eval::dense_probe_word`) — word order alone
+        /// would wrongly admit `-Infinity` into a left ray.
+        dense: bool,
     },
 
     AnyPointIn {
         field: OperandAddr,
         set: SetConst,
+        /// As [`FilterPredicate::PointIn::dense`].
+        dense: bool,
     },
 
     FieldsAllen {
@@ -144,11 +147,16 @@ pub enum FilterPredicate {
     FieldsPointIn {
         interval: OperandAddr,
         point: OperandAddr,
+        /// As [`FilterPredicate::PointIn::dense`].
+        dense: bool,
     },
 
     FieldWithin {
         field: OperandAddr,
         outer: IntervalConst,
+        /// As [`FilterPredicate::PointIn::dense`]: the scalar field is
+        /// F64, so a stored nonfinite value never lies within any range.
+        dense: bool,
     },
 }
 

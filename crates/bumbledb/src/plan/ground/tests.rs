@@ -7,7 +7,7 @@ use crate::plan::planner::{OccStats, plan};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    FieldDescriptor, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
     StatementDescriptor, ValueType,
 };
 
@@ -15,7 +15,6 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
     }
 }
 
@@ -23,7 +22,6 @@ fn fresh(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }
 }
 

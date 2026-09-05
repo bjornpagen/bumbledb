@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { LawScale, pinBare, pinChain, pinClosed, pinGenerator, pinVocab } from "#test/fixtures/law-scale.ts"
+import { LawScale, pinBare, pinChain, pinClosed, pinNoGenerator, pinVocab } from "#test/fixtures/law-scale.ts"
 
 test("the primer-scale fixture constructs and both tiers agree at scale", function scaleGate() {
-	assert.ok(pinChain && pinVocab && pinGenerator && pinClosed && pinBare)
+	assert.ok(pinChain && pinVocab && pinNoGenerator && pinClosed && pinBare)
 
 	assert.equal(Object.keys(LawScale.relations).length, 40, "40 relations")
 	assert.equal(LawScale.statements.length, 155, "155 statements — statements in == statements out")

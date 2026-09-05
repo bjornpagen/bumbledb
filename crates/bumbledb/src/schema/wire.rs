@@ -27,17 +27,17 @@ wire_tag!(ValueTypeTag {
     Interval = 6,
     FixedInterval = 7,
     F64 = 8,
+    Id128 = 9,
 });
 
 wire_tag!(IntervalElementTag {
     U64 = 0,
     I64 = 1,
+    F64 = 2,
 });
 
-wire_tag!(GenerationTag {
-    None = 0,
-    Fresh = 1,
-});
+// GenerationTag is deleted with the fresh machinery: fields carry no
+// generation attribute in the v6 canonical stream (ENG-004/ENG-007).
 
 wire_tag!(ClosednessTag {
     Ordinary = 0,

@@ -54,12 +54,17 @@ function parseFind(context: string, find: FindTermIr): void {
 			throw new AuthoringError({ message: `${context}: ${find.kind} requires over` })
 		}
 	}
+	if (find.kind === "compute" && !("expr" in raw)) {
+		throw new AuthoringError({ message: `${context}: compute requires expr` })
+	}
 }
 
-function findFamily(find: FindTermIr): "var" | "aggregate" {
+function findFamily(find: FindTermIr): "var" | "aggregate" | "compute" {
 	switch (find.kind) {
 		case "var":
 			return "var"
+		case "compute":
+			return "compute"
 		case "count":
 		case "pack":
 		case "aggregate":

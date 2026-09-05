@@ -18,4 +18,5 @@ pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
         (child) | parent(child, parent: p);
     })
+    .into_query()
 }

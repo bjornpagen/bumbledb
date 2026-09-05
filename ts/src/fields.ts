@@ -1,17 +1,20 @@
 import { regex } from "arkregex"
+import { Result } from "effect"
 import { AuthoringError } from "#errors.ts"
+import type { Id128 } from "#id128.ts"
+import { Id128 as Id128Value } from "#id128.ts"
+import { DbError } from "#runtime-errors.ts"
 import type { LiteralSpec } from "#spec.ts"
 
 const INTEGER_INDEX_NAME = regex("^(?:0|[1-9][0-9]*)$")
 
 /**
- * A half-open interval `[start, end)` as a plain value object — the ONE
- * interval value type, whatever the field's element type or width label.
- * The ray is representable (`end` = the element type's MAX_END); widths
- * and signedness are NOT modeled on the value — they are descriptor-type
- * labels the engine judges at the typed write boundary. Interval fields
- * derive no order (the Rust refusal,,
- * so no comparators exist on the value type.
+ * A half-open integer interval `[start, end)` as a plain value object —
+ * the ONE discrete interval value type, whatever the field's element type
+ * or width label. The ray is representable (`end` = the element type's
+ * MAX_END); widths and signedness are NOT modeled on the value — they are
+ * descriptor-type labels the engine judges at the typed write boundary.
+ * Interval fields derive no order, so no comparators exist on the value.
  */
 interface IntervalValue {
 	readonly start: bigint
@@ -19,19 +22,55 @@ interface IntervalValue {
 }
 
 /**
- * Constructs an interval literal — the `start..end` spelling. Half-open
- * and nonempty by construction: `start >= end` is a typed construction
- * error (parse, don't validate — the same invariant Rust's
- * `Interval::new` enforces at the host boundary). The value is bare and
- * structural: it is assignable to any interval field.
+ * A half-open dense float interval `[start, end)` as a plain value object
+ * (chapter 11): two canonical binary64 bounds on the dense numeric line.
+ * NaN is never an endpoint, signed zero is normalized at the checked
+ * constructor and again by the native boundary, and strict `start < end`
+ * makes empty spans unrepresentable through {@link span}. Infinite bounds
+ * denote a missing bound, not a member point.
  */
-function span(start: bigint, end: bigint): IntervalValue {
-	if (start >= end) {
-		throw new AuthoringError({
-			message: `interval is half-open and nonempty: start must be < end (got ${start}..${end})`
-		})
+interface FloatIntervalValue {
+	readonly start: number
+	readonly end: number
+}
+
+/**
+ * Constructs a checked interval literal — the `start..end` spelling.
+ * Half-open and nonempty by construction. This is one of chapter 35's
+ * "checked small interval constructors": genuinely fallible pure parsing
+ * returns `Result` (use `Effect.fromResult(span(...))` inside a generator),
+ * never hidden I/O and never a thrown domain outcome.
+ *
+ * Two element domains, selected by argument type: `span(0n, 60n)` is a
+ * discrete integer interval; `span(0.5, 1.5)` is a dense float interval
+ * with canonical endpoints (NaN refused, `-0` normalized to `+0`,
+ * `-Infinity` legal only as the lower bound and `+Infinity` only as the
+ * upper bound — both enforced by strict numeric `start < end`).
+ */
+function span(start: bigint, end: bigint): Result.Result<IntervalValue, DbError>
+function span(start: number, end: number): Result.Result<FloatIntervalValue, DbError>
+function span(
+	start: bigint | number,
+	end: bigint | number
+): Result.Result<IntervalValue, DbError> | Result.Result<FloatIntervalValue, DbError> {
+	if (typeof start === "bigint" && typeof end === "bigint") {
+		if (start >= end) {
+			return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
+		}
+		return Result.succeed(Object.freeze({ start, end }))
 	}
-	return Object.freeze({ start, end })
+	if (typeof start === "number" && typeof end === "number") {
+		if (Number.isNaN(start) || Number.isNaN(end)) {
+			return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
+		}
+		const lo = Object.is(start, -0) ? 0 : start
+		const hi = Object.is(end, -0) ? 0 : end
+		if (!(lo < hi)) {
+			return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
+		}
+		return Result.succeed(Object.freeze({ start: lo, end: hi }))
+	}
+	return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
 }
 
 /**
@@ -58,14 +97,8 @@ interface StrField {
 	readonly kind: "str"
 }
 
-interface FreshU64Field {
-	readonly kind: "u64"
-	readonly fresh: true
-}
-
 interface U64Field {
 	readonly kind: "u64"
-	readonly fresh: FreshU64Field
 }
 
 interface I64Field {
@@ -76,13 +109,25 @@ interface F64Field {
 	readonly kind: "f64"
 }
 
+/**
+ * The application-owned 128-bit identity scalar (chapter 30/34): sixteen
+ * exact bytes, spelled as the canonical 32-lowercase-hex {@link Id128}
+ * host value. There is no `fresh` mark anywhere: the database issues no
+ * identity, and key laws are declared statements.
+ */
+interface Id128Field {
+	readonly kind: "id128"
+}
+
 interface BytesField<Width extends number = number> {
 	readonly kind: "bytes"
 	readonly width: Width
 }
 
+type IntervalElementKind = "u64" | "i64" | "f64"
+
 interface IntervalField<
-	Element extends "u64" | "i64" = "u64" | "i64",
+	Element extends IntervalElementKind = IntervalElementKind,
 	Width extends bigint | undefined = bigint | undefined
 > {
 	readonly kind: "interval"
@@ -102,9 +147,9 @@ type AnyField =
 	| BoolField
 	| StrField
 	| U64Field
-	| FreshU64Field
 	| I64Field
 	| F64Field
+	| Id128Field
 	| BytesField
 	| IntervalField
 	| AnyClosedIdField
@@ -140,15 +185,19 @@ type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 					? bigint
 					: F extends { readonly kind: "f64" }
 						? number
-						: F extends { readonly kind: "bytes" }
-							? Uint8Array
-							: F extends { readonly kind: "interval" }
-								? IntervalValue
-								: never
+						: F extends { readonly kind: "id128" }
+							? Id128
+							: F extends { readonly kind: "bytes" }
+								? Uint8Array
+								: F extends { readonly kind: "interval"; readonly element: "f64" }
+									? FloatIntervalValue
+									: F extends { readonly kind: "interval" }
+										? IntervalValue
+										: never
 
 /**
  * The typed shape refusal shared by every literal machine — the selection
- * lowering here, the row marshaler (`marshal.ts`), and the query-literal
+ * lowering here, the row codec (`rows.ts`), and the query-literal
  * tagger (`query/lower.ts`) all throw through this ONE voice; reached only
  * through ill-typed input (the well-typed surfaces make it unrepresentable).
  */
@@ -205,6 +254,17 @@ function isIntervalValue(value: unknown): value is IntervalValue {
 	)
 }
 
+function isFloatIntervalValue(value: unknown): value is FloatIntervalValue {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"start" in value &&
+		"end" in value &&
+		typeof value.start === "number" &&
+		typeof value.end === "number"
+	)
+}
+
 function handleLiteral(closed: AnyClosedRoster, value: unknown): LiteralSpec {
 	if (typeof value !== "string") {
 		throw literalShapeError("selection literal", `a ${closed.name} handle name (string)`, value)
@@ -217,7 +277,25 @@ function handleLiteral(closed: AnyClosedRoster, value: unknown): LiteralSpec {
 	return { kind: "handle", handle: value }
 }
 
-function intervalLiteral(element: "u64" | "i64", value: unknown): LiteralSpec {
+function intervalLiteral(element: IntervalElementKind, value: unknown): LiteralSpec {
+	if (element === "f64") {
+		if (!isFloatIntervalValue(value)) {
+			throw literalShapeError("selection literal", "float interval ({ start, end } numbers)", value)
+		}
+		if (Number.isNaN(value.start) || Number.isNaN(value.end) || !(value.start < value.end)) {
+			throw new AuthoringError({
+				message: "selection literal: a float interval is half-open and nonempty with non-NaN canonical endpoints"
+			})
+		}
+		return {
+			kind: "value",
+			value: {
+				kind: "intervalF64",
+				start: Object.is(value.start, -0) ? 0 : value.start,
+				end: Object.is(value.end, -0) ? 0 : value.end
+			}
+		}
+	}
 	if (!isIntervalValue(value)) {
 		throw literalShapeError("selection literal", "interval ({ start, end } bigints)", value)
 	}
@@ -249,14 +327,15 @@ function assertDeclarationRecord(where: string, record: object): void {
 	}
 }
 
-const freshU64: FreshU64Field = Object.freeze({ kind: "u64", fresh: true })
-
-const u64: U64Field = Object.freeze({ kind: "u64", fresh: freshU64 })
+const u64: U64Field = Object.freeze({ kind: "u64" })
 
 const i64: I64Field = Object.freeze({ kind: "i64" })
 
 /** Binary64. The native value boundary canonicalizes NaN and signed zero. */
 const f64: F64Field = Object.freeze({ kind: "f64" })
+
+/** The application-owned 128-bit identity scalar; no fresh mark exists. */
+const id128: Id128Field = Object.freeze({ kind: "id128" })
 
 const bool: BoolField = Object.freeze({ kind: "bool" })
 
@@ -271,16 +350,27 @@ function bytes<const Width extends number>(width: Width): BytesField<Width> {
 	return Object.freeze({ kind: "bytes", width })
 }
 
-function interval<Element extends U64Field | I64Field>(element: Element): IntervalField<Element["kind"], undefined>
+function interval<Element extends U64Field | I64Field | F64Field>(
+	element: Element
+): IntervalField<Element["kind"], undefined>
 function interval<Element extends U64Field | I64Field, const Width extends bigint>(
 	element: Element,
 	width: Width
 ): IntervalField<Element["kind"], Width>
-function interval(element: U64Field | I64Field, width?: bigint): IntervalField<"u64" | "i64", bigint | undefined> {
+function interval(
+	element: U64Field | I64Field | F64Field,
+	width?: bigint
+): IntervalField<IntervalElementKind, bigint | undefined> {
 	const elementKind = element.kind
-	if (elementKind !== "u64" && elementKind !== "i64") {
+	if (elementKind !== "u64" && elementKind !== "i64" && elementKind !== "f64") {
 		throw new AuthoringError({
-			message: `interval element must be the u64 or i64 field constructor (got ${elementKind})`
+			message: `interval element must be the u64, i64 or f64 field constructor (got ${elementKind})`
+		})
+	}
+	if (width !== undefined && elementKind === "f64") {
+		throw new AuthoringError({
+			message:
+				"interval(f64) takes no width — a fixed-width float interval is unrepresentable (rounded start + width is not an exact fixed length on the dense line); applications supply two checked bounds"
 		})
 	}
 	if (width !== undefined && width < 1n) {
@@ -331,6 +421,12 @@ function literalOf(field: AnyField, value: unknown): LiteralSpec {
 			}
 			return { kind: "value", value: { kind: "f64", value } }
 		}
+		case "id128": {
+			if (!Id128Value.isId128(value)) {
+				throw literalShapeError("selection literal", "an Id128 (32 lowercase hex characters)", value)
+			}
+			return { kind: "value", value: { kind: "id128", value } }
+		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
 				throw literalShapeError("selection literal", "Uint8Array", value)
@@ -352,9 +448,11 @@ export type {
 	ClosedIdField,
 	ClosedRoster,
 	F64Field,
-	FreshU64Field,
+	FloatIntervalValue,
 	I64Field,
+	Id128Field,
 	Infer,
+	IntervalElementKind,
 	IntervalField,
 	IntervalValue,
 	SignatureOf,
@@ -368,7 +466,9 @@ export {
 	bytes,
 	f64,
 	i64,
+	id128,
 	interval,
+	isFloatIntervalValue,
 	isIntervalValue,
 	literalOf,
 	literalShapeError,

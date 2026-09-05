@@ -7,23 +7,6 @@ use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, Po
 
 use super::ops::PostingBody;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SqliteSync {
-    Full,
-
-    Nosync,
-}
-
-impl SqliteSync {
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Nosync => "nosync",
-        }
-    }
-}
-
 pub struct OursLane {
     pub db: Db<Ledger>,
 
@@ -65,17 +48,12 @@ pub fn create_ours(
 /// # Errors
 /// # Panics
 /// Only on programmer-invariant violations (WAL refused; corpus values
-pub fn create_sqlite(
-    path: &Path,
-    r#gen: GenConfig,
-    sync: SqliteSync,
-) -> Result<rusqlite::Connection, String> {
+pub fn create_sqlite(path: &Path, r#gen: GenConfig) -> Result<rusqlite::Connection, String> {
+    // FULL sync always (ENG-008): the weakened sqlite mirror existed only
+    // to pair the deleted ours-side no-sync lane; an unpaired OFF mirror
+    // would be an unfair twin, so it went with the lane.
     let conn = rusqlite::Connection::open(path).map_err(|e| format!("churn mirror open: {e}"))?;
     crate::corpus::configure_sqlite(&conn).map_err(|e| format!("churn mirror configure: {e}"))?;
-    if sync == SqliteSync::Nosync {
-        conn.pragma_update(None, "synchronous", "OFF")
-            .map_err(|e| format!("churn mirror nosync pragma: {e}"))?;
-    }
     for statement in crate::sqlmap::ddl(crate::schema::schema()) {
         conn.execute(&statement, [])
             .map_err(|e| format!("churn mirror ddl: {e}"))?;
@@ -118,15 +96,17 @@ pub fn posting_values(p: &Posting) -> Vec<Value> {
 /// delete aborts the whole transaction inside the closure — the
 /// `writebench::posting_swap` in-closure sentinel-abort precedent, so a cycle
 /// is delete-bearing by contract and a refusal commits nothing), then every
-/// body mints a fresh id and inserts.
+/// body takes the next application-owned id and inserts (E-NO-RESERVE: the
+/// lane's `last_minted` cursor IS the id authority; it advances only on a
+/// committed cycle, so a refusal consumes nothing and the burn replays
+/// exactly).
 /// # Errors
-/// # Panics
-/// On a broken monotone-burn invariant: the minted ids must be strictly
 pub fn apply_ours(
     lane: &mut OursLane,
     removals: &[Posting],
     bodies: &[PostingBody],
 ) -> Result<Vec<Posting>, String> {
+    let base = lane.last_minted + 1;
     let added = lane
         .db
         .write(|tx| {
@@ -138,8 +118,8 @@ pub fn apply_ours(
                 }
             }
             let mut added = Vec::with_capacity(bodies.len());
-            for body in bodies {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+            for (offset, body) in bodies.iter().enumerate() {
+                let id = PostingId(base + offset as u64);
                 let posting = Posting {
                     id,
                     entry: JournalEntryId(body.entry),
@@ -156,18 +136,11 @@ pub fn apply_ours(
         .map_err(|e| format!("churn cycle: {e:?}"))?
         .unwrap()
         .value;
-    // The monotone-burn invariant, loud: strictly ascending mints, the
-
-    let mut watermark = lane.last_minted;
-    for posting in &added {
-        assert!(
-            posting.id.0 > watermark,
-            "the monotone-burn invariant broke: minted id {} does not exceed {watermark}",
-            posting.id.0
-        );
-        watermark = posting.id.0;
+    // Monotone by construction: the cursor only moves forward, and only on
+    // a committed cycle.
+    if let Some(last) = added.last() {
+        lane.last_minted = last.id.0;
     }
-    lane.last_minted = watermark;
     Ok(added)
 }
 

@@ -3,43 +3,55 @@ import { Result } from "effect"
 import { NativeLoadError, NativeOperationError, NativeReportedError } from "#errors.ts"
 import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
 
-/** The opaque database handle (owns the LMDB environment + exclusive lock). */
+/**
+ * The opaque managed database capability. The native runtime registry —
+ * not this wrapper — owns the LMDB environment, the kernel directory
+ * lock and every session; a retained wrapper after a completed close is
+ * inert. Minted only by the managed handshake
+ * (`runtimeDirectoryDbOpen` → `runtimeDbTake` in #runtime-native.ts).
+ */
 type DbHandle = { readonly __brand: "bumbledb.db" }
 
-type InstanceHandle = { readonly __brand: "bumbledb.instance" }
-
+/** Owned generation evidence (a value clone, never a borrow). */
 type WitnessHandle = { readonly __brand: "bumbledb.witness" }
 
 type BuilderHandle = { readonly __brand: "bumbledb.builder" }
 
 type OwnedHandle = { readonly __brand: "bumbledb.owned" }
 
-type TxHandle = { readonly __brand: "bumbledb.tx" }
-
-type PreparedHandle = { readonly __brand: "bumbledb.prepared" }
-
 /**
- * The sealed per-theory log codec (`crates/bumbledb-log`): descriptor
- * parsed once — vocabulary + braid map — beside the fingerprint the wire
- * pins. Immutable plain data; no lifecycle verbs.
+ * The sealed per-theory log schema (`crates/bumbledb-log` successor
+ * lanes): the validated core schema plus its fingerprint, shared by the
+ * command/decision grammar. Immutable plain data; no lifecycle verbs.
  */
-type LogCodecHandle = { readonly __brand: "bumbledb.logCodec" }
+type LogSchemaHandle = { readonly __brand: "bumbledb.logSchema" }
 
 interface WireMutationReport {
 	readonly submitted: bigint
 	readonly changed: bigint
 }
 
-type WireFreshRange =
-	| { readonly empty: true }
-	| { readonly empty: false; readonly start: bigint; readonly endExclusive: bigint }
-
+/** A discrete half-open interval `[start, end)` over u64/i64. */
 interface IntervalValue {
 	readonly start: bigint
 	readonly end: bigint
 }
 
-type FactValue = boolean | bigint | number | string | Uint8Array | IntervalValue
+/**
+ * A dense-line half-open interval with canonical binary64 endpoints:
+ * NaN-free, strictly ordered; ±Infinity are unbounded endpoints.
+ */
+interface F64IntervalValue {
+	readonly start: number
+	readonly end: number
+}
+
+/**
+ * One marshalled cell. An application-owned Id128 crosses as its
+ * canonical 32-lowercase-hex string (chapter 32); there is no fresh
+ * range, reservation counter or issuance value anywhere on this wire.
+ */
+type FactValue = boolean | bigint | number | string | Uint8Array | IntervalValue | F64IntervalValue
 
 type TaggedValue = ValueSpec
 
@@ -71,9 +83,32 @@ interface RecIr {
 	readonly rec: readonly RuleIr[]
 }
 
-type HeadTermIr = { readonly kind: "var" } | { readonly kind: "aggregate"; readonly op: HeadOpIr }
+type HeadTermIr =
+	| { readonly kind: "var" }
+	| { readonly kind: "compute" }
+	| { readonly kind: "aggregate"; readonly op: HeadOpIr }
 
 type HeadOpIr = "sum" | "mean" | "min" | "max" | "count" | "pack"
+
+/**
+ * The computed-find scalar expression (C05 `FindTerm::Compute(ScalarExpr)`):
+ * exactly the frozen core roster, spelled as the migration plan JSON spells
+ * the same expressions (one grammar, no second evaluator). `var` binds a
+ * rule variable ordinal on this lane.
+ */
+type NumericCastIr = "toF64" | "toF64Exact" | "toI64Exact" | "toU64Exact"
+
+type ScalarExprIr =
+	| { readonly kind: "var"; readonly var: number }
+	| { readonly kind: "literal"; readonly value: TaggedValue }
+	| { readonly kind: "negate"; readonly expr: ScalarExprIr }
+	| { readonly kind: "add"; readonly left: ScalarExprIr; readonly right: ScalarExprIr }
+	| { readonly kind: "subtract"; readonly left: ScalarExprIr; readonly right: ScalarExprIr }
+	| { readonly kind: "multiply"; readonly left: ScalarExprIr; readonly right: ScalarExprIr }
+	| { readonly kind: "divide"; readonly left: ScalarExprIr; readonly right: ScalarExprIr }
+	| { readonly kind: "cast"; readonly cast: NumericCastIr; readonly expr: ScalarExprIr }
+	| { readonly kind: "isNaN"; readonly expr: ScalarExprIr }
+	| { readonly kind: "isFinite"; readonly expr: ScalarExprIr }
 
 interface RuleIr {
 	readonly finds: readonly FindTermIr[]
@@ -90,6 +125,7 @@ type FoldOpIr =
 
 type FindTermIr =
 	| { readonly kind: "var"; readonly var: number }
+	| { readonly kind: "compute"; readonly expr: ScalarExprIr }
 	| { readonly kind: "count" }
 	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
 	| { readonly kind: "pack"; readonly over: number }
@@ -144,151 +180,182 @@ type ConditionTreeIr =
 
 type StatementKindTag = "functionality" | "containment" | "capacity"
 
+// ---------------------------------------------------------------------------
+// Successor log grammar wire (C06 through the C09 bridge). The 0.x
+// braids/codec/manifest/sidecar lanes and their mint tables are deleted.
+// ---------------------------------------------------------------------------
+
 /**
- * A log grammar lane's domain outcome: the payload, or a refusal row
- * whose `kind` is an identity string spelled exactly as
- * `crates/bumbledb-log` spells it (the `log-identities.json` mint table).
+ * A grammar lane's domain outcome: the payload, or a refusal row whose
+ * `kind` is an identity string spelled exactly as `bumbledb-log`'s
+ * identities emitter spells it (`logIdentities()` / log-identities.json).
  */
 type LogResult<T, K extends string> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly kind: K; readonly message: string }
 
-/** `DecodeError::identity` — the batch decode refusal identities. */
-type LogBatchDecodeKind =
-	| "Truncated"
-	| "BadMagic"
-	| "Version"
-	| "Flags"
-	| "FingerprintMismatch"
-	| "UnknownBraid"
-	| "UnknownOpKind"
-	| "UnknownRelation"
-	| "ClosedRelation"
-	| "OpRelationOutsideBraid"
-	| "TagMismatch"
-	| "BoolByte"
-	| "NonCanonicalF64"
-	| "InvalidUtf8"
-	| "EmptyInterval"
-	| "IntervalOverflow"
-	| "TrailingBytes"
+/** `FrameError` kinds (the `frame` identity family). */
+type LogFrameKind =
+	| "limitExceeded"
+	| "lengthOverflow"
+	| "allocation"
+	| "truncated"
+	| "family"
+	| "layout"
+	| "kind"
+	| "tag"
+	| "invalidEpoch"
+	| "stateIdentityMismatch"
+	| "emptyChangeSummary"
+	| "emptyEvidence"
+	| "invalidTerminalStamp"
+	| "invalidPreconditionEvidence"
+	| "invalidPolicy"
+	| "invalidSequence"
+	| "invalidCount"
+	| "trailingBytes"
 
-/** The batch encode refusal identities (`EncodeError`, bridge-spelled). */
-type LogBatchEncodeKind =
-	| "FingerprintMismatch"
-	| "UnknownBraid"
-	| "UnknownRelation"
-	| "ClosedRelation"
-	| "OpRelationOutsideBraid"
-	| "Arity"
-	| "Value"
-	| "TooManyOps"
-	| "TooManyRows"
+/** Receipt-row kinds: the frame family plus the foreign-scope refusal. */
+type LogReceiptKind = LogFrameKind | "foreignRow"
 
-/** `ManifestError::identity`. */
-type LogManifestKind = "Malformed" | "Version"
+/** Command-lane kinds: frame family plus the two command-only arms. */
+type LogCommandKind = LogFrameKind | "core" | "schemaMismatch"
 
-/** `CheckpointError::identity`. */
-type LogCheckpointKind = "Malformed" | "Version" | "Overflow" | "UnknownBraid" | "BraidSet"
+/** Chain-step refusals from the decode-and-verify lane. */
+type LogChainKind = "wrongParent" | "wrongSequence"
 
-/** `SidecarError::identity`. */
-type LogSidecarKind = "Malformed" | "Version" | "UnknownBraid" | "Overflow"
-
-/**
- * The batch header both directions. The codec handle is the fingerprint
- * authority — the wire never carries one. `braid` is the raw braid id
- * (the smallest relation id in its component).
- */
-interface LogBatchHeader {
-	readonly braid: number
-	readonly braidGen: bigint
-	readonly prev: Uint8Array
-	readonly writer: bigint
-	readonly timestamp: bigint
+/** The complete database scope of every command/receipt/decision. */
+interface LogIdentity {
+	/** Application-owned Id128, canonical 32-lowercase-hex. */
+	readonly databaseId: string
+	readonly incarnationId: string
+	/** The core schema fingerprint, 64 lowercase hex characters. */
+	readonly schemaId: string
 }
 
-type LogOpKind = "insert" | "delete"
-
-/**
- * One op inbound to `logEncodeBatch`: rows carry TAGGED values (the
- * query-literal lane's inbound spelling) so the bridge stays layout-blind
- * and the codec core is the one judge of every cell.
- */
-interface LogOpIn {
-	readonly kind: LogOpKind
-	readonly relation: number
-	readonly rows: ReadonlyArray<readonly TaggedValue[]>
+interface LogStateStamp {
+	readonly incarnation: string
+	readonly dataRevision: bigint
 }
 
-/** One decoded op: rows cross exactly as the engine's `ValueOut` walk. */
-interface LogOpOut {
-	readonly kind: LogOpKind
-	readonly relation: number
-	readonly rows: FactValue[][]
-}
-
-interface LogBatch {
-	readonly header: LogBatchHeader
-	readonly ops: readonly LogOpOut[]
-}
-
-interface LogBraidComponent {
-	readonly braid: number
-	readonly relations: readonly number[]
-}
-
-/** The braid decomposition + serial-at statement ids of one theory. */
-interface LogBraids {
-	readonly components: readonly LogBraidComponent[]
-	readonly serialAt: readonly number[]
-}
-
-/** The manifest document: an absent `checkpoint` is the store-birth null arm. */
-interface LogManifestDoc {
-	readonly fingerprint: Uint8Array
-	readonly checkpoint?: Uint8Array
-}
-
-interface LogCheckpointHead {
-	readonly braid: number
-	readonly g: bigint
+interface LogDecisionStamp {
+	readonly seq: bigint
 	readonly hash: Uint8Array
-	readonly ts: bigint
 }
 
-/** The `ckpt/{digest}` document. Derived facts (digest, vector sum) stay derived. */
-interface LogCheckpointDoc {
-	readonly braids: readonly LogCheckpointHead[]
-	readonly catalog: Uint8Array
-	readonly writer: bigint
-	readonly prev?: Uint8Array
+type LogCondition =
+	| { readonly kind: "unconditional" }
+	| { readonly kind: "exactState"; readonly state: LogStateStamp }
+
+interface LogCommandId {
+	readonly receiptEpoch: bigint
+	readonly requestId: string
 }
 
-interface LogChainEntry {
-	readonly braid: number
-	readonly g: bigint
-	readonly prev: Uint8Array
-	readonly ts: bigint
+interface LogCommandMetadata {
+	readonly identity: LogIdentity
+	readonly id: LogCommandId
+	readonly condition: LogCondition
 }
 
-interface LogPendingBatch {
-	readonly braid: number
-	readonly slot: bigint
-	readonly bytes: Uint8Array
+interface LogCommandRef {
+	readonly identity: LogIdentity
+	readonly receiptEpoch: bigint
+	readonly requestId: string
+	readonly digest: Uint8Array
 }
 
-/** The chain sidecar document: an absent `pending` is the `Settled` arm. */
-interface LogChain {
-	readonly entries: readonly LogChainEntry[]
-	readonly pending?: LogPendingBatch
+type LogOutcomeWire =
+	| { readonly kind: "committed"; readonly added: bigint; readonly removed: bigint; readonly result?: Uint8Array }
+	| { readonly kind: "noChange"; readonly result?: Uint8Array }
+	| { readonly kind: "preconditionFailed"; readonly expected: LogStateStamp; readonly observed: LogStateStamp }
+	| { readonly kind: "invariantRejected"; readonly evidence: Uint8Array }
+
+interface LogReceipt {
+	readonly command: LogCommandRef
+	readonly decisionAt: LogDecisionStamp
+	readonly stateAt: LogStateStamp
+	readonly outcome: LogOutcomeWire
+}
+
+interface LogLimits {
+	readonly envelopeBytes: bigint
+	readonly changeBytes: bigint
+	readonly evidenceBytes: bigint
+	readonly resultBytes: bigint
+}
+
+type LogAccess =
+	| { readonly kind: "active" }
+	| {
+			readonly kind: "frozen"
+			readonly operation: string
+			readonly intent:
+				| { readonly kind: "erasure" }
+				| { readonly kind: "migration"; readonly planSetDigest: Uint8Array; readonly target: string }
+	  }
+
+type LogLifecycle =
+	| {
+			readonly kind: "live"
+			readonly access: LogAccess
+			readonly decision: LogDecisionStamp
+			readonly state: LogStateStamp
+			readonly receipts: { readonly openEpoch: bigint; readonly retiredThrough: bigint }
+	  }
+	| {
+			readonly kind: "deleted"
+			readonly operation: string
+			readonly reason:
+				| { readonly kind: "erasure" }
+				| {
+						readonly kind: "migrationAborted"
+						readonly sourceDatabase: string
+						readonly sourceIncarnation: string
+						readonly planSetDigest: Uint8Array
+				  }
+	  }
+
+type LogActivation =
+	| { readonly kind: "notActivated" }
+	| {
+			readonly kind: "activated"
+			readonly operation: string
+			readonly targetGenesis: Uint8Array
+			readonly cause:
+				| { readonly kind: "create" }
+				| { readonly kind: "restore" }
+				| { readonly kind: "migration"; readonly planSetDigest: Uint8Array }
+	  }
+
+interface LogAuthority {
+	readonly identity: LogIdentity
+	readonly revision: bigint
+	readonly lifecycle: LogLifecycle
+	readonly activation: LogActivation
+}
+
+type LogGenesisProvenance =
+	| { readonly kind: "create" }
+	| { readonly kind: "restore"; readonly sourceEvidence: Uint8Array }
+	| {
+			readonly kind: "migration"
+			readonly sourceDatabase: string
+			readonly sourceIncarnation: string
+			readonly planSetDigest: Uint8Array
+	  }
+
+interface LogGenesis {
+	readonly identity: LogIdentity
+	readonly initialApplicationDigest: Uint8Array
+	readonly initialSystemDigest: Uint8Array
+	readonly provenance: LogGenesisProvenance
 }
 
 interface ManifestField {
 	readonly name: string
 	readonly id: number
 	readonly valueType: ValueTypeSpec
-	/** The field's fresh attribute, straight off the declared spec; a closed relation's synthetic `id` slot is never fresh. */
-	readonly fresh: boolean
 	/** The field's host newtype name off the declared spec; a closed relation's synthetic `id` slot carries the handle newtype. Absent on a bare column. */
 	readonly newtype?: string
 }
@@ -390,40 +457,12 @@ type Violation =
 			readonly facts: readonly ViolationFact[]
 	  }
 
-type CreateResult =
-	| { readonly tag: "accepted"; readonly db: DbHandle }
-	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
-	| { readonly tag: "schemaError"; readonly message: string }
-	| { readonly tag: "newtypeMismatch"; readonly message: string }
-
-/**
- * `dbOpen`'s domain outcome. `schemaError` spans both spec
- * resolution (unresolvable names, banned spellings — every issue in one
- * message) and schema validation at the declaration boundary;
- * `newtypeMismatch` is the coherence wall's own kind; `fingerprintMismatch`
- * is `dbOpen`'s stored-theory refusal.
- */
-type DbOpenResult =
-	| { readonly ok: true; readonly db: DbHandle }
-	| {
-			readonly ok: false
-			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
-			readonly message: string
-	  }
-
-type NativeWriteOutcome =
-	| { readonly tag: "accepted"; readonly generation: bigint }
-	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
-	| { readonly tag: "abandoned" }
-	| { readonly tag: "moved"; readonly witnessed: bigint; readonly current: bigint }
-
-type AdmitResult =
-	| { readonly tag: "accepted"; readonly value: OwnedHandle }
-	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
-
-type PrepareResult =
-	| { readonly ok: true; readonly prepared: PreparedHandle }
-	| { readonly ok: false; readonly kind: "irError"; readonly message: string }
+// The managed create/open outcome is `ManagedDbOutcome` in
+// #runtime-native.ts (accepted | rejected | refused); reads, writes and
+// queries are worker-affine session verbs there too. The historical
+// raw-pointer `dbRead`/`dbWrite`/`tx*`/`instance*`/`prepared*` synchronous
+// surface — a JS callback inside a native transaction — is deleted (P06),
+// as are the fresh/reserve issuance verbs (`WireFreshRange`).
 
 type ErrorFamilyKind =
 	| "formatMismatch"
@@ -438,7 +477,6 @@ type ErrorFamilyKind =
 	| "schema"
 	| "validation"
 	| "factShape"
-	| "freshExhausted"
 	| "closedRelationWrite"
 	| "commitSync"
 	| "transactionPoisoned"
@@ -448,24 +486,22 @@ type ErrorFamilyKind =
 	| "capacityRayMeasure"
 	| "derivedBudgetExceeded"
 	| "overflow"
+	| "scalar"
 	| "resultBytesOverflow"
 	| "corruption"
 
 type AdmissionTag = "accepted" | "rejected"
 type WriteTag = "accepted" | "rejected" | "abandoned" | "moved"
-type OpenKind = "schemaError" | "newtypeMismatch" | "fingerprintMismatch"
+type OpenKind = "schemaError" | "newtypeMismatch" | "fingerprintMismatch" | "destinationExists"
 type PrepareKind = "irError"
 
 interface Native {
 	engineVersion(): string
 
+	/** Small identity-sized inputs only; bulk hashing rides `runtimeHash`. */
 	blake3Hash(data: Uint8Array): Uint8Array
 
 	descriptor(spec: SchemaSpec): SealedDescriptor
-
-	dbCreate(path: string, spec: SchemaSpec): Promise<CreateResult>
-
-	dbOpen(path: string, spec: SchemaSpec): Promise<DbOpenResult>
 
 	dbManifest(db: DbHandle): Manifest
 
@@ -480,62 +516,18 @@ interface Native {
 	 */
 	dbCatalogDigest(db: DbHandle): Uint8Array
 
-	dbFromInstance(path: string, instance: OwnedHandle): Promise<DbHandle>
-
-	/**
-	 * Runs `callback` synchronously inside the engine read lease. The
-	 * instance handle is invalid after the callback returns; the witness
-	 * handle is a clone and may escape.
-	 */
-	dbRead<R>(db: DbHandle, callback: (instance: InstanceHandle, witness: WitnessHandle) => R): R
-	instanceGeneration(instance: InstanceHandle): bigint
-	instanceScan(instance: InstanceHandle, relationId: number): FactValue[][]
-
-	instanceCount(instance: InstanceHandle, relationId: number): bigint
-	instanceContains(instance: InstanceHandle, relationId: number, values: readonly FactValue[]): boolean
-	instanceGet(
-		instance: InstanceHandle,
-		relationId: number,
-		keyStatementId: number,
-		keyValues: readonly FactValue[]
-	): FactValue[] | null
-	instancePrepare(instance: InstanceHandle, query: ParsedQuery): PrepareResult
 	witnessClose(witness: WitnessHandle): void
-
-	dbWrite(db: DbHandle, callback: (tx: TxHandle) => boolean): NativeWriteOutcome
-
-	dbWriteFrom(db: DbHandle, witness: WitnessHandle, callback: (tx: TxHandle) => boolean): NativeWriteOutcome
-	/**
-	 * Records a collection of inserts into the delta; returns the engine
-	 * `{ submitted, changed }` report. `cells` is ONE flat row-major array
-	 * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
-	 * row count the caller states — the one collection crossing: the JS side
-	 * alone knows N when the roster is fieldless (N nullary facts project to 0 cells, so no
-	 * derivation can recover N), and the bridge verifies
-	 * `cells.length === rows × arity` exactly against its resident sealed
-	 * roster before building the engine's shape-proved collection in a
-	 * single pass. Empty (`rows === 0n`, no cells) is lawful and still a
-	 * mutation. Nothing is judged until commit; shape violations throw
-	 * typed, naming relation and field.
-	 */
-	txInsert(tx: TxHandle, relationId: number, rows: bigint, cells: readonly FactValue[]): WireMutationReport
-
-	txDelete(tx: TxHandle, relationId: number, rows: bigint, cells: readonly FactValue[]): WireMutationReport
-
-	txContains(tx: TxHandle, relationId: number, values: readonly FactValue[]): boolean
-
-	txGet(tx: TxHandle, relationId: number, keyStatementId: number, keyValues: readonly FactValue[]): FactValue[] | null
-
-	txReserve(tx: TxHandle, relationId: number, fieldId: number, count: bigint): WireFreshRange
-
-	dbPrepare(db: DbHandle, query: ParsedQuery): PrepareResult
-
-	preparedExecute(prepared: PreparedHandle, instance: InstanceHandle, params: readonly QueryParam[]): FactValue[][]
-
-	preparedClose(prepared: PreparedHandle): void
 
 	instanceBuilderNew(spec: SchemaSpec): BuilderHandle
 
+	/**
+	 * Records a collection of inserts into the draft; returns the engine
+	 * `{ submitted, changed }` report. `cells` is ONE flat row-major array
+	 * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
+	 * row count the caller states; the bridge verifies
+	 * `cells.length === rows × arity` exactly against its resident sealed
+	 * roster before building the engine's shape-proved collection.
+	 */
 	instanceBuilderLoad(
 		builder: BuilderHandle,
 		relationId: number,
@@ -548,7 +540,6 @@ interface Native {
 		rows: bigint,
 		cells: readonly FactValue[]
 	): WireMutationReport
-	instanceBuilderReserve(builder: BuilderHandle, relationId: number, fieldId: number, count: bigint): WireFreshRange
 	instanceBuilderContains(builder: BuilderHandle, relationId: number, values: readonly FactValue[]): boolean
 	instanceBuilderGet(
 		builder: BuilderHandle,
@@ -557,10 +548,13 @@ interface Native {
 		keyValues: readonly FactValue[]
 	): FactValue[] | null
 	instanceBuilderClose(builder: BuilderHandle): void
-	instanceBuilderAdmit(builder: BuilderHandle): Promise<AdmitResult>
-	ownedInstanceClose(instance: OwnedHandle): void
-	ownedScan(instance: OwnedHandle, relationId: number): FactValue[][]
+	// Admission moved onto the one executor: `runtimeBuilderAdmit` →
+	// `runtimeAdmitTake` in #runtime-native.ts. No AsyncTask/Promise verb.
 
+	ownedInstanceClose(instance: OwnedHandle): void
+	// Owned-instance point reads are bounded owned-heap work and stay
+	// synchronous; scans and queries ride the executor
+	// (`runtimeOwnedScan`/`runtimeOwnedQuery` in #runtime-native.ts).
 	ownedCount(instance: OwnedHandle, relationId: number): bigint
 	ownedContains(instance: OwnedHandle, relationId: number, values: readonly FactValue[]): boolean
 	ownedGet(
@@ -569,45 +563,46 @@ interface Native {
 		keyStatementId: number,
 		keyValues: readonly FactValue[]
 	): FactValue[] | null
-	ownedPrepare(instance: OwnedHandle, query: ParsedQuery): PrepareResult
-	ownedExecute(prepared: PreparedHandle, instance: OwnedHandle, params: readonly QueryParam[]): FactValue[][]
 
-	logCodec(descriptor: SealedDescriptor): LogCodecHandle
+	// --- successor log grammar (small frames; command/decision lanes are
+	// executor verbs in #runtime-native.ts) ---
 
-	logBraidsOf(descriptor: SealedDescriptor): LogBraids
+	logIdentities(): string
 
-	logEncodeBatch(
-		handle: LogCodecHandle,
-		header: LogBatchHeader,
-		ops: readonly LogOpIn[]
-	): LogResult<Uint8Array, LogBatchEncodeKind>
+	logSchema(spec: SchemaSpec): LogSchemaHandle
 
-	logDecodeBatch(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogBatch, LogBatchDecodeKind>
+	logSchemaFingerprint(schema: LogSchemaHandle): string
 
-	logParseManifest(bytes: Uint8Array): LogResult<LogManifestDoc, LogManifestKind>
+	logReceiptKey(id: LogCommandId): Uint8Array
 
-	logRenderManifest(doc: LogManifestDoc): Uint8Array
+	logReceiptEncode(receipt: LogReceipt, limits: LogLimits): LogResult<Uint8Array, LogReceiptKind>
 
-	logParseCheckpoint(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogCheckpointDoc, LogCheckpointKind>
+	logReceiptDecode(
+		expected: { readonly identity: LogIdentity; readonly receiptEpoch: bigint; readonly requestId: string },
+		bytes: Uint8Array,
+		limits: LogLimits
+	): LogResult<LogReceipt, LogReceiptKind>
 
-	logRenderCheckpoint(handle: LogCodecHandle, doc: LogCheckpointDoc): Uint8Array
+	logReceiptDecodeAt(id: LogCommandId, bytes: Uint8Array, limits: LogLimits): LogResult<LogReceipt, LogReceiptKind>
 
-	logParseSidecar(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogChain, LogSidecarKind>
+	logControlEncode(authority: LogAuthority, cap: bigint): LogResult<Uint8Array, LogFrameKind>
 
-	logRenderSidecar(handle: LogCodecHandle, chain: LogChain): Uint8Array
+	logControlDecode(bytes: Uint8Array, cap: bigint): LogResult<LogAuthority, LogFrameKind>
 
-	logParseCkptScratch(bytes: Uint8Array): Uint8Array | null
+	logGenesisEncode(record: LogGenesis, cap: bigint): LogResult<Uint8Array, LogFrameKind>
 
-	logRenderCkptScratch(digest: Uint8Array): Uint8Array
+	logGenesisDecode(bytes: Uint8Array, cap: bigint): LogResult<LogGenesis, LogFrameKind>
+
+	logGenesisStamp(record: LogGenesis, cap: bigint): LogResult<LogDecisionStamp, LogFrameKind>
+
+	logBlankDigests(): { readonly application: Uint8Array; readonly system: Uint8Array }
 }
 
 const SHIPPED_PLATFORMS = ["darwin-arm64", "linux-arm64", "linux-x64"] as const
 
 const requireNative = createRequire(import.meta.url)
 
-interface NativeBinding extends Native {
-	dbClose(db: DbHandle): void
-}
+type NativeBinding = Native
 
 function loadNativeBinding(platform: string, arch: string): NativeBinding {
 	const platformPackage = `@bjornpagen/bumbledb-${platform}-${arch}`
@@ -637,15 +632,11 @@ function loadNativeBinding(platform: string, arch: string): NativeBinding {
 const binding: NativeBinding = loadNativeBinding(process.platform, process.arch)
 const native: Native = binding
 
-function dbClose(db: DbHandle): void {
-	binding.dbClose(db)
-}
-
 /**
  * @internal blake3 of the given bytes via the resident native binding —
  * the engine's own hash, lent to the replication driver
  * (`@bjornpagen/bumbledb-log`). Not SDK API; the export is deliberately
- * undocumented in the package surface.
+ * undocumented in the package surface. Small identity-sized inputs only.
  */
 function internalBlake3(data: Uint8Array): Uint8Array {
 	return bridged("bumbledb blake3", function hashBytes() {
@@ -667,105 +658,23 @@ function internalDescriptor(spec: SchemaSpec): SealedDescriptor {
 }
 
 /**
- * @internal the sealed per-theory log codec off the `DescriptorWire` —
- * one implementation of the protocol grammar (`crates/bumbledb-log`),
- * lent to the replication driver (`@bjornpagen/bumbledb-log`). Not SDK
- * API; the export is deliberately undocumented in the package surface.
+ * @internal the successor identity table emitted by the log core's one
+ * speller (`bumbledb_log::identities::emit`). Not SDK API.
  */
-function internalLogCodec(descriptor: SealedDescriptor): LogCodecHandle {
-	return bridged("bumbledb-log codec", function sealCodec() {
-		return binding.logCodec(descriptor)
+function internalLogIdentities(): string {
+	return bridged("bumbledb-log identities", function emitIdentities() {
+		return binding.logIdentities()
 	})
 }
 
 /**
- * @internal the braid decomposition + serial-at statement ids, riding
- * the same `DescriptorWire`; the driver caches the result per theory
- * beside the codec handle. Not SDK API.
+ * @internal the sealed per-theory log schema off the same `SchemaSpec`
+ * every other lane speaks — one validated core schema, lent to the
+ * replication driver (`@bjornpagen/bumbledb-log`). Not SDK API.
  */
-function internalLogBraidsOf(descriptor: SealedDescriptor): LogBraids {
-	return bridged("bumbledb-log braids", function deriveBraids() {
-		return binding.logBraidsOf(descriptor)
-	})
-}
-
-/** @internal batch encode through the sealed codec. Not SDK API. */
-function internalLogEncodeBatch(
-	handle: LogCodecHandle,
-	header: LogBatchHeader,
-	ops: readonly LogOpIn[]
-): LogResult<Uint8Array, LogBatchEncodeKind> {
-	return bridged("bumbledb-log encode", function encodeBatch() {
-		return binding.logEncodeBatch(handle, header, ops)
-	})
-}
-
-/** @internal batch decode through the sealed codec. Not SDK API. */
-function internalLogDecodeBatch(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogBatch, LogBatchDecodeKind> {
-	return bridged("bumbledb-log decode", function decodeBatch() {
-		return binding.logDecodeBatch(handle, bytes)
-	})
-}
-
-/** @internal manifest document parse — grammar only, no IO. Not SDK API. */
-function internalLogParseManifest(bytes: Uint8Array): LogResult<LogManifestDoc, LogManifestKind> {
-	return bridged("bumbledb-log manifest parse", function parseManifest() {
-		return binding.logParseManifest(bytes)
-	})
-}
-
-/** @internal the manifest's one encoding, byte-exact for CAS bodies. Not SDK API. */
-function internalLogRenderManifest(doc: LogManifestDoc): Uint8Array {
-	return bridged("bumbledb-log manifest render", function renderManifest() {
-		return binding.logRenderManifest(doc)
-	})
-}
-
-/** @internal checkpoint document parse against the theory's braids. Not SDK API. */
-function internalLogParseCheckpoint(
-	handle: LogCodecHandle,
-	bytes: Uint8Array
-): LogResult<LogCheckpointDoc, LogCheckpointKind> {
-	return bridged("bumbledb-log checkpoint parse", function parseCheckpoint() {
-		return binding.logParseCheckpoint(handle, bytes)
-	})
-}
-
-/** @internal checkpoint document render. Not SDK API. */
-function internalLogRenderCheckpoint(handle: LogCodecHandle, doc: LogCheckpointDoc): Uint8Array {
-	return bridged("bumbledb-log checkpoint render", function renderCheckpoint() {
-		return binding.logRenderCheckpoint(handle, doc)
-	})
-}
-
-/** @internal chain sidecar parse — the fs half stays in the driver. Not SDK API. */
-function internalLogParseSidecar(handle: LogCodecHandle, bytes: Uint8Array): LogResult<LogChain, LogSidecarKind> {
-	return bridged("bumbledb-log sidecar parse", function parseSidecar() {
-		return binding.logParseSidecar(handle, bytes)
-	})
-}
-
-/** @internal chain sidecar render. Not SDK API. */
-function internalLogRenderSidecar(handle: LogCodecHandle, chain: LogChain): Uint8Array {
-	return bridged("bumbledb-log sidecar render", function renderSidecar() {
-		return binding.logRenderSidecar(handle, chain)
-	})
-}
-
-/**
- * @internal the digest a scratch-lease body names, or null — the refusal
- * is undifferentiated by law. Not SDK API.
- */
-function internalLogParseCkptScratch(bytes: Uint8Array): Uint8Array | null {
-	return bridged("bumbledb-log scratch parse", function parseScratch() {
-		return binding.logParseCkptScratch(bytes)
-	})
-}
-
-/** @internal the scratch-lease body: version byte + 32-byte digest. Not SDK API. */
-function internalLogRenderCkptScratch(digest: Uint8Array): Uint8Array {
-	return bridged("bumbledb-log scratch render", function renderScratch() {
-		return binding.logRenderCkptScratch(digest)
+function internalLogSchema(spec: SchemaSpec): LogSchemaHandle {
+	return bridged("bumbledb-log schema", function sealSchema() {
+		return binding.logSchema(spec)
 	})
 }
 
@@ -800,18 +709,8 @@ function bridged<T>(context: string, run: () => T): T {
 	}
 }
 
-async function bridgedAsync<T>(context: string, run: () => Promise<T>): Promise<T> {
-	try {
-		return await run()
-	} catch (caught) {
-		if (caught instanceof Error) throw caught
-		throw new NativeOperationError({ operation: context, cause: caught })
-	}
-}
-
 export type {
 	AdmissionTag,
-	AdmitResult,
 	AggOpIr,
 	AtomIr,
 	AtomSourceIr,
@@ -821,42 +720,44 @@ export type {
 	ConditionTreeIr,
 	DbHandle,
 	ErrorFamilyKind,
+	F64IntervalValue,
 	FactValue,
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
-	InstanceHandle,
 	IntervalValue,
-	LogBatch,
-	LogBatchDecodeKind,
-	LogBatchEncodeKind,
-	LogBatchHeader,
-	LogBraidComponent,
-	LogBraids,
-	LogChain,
-	LogChainEntry,
-	LogCheckpointDoc,
-	LogCheckpointHead,
-	LogCheckpointKind,
-	LogCodecHandle,
-	LogManifestDoc,
-	LogManifestKind,
-	LogOpIn,
-	LogOpKind,
-	LogOpOut,
-	LogPendingBatch,
+	LogAccess,
+	LogActivation,
+	LogAuthority,
+	LogChainKind,
+	LogCommandId,
+	LogCommandKind,
+	LogCommandMetadata,
+	LogCommandRef,
+	LogCondition,
+	LogDecisionStamp,
+	LogFrameKind,
+	LogGenesis,
+	LogGenesisProvenance,
+	LogIdentity,
+	LogLifecycle,
+	LogLimits,
+	LogOutcomeWire,
+	LogReceipt,
+	LogReceiptKind,
 	LogResult,
-	LogSidecarKind,
+	LogSchemaHandle,
+	LogStateStamp,
 	Manifest,
-	NativeWriteOutcome,
+	NumericCastIr,
 	OpenKind,
 	OwnedHandle,
 	ParsedQuery,
-	PreparedHandle,
 	PrepareKind,
 	QueryIr,
 	QueryParam,
 	RuleIr,
+	ScalarExprIr,
 	SealedDescriptor,
 	SealedHi,
 	SealedSide,
@@ -865,33 +766,19 @@ export type {
 	StatementKindTag,
 	TaggedValue,
 	TermIr,
-	TxHandle,
 	Violation,
 	ViolationFact,
-	WireFreshRange,
 	WireMutationReport,
 	WitnessHandle,
 	WriteTag
 }
 export {
 	bridged,
-	bridgedAsync,
-	dbClose,
 	errorFromThrow,
 	internalBlake3,
 	internalDescriptor,
-	internalLogBraidsOf,
-	internalLogCodec,
-	internalLogDecodeBatch,
-	internalLogEncodeBatch,
-	internalLogParseCheckpoint,
-	internalLogParseCkptScratch,
-	internalLogParseManifest,
-	internalLogParseSidecar,
-	internalLogRenderCheckpoint,
-	internalLogRenderCkptScratch,
-	internalLogRenderManifest,
-	internalLogRenderSidecar,
+	internalLogIdentities,
+	internalLogSchema,
 	loadNativeBinding,
 	native,
 	SHIPPED_PLATFORMS

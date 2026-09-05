@@ -1,4 +1,4 @@
-use bumbledb::{Id128, Violations};
+use bumbledb::Id128;
 
 use super::SchemaId;
 
@@ -30,6 +30,10 @@ identity_role!(IncarnationId, "One non-forking history lineage.");
 identity_role!(
     RequestId,
     "Named-request role, explicitly distinct from an entity ID."
+);
+identity_role!(
+    OperationId,
+    "One admin/migration operation's stable identity, fixed before dispatch."
 );
 
 /// Complete scope of every command, receipt, and materialized history.
@@ -126,10 +130,62 @@ pub enum Condition {
     ExactState(StateStamp),
 }
 
-/// The first slice accepts only empty declared metadata. Nonempty scalar
-/// metadata must use the future core result codec, not a log value vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EmptyResult;
+/// Bounded caller-declared result metadata. The bytes are the core's
+/// canonical scalar encoding, opaque to the log: this module frames and
+/// bounds them but never interprets them with a log value vocabulary.
+/// Until the core exposes its canonical result-scalar codec (C01, P01),
+/// only the empty result is produced by this crate's own machines; the
+/// framing is already total for nonempty canonical bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CommandResult(Box<[u8]>);
+
+impl CommandResult {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn from_canonical_bytes(bytes: Box<[u8]>) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Owned bounded rejection evidence: the core's canonical statement-level
+/// diagnostic bytes (`bumbledb::schema::evidence`, family
+/// `bumbledb.evidence.v1` — the core-owned C01/C03 codec). The log stores and
+/// returns them without interpreting them; the native runtime decodes them
+/// back through the same core module. An empty evidence body is invalid — an
+/// incomplete diagnostic is a resource failure before deciding, never a
+/// falsely complete rejection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectionEvidence(Box<[u8]>);
+
+impl RejectionEvidence {
+    #[must_use]
+    pub fn from_canonical_bytes(bytes: Box<[u8]>) -> Option<Self> {
+        if bytes.is_empty() {
+            None
+        } else {
+            Some(Self(bytes))
+        }
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 /// Net fact counts supplied by core judgment, never counts of input spelling.
 /// A zero/zero report belongs to `NoChange`, not `Committed`.
@@ -166,17 +222,17 @@ impl ChangeSummary {
 pub enum TerminalOutcome {
     Committed {
         changed: ChangeSummary,
-        result: EmptyResult,
+        result: CommandResult,
     },
     NoChange {
-        result: EmptyResult,
+        result: CommandResult,
     },
     PreconditionFailed {
         expected: StateStamp,
         observed: StateStamp,
     },
     InvariantRejected {
-        violations: Violations,
+        evidence: RejectionEvidence,
     },
 }
 

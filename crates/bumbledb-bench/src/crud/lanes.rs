@@ -27,11 +27,15 @@ const COUNTER_SELECT: &str = "SELECT \"val\" FROM \"Counter\" WHERE \"key\" = ?1
 
 const DOC_DELETE: &str = "DELETE FROM \"Doc\" WHERE \"id\" = ?1";
 
-/// fresh mint base both engines share after load) and advances one per
+/// The application-owned Doc-id authority (E-NO-RESERVE): both engines
+/// share the mint base after load (`docs + delete_pool`, the corpus being
+/// dense from 0) and the cursor IS the id — the successor engine has no
+/// generator to consult or drift from. One cursor per engine per run,
+/// advanced one per mint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FreshCursor(pub u64);
+pub struct MintCursor(pub u64);
 
-impl FreshCursor {
+impl MintCursor {
     #[must_use]
     pub fn at_base(sizes: CrudSizes) -> Self {
         Self(sizes.docs + sizes.delete_pool)
@@ -87,15 +91,11 @@ fn sql_u64(value: u64) -> i64 {
 fn mint_doc(
     tx: &mut bumbledb::WriteTx<'_, CrudWorld>,
     seed: u64,
-    cursor: &mut FreshCursor,
+    cursor: &mut MintCursor,
 ) -> bumbledb::Result<()> {
-    let id: CrudDocId = tx.reserve(1)?.start().expect("nonempty");
-    if id.0 != cursor.0 {
-        return Err(refuse(&format!(
-            "the fresh mint drifted from the shared cursor: minted {}, expected {}",
-            id.0, cursor.0
-        )));
-    }
+    // Application-owned identity: the shared cursor IS the id authority —
+    // there is no engine mint left to drift from (E-NO-RESERVE).
+    let id = CrudDocId(cursor.0);
     tx.insert([&Doc {
         id,
         key: cursor.0,
@@ -106,7 +106,7 @@ fn mint_doc(
     Ok(())
 }
 
-fn mint_doc_sqlite(conn: &Connection, seed: u64, cursor: &mut FreshCursor) -> Result<(), String> {
+fn mint_doc_sqlite(conn: &Connection, seed: u64, cursor: &mut MintCursor) -> Result<(), String> {
     let id = sql_u64(cursor.0);
     conn.prepare_cached(DOC_INSERT)
         .map_err(|e| format!("prepare: {e}"))?
@@ -122,7 +122,7 @@ pub fn insert_bumbledb(
     proto: Protocol,
     seed: u64,
     per_commit: u64,
-    cursor: &mut FreshCursor,
+    cursor: &mut MintCursor,
 ) -> Result<Measurement, String> {
     harness::measure(proto, || {
         db.write(|tx| {
@@ -145,7 +145,7 @@ pub fn insert_sqlite(
     proto: Protocol,
     seed: u64,
     per_commit: u64,
-    cursor: &mut FreshCursor,
+    cursor: &mut MintCursor,
 ) -> Result<Measurement, String> {
     harness::measure(proto, || {
         conn.execute_batch("BEGIN IMMEDIATE")
@@ -475,7 +475,7 @@ pub fn mixed_bumbledb(
     proto: Protocol,
     seed: u64,
     sizes: CrudSizes,
-    cursor: &mut FreshCursor,
+    cursor: &mut MintCursor,
 ) -> Result<Measurement, String> {
     let query = read_query();
     let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
@@ -502,7 +502,7 @@ pub fn mixed_sqlite(
     proto: Protocol,
     seed: u64,
     sizes: CrudSizes,
-    cursor: &mut FreshCursor,
+    cursor: &mut MintCursor,
 ) -> Result<Measurement, String> {
     let translated = translate::translate(&read_query(), schema(), &[])
         .map_err(|e| format!("translate: {e}"))?;

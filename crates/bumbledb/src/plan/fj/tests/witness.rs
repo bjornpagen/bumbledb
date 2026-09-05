@@ -11,12 +11,10 @@ fn idiom_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     let fresh = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Fresh,
     };
     SchemaDescriptor {
         relations: vec![
@@ -53,17 +51,14 @@ fn interval_schema() -> Schema {
                 FieldDescriptor {
                     name: "emp".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "during".into(),
                     value_type: interval,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "review".into(),
                     value_type: interval,
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -91,14 +86,18 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
     let join_order = plan(&normalized, schema, occ_stats);
     let mut fj_plan = binary2fj(&normalized, &join_order);
     factor(&mut fj_plan);
-    let sink_vars: BTreeSet<VarId> = query.rules()[0]
-        .finds
-        .iter()
-        .filter_map(|f| match f {
-            FindTerm::Var(v) => Some(*v),
-            FindTerm::Count | FindTerm::Pack { .. } | FindTerm::Aggregate { .. } => None,
-        })
-        .collect();
+    let mut sink_vars: BTreeSet<VarId> = BTreeSet::new();
+    for f in &query.rules()[0].finds {
+        match f {
+            FindTerm::Var(v) => {
+                sink_vars.insert(*v);
+            }
+            // The sink reads a computed find through its input variables
+            // (C05: the adapter evaluates per surviving binding).
+            FindTerm::Compute(expr) => sink_vars.extend(expr.variables()),
+            FindTerm::Count | FindTerm::Pack { .. } | FindTerm::Aggregate { .. } => {}
+        }
+    }
     validate(&fj_plan, &normalized, schema, &sink_vars).expect("valid plan")
 }
 

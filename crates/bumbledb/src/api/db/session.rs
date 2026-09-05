@@ -1,17 +1,31 @@
-//! Narrow native-host integration: the writer guard outlives rejected
-//! candidates, empty receipt transactions, and a sealed publication attempt.
-//! This transitional facade uses the existing admission engine; its legacy
-//! planning/index allocations still require the M2/M3 budgeted rewrite.
-use std::sync::{Arc, MutexGuard, PoisonError, TryLockError, atomic::Ordering};
-use std::time::Duration;
+//! Narrow native-host integration over the successor candidate protocol:
+//! the writer session outlives rejected candidates, empty receipt
+//! transactions, and a sealed publication attempt. This is the log/native
+//! bridge's seam (consumed as `bumbledb::integration`); it is not a general
+//! key/value or callback API.
+//!
+//! Everything here is a thin, typed facade over the store's own
+//! capabilities (`storage::store::{WriteOwner, PreparedWrite, SealedWrite}`):
+//! prepare applies the sealed `ChangeSet` as a private candidate and judges
+//! the complete final state with the production judge; seal writes only
+//! opaque host records/attachment into the same transaction; commit is the
+//! one durability point for facts + generation + host rows + attachment.
+//! A rejected or aborted candidate retains the exclusive session, so the
+//! log can prepare its receipt-only transaction against the unchanged
+//! parent with no gap for another local writer.
 
-use super::{Db, ReadInstance, ThreadKey, WriteTx, WriterThreadReset};
-use crate::changes::ChangeKind;
-use crate::storage::commit::{ApplicationChanges, CommitReport, PreparedCommit, SealedCommit};
-use crate::storage::env::host::{HostChanges, HostSealError};
-use crate::{
-    Admission, ChangeError, ChangeSet, Error, GenerationId, RelationId, WorkContext, WorkError,
+use std::marker::PhantomData;
+
+use super::{Db, ReadInstance};
+use crate::storage::GenerationId;
+use crate::storage::store::{
+    self, HostChanges, HostSealError, SchemaJudge, StoreError, UnindexedRows,
 };
+use crate::{Admission, ChangeError, ChangeSet, Error, WorkContext, WorkError};
+
+/// Net application-fact changes of one candidate (C04's `AppliedChanges`,
+/// exported under the integration seam's historical name).
+pub type ApplicationChanges = store::AppliedChanges;
 
 #[derive(Debug)]
 pub enum IntegrationError {
@@ -22,6 +36,7 @@ pub enum IntegrationError {
     ForeignSchema,
     ReentrantWriter,
 }
+
 impl From<Error> for IntegrationError {
     fn from(error: Error) -> Self {
         Self::Core(error)
@@ -49,27 +64,36 @@ impl std::fmt::Display for IntegrationError {
 }
 impl std::error::Error for IntegrationError {}
 
+fn integration_error(error: StoreError) -> IntegrationError {
+    match error {
+        StoreError::Work(work) => IntegrationError::Work(work),
+        StoreError::Changes(changes) => IntegrationError::Changes(changes),
+        StoreError::ForeignSchema => IntegrationError::ForeignSchema,
+        StoreError::ReentrantWriter => IntegrationError::ReentrantWriter,
+        StoreError::HostKey(fault) => {
+            IntegrationError::Host(crate::storage::store::host::seal_error_of(fault))
+        }
+        StoreError::GenerationExhausted => {
+            IntegrationError::Host(HostSealError::GenerationExhausted)
+        }
+        other => IntegrationError::Core(Error::from_store(other)),
+    }
+}
+
 pub struct WriterSession<'db, S> {
     db: &'db Db<S>,
+    owner: store::WriteOwner<'db>,
     work: WorkContext,
-    // Field order is Drop order: clear the owner before releasing the mutex.
-    _owner: WriterThreadReset<'db>,
-    _guard: MutexGuard<'db, ()>,
 }
 
 pub struct PreparedWrite<'owner, 'db, S> {
-    session: &'owner mut WriterSession<'db, S>,
-    prepared: PreparedCommit<'db>,
-    dirty: Vec<RelationId>,
-    floors: Vec<(RelationId, u64)>,
+    inner: store::PreparedWrite<'owner, 'db>,
+    marker: PhantomData<fn() -> S>,
 }
 
 pub struct SealedWrite<'owner, 'db, S> {
-    session: &'owner mut WriterSession<'db, S>,
-    sealed: SealedCommit<'db>,
-    changes: ApplicationChanges,
-    dirty: Vec<RelationId>,
-    floors: Vec<(RelationId, u64)>,
+    inner: store::SealedWrite<'owner, 'db>,
+    marker: PhantomData<fn() -> S>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,43 +113,24 @@ impl<S> Db<S> {
         &self,
         work: &WorkContext,
     ) -> Result<WriterSession<'_, S>, IntegrationError> {
-        let caller = ThreadKey::mint();
-        if ThreadKey::load(&self.writer_thread, Ordering::Acquire) == Some(caller) {
-            return Err(IntegrationError::ReentrantWriter);
-        }
-        let guard = loop {
-            work.checkpoint()?;
-            match self.writer.try_lock() {
-                Ok(guard) => break guard,
-                Err(TryLockError::Poisoned(error)) => break error.into_inner(),
-                Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
-            }
-        };
-        work.checkpoint()?;
-        ThreadKey::store(&self.writer_thread, Some(caller), Ordering::Release);
-        let owner = WriterThreadReset(&self.writer_thread);
-        drop(
-            self.read_cache
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take(),
-        );
+        let owner = self.store.writer(work).map_err(integration_error)?;
         Ok(WriterSession {
             db: self,
+            owner,
             work: work.clone(),
-            _owner: owner,
-            _guard: guard,
         })
     }
 }
 
 impl<'db, S> WriterSession<'db, S> {
+    /// The committed parent generation, read while exclusivity is held.
     /// # Errors
-    /// Reads the parent generation while retaining exclusive writer ownership.
+    /// Storage failure or stopped work.
     pub fn generation(&self) -> Result<GenerationId, IntegrationError> {
-        Ok(self.db.env.read_txn()?.generation()?)
+        self.owner.parent_generation().map_err(integration_error)
     }
 
+    /// Prepare and judge one sealed canonical delta as a private candidate.
     /// # Errors
     /// Refuses a foreign schema, malformed/storage failure or stopped work.
     /// A domain rejection drops its candidate, but this session stays owned.
@@ -134,124 +139,119 @@ impl<'db, S> WriterSession<'db, S> {
         changes: &ChangeSet,
     ) -> Result<Admission<PreparedWrite<'owner, 'db, S>>, IntegrationError> {
         self.work.checkpoint()?;
-        if changes.schema() != crate::schema::fingerprint::fingerprint(&self.db.schema) {
-            return Err(IntegrationError::ForeignSchema);
-        }
-        let view = self.db.env.read_txn()?;
-        let mut transaction: WriteTx<'_, S> = WriteTx {
-            mutation: super::mutation_core::MutationCore::store(
-                Arc::clone(&self.db.schema),
-                self.db.schema.as_ref(),
-                view,
-            ),
-        };
-        // Delete all old tuples before adding replacements. No caller callback
-        // or iterator runs in this interval; the command is already sealed.
-        for kind in [ChangeKind::Remove, ChangeKind::Add] {
-            for record in changes.records().filter(|record| record.kind == kind) {
-                self.work.step(1)?;
-                let row = crate::canonical::decode(
-                    self.db.schema.relation(record.relation).fields(),
-                    record.row,
-                    &self.work,
-                )
-                .map_err(ChangeError::from)?;
-                match kind {
-                    ChangeKind::Remove => {
-                        transaction.delete_dyn(record.relation, [&row.values])?;
-                    }
-                    ChangeKind::Add => {
-                        transaction.insert_dyn(record.relation, [&row.values])?;
-                    }
-                }
+        let schema = self.db.schema_arc();
+        let judge = SchemaJudge::new(schema.as_ref());
+        match self
+            .owner
+            .prepare(changes, &UnindexedRows, &judge)
+            .map_err(integration_error)?
+        {
+            store::Prepared::Rejected(judged) => {
+                let violations =
+                    super::violations::violations_from_judged(schema.as_ref(), judged, &self.work)
+                        .map_err(IntegrationError::Core)?;
+                Ok(Admission::Rejected(violations))
             }
+            store::Prepared::Admitted(inner) => Ok(Admission::Accepted(PreparedWrite {
+                inner,
+                marker: PhantomData,
+            })),
         }
-        let (view, delta) = transaction.into_store();
-        drop(view);
-        self.work.checkpoint()?;
-        let dirty = delta.dirty_relations();
-        let floors = delta.inserted_floors();
-        let prepared = match crate::storage::commit::prepare(&delta, &self.db.env)? {
-            Admission::Rejected(violations) => return Ok(Admission::Rejected(violations)),
-            Admission::Accepted(prepared) => prepared,
-        };
-        self.work.checkpoint()?;
-        Ok(Admission::Accepted(PreparedWrite {
-            session: self,
-            prepared,
-            dirty,
-            floors,
-        }))
     }
 }
 
 impl<'owner, 'db, S> PreparedWrite<'owner, 'db, S> {
     #[must_use]
     pub fn application_changes(&self) -> ApplicationChanges {
-        self.prepared.application_changes()
-    }
-    #[must_use]
-    pub fn proposed_generation(&self) -> GenerationId {
-        self.prepared.report().generation()
+        self.inner.application_changes()
     }
 
+    #[must_use]
+    pub fn proposed_generation(&self) -> GenerationId {
+        self.inner.proposed_generation()
+    }
+
+    /// Seal opaque host records/attachment into the same transaction. Only
+    /// host bytes can change — never judged application facts. Any failure
+    /// aborts the private facts and all staged host records; the returned
+    /// capability exposes commit/drop only, never fact amendment.
     /// # Errors
-    /// Any failure aborts the private facts and all staged host records. The
-    /// returned capability exposes commit/drop only, never fact amendment.
+    /// Host-key grammar violations, growth exhaustion, storage failure or
+    /// stopped work.
     pub fn seal(
         self,
         host: HostChanges<'_>,
     ) -> Result<SealedWrite<'owner, 'db, S>, IntegrationError> {
-        let changes = self.prepared.application_changes();
-        let sealed = self.prepared.seal(host, &self.session.work)?;
+        let inner = self.inner.seal(host).map_err(integration_error)?;
         Ok(SealedWrite {
-            session: self.session,
-            sealed,
-            changes,
-            dirty: self.dirty,
-            floors: self.floors,
+            inner,
+            marker: PhantomData,
         })
+    }
+
+    /// Drop the candidate; committed state untouched, session retained.
+    pub fn abort(self) {
+        self.inner.abort();
     }
 }
 
 impl<S> SealedWrite<'_, '_, S> {
     /// # Errors
-    /// Reports local durability failure without making claims about any remote
-    /// publication. A hosted caller must preserve its already-known receipt.
+    /// Reports local durability failure without making claims about any
+    /// remote publication. A hosted caller must preserve its already-known
+    /// receipt.
     pub fn commit(self) -> Result<CoreCommit, IntegrationError> {
-        let report = self.sealed.commit()?;
-        if let CommitReport::Changed { new_generation } = report {
-            self.session
-                .db
-                .cache
-                .advance(new_generation, &self.dirty, &self.floors);
-            self.session
-                .db
-                .generation
-                .store(new_generation.storage_word(), Ordering::Release);
-        }
+        let commit = self.inner.commit().map_err(integration_error)?;
         Ok(CoreCommit {
-            generation: report.generation(),
-            application: self.changes,
-            changed: matches!(report, CommitReport::Changed { .. }),
+            generation: commit.generation,
+            application: commit.application,
+            changed: commit.changed,
         })
+    }
+
+    /// Drop the sealed candidate whole; nothing was dispatched.
+    pub fn abort(self) {
+        self.inner.abort();
     }
 }
 
 impl<S> ReadInstance<'_, S> {
     /// # Errors
-    /// The bytes and application rows borrow the same committed read snapshot.
+    /// The bytes and application rows borrow the same committed snapshot.
     #[doc(hidden)]
     pub fn integration_host_record(&self, key: &[u8]) -> Result<Option<&[u8]>, HostSealError> {
-        self.txn().host_record(key)
+        self.snapshot.host_record(key).map_err(|error| match error {
+            StoreError::HostKey(fault) => crate::storage::store::host::seal_error_of(fault),
+            other => HostSealError::Storage(Error::from_store(other)),
+        })
     }
+
+    /// Visit every committed host record whose key starts with `prefix`, in
+    /// ascending key order, within this read's one committed transaction
+    /// (the P02R host enumeration seam). Key and value bytes borrow the
+    /// snapshot only for the duration of each visit — copy before
+    /// returning; charged against this lease's work allowance per record.
+    /// # Errors
+    /// Host-key grammar or storage failure, stopped work, or the visitor's
+    /// own refusal.
+    #[doc(hidden)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "the P02R-requested visitor signature, spelled exactly as \
+                  implementation/packets/P05.md records it"
+    )]
+    pub fn integration_host_scan(
+        &self,
+        prefix: &[u8],
+        visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), HostSealError>,
+    ) -> Result<(), HostSealError> {
+        self.snapshot.host_scan(prefix, &self.work, visit)
+    }
+
     /// # Errors
     /// Returns opaque host attachment bytes from this exact read snapshot.
     #[doc(hidden)]
     pub fn integration_host_attachment(&self) -> crate::Result<Option<&[u8]>> {
-        self.txn().host_attachment()
+        self.snapshot.attachment().map_err(Error::from_store)
     }
 }
-
-#[cfg(test)]
-mod tests;

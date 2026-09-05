@@ -257,15 +257,18 @@ pub struct Coverage {
     pub membership_var: u64,
     pub membership_u64: u64,
     pub membership_i64: u64,
+    pub membership_f64: u64,
 
     pub allen_u64: u64,
     pub allen_i64: u64,
+    pub allen_f64: u64,
     pub allen_composite: u64,
     pub allen_singleton: u64,
     pub allen_random_mask: u64,
     pub allen_basics: [u64; 13],
     pub point_in_u64: u64,
     pub point_in_i64: u64,
+    pub point_in_f64: u64,
 
     pub adjacent_left: u64,
     pub adjacent_right: u64,

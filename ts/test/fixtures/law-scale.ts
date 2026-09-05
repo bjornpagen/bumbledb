@@ -28,38 +28,38 @@ const Vocab5 = closed("Vocab5", ["Alpha5", "Beta5"])
 const Vocab6 = closed("Vocab6", ["Alpha6", "Beta6"])
 const Vocab7 = closed("Vocab7", ["Alpha7", "Beta7"])
 
-const R0 = relation("R0", { id: u64.fresh, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
-const R1 = relation("R1", { id: u64.fresh, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
-const R2 = relation("R2", { id: u64.fresh, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
-const R3 = relation("R3", { id: u64.fresh, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
-const R4 = relation("R4", { id: u64.fresh, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
-const R5 = relation("R5", { id: u64.fresh, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
-const R6 = relation("R6", { id: u64.fresh, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
-const R7 = relation("R7", { id: u64.fresh, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
-const R8 = relation("R8", { id: u64.fresh, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
-const R9 = relation("R9", { id: u64.fresh, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
-const R10 = relation("R10", { id: u64.fresh, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
-const R11 = relation("R11", { id: u64.fresh, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
-const R12 = relation("R12", { id: u64.fresh, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
-const R13 = relation("R13", { id: u64.fresh, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
-const R14 = relation("R14", { id: u64.fresh, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
-const R15 = relation("R15", { id: u64.fresh, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
-const R16 = relation("R16", { id: u64.fresh, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
-const R17 = relation("R17", { id: u64.fresh, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
-const R18 = relation("R18", { id: u64.fresh, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
-const R19 = relation("R19", { id: u64.fresh, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
-const R20 = relation("R20", { id: u64.fresh, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
-const R21 = relation("R21", { id: u64.fresh, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
-const R22 = relation("R22", { id: u64.fresh, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
-const R23 = relation("R23", { id: u64.fresh, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
-const R24 = relation("R24", { id: u64.fresh, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
-const R25 = relation("R25", { id: u64.fresh, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
-const R26 = relation("R26", { id: u64.fresh, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
-const R27 = relation("R27", { id: u64.fresh, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
-const R28 = relation("R28", { id: u64.fresh, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
-const R29 = relation("R29", { id: u64.fresh, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
-const R30 = relation("R30", { id: u64.fresh, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
-const R31 = relation("R31", { id: u64.fresh, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
+const R0 = relation("R0", { id: u64, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
+const R1 = relation("R1", { id: u64, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
+const R2 = relation("R2", { id: u64, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
+const R3 = relation("R3", { id: u64, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
+const R4 = relation("R4", { id: u64, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
+const R5 = relation("R5", { id: u64, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
+const R6 = relation("R6", { id: u64, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
+const R7 = relation("R7", { id: u64, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
+const R8 = relation("R8", { id: u64, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
+const R9 = relation("R9", { id: u64, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
+const R10 = relation("R10", { id: u64, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
+const R11 = relation("R11", { id: u64, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
+const R12 = relation("R12", { id: u64, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
+const R13 = relation("R13", { id: u64, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
+const R14 = relation("R14", { id: u64, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
+const R15 = relation("R15", { id: u64, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
+const R16 = relation("R16", { id: u64, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
+const R17 = relation("R17", { id: u64, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
+const R18 = relation("R18", { id: u64, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
+const R19 = relation("R19", { id: u64, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
+const R20 = relation("R20", { id: u64, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
+const R21 = relation("R21", { id: u64, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
+const R22 = relation("R22", { id: u64, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
+const R23 = relation("R23", { id: u64, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
+const R24 = relation("R24", { id: u64, ref: u64, kind: Vocab0.id, at: interval(u64), label: str, score: i64 })
+const R25 = relation("R25", { id: u64, ref: u64, kind: Vocab1.id, at: interval(u64), label: str, score: i64 })
+const R26 = relation("R26", { id: u64, ref: u64, kind: Vocab2.id, at: interval(u64), label: str, score: i64 })
+const R27 = relation("R27", { id: u64, ref: u64, kind: Vocab3.id, at: interval(u64), label: str, score: i64 })
+const R28 = relation("R28", { id: u64, ref: u64, kind: Vocab4.id, at: interval(u64), label: str, score: i64 })
+const R29 = relation("R29", { id: u64, ref: u64, kind: Vocab5.id, at: interval(u64), label: str, score: i64 })
+const R30 = relation("R30", { id: u64, ref: u64, kind: Vocab6.id, at: interval(u64), label: str, score: i64 })
+const R31 = relation("R31", { id: u64, ref: u64, kind: Vocab7.id, at: interval(u64), label: str, score: i64 })
 
 const LawScale = schema(
 	"LawScale",
@@ -106,6 +106,38 @@ const LawScale = schema(
 		R31
 	},
 	[
+		key(R0, ["id"]),
+		key(R1, ["id"]),
+		key(R2, ["id"]),
+		key(R3, ["id"]),
+		key(R4, ["id"]),
+		key(R5, ["id"]),
+		key(R6, ["id"]),
+		key(R7, ["id"]),
+		key(R8, ["id"]),
+		key(R9, ["id"]),
+		key(R10, ["id"]),
+		key(R11, ["id"]),
+		key(R12, ["id"]),
+		key(R13, ["id"]),
+		key(R14, ["id"]),
+		key(R15, ["id"]),
+		key(R16, ["id"]),
+		key(R17, ["id"]),
+		key(R18, ["id"]),
+		key(R19, ["id"]),
+		key(R20, ["id"]),
+		key(R21, ["id"]),
+		key(R22, ["id"]),
+		key(R23, ["id"]),
+		key(R24, ["id"]),
+		key(R25, ["id"]),
+		key(R26, ["id"]),
+		key(R27, ["id"]),
+		key(R28, ["id"]),
+		key(R29, ["id"]),
+		key(R30, ["id"]),
+		key(R31, ["id"]),
 		contained(on(R1, "ref"), on(R0, "id")),
 		contained(on(R2, "ref"), on(R1, "id")),
 		contained(on(R3, "ref"), on(R2, "id")),
@@ -169,26 +201,26 @@ const LawScale = schema(
 		contained(on(R29, "kind"), on(Vocab5, "id")),
 		contained(on(R30, "kind"), on(Vocab6, "id")),
 		contained(on(R31, "kind"), on(Vocab7, "id")),
-		capacity(on(R0, "id"), within(0n, 3n), on(R1, "ref")),
-		capacity(on(R1, "id"), within(0n, 3n), on(R2, "ref")),
-		capacity(on(R2, "id"), within(0n, 3n), on(R3, "ref")),
-		capacity(on(R3, "id"), within(0n, 3n), on(R4, "ref")),
-		capacity(on(R4, "id"), within(0n, 3n), on(R5, "ref")),
-		capacity(on(R5, "id"), within(0n, 3n), on(R6, "ref")),
-		capacity(on(R6, "id"), within(0n, 3n), on(R7, "ref")),
-		capacity(on(R7, "id"), within(0n, 3n), on(R8, "ref")),
-		capacity(on(R8, "id"), within(0n, 3n), on(R9, "ref")),
-		capacity(on(R9, "id"), within(0n, 3n), on(R10, "ref")),
-		capacity(on(R10, "id"), within(0n, 3n), on(R11, "ref")),
-		capacity(on(R11, "id"), within(0n, 3n), on(R12, "ref")),
-		capacity(on(R12, "id"), within(0n, 3n), on(R13, "ref")),
-		capacity(on(R13, "id"), within(0n, 3n), on(R14, "ref")),
-		capacity(on(R14, "id"), within(0n, 3n), on(R15, "ref")),
-		capacity(on(R15, "id"), within(0n, 3n), on(R16, "ref")),
-		capacity(on(R16, "id"), within(0n, 3n), on(R17, "ref")),
-		capacity(on(R17, "id"), within(0n, 3n), on(R18, "ref")),
-		capacity(on(R18, "id"), within(0n, 3n), on(R19, "ref")),
-		capacity(on(R19, "id"), within(0n, 3n), on(R20, "ref")),
+		capacity(on(R0, "id"), { from: on(R1, "ref"), within: within(0n, 3n) }),
+		capacity(on(R1, "id"), { from: on(R2, "ref"), within: within(0n, 3n) }),
+		capacity(on(R2, "id"), { from: on(R3, "ref"), within: within(0n, 3n) }),
+		capacity(on(R3, "id"), { from: on(R4, "ref"), within: within(0n, 3n) }),
+		capacity(on(R4, "id"), { from: on(R5, "ref"), within: within(0n, 3n) }),
+		capacity(on(R5, "id"), { from: on(R6, "ref"), within: within(0n, 3n) }),
+		capacity(on(R6, "id"), { from: on(R7, "ref"), within: within(0n, 3n) }),
+		capacity(on(R7, "id"), { from: on(R8, "ref"), within: within(0n, 3n) }),
+		capacity(on(R8, "id"), { from: on(R9, "ref"), within: within(0n, 3n) }),
+		capacity(on(R9, "id"), { from: on(R10, "ref"), within: within(0n, 3n) }),
+		capacity(on(R10, "id"), { from: on(R11, "ref"), within: within(0n, 3n) }),
+		capacity(on(R11, "id"), { from: on(R12, "ref"), within: within(0n, 3n) }),
+		capacity(on(R12, "id"), { from: on(R13, "ref"), within: within(0n, 3n) }),
+		capacity(on(R13, "id"), { from: on(R14, "ref"), within: within(0n, 3n) }),
+		capacity(on(R14, "id"), { from: on(R15, "ref"), within: within(0n, 3n) }),
+		capacity(on(R15, "id"), { from: on(R16, "ref"), within: within(0n, 3n) }),
+		capacity(on(R16, "id"), { from: on(R17, "ref"), within: within(0n, 3n) }),
+		capacity(on(R17, "id"), { from: on(R18, "ref"), within: within(0n, 3n) }),
+		capacity(on(R18, "id"), { from: on(R19, "ref"), within: within(0n, 3n) }),
+		capacity(on(R19, "id"), { from: on(R20, "ref"), within: within(0n, 3n) }),
 		key(R0, ["at"]),
 		key(R1, ["at"]),
 		key(R2, ["at"]),
@@ -267,8 +299,9 @@ const LawScale = schema(
 // The machinery COMPUTED (never silently widened) — spot pins across the laws.
 const pinChain: Equal<(typeof LawScale)["classes"]["R5"]["ref"], "R4.id"> = true
 const pinVocab: Equal<(typeof LawScale)["classes"]["R9"]["kind"], "Vocab1.id"> = true
-const pinGenerator: Equal<(typeof LawScale)["classes"]["R31"]["id"], "R31.id"> = true
+// The generator authority is deleted with fresh: an id in no law is BARE.
+const pinNoGenerator: Equal<(typeof LawScale)["classes"]["R31"]["id"], undefined> = true
 const pinClosed: Equal<(typeof LawScale)["classes"]["Vocab7"]["id"], "Vocab7.id"> = true
 const pinBare: Equal<(typeof LawScale)["classes"]["R3"]["score"], undefined> = true
 
-export { LawScale, pinBare, pinChain, pinClosed, pinGenerator, pinVocab }
+export { LawScale, pinBare, pinChain, pinClosed, pinNoGenerator, pinVocab }

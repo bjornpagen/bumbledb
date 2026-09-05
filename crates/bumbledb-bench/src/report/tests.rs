@@ -63,8 +63,6 @@ fn fixture() -> RunReport {
         store: StoreNumbers {
             db_bytes: 1024,
             sqlite_bytes: 2048,
-            cache_images: 3,
-            cache_bytes: 4096,
         },
         flames: vec![],
     }
@@ -118,7 +116,6 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
 
 - bumbledb file (compacted): 1024 bytes
 - sqlite file: 2048 bytes
-- image cache: 3 images, 4096 bytes
 
 ## Flame summaries
 

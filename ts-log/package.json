@@ -1,13 +1,24 @@
 {
 	"name": "@bjornpagen/bumbledb-log",
 	"version": "0.20.3",
-	"description": "Braided object-store replication for bumbledb: the command codec, theory-derived braids, and replica/writer over five store verbs",
+	"description": "Durable named application commands over bumbledb: LocalHistory, HostedHistory, sealed commands with retained refs, published snapshots, one native TenantCache, and explicit maintenance/migration operations (Effect-only)",
 	"type": "module",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
+		},
+		"./schema": {
+			"types": "./dist/schema.d.ts",
+			"default": "./dist/schema.js"
+		},
+		"./migrations": {
+			"types": "./dist/migrations/index.d.ts",
+			"default": "./dist/migrations/index.js"
 		}
+	},
+	"bin": {
+		"bumbledb-log": "./dist/migrations/bin.js"
 	},
 	"imports": {
 		"#test/*.ts": "./test/*.ts",
@@ -30,8 +41,9 @@
 	},
 	"keywords": [
 		"database",
-		"replication",
-		"object-storage",
+		"commands",
+		"history",
+		"migrations",
 		"bumbledb"
 	],
 	"author": "Bjorn Pagen",
@@ -42,10 +54,6 @@
 		"directory": "ts-log"
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
-	"dependencies": {
-		"@aws-sdk/client-s3": "^3.1116.0",
-		"arkregex": "^0.0.8"
-	},
 	"peerDependencies": {
 		"@bjornpagen/bumbledb": "0.20.3",
 		"effect": "4.0.0-rc.112"

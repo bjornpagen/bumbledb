@@ -2,13 +2,12 @@ use super::*;
 
 #[test]
 fn projection_scan_filters_residuals_like_the_oracle() {
-    let dir = TempDir::new("sink-projection-scan");
     let schema = schema();
 
     let postings: Vec<(u64, u64, i64)> = (0..60)
         .map(|i| (i, i % 5, i64::try_from(i * 7 % 23).expect("small")))
         .collect();
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![
@@ -51,14 +50,13 @@ fn projection_scan_filters_residuals_like_the_oracle() {
 
 #[test]
 fn pinned_leaf_skips_preserve_d2() {
-    let dir = TempDir::new("sink-pinned-d2");
     let schema = schema();
 
     let postings: Vec<(u64, u64, i64)> = (0..40)
         .map(|i| (i, i % 4, i64::try_from(i).expect("small")))
         .collect();
     let tags: Vec<(u64, u64)> = (0..40).map(|i| (i, 900 + i)).collect();
-    let views = views_of(&dir, &schema, &postings, &tags);
+    let views = views_of(&schema, &postings, &tags);
 
     let normalized = normalized(
         &schema,
@@ -90,12 +88,11 @@ fn pinned_leaf_skips_preserve_d2() {
 
 #[test]
 fn duplicate_witness_projection_dedups_and_skips_suffixes() {
-    let dir = TempDir::new("sink-projection-skip");
     let schema = schema();
 
     let postings = vec![(1u64, 7u64, 100i64)];
     let tags: Vec<(u64, u64)> = (0..50).map(|t| (1, t)).collect();
-    let views = views_of(&dir, &schema, &postings, &tags);
+    let views = views_of(&schema, &postings, &tags);
 
     let normalized = normalized(
         &schema,
@@ -127,14 +124,13 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
 
 #[test]
 fn interval_projection_carries_both_slot_words() {
-    let dir = TempDir::new("sink-projection-interval");
     let schema = schema();
     let rows = vec![
         (1u64, 10u64, (5i64, 9i64)),
         (2, 10, (-3, 4)),
         (3, 11, (5, 9)),
     ];
-    let views = payroll_views_of(&dir, &schema, &rows);
+    let views = payroll_views_of(&schema, &rows);
 
     let normalized = normalized(
         &schema,

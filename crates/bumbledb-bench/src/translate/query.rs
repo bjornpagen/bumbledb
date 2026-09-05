@@ -146,6 +146,9 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
+            FindTerm::Compute(_) => {
+                return Err("computed heads are not translated to SQL".into());
+            }
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                 unreachable!("no aggregates here")
             }
@@ -173,6 +176,9 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
             FindTerm::Count => cols.push(format!("0 AS h{position}")),
+            FindTerm::Compute(_) => {
+                return Err("computed heads are not translated to SQL".into());
+            }
         }
     }
     Ok(format!(
@@ -203,6 +209,9 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
                 FoldOp::Min => format!("MIN(h{position})"),
                 FoldOp::Max => format!("MAX(h{position})"),
             }),
+            FindTerm::Compute(_) => {
+                return Err("computed heads are not translated to SQL".into());
+            }
             FindTerm::Pack { .. } => {
                 // routes Pack heads to the naive lane before translation.
                 return Err("Pack is naive-only (no SQL coalesce)".to_owned());
@@ -276,12 +285,17 @@ fn fold_sql(
             FindTerm::Aggregate { op, over } => outer.push({
                 let agg = match op {
                     FoldOp::Sum => "SUM",
-                    FoldOp::Mean => return Err("exact F64 Mean has no SQLite numerical oracle".into()),
+                    FoldOp::Mean => {
+                        return Err("exact F64 Mean has no SQLite numerical oracle".into());
+                    }
                     FoldOp::Min => "MIN",
                     FoldOp::Max => "MAX",
                 };
                 format!("{agg}(v{})", over.0)
             }),
+            FindTerm::Compute(_) => {
+                return Err("computed heads are not translated to SQL".into());
+            }
             FindTerm::Pack { .. } => {
                 return Err("Pack is naive-only (no SQL coalesce)".to_owned());
             }

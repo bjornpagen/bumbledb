@@ -231,6 +231,10 @@ trace_points! {
 
     LITERAL_LATCH => "literal_latch", Execute,
 
+    FALLBACK_RESTART => "fallback_restart", Execute,
+
+    SCRATCH_SPILL => "scratch_spill", Execute,
+
     COMMIT => "commit", Commit,
 
     COMMIT_NOOP => "commit_noop", Commit,

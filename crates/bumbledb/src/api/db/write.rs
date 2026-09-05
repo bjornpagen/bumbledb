@@ -1,72 +1,31 @@
-use std::sync::PoisonError;
+//! [`Db::write`] / [`Db::write_from`]: the embedded durable write path over
+//! the successor candidate protocol.
+//!
+//! Flow: acquire the store's one writer capability (exclusive, reentrancy
+//! refused as a typed error) → witness check against the true parent →
+//! open the parent snapshot → run the closure over an in-memory net delta
+//! → drop the parent reader → prepare the sealed delta as a private
+//! candidate, judged as a complete final state by the production judge →
+//! seal (no host adjunct on the embedded path) → one durable LMDB commit
+//! for facts and generation together. An abort — closure error, judge
+//! rejection, or panic — never wrote a fact: the pending delta is plain
+//! memory and the candidate transaction drops whole.
 
-use super::{Db, ReadInstance, ThreadKey, WriteTx, WriterThreadReset};
-use crate::error::{Admission, Committed, ConditionalWrite, Error, Result};
-use crate::storage::commit::{commit, flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids};
-use crate::storage::env::Environment;
+use super::tx::change_set_of_pending;
+use super::{Db, ReadInstance, WriteTx, embedded_work};
+use crate::error::{Committed, ConditionalWrite, Error, Result};
+use crate::storage::GenerationId;
+use crate::storage::store::{
+    AttachmentChange, EnvironmentId, HostChanges, Prepared, SchemaJudge, UnindexedRows,
+};
 
-impl Drop for WriterThreadReset<'_> {
-    fn drop(&mut self) {
-        ThreadKey::store(self.0, None, std::sync::atomic::Ordering::Release);
-    }
-}
-
-/// Burns the escaped fresh high-water when the write region terminates without
-/// reaching `commit` — [`WriterThreadReset`]'s sibling drop guard, and the
-/// closure of the one panic gap: `reserve` hands ids to the host before the
-/// commit's fate is known, so an `Err`-returning closure and a PANICKING
-/// closure alike must burn what escaped (`lean/Bumbledb/Txn/Fresh.lean:
-/// never_reissue_observable` — one `Reachable.txn` transition, the fate
-/// irrelevant).
-struct EscapedIdBurn<'a, S> {
-    env: &'a Environment,
-
-    tx: Option<WriteTx<'a, S>>,
-}
-
-impl<'a, S> EscapedIdBurn<'a, S> {
-    fn arm(env: &'a Environment, tx: WriteTx<'a, S>) -> Self {
-        Self { env, tx: Some(tx) }
-    }
-
-    fn tx(&mut self) -> &mut WriteTx<'a, S> {
-        self.tx.as_mut().expect("armed from construction to disarm")
-    }
-
-    fn disarm(mut self) -> WriteTx<'a, S> {
-        self.tx.take().expect("armed from construction to disarm")
-    }
-}
-
-impl<S> Drop for EscapedIdBurn<'_, S> {
-    fn drop(&mut self) {
-        let Some(tx) = self.tx.take() else {
-            return;
-        };
-        let (view, delta) = tx.into_store();
-        // The read view closes before the burn's own write transaction —
-
-        drop(view);
-
-        // begin (`never_reissue_observable`).
-        let _ = flush_escaped_fresh_ids(self.env, &delta);
-    }
-}
-
-enum WriteEnd<R> {
-    Committed(R),
-    Poisoned(Error),
-    Aborted(Error),
-}
-
-/// The generation witness, reified: the catalog identity and generation one
-/// [`ReadInstance`] observed. Fields are private and the one
-/// construction site is [`ReadInstance::witness`], so a witness stays
-/// evidence — never an integer a caller could fabricate. A stale
-/// witness is exactly what the commit-time compare convicts as
-/// [`ConditionalWrite::Moved`].
-/// A witness is evidence, and evidence does not wear out. The spent-move
-/// ruling is overturned: this value is [`Clone`] and not [`Copy`] (the
+/// The generation witness, reified: the environment identity and
+/// generation one [`ReadInstance`] observed. Fields are private and the
+/// one construction site is [`ReadInstance::witness`], so a witness stays
+/// evidence — never an integer a caller could fabricate. A stale witness
+/// is exactly what the commit-time compare convicts as
+/// [`ConditionalWrite::Moved`]. Evidence does not wear out: `Clone`, not
+/// `Copy` (cloning is a decision at the call site).
 /// ```compile_fail
 /// fn require_copy<T: Copy>() {}
 /// require_copy::<bumbledb::Witness<()>>();
@@ -74,50 +33,55 @@ enum WriteEnd<R> {
 #[derive(Clone)]
 #[must_use]
 pub struct Witness<S> {
-    identity: crate::storage::env::CatalogIdentity,
-    generation: crate::GenerationId,
+    environment: EnvironmentId,
+    generation: GenerationId,
     marker: std::marker::PhantomData<fn() -> S>,
 }
 
 impl<S> ReadInstance<'_, S> {
     /// # Errors
+    /// None today; kept fallible with the lease shape.
     pub fn witness(&self) -> Result<Witness<S>> {
         Ok(Witness {
-            identity: self.txn().identity().clone(),
-            generation: self.txn().generation()?,
+            environment: self.snapshot.identity().environment,
+            generation: self.snapshot.generation(),
             marker: std::marker::PhantomData,
         })
     }
 }
 
 impl<S> Db<S> {
-    /// delta — LMDB never saw a fact — but fresh ids the closure already
-    /// minted burn either way: the `EscapedIdBurn` drop guard flushes the
-    /// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+    /// One durable write: in-memory set arithmetic inside the closure, then
+    /// complete final-state judgment, then one LMDB commit. A rejection is
+    /// an [`crate::Admission::Rejected`] carrying the complete violated
+    /// statement set; the closure's minted values are gone with the delta.
     /// # Errors
-    /// # Panics
+    /// Storage failure, exhausted work, reentrant write, or the closure's
+    /// own error (which aborts: LMDB never saw a fact).
     pub fn write<R>(
         &self,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
-    ) -> Result<Admission<Committed<R>>> {
+    ) -> Result<crate::Admission<Committed<R>>> {
         match self.write_witnessed(None, f)? {
-            ConditionalWrite::Accepted(committed) => Ok(Admission::Accepted(committed)),
-            ConditionalWrite::Rejected(violations) => Ok(Admission::Rejected(violations)),
+            ConditionalWrite::Accepted(committed) => Ok(crate::Admission::Accepted(committed)),
+            ConditionalWrite::Rejected(violations) => Ok(crate::Admission::Rejected(violations)),
             ConditionalWrite::Moved { .. } => {
                 unreachable!("Db::write has no witness, so Moved is unrepresentable")
             }
         }
     }
 
-    /// The engine ships the outcome, never a loop — retry is host policy.
+    /// Conditional write: the engine ships the outcome, never a loop —
+    /// retry is host policy. A moved generation is an answer, not an error.
     /// # Errors
-    /// # Panics
+    /// `ForeignWitness` for a witness from another environment; otherwise
+    /// as [`Db::write`].
     pub fn write_from<R>(
         &self,
         witness: &Witness<S>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<ConditionalWrite<R>> {
-        if !witness.identity.same(self.env.identity()) {
+        if witness.environment != self.store.environment_id() {
             return Err(Error::ForeignWitness);
         }
         self.write_witnessed(Some(witness.generation), f)
@@ -125,104 +89,56 @@ impl<S> Db<S> {
 
     fn write_witnessed<R>(
         &self,
-        witnessed: Option<crate::GenerationId>,
+        witnessed: Option<GenerationId>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<ConditionalWrite<R>> {
-        use std::sync::atomic::Ordering;
-        let caller = ThreadKey::mint();
-        assert_ne!(
-            ThreadKey::load(&self.writer_thread, Ordering::Acquire),
-            Some(caller),
-            "nested Db::write — re-entrant write transactions are forbidden"
-        );
-
-        // LMDB — so the flag is cleared rather than propagated.
-        let _writer_lock = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        ThreadKey::store(&self.writer_thread, Some(caller), Ordering::Release);
-        let _owner = WriterThreadReset(&self.writer_thread);
-        // Drop the parked reader before writing: a
-        // pinned old snapshot blocks LMDB page reuse for the writer.
-        drop(
-            self.read_cache
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take(),
-        );
-        flush_pending_escaped_fresh_ids(&self.env)?;
-        let view = self.env.read_txn()?;
-
-        // witness's. Mismatch aborts before any page is touched.
+        let work = embedded_work()?;
+        // The exclusive writer first: nothing can commit between the
+        // witness check / parent snapshot and this candidate's commit.
+        let mut owner = self.store.writer(&work).map_err(Error::from_store)?;
         if let Some(witnessed) = witnessed {
-            let current = view.generation()?;
+            let current = owner.parent_generation().map_err(Error::from_store)?;
             if current != witnessed {
                 return Ok(ConditionalWrite::Moved { witnessed, current });
             }
         }
         let mut txn_span = crate::obs::span(crate::obs::names::WRITE_TXN);
-
-        // the guard's drop, exactly once. `reserve` may already have handed
-
-        // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
-        // Declared after `_writer_lock` (locals drop in reverse order),
-
-        let mut burn = EscapedIdBurn::arm(
-            &self.env,
-            WriteTx {
-                mutation: super::mutation_core::MutationCore::store(
-                    std::sync::Arc::clone(&self.schema),
-                    self.schema.as_ref(),
-                    view,
-                ),
-            },
-        );
-        let end = match f(burn.tx()) {
-            Ok(value) => {
-                if let Some(source) = burn.tx().poisoned() {
-                    WriteEnd::Poisoned(Error::TransactionPoisoned {
-                        source: Box::new(source.clone()),
-                    })
-                } else {
-                    WriteEnd::Committed(value)
-                }
-            }
-            Err(error) => WriteEnd::Aborted(error),
-        };
-        let out = match end {
-            WriteEnd::Committed(value) => value,
-            WriteEnd::Poisoned(error) | WriteEnd::Aborted(error) => {
-                // Non-unwind abort: disarm so Drop does not flush twice,
-
-                let (view, delta) = burn.disarm().into_store();
-                drop(view);
-                return match flush_escaped_fresh_ids(&self.env, &delta) {
-                    Ok(()) => Err(error),
-                    Err(flush_err) => Err(flush_err),
-                };
-            }
-        };
-
-        let (view, delta) = burn.disarm().into_store();
-        drop(view);
-
-        let dirty = delta.dirty_relations();
-        let floors = delta.inserted_floors();
-        let report = match commit(delta, &self.env)? {
-            Admission::Rejected(violations) => {
-                return Ok(ConditionalWrite::Rejected(violations));
-            }
-            Admission::Accepted(report) => report,
-        };
-        txn_span.set_flag(true);
-        txn_span.end();
-        if let crate::storage::commit::CommitReport::Changed { new_generation } = report {
-            self.cache.advance(new_generation, &dirty, &floors);
-
-            self.generation
-                .store(new_generation.storage_word(), Ordering::Release);
+        let parent = self.store.snapshot(&work).map_err(Error::from_store)?;
+        let mut tx = WriteTx::new(&self.schema, self.closed.as_ref(), &parent, &work);
+        let value = f(&mut tx)?;
+        if let Some(source) = tx.poisoned() {
+            return Err(Error::TransactionPoisoned {
+                source: Box::new(source.clone()),
+            });
         }
-        Ok(ConditionalWrite::Accepted(Committed {
-            value: out,
-            generation: report.generation(),
-        }))
+        let pending = tx.into_pending();
+        // Release the parent reader before the candidate's map-full →
+        // grow → reapply loop: a held snapshot would block growth.
+        drop(parent);
+        let changes = change_set_of_pending(self.schema.as_ref(), &pending, &work)?;
+        let judge = SchemaJudge::new(self.schema.as_ref());
+        match owner
+            .prepare(&changes, &UnindexedRows, &judge)
+            .map_err(Error::from_store)?
+        {
+            Prepared::Rejected(judged) => Ok(ConditionalWrite::Rejected(
+                super::violations::violations_from_judged(self.schema.as_ref(), judged, &work)?,
+            )),
+            Prepared::Admitted(prepared) => {
+                let sealed = prepared
+                    .seal(HostChanges {
+                        records: &[],
+                        attachment: AttachmentChange::Keep,
+                    })
+                    .map_err(Error::from_store)?;
+                let commit = sealed.commit().map_err(Error::from_store)?;
+                txn_span.set_flag(true);
+                txn_span.end();
+                Ok(ConditionalWrite::Accepted(Committed {
+                    value,
+                    generation: commit.generation,
+                }))
+            }
+        }
     }
 }

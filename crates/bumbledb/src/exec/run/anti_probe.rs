@@ -32,7 +32,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
     mask: &mut Vec<u8>,
     anti_sources: &mut [Vec<Source>],
     point_checks: &mut Vec<(usize, usize, u64)>,
-    point_sources: &mut Vec<(usize, usize, Source)>,
+    point_sources: &mut Vec<(usize, usize, Source, bool)>,
     read_slot: impl Fn(usize, usize) -> u64,
     counters: &mut C,
 ) {
@@ -50,10 +50,10 @@ pub(super) fn anti_probe_pass<C: Counters>(
         let n = survivors.len();
 
         point_sources.clear();
-        for (start_col, end_col, var, slot) in &spec.point_parts {
+        for (start_col, end_col, var, slot, dense) in &spec.point_parts {
             let src =
                 word_base(cover_vars, *var, width_of).map_or(Source::Slot(*slot), Source::Batch);
-            point_sources.push((*start_col, *end_col, src));
+            point_sources.push((*start_col, *end_col, src, *dense));
         }
 
         match &spec.form {
@@ -73,10 +73,18 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 for k in 0..n {
                     let element = usize::try_from(survivors[k]).expect("batch fits usize");
                     point_checks.clear();
-                    for &(start_col, end_col, src) in point_sources.iter() {
+                    for &(start_col, end_col, src, dense) in point_sources.iter() {
                         let point = match src {
                             Source::Batch(base) => entry_keys[element * arity + base],
                             Source::Slot(slot) => read_slot(element, slot),
+                        };
+                        // The dense finite-probe guard (chapter 10 §2):
+                        // a nonfinite point satisfies no membership, so
+                        // the negated atom's conjunction has no witness.
+                        let point = if dense {
+                            crate::image::view::dense_probe_word(point)
+                        } else {
+                            point
                         };
                         point_checks.push((start_col, end_col, point));
                     }
@@ -161,10 +169,16 @@ pub(super) fn anti_probe_pass<C: Counters>(
                             Some(_) if spec.point_parts.is_empty() => true,
                             Some(child) => {
                                 point_checks.clear();
-                                for &(start_col, end_col, src) in point_sources.iter() {
+                                for &(start_col, end_col, src, dense) in point_sources.iter() {
                                     let point = match src {
                                         Source::Batch(base) => entry_keys[element * arity + base],
                                         Source::Slot(slot) => read_slot(element, slot),
+                                    };
+                                    // The dense finite-probe guard.
+                                    let point = if dense {
+                                        crate::image::view::dense_probe_word(point)
+                                    } else {
+                                        point
                                     };
                                     point_checks.push((start_col, end_col, point));
                                 }

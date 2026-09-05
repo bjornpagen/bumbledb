@@ -1,7 +1,7 @@
 use bumbledb::Value;
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, ValueType, Weight,
 };
 
 use super::PrimerConfig;
@@ -62,6 +62,15 @@ pub fn descriptor(cfg: &PrimerConfig) -> SchemaDescriptor {
         })
         .collect();
     let mut statements = Vec::new();
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now; the generator supplies dense
+    // index-aligned ids itself, so the keys hold by construction.
+    for rel in 0..cfg.relations {
+        statements.push(StatementDescriptor::Functionality {
+            relation: RelationId(rel),
+            projection: Box::new([FieldId(0)]),
+        });
+    }
     for rel in 1..cfg.relations {
         statements.push(StatementDescriptor::Containment {
             source: side(RelationId(rel), &[FieldId(1)]),
@@ -85,13 +94,11 @@ fn fields_of(rel: u32) -> Vec<FieldDescriptor> {
     let mut fields = vec![FieldDescriptor {
         name: "id".into(),
         value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }];
     if rel > 0 {
         fields.push(FieldDescriptor {
             name: "parent".into(),
             value_type: ValueType::U64,
-            generation: Generation::None,
         });
     }
     for slot in fields.len()..arity_of(rel) {
@@ -105,7 +112,6 @@ fn fields_of(rel: u32) -> Vec<FieldDescriptor> {
         fields.push(FieldDescriptor {
             name: format!("{tag}{slot}").into(),
             value_type,
-            generation: Generation::None,
         });
     }
     fields

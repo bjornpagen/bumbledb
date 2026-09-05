@@ -5,7 +5,6 @@ import {
 	isCapacityWeight,
 	isCapacityWindow,
 	type UnitDimensionBan,
-	type UnitWindowBan,
 	unitWeight,
 	type WeightOnSource
 } from "#capacity.ts"
@@ -223,26 +222,43 @@ function assertBoundsOnTarget(window: CapacityWindowSpec, target: FaceData, stat
 	}
 }
 
+/**
+ * The chapter 34 NAMED-OPTIONS capacity call — it replaces the old four
+ * positional arguments: `capacity(target, { from, weight?, within })`.
+ * Unit weight is the default; `weigh(...)`/`within(...)` remain the only
+ * mints for the weight/window values.
+ */
 function capacity<B extends AnyFace, W extends CapacityWindow, A extends AnyFace>(
 	target: B,
-	window: W & UnitWindowBan<W> & UnitDimensionBan<W> & BoundsOnTarget<W, B>,
-	source: A & SameArity<B, A> & SameShapes<B, A>
+	options: {
+		readonly from: A & SameArity<B, A> & SameShapes<B, A>
+		readonly within: W & UnitDimensionBan<W> & BoundsOnTarget<W, B>
+	}
 ): CapacityStatement<B["data"], A["data"]>
 function capacity<B extends AnyFace, M extends CapacityWeight, W extends CapacityWindow, A extends AnyFace>(
 	target: B,
-	weight: M & WeightOnSource<M, A>,
-	window: W & BoundsOnTarget<W, B>,
-	source: A & SameArity<B, A> & SameShapes<B, A>
+	options: {
+		readonly from: A & SameArity<B, A> & SameShapes<B, A>
+		readonly weight: M & WeightOnSource<M, A>
+		readonly within: W & BoundsOnTarget<W, B>
+	}
 ): CapacityStatement<B["data"], A["data"]>
 function capacity(
 	target: AnyFace,
-	second: unknown,
-	third: unknown,
-	fourth?: AnyFace
+	options: {
+		readonly from: AnyFace
+		readonly weight?: unknown
+		readonly within: unknown
+	}
 ): CapacityStatement<FaceData, FaceData> {
-	const weighted = fourth !== undefined
-	const windowValue = weighted ? third : second
-	const source = weighted ? fourth : (third as AnyFace)
+	if (typeof options !== "object" || options === null || !("from" in options) || !("within" in options)) {
+		throw new AuthoringError({
+			message:
+				"capacity takes named options — capacity(target, { from, weight?, within }) (chapter 34's one spelling; the positional arguments are deleted)"
+		})
+	}
+	const windowValue = options.within
+	const source = options.from
 	if (!isCapacityWindow(windowValue)) {
 		throw new AuthoringError({
 			message:
@@ -250,30 +266,18 @@ function capacity(
 		})
 	}
 	let weight: WeightSpec = unitWeight
-	if (weighted) {
-		if (!isCapacityWeight(second)) {
+	if (options.weight !== undefined) {
+		if (!isCapacityWeight(options.weight)) {
 			throw new AuthoringError({
 				message: "a capacity weight is minted only by weigh() — a structural literal skips the row-local weight wall"
 			})
 		}
-		weight = second.weight
+		weight = options.weight.weight
 	}
 	const window = windowValue.window
-	if (weight.kind === "unit" && window.kind === "floor" && window.lo.kind === "lit" && window.lo.value === 1n) {
-		throw new AuthoringError({
-			message:
-				"`{1..*}` on the unit instance says only what the bare containment says — drop the annotation and write the containment: contained(source, target)"
-		})
-	}
-	if (weight.kind === "unit" && window.kind === "floor") {
-		throw new AuthoringError({
-			message:
-				"`{N..*}` on the unit instance — a bare count floor is refused; weigh the source (`<=[w]{N..*}` stays legal) or drop the bound"
-		})
-	}
-
-	// CapacityDimensionMixing twin — ruled 2026-07-24): a count of facts
-
+	// The unit-floor and vacuous-window ban tables are deleted (C01):
+	// `{1..*}`, `{N..*}` and `{0..*}` are accepted canonical laws now.
+	// CapacityDimensionMixing (C18) remains — genuinely different semantics.
 	if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
 		throw new AuthoringError({
 			message: `a unit (count) window against the duration() bound on ${window.hi.field} mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal`

@@ -1,6 +1,6 @@
 use super::*;
 use crate::schema::ContainmentId;
-use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
+use crate::schema::tests::{containment, fd, field, id_field, side, side_where};
 use bumbledb_theory::schema::{IntervalElement, LiteralSet, RelationDescriptor};
 
 #[test]
@@ -32,13 +32,13 @@ fn example() -> SchemaDescriptor {
             RelationDescriptor {
                 extension: None,
                 name: "Holder".into(),
-                fields: vec![fresh_field("id"), field("name", ValueType::String)],
+                fields: vec![id_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
                 fields: vec![
-                    fresh_field("id"),
+                    id_field("id"),
                     field("holder", ValueType::U64),
                     field("kind", ValueType::U64),
                     field(
@@ -77,6 +77,10 @@ fn example() -> SchemaDescriptor {
             },
         ],
         statements: vec![
+            // Declared identity keys sit at the ids the old fresh auto-keys
+            // occupied (0 and 1), so the render goldens keep their ids.
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(0)]),
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -334,7 +338,7 @@ fn closed_reference_selections_render_handles() {
             RelationDescriptor {
                 extension: None,
                 name: "Submission".into(),
-                fields: vec![fresh_field("id"), field("status", ValueType::U64)],
+                fields: vec![id_field("id"), field("status", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,
@@ -343,6 +347,9 @@ fn closed_reference_selections_render_handles() {
             },
         ],
         statements: vec![
+            // The declared key takes materialized id 1, after Status's
+            // closed auto-key (id 0); the containments keep ids 2 and 3.
+            fd(RelationId(1), &[FieldId(0)]),
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),

@@ -1,308 +1,556 @@
-//! Legacy filesystem object-store adapter and local test support.
-//! One implementation serves untracked Rust callers and bounded native jobs.
-//! The kernel-held mutation lock spans comparison, publication and fsync.
-//! This adapter is not the successor's LMDB local-history authority.
+//! `FsStore`: the conditional-store verbs over one local directory. This is
+//! the ONE implementation of every filesystem operation — its entire
+//! read/compare/write/flush/rename/cleanup critical section runs here, in
+//! Rust, under a kernel-held mutation lock. No JS layer carries a lock across
+//! an await; TS delegates through the shared native executor (C07).
+//!
+//! Deleted 0.x mechanisms: numeric token/`~lease/<key>/gen` sidecar CAS,
+//! `Lease` parsing, age-based temp sweeping and the unconditional-rename TS
+//! authority. The head version token is the content hash of the current head
+//! bytes; every proposed head body differs through its monotone head
+//! revision, so equal-bytes ABA is impossible (chapter 20).
+//!
+//! Durable ordering per mutation: stage under `~tmp` → fsync file → rename
+//! into place → fsync parent directory. A crash leaves the old or the new
+//! complete bytes, never a torn head. This adapter is deterministic-test
+//! support and a backup destination; it is not a second production database
+//! engine — `LocalHistory`'s authority is LMDB.
 
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use bumbledb::work::{ByteReservation, WorkContext, WorkError};
-
-use super::{
-    Create, Etag, Fenced, Fetched, LEASE_NAMESPACE, ObjectStore, Poll, Result, StoreError,
-    StoreKey, Swap,
+use super::fence::{acquire_mutation, sync_parent, synced_temp};
+use super::key_ok;
+use crate::writer::verbs::{
+    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
 };
 
-#[cfg(test)]
-mod bounded_tests;
-mod operation;
+const QUANTUM: usize = 65_536;
+const PAGE: usize = 1_000;
 
-/// The content etag used by all filesystem and in-memory readers.
+/// One phase boundary a deterministic schedule can intercept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// The critical section holds the mutation lock and has read the current
+    /// state, before staging any bytes.
+    HeadObserved,
+    /// The replacement bytes are staged and fsynced, before the rename.
+    Staged,
+    /// The rename landed and the directory is durable, before the response.
+    Published,
+}
+
+/// What an intercepted phase does to the in-flight operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inject {
+    Continue,
+    /// Fail with a transport error at this boundary. Before `Published` the
+    /// mutation is dropped; at `Published` it has already landed.
+    Error,
+    /// Report `Indeterminate` at this boundary. Before `Published` nothing
+    /// landed; at `Published` the response is lost after the effect.
+    Indeterminate,
+}
+
+type Hook = Box<dyn FnMut(Phase, &str) -> Inject + Send>;
+
+/// The version token of exactly these head bytes.
 #[must_use]
-pub fn content_etag(bytes: &[u8]) -> Etag {
-    Etag(blake3::hash(bytes).to_hex().to_string())
+pub fn content_version(bytes: &[u8]) -> HeadVersion {
+    HeadVersion(Box::from(blake3::hash(bytes).to_hex().as_bytes()))
 }
 
-/// An owned result retains its exact logical body/etag charge until consumed.
+/// The filesystem backend's infrastructure failure.
 #[derive(Debug)]
-pub struct Accounted<T> {
-    pub value: T,
-    pub reservation: ByteReservation,
+pub struct FsError {
+    pub op: &'static str,
+    pub key: String,
+    pub source: io::Error,
 }
 
-/// Cooperative refusal is not erased into an I/O message or a CAS outcome.
-#[derive(Debug)]
-pub enum FsWorkError {
-    Store(StoreError),
-    Work(WorkError),
-}
-
-impl std::fmt::Display for FsWorkError {
+impl std::fmt::Display for FsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Store(error) => error.fmt(f),
-            Self::Work(error) => error.fmt(f),
-        }
+        write!(
+            f,
+            "filesystem store {} on `{}`: {}",
+            self.op, self.key, self.source
+        )
     }
 }
-impl std::error::Error for FsWorkError {}
+
+impl std::error::Error for FsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 /// Construction does no I/O and cannot infer abandonment from file age.
 pub struct FsStore {
     root: PathBuf,
+    hook: Mutex<Option<Hook>>,
 }
 
 impl FsStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            hook: Mutex::new(None),
+        }
     }
 
-    fn object_path(&self, key: &StoreKey) -> PathBuf {
-        self.root.join(key.as_str())
+    /// Install a deterministic schedule hook. Test support only: production
+    /// callers never install one.
+    pub fn set_hook(&self, hook: impl FnMut(Phase, &str) -> Inject + Send + 'static) {
+        *self
+            .hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Box::new(hook));
     }
 
-    fn generation_path(&self, key: &StoreKey) -> PathBuf {
-        self.root
-            .join(LEASE_NAMESPACE)
-            .join(key.as_str())
-            .join("gen")
+    fn inject(&self, phase: Phase, key: &str) -> Inject {
+        let mut slot = self
+            .hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match slot.as_mut() {
+            Some(hook) => hook(phase, key),
+            None => Inject::Continue,
+        }
     }
 
-    /// # Errors
-    /// Refuses I/O failure, cancellation, deadline or insufficient work/bytes.
-    pub fn get_with(
-        &self,
-        key: &StoreKey,
-        work: &WorkContext,
-    ) -> std::result::Result<Accounted<Option<Fetched>>, FsWorkError> {
-        self.get_work(key, Some(work))
-            .map(operation::Product::accounted)
+    fn path_of(&self, op: &'static str, key: &str) -> Result<PathBuf, FsError> {
+        if !key_ok(key) {
+            return Err(FsError {
+                op,
+                key: key.to_string(),
+                source: io::Error::new(io::ErrorKind::InvalidInput, "invalid store key"),
+            });
+        }
+        Ok(self.root.join(key))
     }
 
-    /// # Errors
-    /// Refuses I/O failure, absence, cancellation or insufficient work/bytes.
-    pub fn get_if_changed_with(
-        &self,
-        key: &StoreKey,
-        etag: &Etag,
-        work: &WorkContext,
-    ) -> std::result::Result<Accounted<Poll>, FsWorkError> {
-        self.poll_work(key, etag, Some(work))
-            .map(operation::Product::accounted)
-    }
-
-    /// # Errors
-    /// Refuses I/O failure or cooperative limits before publication.
-    pub fn put_create_with<'a>(
-        &self,
-        key: &StoreKey,
-        body: impl Into<Fenced<'a>>,
-        work: &WorkContext,
-    ) -> std::result::Result<Accounted<Create>, FsWorkError> {
-        self.create_work(key, body.into(), Some(work))
-            .map(operation::Product::accounted)
-    }
-
-    /// # Errors
-    /// Refuses I/O failure or cooperative limits before publication.
-    pub fn put_swap_with<'a>(
-        &self,
-        key: &StoreKey,
-        body: impl Into<Fenced<'a>>,
-        etag: &Etag,
-        work: &WorkContext,
-    ) -> std::result::Result<Accounted<Swap>, FsWorkError> {
-        self.swap_work(key, body.into(), etag, Some(work))
-            .map(operation::Product::accounted)
-    }
-
-    /// # Errors
-    /// Refuses I/O failure or cooperative limits before deletion.
-    pub fn delete_with(
-        &self,
-        key: &StoreKey,
-        work: &WorkContext,
-    ) -> std::result::Result<Accounted<()>, FsWorkError> {
-        self.delete_work(key, Some(work))
-            .map(operation::Product::accounted)
+    fn fail(op: &'static str, key: &str, source: io::Error) -> FsError {
+        FsError {
+            op,
+            key: key.to_string(),
+            source,
+        }
     }
 }
 
-fn legacy<T>(result: std::result::Result<operation::Product<T>, FsWorkError>) -> Result<T> {
-    result
-        .map(|output| output.value)
-        .map_err(|error| match error {
-            FsWorkError::Store(error) => error,
-            // Untracked execution cannot produce this arm. Keep it a refusal,
-            // rather than making an invariant violation panic across a boundary.
-            FsWorkError::Work(error) => StoreError {
-                op: "legacy filesystem operation",
-                key: String::new(),
-                source: std::io::Error::other(error),
+/// Refuse a symlinked object path: redirection at the owned store boundary
+/// is a hostile shape, not a storage location.
+fn refuse_symlink(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "object path is a symlink",
+        )),
+        Ok(meta) if meta.is_dir() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "key names a directory",
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Read a whole object in bounded chunks; `None` on definite absence. The
+/// open inode is immune to a concurrent rename; a file that changes length
+/// in place refuses rather than growing its buffer.
+fn read_object(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    refuse_symlink(path)?;
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "key is not a regular file",
+        ));
+    }
+    let length = usize::try_from(metadata.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "object exceeds address space"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "object allocation failed"))?;
+    while bytes.len() < length {
+        let begin = bytes.len();
+        let count = (length - begin).min(QUANTUM);
+        bytes.resize(begin + count, 0);
+        file.read_exact(&mut bytes[begin..])?;
+    }
+    let mut extra = [0u8];
+    if file.read(&mut extra)? != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "object grew during read",
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+fn ensure_parent(root: &Path, path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "key has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let mut current = Some(parent);
+    while let Some(dir) = current {
+        File::open(dir)?.sync_all()?;
+        if dir == root {
+            break;
+        }
+        current = dir.parent();
+    }
+    Ok(())
+}
+
+/// Stage-and-rename with full durability: temp under `~tmp`, fsync, rename,
+/// parent fsync. The temp's owner removes it on failure; elapsed time never
+/// proves another owner abandoned one.
+fn publish_bytes(root: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    ensure_parent(root, path)?;
+    let temp = synced_temp(root, bytes)?;
+    match fs::rename(&temp, path) {
+        Ok(()) => sync_parent(path),
+        Err(err) => {
+            let _ = fs::remove_file(&temp);
+            Err(err)
+        }
+    }
+}
+
+impl ConditionalStore for FsStore {
+    type Error = FsError;
+
+    fn read_head(&self, head_key: &str) -> Result<HeadRead, FsError> {
+        let path = self.path_of("read_head", head_key)?;
+        match read_object(&path).map_err(|e| Self::fail("read_head", head_key, e))? {
+            Some(bytes) => {
+                let version = content_version(&bytes);
+                Ok(HeadRead::Present {
+                    version,
+                    body: bytes.into_boxed_slice(),
+                })
+            }
+            None => Ok(HeadRead::Absent),
+        }
+    }
+
+    fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, FsError> {
+        let path = self.path_of("create_head", head_key)?;
+        // The whole critical section — observe, stage, rename, sync — runs
+        // under the kernel-held mutation lock. A paused holder remains owner.
+        let _lock = acquire_mutation(&self.root, head_key)
+            .map_err(|e| Self::fail("create_head", head_key, e))?;
+        let existing = read_object(&path).map_err(|e| Self::fail("create_head", head_key, e))?;
+        match self.inject(Phase::HeadObserved, head_key) {
+            Inject::Continue => {}
+            Inject::Error => {
+                return Err(Self::fail(
+                    "create_head",
+                    head_key,
+                    io::Error::other("injected transport failure"),
+                ));
+            }
+            Inject::Indeterminate => return Ok(ConditionalOutcome::Indeterminate),
+        }
+        if existing.is_some() {
+            return Ok(ConditionalOutcome::PreconditionFailed);
+        }
+        publish_bytes(&self.root, &path, body)
+            .map_err(|e| Self::fail("create_head", head_key, e))?;
+        match self.inject(Phase::Published, head_key) {
+            Inject::Continue => Ok(ConditionalOutcome::Published {
+                version: content_version(body),
+            }),
+            Inject::Error => Err(Self::fail(
+                "create_head",
+                head_key,
+                io::Error::other("injected lost response"),
+            )),
+            Inject::Indeterminate => Ok(ConditionalOutcome::Indeterminate),
+        }
+    }
+
+    fn replace_head(
+        &self,
+        head_key: &str,
+        expected: &HeadVersion,
+        body: &[u8],
+    ) -> Result<ConditionalOutcome, FsError> {
+        let path = self.path_of("replace_head", head_key)?;
+        let _lock = acquire_mutation(&self.root, head_key)
+            .map_err(|e| Self::fail("replace_head", head_key, e))?;
+        let current = read_object(&path).map_err(|e| Self::fail("replace_head", head_key, e))?;
+        match self.inject(Phase::HeadObserved, head_key) {
+            Inject::Continue => {}
+            Inject::Error => {
+                return Err(Self::fail(
+                    "replace_head",
+                    head_key,
+                    io::Error::other("injected transport failure"),
+                ));
+            }
+            Inject::Indeterminate => return Ok(ConditionalOutcome::Indeterminate),
+        }
+        let Some(current) = current else {
+            return Ok(ConditionalOutcome::PreconditionFailed);
+        };
+        if content_version(&current) != *expected {
+            return Ok(ConditionalOutcome::PreconditionFailed);
+        }
+        match self.inject(Phase::Staged, head_key) {
+            Inject::Continue => {}
+            Inject::Error => {
+                return Err(Self::fail(
+                    "replace_head",
+                    head_key,
+                    io::Error::other("injected transport failure"),
+                ));
+            }
+            Inject::Indeterminate => return Ok(ConditionalOutcome::Indeterminate),
+        }
+        publish_bytes(&self.root, &path, body)
+            .map_err(|e| Self::fail("replace_head", head_key, e))?;
+        match self.inject(Phase::Published, head_key) {
+            Inject::Continue => Ok(ConditionalOutcome::Published {
+                version: content_version(body),
+            }),
+            Inject::Error => Err(Self::fail(
+                "replace_head",
+                head_key,
+                io::Error::other("injected lost response"),
+            )),
+            Inject::Indeterminate => Ok(ConditionalOutcome::Indeterminate),
+        }
+    }
+
+    fn put_object(&self, key: &str, body: &[u8]) -> Result<PutOutcome, FsError> {
+        let path = self.path_of("put_object", key)?;
+        // Immutable names: an existing identical payload is idempotent
+        // evidence; a conflicting payload refuses and never overwrites.
+        if let Some(existing) = read_object(&path).map_err(|e| Self::fail("put_object", key, e))? {
+            if existing == body {
+                return Ok(PutOutcome::Stored);
+            }
+            return Err(Self::fail(
+                "put_object",
+                key,
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "immutable object holds conflicting bytes",
+                ),
+            ));
+        }
+        match self.inject(Phase::Staged, key) {
+            Inject::Continue => {}
+            Inject::Error => {
+                return Err(Self::fail(
+                    "put_object",
+                    key,
+                    io::Error::other("injected transport failure"),
+                ));
+            }
+            Inject::Indeterminate => return Ok(PutOutcome::Indeterminate),
+        }
+        publish_bytes(&self.root, &path, body).map_err(|e| Self::fail("put_object", key, e))?;
+        match self.inject(Phase::Published, key) {
+            Inject::Continue => Ok(PutOutcome::Stored),
+            Inject::Error | Inject::Indeterminate => Ok(PutOutcome::Indeterminate),
+        }
+    }
+
+    fn get_object(&self, key: &str) -> Result<ObjectRead, FsError> {
+        let path = self.path_of("get_object", key)?;
+        Ok(
+            match read_object(&path).map_err(|e| Self::fail("get_object", key, e))? {
+                Some(bytes) => ObjectRead::Present {
+                    body: bytes.into_boxed_slice(),
+                },
+                None => ObjectRead::Absent,
             },
-        })
-}
+        )
+    }
 
-impl ObjectStore for FsStore {
-    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>> {
-        legacy(self.get_work(key, None))
+    fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, FsError> {
+        // Enumerate actual extant names in sorted order, one bounded page.
+        // Reserved `~` namespaces are never object names.
+        let resume: Option<String> = after.map(|token| String::from_utf8_lossy(token).into_owned());
+        let mut keys = Vec::new();
+        let mut stack = vec![self.root.clone()];
+        let mut entries: Vec<String> = Vec::new();
+        while let Some(dir) = stack.pop() {
+            let listing = match fs::read_dir(&dir) {
+                Ok(listing) => listing,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(Self::fail("list_objects", prefix, err)),
+            };
+            for entry in listing {
+                let entry = entry.map_err(|e| Self::fail("list_objects", prefix, e))?;
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if name.starts_with('~') {
+                    continue;
+                }
+                let path = entry.path();
+                let kind = entry
+                    .file_type()
+                    .map_err(|e| Self::fail("list_objects", prefix, e))?;
+                if kind.is_dir() {
+                    stack.push(path);
+                } else if kind.is_file()
+                    && let Ok(relative) = path.strip_prefix(&self.root)
+                {
+                    let key = relative
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    entries.push(key);
+                }
+            }
+        }
+        entries.sort();
+        for key in entries {
+            if !key.starts_with(prefix) {
+                continue;
+            }
+            if let Some(resume) = &resume
+                && key.as_str() <= resume.as_str()
+            {
+                continue;
+            }
+            keys.push(key);
+            if keys.len() == PAGE {
+                break;
+            }
+        }
+        let next = if keys.len() == PAGE {
+            keys.last().map(|last| Box::from(last.as_bytes()))
+        } else {
+            None
+        };
+        Ok(ListPage { keys, next })
     }
-    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll> {
-        legacy(self.poll_work(key, etag, None))
-    }
-    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
-        legacy(self.create_work(key, body.into(), None))
-    }
-    fn put_swap<'a>(
-        &self,
-        key: &StoreKey,
-        body: impl Into<Fenced<'a>>,
-        etag: &Etag,
-    ) -> Result<Swap> {
-        legacy(self.swap_work(key, body.into(), etag, None))
-    }
-    fn delete(&self, key: &StoreKey) -> Result<()> {
-        legacy(self.delete_work(key, None))
+
+    fn delete_object(&self, key: &str) -> Result<(), FsError> {
+        let path = self.path_of("delete_object", key)?;
+        refuse_symlink(&path).map_err(|e| Self::fail("delete_object", key, e))?;
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(Self::fail("delete_object", key, err)),
+        }
+        sync_parent(&path).map_err(|e| Self::fail("delete_object", key, e))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{Create, ObjectStore, StoreKey, TEMP_NAMESPACE};
-    use std::{fs, io};
 
     fn scratch(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         let path =
-            std::env::temp_dir().join(format!("bdb-log-fs-{tag}-{}-{nanos}", std::process::id()));
+            std::env::temp_dir().join(format!("bdb-log-fs2-{tag}-{}-{nanos}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("root");
         path
     }
 
     #[test]
-    fn put_create_against_a_directory_is_a_key_shape_fault() {
-        let root = scratch("dir_shape");
-        let key = StoreKey::of("manifest");
-        fs::create_dir_all(root.join(key.as_str())).expect("directory at the key");
+    fn stale_version_replacement_is_a_definite_loss_never_an_acknowledgment() {
+        let root = scratch("stale");
         let store = FsStore::new(&root);
-        let outcome = store.put_create(&key, b"body");
-        match outcome {
-            Err(err) => {
-                assert_eq!(err.op, "put_create");
-                assert!(
-                    err.source.to_string().contains("key names a directory"),
-                    "directory at a key is a shape fault: {}",
-                    err.source
-                );
-            }
-            Ok(Create::Exists) => panic!("a directory at the key is not Exists"),
-            Ok(other) => panic!("expected a key-shape fault, got {other:?}"),
+        let v1 = match store.create_head("t/HEAD", b"rev1").unwrap() {
+            ConditionalOutcome::Published { version } => version,
+            other => panic!("{other:?}"),
+        };
+        // A second writer wins the head.
+        match store.replace_head("t/HEAD", &v1, b"rev2").unwrap() {
+            ConditionalOutcome::Published { .. } => {}
+            other => panic!("{other:?}"),
+        }
+        // The paused first writer resumes with its captured old version: the
+        // 0.x mixed-fleet bug acknowledged both updates; the successor loses.
+        assert_eq!(
+            store.replace_head("t/HEAD", &v1, b"rev1b").unwrap(),
+            ConditionalOutcome::PreconditionFailed
+        );
+        match store.read_head("t/HEAD").unwrap() {
+            HeadRead::Present { body, .. } => assert_eq!(&*body, b"rev2"),
+            HeadRead::Absent => panic!("head exists"),
         }
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn constructor_leaves_an_in_flight_temp() {
-        let root = scratch("sweep_live");
-        let temp = crate::store::fence::synced_temp(&root, b"live").expect("temp");
-        let _store = FsStore::new(&root);
-        assert!(
-            temp.exists(),
-            "a constructor must not wipe a live publish temp"
+    fn immutable_objects_are_idempotent_and_conflicts_refuse() {
+        let root = scratch("immutable");
+        let store = FsStore::new(&root);
+        assert_eq!(
+            store.put_object("t/objects/1/chunk/aa", b"bytes").unwrap(),
+            PutOutcome::Stored
         );
+        assert_eq!(
+            store.put_object("t/objects/1/chunk/aa", b"bytes").unwrap(),
+            PutOutcome::Stored,
+            "re-putting identical bytes is idempotent evidence"
+        );
+        let conflict = store.put_object("t/objects/1/chunk/aa", b"other");
+        assert!(conflict.is_err(), "creation never overwrites a conflict");
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn occupied_create_does_not_stage_or_claim_a_second_equal_body_birth() {
-        let root = scratch("occupied_no_staging");
-        let key = StoreKey::of("ids/counter");
+    fn hostile_lock_shapes_refuse_or_are_inert() {
+        use std::os::unix::fs::symlink;
+        let root = scratch("hostile");
         let store = FsStore::new(&root);
+        // Garbage lock-body content is inert: the kernel lock is the
+        // authority; no content parse grants or denies mutation.
+        fs::create_dir_all(root.join("~lease/t/HEAD")).unwrap();
+        fs::write(
+            root.join("~lease/t/HEAD/mutation.lock"),
+            b"POISON not-a-lease",
+        )
+        .unwrap();
         assert!(matches!(
-            store.put_create(&key, b"4096").unwrap(),
-            Create::Created(_)
+            store.create_head("t/HEAD", b"rev1").unwrap(),
+            ConditionalOutcome::Published { .. }
         ));
-        let generation = fs::read(store.generation_path(&key)).unwrap();
-
-        // An occupied create needs no temporary file. A regular file here
-        // deterministically fails an attempted staging-directory creation,
-        // independently of filesystem permissions or elapsed time.
-        fs::remove_dir(root.join(TEMP_NAMESPACE)).unwrap();
-        fs::write(root.join(TEMP_NAMESPACE), b"staging unavailable").unwrap();
-        for body in [b"4096".as_slice(), b"different".as_slice()] {
-            assert_eq!(
-                store.put_create(&key, Fenced::new(body, 99)).unwrap(),
-                Create::Exists
-            );
-        }
-        assert_eq!(store.get(&key).unwrap().unwrap().bytes, b"4096");
-        assert_eq!(fs::read(store.generation_path(&key)).unwrap(), generation);
-        assert_eq!(
-            fs::read(root.join(TEMP_NAMESPACE)).unwrap(),
-            b"staging unavailable"
-        );
+        // A symlinked mutation lock refuses the operation outright.
+        let sentinel = root.join("elsewhere.bin");
+        fs::write(&sentinel, b"sentinel").unwrap();
+        fs::create_dir_all(root.join("~lease/u/HEAD")).unwrap();
+        symlink(&sentinel, root.join("~lease/u/HEAD/mutation.lock")).unwrap();
+        assert!(store.create_head("u/HEAD", b"rev1").is_err());
+        assert_eq!(fs::read(&sentinel).unwrap(), b"sentinel");
+        // A symlinked object path refuses reads and writes.
+        symlink(&sentinel, root.join("v")).unwrap();
+        assert!(store.get_object("v").is_err());
         let _ = fs::remove_dir_all(&root);
     }
 
-    fn create_or_exist(store: &FsStore, key: &StoreKey, body: &[u8]) -> Create {
-        for _ in 0..32 {
-            match store.put_create(key, body) {
-                Ok(Create::Created(etag)) => return Create::Created(etag),
-                Ok(Create::Exists) => return Create::Exists,
-                Ok(Create::Ambiguous) | Err(_) => match store.get(key) {
-                    Ok(Some(fetched)) if fetched.bytes == body => {
-                        return Create::Created(content_etag(body));
-                    }
-                    Ok(Some(_)) => return Create::Exists,
-                    Ok(None) | Err(_) => std::thread::yield_now(),
-                },
-            }
-        }
-        match store.get(key) {
-            Ok(Some(fetched)) if fetched.bytes == body => Create::Created(content_etag(body)),
-            Ok(Some(_)) => Create::Exists,
-            Ok(None) | Err(_) => Create::Ambiguous,
-        }
-    }
-
     #[test]
-    fn concurrent_constructors_create_or_exist_without_enoent() {
-        const WRITERS: u64 = 8;
-        let root = scratch("concurrent_new");
-        let outcomes: Vec<Create> = std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..WRITERS)
-                .map(|i| {
-                    let root = root.clone();
-                    scope.spawn(move || {
-                        let store = FsStore::new(&root);
-                        let key = StoreKey::of("manifest");
-                        let body = format!("body {i}");
-                        create_or_exist(&store, &key, body.as_bytes())
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|handle| handle.join().expect("thread"))
-                .collect()
-        });
-        let created = outcomes
-            .iter()
-            .filter(|outcome| matches!(outcome, Create::Created(_)))
-            .count();
-        let exists = outcomes
-            .iter()
-            .filter(|outcome| matches!(outcome, Create::Exists))
-            .count();
-        assert_eq!(created, 1, "exactly one creator wins: {outcomes:?}");
-        assert_eq!(
-            exists,
-            usize::try_from(WRITERS).expect("fits") - 1,
-            "every other constructor sees Exists: {outcomes:?}"
-        );
+    fn keys_cannot_spell_reserved_namespaces() {
+        let root = scratch("reserved");
+        let store = FsStore::new(&root);
+        for key in ["~tmp/x", "~lease/y", "a/~tmp/z", "a/b.lock", "a//b", "../a"] {
+            assert!(store.put_object(key, b"x").is_err(), "{key}");
+            assert!(store.get_object(key).is_err(), "{key}");
+        }
         let _ = fs::remove_dir_all(&root);
     }
 }

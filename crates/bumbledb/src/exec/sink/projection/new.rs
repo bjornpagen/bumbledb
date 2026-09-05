@@ -1,6 +1,7 @@
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
-use crate::exec::sink::{FindSpec, ProjectionSink, ProjectionSources, SinkSpec, sources_of};
-use crate::exec::wordmap::WordMap;
+use crate::exec::sink::{
+    FindSpec, ProjectionSink, ProjectionSources, SinkBudget, SinkSpec, SpillSet, sources_of,
+};
 
 impl ProjectionSink {
     #[cfg(test)]
@@ -17,7 +18,7 @@ impl ProjectionSink {
         Self {
             finds: Vec::new(),
             sources,
-            seen: WordMap::with_capacity_hint(arity, hint),
+            seen: SpillSet::with_capacity_hint(arity, hint, true),
             scratch: vec![0; arity],
             batch_sources: vec![crate::exec::run::LeafSource::Outer; arity],
             scan_rows: Vec::new(),
@@ -55,12 +56,54 @@ impl ProjectionSink {
         );
     }
 
+    /// RAM-tier answers (the main sink's warm finalize fill). Spilled
+    /// sinks drain through [`Self::for_each_answer`]; interior stage sinks
+    /// never receive a budget and never spill. The reach driver's sink CAN
+    /// spill — its refills use [`Self::drain_since`], never this iterator.
     pub fn answers(&self) -> impl Iterator<Item = &[u64]> {
-        self.seen.iter().map(|(key, ())| key)
+        self.seen.ram_iter_since(0)
     }
 
-    pub fn answers_since(&self, watermark: usize) -> impl Iterator<Item = &[u64]> {
-        self.seen.iter_since(watermark).map(|(key, ())| key)
+    /// Insertion-ordered drain across both tiers (finalize's spilled arm).
+    /// # Errors
+    /// A sticky sink failure, scratch read failure, stopped work, or the
+    /// visitor's failure.
+    pub(crate) fn for_each_answer(
+        &mut self,
+        visit: &mut dyn FnMut(&[u64]) -> crate::error::Result<()>,
+    ) -> crate::error::Result<()> {
+        self.seen.for_each_since(0, visit)
+    }
+
+    /// Insertion-ordered drain from `since` across both tiers — the reach
+    /// driver's Δ/accumulated/seal refills (the rec seen/frontier state
+    /// keeps its watermark contract after the RAM→scratch transition).
+    /// # Errors
+    /// As [`Self::for_each_answer`].
+    pub(crate) fn drain_since(
+        &mut self,
+        since: usize,
+        write: &mut dyn FnMut(&[u64]),
+    ) -> crate::error::Result<()> {
+        self.seen.for_each_since(since, &mut |row| {
+            write(row);
+            Ok(())
+        })
+    }
+
+    /// Install this execution's allowance (None = RAM-only stage sink).
+    pub(crate) fn begin(&mut self, budget: Option<SinkBudget>) {
+        self.seen.begin(budget);
+    }
+
+    #[must_use]
+    pub(crate) fn spilled(&self) -> bool {
+        self.seen.spilled()
+    }
+
+    /// The sticky failure recorded by the infallible emit path, if any.
+    pub(crate) fn take_error(&mut self) -> Option<crate::error::Error> {
+        self.seen.take_error()
     }
 
     #[must_use]

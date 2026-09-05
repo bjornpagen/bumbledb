@@ -16,9 +16,9 @@ function buildLedgerPieces() {
 			Failed: { mastered: false }
 		}
 	)
-	const Holder = relation("Holder", { id: u64.fresh, name: str })
+	const Holder = relation("Holder", { id: u64, name: str })
 	const Account = relation("Account", {
-		id: u64.fresh,
+		id: u64,
 		holder: u64,
 		kind: Kind.id,
 		active: interval(i64)
@@ -29,12 +29,11 @@ function buildLedgerPieces() {
 describe("field descriptors", function describeDescriptors() {
 	test("descriptors are honest frozen plain objects — the type IS the runtime shape", function probeDescriptorShape() {
 		assert.equal(u64.kind, "u64")
-		assert.deepStrictEqual(u64.fresh, { kind: "u64", fresh: true })
+		assert.deepStrictEqual(u64, { kind: "u64" })
 		assert.deepStrictEqual(i64, { kind: "i64" })
 		assert.deepStrictEqual(bool, { kind: "bool" })
 		assert.deepStrictEqual(str, { kind: "str" })
 		assert.ok(Object.isFrozen(u64))
-		assert.ok(Object.isFrozen(u64.fresh))
 		assert.ok(Object.isFrozen(i64))
 	})
 
@@ -44,7 +43,6 @@ describe("field descriptors", function describeDescriptors() {
 			["bool", bool],
 			["str", str],
 			["u64", u64],
-			["u64.fresh", u64.fresh],
 			["i64", i64],
 			["bytes(4)", bytes(4)],
 			["interval(u64)", interval(u64)],

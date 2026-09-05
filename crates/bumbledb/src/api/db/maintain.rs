@@ -1,41 +1,54 @@
+//! Maintenance surface: compaction, size and generation reads.
+
 use std::path::Path;
 
-use super::Db;
-use crate::error::Result;
-use crate::storage::env::GenerationId;
+use super::{Db, embedded_work};
+use crate::error::{Error, Result};
+use crate::storage::GenerationId;
+use crate::storage::store::{MapPolicy, Store, UnindexedRows};
 
 impl<S> Db<S> {
-    #[cfg(feature = "trace")]
-    #[must_use]
-    pub fn cache_stats(&self) -> crate::image::cache::stats::CacheStats {
-        self.cache.stats()
-    }
-
-    #[cfg(feature = "trace")]
-    #[must_use]
-    pub fn cache_resident(&self) -> (u64, u64) {
-        self.cache.resident()
-    }
-
-    /// that must not exist): one [`crate::storage::env::PublishStep`]
+    /// Compact into a fresh store at `dest` (which must not exist): one
+    /// coherent source snapshot supplies rows, host records, attachment and
+    /// generation together (ENG-003 by construction), and the destination
+    /// adopts them in one durable transaction — a crash leaves `dest`
+    /// absent, empty-staged, or complete.
     /// # Errors
+    /// `DestinationExists`, storage failure, or stopped work.
     pub fn compact(&self, dest: &Path) -> Result<()> {
-        let catalog = crate::storage::env::PublishCatalog::store(&self.env, self.schema.as_ref())?;
-        drop(crate::storage::env::Environment::publish(dest, &catalog)?);
+        let work = embedded_work()?;
+        let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
+        let policy = MapPolicy::default();
+        let target =
+            Store::create(dest, self.schema.as_ref(), policy).map_err(Error::from_store)?;
+        target
+            .adopt_snapshot(&snapshot, &UnindexedRows, &work)
+            .map_err(Error::from_store)?;
+        drop(target);
         crate::obs::event(
             crate::obs::names::COMPACT_DURABLE,
-            crate::obs::TraceArgs::Count(2),
+            crate::obs::TraceArgs::Count(1),
         );
         Ok(())
     }
 
+    /// Populated file bytes of the store (not the virtual map, not resident
+    /// memory — see the C04 map report for the distinct quantities).
     /// # Errors
+    /// Storage failure.
     pub fn disk_size(&self) -> Result<u64> {
-        self.env.disk_size()
+        let work = embedded_work()?;
+        let report = self.store.map_report(&work).map_err(Error::from_store)?;
+        Ok(report.populated_file_bytes)
     }
 
+    /// The committed generation.
     /// # Errors
+    /// Storage failure.
     pub fn generation(&self) -> Result<GenerationId> {
-        self.env.read_txn()?.generation()
+        let work = embedded_work()?;
+        self.store
+            .committed_generation(&work)
+            .map_err(Error::from_store)
     }
 }

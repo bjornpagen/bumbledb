@@ -15,27 +15,27 @@ bumbledb::schema! {
     pub Scheduling;
 
     relation Account {
-        id: u64 as CalAccountId, fresh,
+        id: u64 as CalAccountId,
         name: str,
     }
     relation Person {
-        id: u64 as CalPersonId, fresh,
+        id: u64 as CalPersonId,
         account: u64 as CalAccountId,
         name: str,
     }
     relation Calendar {
-        id: u64 as CalendarId, fresh,
+        id: u64 as CalendarId,
         owner: u64 as CalPersonId,
     }
     relation Event {
-        id: u64 as CalEventId, fresh,
+        id: u64 as CalEventId,
         calendar: u64 as CalendarId,
         span: interval<i64>,
         created_at: i64,
         hash: bytes<32>,
     }
     relation Attendance {
-        id: u64 as AttendanceId, fresh,
+        id: u64 as AttendanceId,
         event: u64 as CalEventId,
         person: u64 as CalPersonId,
         rsvp: u64 as RsvpId,
@@ -47,7 +47,7 @@ bumbledb::schema! {
         span: interval<i64>,
     }
     relation Room {
-        id: u64 as RoomId, fresh,
+        id: u64 as RoomId,
         name: str,
     }
     relation Booking {
@@ -66,6 +66,16 @@ bumbledb::schema! {
 
     closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
     closed relation Arm as ClaimArmId = { Busy, Ooo };
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Account(id)    -> Account;
+    Person(id)     -> Person;
+    Calendar(id)   -> Calendar;
+    Event(id)      -> Event;
+    Attendance(id) -> Attendance;
+    Room(id)       -> Room;
 
     Person(account)     <= Account(id);
     Calendar(owner)     <= Person(id);

@@ -62,13 +62,14 @@ fn projection(finds: Vec<FindTerm>, atoms: Vec<Atom>, negated: Vec<Atom>) -> Rul
     }
 }
 
-fn proj(finds: Vec<VarId>, atoms: Vec<Atom>, negated: Vec<Atom>) -> ProjectionRule {
+fn proj(finds: Vec<VarId>, atoms: Vec<Atom>, negated: Vec<Atom>) -> Rule {
     ProjectionRule {
         finds,
         atoms,
         negated,
         conditions: vec![],
     }
+    .to_rule()
 }
 
 fn rec_rule(finds: Vec<VarId>, atoms: Vec<Atom>) -> RecRule {

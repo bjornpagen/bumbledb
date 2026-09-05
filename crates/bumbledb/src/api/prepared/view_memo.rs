@@ -24,6 +24,22 @@ impl ViewMemo {
         &mut self.occs[occ].spare
     }
 
+    /// Memory-pressure trim: drop parked bindings, active views and spare
+    /// buffers. Derived occurrences return to `Derived`; store occurrences
+    /// to `Unbound` — the next execution rebuilds what it needs.
+    pub(super) fn trim(&mut self) {
+        for (occ, memo) in self.occs.iter_mut().enumerate() {
+            for slot in &mut memo.parked {
+                *slot = None;
+            }
+            memo.spare = Vec::new();
+            let _ = self.colts[occ].reset(crate::image::view::View::Unbound);
+            if !matches!(memo.active, Binding::Derived) {
+                memo.active = Binding::Unbound;
+            }
+        }
+    }
+
     pub(super) fn is_derived(&self, occ: usize) -> bool {
         matches!(self.occs[occ].active, Binding::Derived)
     }

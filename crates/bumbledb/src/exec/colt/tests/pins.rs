@@ -20,7 +20,6 @@ fn schema4() -> Schema {
     let field = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -34,30 +33,21 @@ fn schema4() -> Schema {
     .expect("valid fixture")
 }
 
-fn view4_of(dir: &TempDir, schema: &Schema, n: u64) -> Arc<crate::image::RelationImage> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    let mut bytes = Vec::new();
-    for i in 0..n {
-        let w = row4(i);
-        bytes.clear();
-        encode_fact(
-            &[
-                ValueRef::U64(w[0]),
-                ValueRef::U64(w[1]),
-                ValueRef::U64(w[2]),
-                ValueRef::U64(w[3]),
-            ],
-            schema.relation(R).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, R, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    crate::image::build(&txn.catalog(), schema, R).expect("build")
+fn view4_of(schema: &Schema, n: u64) -> Arc<crate::image::RelationImage> {
+    let facts: Vec<Vec<crate::ir::Value>> = (0..n)
+        .map(|i| {
+            let w = row4(i);
+            vec![
+                crate::ir::Value::U64(w[0]),
+                crate::ir::Value::U64(w[1]),
+                crate::ir::Value::U64(w[2]),
+                crate::ir::Value::U64(w[3]),
+            ]
+        })
+        .collect();
+    let source = crate::image::testsupport::TestSource::new(schema, &[(R, facts)]);
+    let (_cache, image) = source.image_with_cache(R);
+    image
 }
 
 #[inline(always)]
@@ -206,8 +196,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
     let foreign: Vec<u64> = (0..12_000_000u64).map(mix).collect();
 
     for &(regime, n_rows, displace) in regimes {
-        let dir = TempDir::new("colt-flagfree-twin");
-        let view = view4_of(&dir, &schema, n_rows);
+        let view = view4_of(&schema, n_rows);
         let mut colt = Colt::new(all(&view), &[], vec![vec![0, 1, 2, 3]]);
         let root = Colt::root();
         colt.ensure_forced(root, 0);
@@ -328,13 +317,12 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
         (ctrl, rows)
     }
 
-    let dir = TempDir::new("colt-build-pin");
     let schema = schema();
     let n = std::hint::black_box(100_000u64);
     let rows: Vec<(u64, u64)> = (0..n)
         .map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15), i))
         .collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let decoded: Vec<u64> = view.column_words(0).to_vec();
 
     let mut bucket_best = std::time::Duration::MAX;

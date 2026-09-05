@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "aegis"
+version = "0.9.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58541132f980da31e9aa99f7bdee69bc84bf1e168b9b91ef2dbe8abb7b4ce5dd"
+dependencies = [
+ "cc",
+ "softaes",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -118,6 +128,7 @@ version = "0.20.3"
 dependencies = [
  "blake3",
  "bumbledb-macros",
+ "bumbledb-query-macros",
  "bumbledb-theory",
  "heed",
 ]
@@ -126,6 +137,8 @@ dependencies = [
 name = "bumbledb-bench"
 version = "0.20.3"
 dependencies = [
+ "aegis",
+ "blake3",
  "bumbledb",
  "rusqlite",
 ]
@@ -136,6 +149,7 @@ version = "0.20.3"
 dependencies = [
  "blake3",
  "bumbledb",
+ "bumbledb-bench",
  "object_store",
  "serde_json",
  "tokio",
@@ -1662,6 +1676,12 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "softaes"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45e14297decde697ddf377c25752aead0927d5cfc89c2684d2af96901a4ceeea"
 
 [[package]]
 name = "spin"

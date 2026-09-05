@@ -46,8 +46,6 @@ pub struct BenchArgs {
     pub trace: bool,
     pub alloc: bool,
 
-    pub ephemeral: bool,
-
     pub proxy_per_rep: bool,
     pub out: Option<PathBuf>,
 
@@ -99,6 +97,17 @@ pub enum Cmd {
     Heap(HeapArgs),
 
     Primerlane(PrimerlaneArgs),
+
+    /// The deterministic float fixture corpus generator (P11's
+    /// `corpus_gen::float_corpus`; a generator like `gen`, never a
+    /// measurement).
+    CorpusFloat(CorpusFloatArgs),
+
+    /// The HASH-01/04 candidate probe (report-class; F3 only).
+    HashProbe(HashProbeArgs),
+
+    /// The APP-* regime lane over the ledger corpus (report-class; F3 only).
+    AppPerf(AppPerfArgs),
 }
 
 impl Cmd {
@@ -116,10 +125,13 @@ impl Cmd {
             | Self::Curves(_)
             | Self::Churn(_)
             | Self::Heap(_)
-            | Self::Primerlane(_) => true,
+            | Self::Primerlane(_)
+            | Self::HashProbe(_)
+            | Self::AppPerf(_) => true,
             Self::Help
             | Self::Queries
             | Self::Gen(_)
+            | Self::CorpusFloat(_)
             | Self::Verify { .. }
             | Self::VerifyStore(_)
             | Self::Merge { .. } => false,
@@ -205,7 +217,9 @@ pub struct WritesArgs {
     pub seed: u64,
     pub dir: PathBuf,
 
-    /// durable lane's fsync shadow must land after every nosync sample
+    /// The durability lanes to run. Post-ENG-008 exactly one exists
+    /// (`durable`); the flag survives so the run order stays explicit in
+    /// artifacts and scripts.
     pub lanes: Vec<DurabilityLane>,
 
     pub batches: Vec<u32>,
@@ -222,7 +236,7 @@ impl Default for WritesArgs {
             scale: Scale::S,
             seed: 1,
             dir: PathBuf::from("bench-data"),
-            lanes: vec![DurabilityLane::Nosync, DurabilityLane::Durable],
+            lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: None,
             trace: false,
@@ -316,6 +330,94 @@ impl Default for PrimerlaneArgs {
             dir: PathBuf::from("bench-data"),
             trace: false,
             alloc: false,
+            out: None,
+        }
+    }
+}
+
+/// `corpus-float` — the deterministic float fixture corpus (canon / order /
+/// arith / agg) with oracle-computed expectations, rendered as fixed
+/// line-hex files under `--out`. Seeds accept `0x`-prefixed hex (the P11
+/// regeneration command pins `--seed 0xB0B`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorpusFloatArgs {
+    pub seed: u64,
+
+    /// Random canonicalization/arithmetic cases appended after the
+    /// structured boundary roster.
+    pub random: u64,
+
+    /// Deterministic aggregate groups beyond the named chapter 11 goldens.
+    pub groups: u64,
+
+    /// Payloads per aggregate group (pre-dedup).
+    pub group_size: usize,
+
+    pub out: PathBuf,
+}
+
+impl Default for CorpusFloatArgs {
+    fn default() -> Self {
+        Self {
+            seed: 0xB0B,
+            random: 1024,
+            groups: 128,
+            group_size: 12,
+            out: PathBuf::from("fixtures/float"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashProbeArgs {
+    pub seed: u64,
+
+    /// Timed samples per (candidate, input) cell.
+    pub samples: Option<u32>,
+
+    /// Known-answer vector file (see `hashprobe::kat`); absent = the report
+    /// records `NotRun`, never a pass.
+    pub kat: Option<PathBuf>,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for HashProbeArgs {
+    fn default() -> Self {
+        Self {
+            seed: 1,
+            samples: None,
+            kat: None,
+            out: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppPerfArgs {
+    pub scale: Scale,
+    pub seed: u64,
+    pub dir: PathBuf,
+
+    /// Regime filter (warm, cold-open, post-write, large-result,
+    /// tenant-churn); default all runnable here.
+    pub regimes: Option<Vec<String>>,
+
+    pub samples: Option<u32>,
+
+    /// Tenant count for the churn regime.
+    pub tenants: u32,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for AppPerfArgs {
+    fn default() -> Self {
+        Self {
+            scale: Scale::S,
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            regimes: None,
+            samples: None,
+            tenants: 8,
             out: None,
         }
     }

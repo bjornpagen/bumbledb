@@ -1,5 +1,5 @@
 import { AuthoringError } from "#errors.ts"
-import type { AnyClosedRoster, AnyField, Infer, IntervalValue } from "#fields.ts"
+import type { AnyClosedRoster, AnyField, FloatIntervalValue, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AntiJoinOk,
@@ -14,6 +14,7 @@ import type {
 	SetParam,
 	ShapeOf
 } from "#query/scope.ts"
+import type { ComputeData, ComputeKind } from "#query/compute.ts"
 import { isTerm, term } from "#query/scope.ts"
 import type { FieldsShape } from "#relation.ts"
 
@@ -73,6 +74,7 @@ type AggData =
 type FindEntryData =
 	| { readonly kind: "var"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
+	| { readonly kind: "compute"; readonly expr: ComputeData; readonly result: ComputeKind }
 
 interface FindColumn {
 	readonly name: string
@@ -141,7 +143,11 @@ type DerivedTable = InteriorData | RecHead
 type BindingInput<F extends AnyField> =
 	| Infer<F>
 	| (F extends { readonly closed: { readonly handles: readonly string[] } } ? readonly Infer<F>[] : never)
-	| (F extends { readonly kind: "interval" } ? bigint : never)
+	| (F extends { readonly kind: "interval"; readonly element: "f64" }
+			? number
+			: F extends { readonly kind: "interval" }
+				? bigint
+				: never)
 	| AnyVar
 	| Param<string>
 	| SetParam<string>
@@ -226,14 +232,15 @@ type EqRight =
 	| boolean
 	| Uint8Array
 	| IntervalValue
+	| FloatIntervalValue
 
-type NeRight = AnyVar | Param<string> | bigint | number | string | boolean | Uint8Array | IntervalValue
+type NeRight = AnyVar | Param<string> | bigint | number | string | boolean | Uint8Array | IntervalValue | FloatIntervalValue
 
 type OrderSide = AnyVar | Param<string> | bigint | number | boolean
 
-type PointSide = AnyVar | Param<string> | bigint
+type PointSide = AnyVar | Param<string> | bigint | number
 
-type IntervalSide = AnyVar | Param<string> | IntervalValue
+type IntervalSide = AnyVar | Param<string> | IntervalValue | FloatIntervalValue
 
 function comparison<Op extends CmpKind, L, R, M>(op: Op, lhs: L, rhs: R, mask: M): Cmp<Op, L, R, M> {
 	return Object.freeze({ cond: "cmp", op, lhs, rhs, mask })
@@ -428,7 +435,7 @@ type OrderDomainsOk<A, B> = [A] extends [never]
 type OrderPairOk<L, R> = CmpVarSideOk<L, R> extends true ? OrderDomainsOk<OrderDomain<L>, OrderDomain<R>> : false
 
 type IntervalElementDomain<T> = T extends AnyVar
-	? T["field"] extends { readonly kind: "interval"; readonly element: infer E extends "u64" | "i64" }
+	? T["field"] extends { readonly kind: "interval"; readonly element: infer E extends "u64" | "i64" | "f64" }
 		? E
 		: never
 	: "open"

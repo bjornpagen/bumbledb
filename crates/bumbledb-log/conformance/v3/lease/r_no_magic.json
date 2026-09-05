@@ -1,6 +1,0 @@
-{
-  "kind": "lease",
-  "expect": "refusal",
-  "note": "a headerless three-line body is not a lease and never breakable",
-  "hex": "370a330a3130300a"
-}

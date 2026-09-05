@@ -1,36 +1,34 @@
-//! `S3Store`: the five verbs over one S3-compatible target. `SigV4` and
-//! the conditional headers ride the `object_store` crate; this module
-//! maps their outcomes onto the trait's sums and nothing else. A 409
-//! is `Ambiguous`, never a proved `Exists` or `Moved`. Conditional
-//! writes are not retried by the transport. Credentials are consulted
-//! per request, off the worker threads. Body-stream failures ride
-//! `StoreError`. The fencing token on a [`Fenced`] write is object
-//! metadata: create records it as the generation a later swap can
-//! lose to, and `body.token <` that stored generation is `Moved`.
+//! `S3Store`: the conditional-store verbs over one S3 bucket/prefix. `SigV4`
+//! and the conditional headers ride the `object_store` crate; this module
+//! maps vendor outcomes onto the three-way conditional grammar and nothing
+//! else. A 409/timeout is `Indeterminate`, never a proved publication or
+//! failure; a 412 (`Precondition`) is a proved loss. Conditional writes are
+//! never retried by the transport. Credentials are consulted per request,
+//! off the worker threads. `ETags` stay opaque version tokens.
+//!
+//! Production qualification is for a specific AWS S3 configuration (region,
+//! bucket class, strong read-after-write, conditional replacement, IAM
+//! separation) exercised by the real-credential F3 lane; emulator green is
+//! not S3 qualification (C07).
 
-use std::borrow::Cow;
 use std::io;
 use std::sync::Arc;
 
 use object_store::aws::{AmazonS3, AmazonS3Builder, AwsCredential};
 use object_store::path::Path;
 use object_store::{
-    Attribute, Attributes, CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _,
-    ObjectStoreExt as _, PutMode, PutOptions, RetryConfig, UpdateVersion,
+    CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, ObjectStoreExt as _,
+    PutMode, PutOptions, RetryConfig, UpdateVersion,
 };
 use tokio::runtime::{Builder, Handle, Runtime};
 
-use super::{
-    Create, Etag, Fenced, Fetched, ObjectStore, Poll, Result, StoreError, StoreKey, Swap,
-    parse_prefix, prove_create, prove_swap,
+use super::key_ok;
+use crate::writer::verbs::{
+    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
 };
 
-/// Static keys, or a caller-owned refresh the store invokes before
-/// each signed request. The refresh is `dyn` because the caller owns
-/// open-ended credential behavior (env, IMDS, SSO, secrets manager,
-/// host rotation); a generic on the store and a bare function pointer
-/// both refuse that. The boxed future is the foreign `CredentialProvider`
-/// shape, not a second house abstraction.
+/// Static keys, or a caller-owned refresh the store invokes before each
+/// signed request (env, IMDS, SSO, secrets manager, host rotation).
 pub enum S3Credentials {
     Static {
         access_key_id: String,
@@ -40,8 +38,8 @@ pub enum S3Credentials {
     Refresh(Arc<dyn Fn() -> io::Result<StaticKeys> + Send + Sync>),
 }
 
-/// The three values a refresh must produce. `session_token` is `None`
-/// for long-lived keys.
+/// The three values a refresh must produce. `session_token` is `None` for
+/// long-lived keys.
 #[derive(Clone)]
 pub struct StaticKeys {
     pub access_key_id: String,
@@ -49,42 +47,60 @@ pub struct StaticKeys {
     pub session_token: Option<String>,
 }
 
-/// One constructor: endpoint, region, bucket, credentials, key prefix.
-/// `endpoint` is `None` for AWS's regional virtual-host. `region: "auto"`
-/// without an endpoint is refused — R2's `auto` rides the endpoint arm.
+/// One constructor: endpoint, region, bucket, credentials. `endpoint` is
+/// `None` for AWS's regional virtual-host. `region: "auto"` without an
+/// endpoint is refused — R2's `auto` rides the endpoint arm.
 pub struct S3Config {
     pub endpoint: Option<String>,
     pub region: String,
     pub bucket: String,
     pub credentials: S3Credentials,
-    pub prefix: String,
 }
 
-/// The five verbs against one bucket. Clone shares the client and the
-/// runtime; two clones are two HTTP clients over one prefix. Construct
-/// and call outside an async context — every verb drives a dedicated
-/// multi-thread runtime and returns `Err` rather than `block_on` from
-/// an async context.
-#[derive(Clone)]
+/// The S3 backend's infrastructure failure: transport, auth, stream bodies.
+/// Never a protocol outcome.
+#[derive(Debug)]
+pub struct S3Error {
+    pub op: &'static str,
+    pub key: String,
+    pub source: io::Error,
+}
+
+impl std::fmt::Display for S3Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "s3 store {} on `{}`: {}", self.op, self.key, self.source)
+    }
+}
+
+impl std::error::Error for S3Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// The verbs against one bucket. Construct and call outside an async
+/// context — every verb drives a dedicated multi-thread runtime and returns
+/// `Err` rather than `block_on` from a foreign context.
 pub struct S3Store {
     inner: AmazonS3,
-    prefix: String,
     handle: Handle,
     _runtime: Arc<Runtime>,
 }
 
 impl S3Store {
     /// # Errors
-    pub fn new(config: &S3Config) -> Result<Self> {
+    /// Refuses construction inside an async context, `region: "auto"`
+    /// without an endpoint, and client-build failure. No network is touched.
+    pub fn new(config: &S3Config) -> Result<Self, S3Error> {
         if Handle::try_current().is_ok() {
-            return Err(StoreError {
+            return Err(S3Error {
                 op: "open",
                 key: config.bucket.clone(),
                 source: io::Error::other("S3Store is constructed outside an async context"),
             });
         }
         if config.region == "auto" && config.endpoint.is_none() {
-            return Err(StoreError {
+            return Err(S3Error {
                 op: "open",
                 key: config.region.clone(),
                 source: io::Error::new(
@@ -96,108 +112,61 @@ impl S3Store {
         let runtime = Builder::new_multi_thread()
             .enable_all()
             .build()
-            .map_err(|source| StoreError {
+            .map_err(|source| S3Error {
                 op: "open",
                 key: config.bucket.clone(),
                 source,
             })?;
         let handle = runtime.handle().clone();
-        let prefix = parse_prefix(&config.prefix).map_err(|err| StoreError {
-            op: "open",
-            key: config.prefix.clone(),
-            source: io::Error::new(io::ErrorKind::InvalidInput, err),
-        })?;
         let inner = build_client(config)?;
         Ok(Self {
             inner,
-            prefix,
             handle,
             _runtime: Arc::new(runtime),
         })
     }
 
-    fn object_path(&self, key: &StoreKey) -> Result<Path> {
-        let raw = join_prefix(&self.prefix, key.as_str());
-        Path::parse(&raw).map_err(|source| StoreError {
-            op: "path",
-            key: raw,
+    fn path_of(op: &'static str, key: &str) -> Result<Path, S3Error> {
+        if !key_ok(key) {
+            return Err(S3Error {
+                op,
+                key: key.to_string(),
+                source: io::Error::new(io::ErrorKind::InvalidInput, "invalid store key"),
+            });
+        }
+        Path::parse(key).map_err(|source| S3Error {
+            op,
+            key: key.to_string(),
             source: io::Error::other(source),
         })
     }
 
-    /// The verbs are the sync surface. Construction and every verb
-    /// return `Err` when this thread is inside an async context, so
-    /// the dedicated runtime never `block_on`s from a foreign context.
-    fn block<T>(&self, fut: impl std::future::Future<Output = T>) -> Result<T> {
+    /// The verbs are the sync surface; refuse rather than `block_on` from a
+    /// foreign async context.
+    fn block<T>(
+        &self,
+        op: &'static str,
+        key: &str,
+        fut: impl std::future::Future<Output = T>,
+    ) -> Result<T, S3Error> {
         if Handle::try_current().is_ok() {
-            return Err(StoreError {
-                op: "block",
-                key: self.prefix.clone(),
+            return Err(S3Error {
+                op,
+                key: key.to_string(),
                 source: io::Error::other("store verbs are synchronous"),
             });
         }
         Ok(self.handle.block_on(fut))
     }
-
-    /// Delete every object under this store's prefix. The smoke lane's
-    /// bucket cleanup.
-    ///
-    /// # Errors
-    pub fn sweep_prefix(&self) -> Result<u64> {
-        let raw = if self.prefix.is_empty() {
-            return Err(StoreError {
-                op: "sweep",
-                key: String::new(),
-                source: io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "refuse to sweep an empty prefix",
-                ),
-            });
-        } else {
-            self.prefix.clone()
-        };
-        let path = Path::parse(&raw).map_err(|source| StoreError {
-            op: "sweep",
-            key: raw,
-            source: io::Error::other(source),
-        })?;
-        self.block(async { sweep_listed(&self.inner, &path).await })?
-    }
 }
 
-async fn sweep_listed(inner: &AmazonS3, prefix: &Path) -> Result<u64> {
-    let listed = inner
-        .list_with_delimiter(Some(prefix))
-        .await
-        .map_err(|source| StoreError {
-            op: "sweep",
-            key: prefix.as_ref().to_string(),
-            source: io::Error::other(source),
-        })?;
-    let mut n = 0u64;
-    for object in listed.objects {
-        match inner.delete(&object.location).await {
-            Ok(()) | Err(ObjError::NotFound { .. }) => n += 1,
-            Err(source) => {
-                return Err(StoreError {
-                    op: "sweep",
-                    key: object.location.to_string(),
-                    source: io::Error::other(source),
-                });
-            }
-        }
-    }
-    for common in listed.common_prefixes {
-        n = n.saturating_add(Box::pin(sweep_listed(inner, &common)).await?);
-    }
-    Ok(n)
-}
-
-fn build_client(config: &S3Config) -> Result<AmazonS3> {
+fn build_client(config: &S3Config) -> Result<AmazonS3, S3Error> {
     let mut builder = AmazonS3Builder::new()
         .with_region(&config.region)
         .with_bucket_name(&config.bucket)
         .with_conditional_put(object_store::aws::S3ConditionalPut::ETagMatch)
+        // Conditional writes are never blindly retried by the transport: a
+        // retry after a timeout could double-report a unique transition.
         .with_retry(RetryConfig {
             max_retries: 0,
             ..RetryConfig::default()
@@ -213,20 +182,17 @@ fn build_client(config: &S3Config) -> Result<AmazonS3> {
             builder = builder.with_virtual_hosted_style_request(true);
         }
     }
-    // Both arms resolve at sign time. Static is a closure that
-    // returns the same keys; Refresh is the caller-owned callback.
-    // Neither set is stored on a worker for the life of the client.
     builder = builder.with_credentials(Arc::new(request_credentials(&config.credentials)));
-    builder.build().map_err(|source| StoreError {
+    builder.build().map_err(|source| S3Error {
         op: "open",
         key: config.bucket.clone(),
         source: io::Error::other(source),
     })
 }
 
-/// One provider for both credential arms. `get_credential` consults
-/// the arm on every sign; the Refresh callback runs on `spawn_blocking`
-/// so blocking I/O never occupies a tokio worker.
+/// One provider for both credential arms. `get_credential` consults the arm
+/// on every sign; the Refresh callback runs on `spawn_blocking` so blocking
+/// I/O never occupies a tokio worker.
 fn request_credentials(credentials: &S3Credentials) -> RefreshProvider {
     match credentials {
         S3Credentials::Static {
@@ -246,133 +212,6 @@ fn request_credentials(credentials: &S3Credentials) -> RefreshProvider {
         S3Credentials::Refresh(refresh) => RefreshProvider {
             refresh: Arc::clone(refresh),
         },
-    }
-}
-
-fn join_prefix(prefix: &str, key: &str) -> String {
-    if prefix.is_empty() {
-        key.to_string()
-    } else {
-        format!("{prefix}/{key}")
-    }
-}
-
-fn infra(op: &'static str, key: &StoreKey, source: ObjError) -> StoreError {
-    StoreError {
-        op,
-        key: key.to_string(),
-        source: io::Error::other(source),
-    }
-}
-
-/// A body-stream failure is an infrastructure error, never a raw
-/// vendor error leaking past the store channel.
-fn stream_err(op: &'static str, key: &StoreKey, source: ObjError) -> StoreError {
-    infra(op, key, source)
-}
-
-fn etag_of(op: &'static str, key: &StoreKey, raw: Option<String>) -> Result<Etag> {
-    raw.map(Etag).ok_or_else(|| StoreError {
-        op,
-        key: key.to_string(),
-        source: io::Error::new(io::ErrorKind::InvalidData, "vendor omitted ETag"),
-    })
-}
-
-/// User-metadata key the fencing generation rides. Create writes it;
-/// swap If-Match-heads it and refuses `body.token <` the stored value.
-const GENERATION_META: &str = "generation";
-
-fn generation_key() -> Attribute {
-    Attribute::Metadata(Cow::Borrowed(GENERATION_META))
-}
-
-fn generation_attributes(token: u64) -> Attributes {
-    let mut attributes = Attributes::new();
-    attributes.insert(generation_key(), token.to_string().into());
-    attributes
-}
-
-/// The fencing generation stored on the object. Absent metadata is
-/// generation 0 — an unfenced occupant a later higher token can take.
-fn stored_generation(attributes: &Attributes) -> u64 {
-    attributes
-        .get(&generation_key())
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
-}
-
-/// 20: a stale holder's write is the token the CAS does not win.
-/// A matching etag is not a waiver.
-fn swap_fence(token: u64, stored: u64) -> Option<Swap> {
-    if token < stored {
-        Some(Swap::Moved)
-    } else {
-        None
-    }
-}
-
-fn fenced_put(mode: PutMode, token: u64) -> PutOptions {
-    PutOptions {
-        mode,
-        attributes: generation_attributes(token),
-        ..PutOptions::default()
-    }
-}
-
-/// 409 Conflict, a timed-out PUT, and any other unproved transport
-/// result. `object_store` maps 409 onto `AlreadyExists`, so the walk
-/// has to read the status out of the source chain — the variant
-/// alone is not a proof.
-fn is_unproved(err: &ObjError) -> bool {
-    if unproved_text(&err.to_string()) {
-        return true;
-    }
-    let mut current = std::error::Error::source(err);
-    while let Some(e) = current {
-        if unproved_text(&e.to_string()) {
-            return true;
-        }
-        current = std::error::Error::source(e);
-    }
-    false
-}
-
-fn unproved_text(text: &str) -> bool {
-    text.contains("409")
-        || text.contains("Conflict")
-        || text.contains("CONFLICT")
-        || text.contains("timed out")
-        || text.contains("TimedOut")
-}
-
-/// Create-only: 412 / a remapped `AlreadyExists` is a proved
-/// occupation. 409 and a timeout are not — they stay `Ambiguous`.
-fn create_from_put(key: &StoreKey, source: ObjError) -> Result<Create> {
-    if is_unproved(&source) {
-        Ok(Create::Ambiguous)
-    } else if matches!(
-        source,
-        ObjError::AlreadyExists { .. } | ObjError::Precondition { .. }
-    ) {
-        Ok(Create::Exists)
-    } else {
-        Err(infra("put_create", key, source))
-    }
-}
-
-/// Swap: 412 / 404 is a proved `Moved`. 409 lands as `AlreadyExists`
-/// in the crate and is never a proved mismatch.
-fn swap_from_put(key: &StoreKey, source: ObjError) -> Result<Swap> {
-    if is_unproved(&source) || matches!(source, ObjError::AlreadyExists { .. }) {
-        Ok(Swap::Ambiguous)
-    } else if matches!(
-        source,
-        ObjError::Precondition { .. } | ObjError::NotFound { .. }
-    ) {
-        Ok(Swap::Moved)
-    } else {
-        Err(infra("put_swap", key, source))
     }
 }
 
@@ -419,111 +258,210 @@ impl CredentialProvider for RefreshProvider {
     }
 }
 
-impl ObjectStore for S3Store {
-    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>> {
-        let path = self.object_path(key)?;
-        self.block(async {
+fn infra(op: &'static str, key: &str, source: ObjError) -> S3Error {
+    S3Error {
+        op,
+        key: key.to_string(),
+        source: io::Error::other(source),
+    }
+}
+
+/// 409 Conflict, a timed-out PUT, and any other unproved transport result.
+/// `object_store` maps 409 onto `AlreadyExists`, so the walk reads the
+/// status out of the source chain — the variant alone is not a proof.
+fn is_unproved(err: &ObjError) -> bool {
+    if unproved_text(&err.to_string()) {
+        return true;
+    }
+    let mut current = std::error::Error::source(err);
+    while let Some(e) = current {
+        if unproved_text(&e.to_string()) {
+            return true;
+        }
+        current = std::error::Error::source(e);
+    }
+    false
+}
+
+fn unproved_text(text: &str) -> bool {
+    text.contains("409")
+        || text.contains("Conflict")
+        || text.contains("CONFLICT")
+        || text.contains("timed out")
+        || text.contains("TimedOut")
+}
+
+fn version_of(op: &'static str, key: &str, raw: Option<String>) -> Result<HeadVersion, S3Error> {
+    raw.map(|etag| HeadVersion(Box::from(etag.into_bytes())))
+        .ok_or_else(|| S3Error {
+            op,
+            key: key.to_string(),
+            source: io::Error::new(io::ErrorKind::InvalidData, "vendor omitted ETag"),
+        })
+}
+
+fn etag_text(version: &HeadVersion) -> String {
+    String::from_utf8_lossy(&version.0).into_owned()
+}
+
+impl ConditionalStore for S3Store {
+    type Error = S3Error;
+
+    fn read_head(&self, head_key: &str) -> Result<HeadRead, S3Error> {
+        let path = Self::path_of("read_head", head_key)?;
+        self.block("read_head", head_key, async {
             match self.inner.get_opts(&path, GetOptions::new()).await {
                 Ok(result) => {
-                    let tag = etag_of("get", key, result.meta.e_tag.clone())?;
+                    let version = version_of("read_head", head_key, result.meta.e_tag.clone())?;
                     let bytes = result
                         .bytes()
                         .await
-                        .map_err(|source| stream_err("get", key, source))?;
-                    Ok(Some(Fetched {
-                        bytes: bytes.to_vec(),
-                        etag: tag,
-                    }))
+                        .map_err(|source| infra("read_head", head_key, source))?;
+                    Ok(HeadRead::Present {
+                        version,
+                        body: Box::from(bytes.as_ref()),
+                    })
                 }
-                Err(ObjError::NotFound { .. }) => Ok(None),
-                Err(source) => Err(infra("get", key, source)),
+                Err(ObjError::NotFound { .. }) => Ok(HeadRead::Absent),
+                Err(source) => Err(infra("read_head", head_key, source)),
             }
         })?
     }
 
-    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll> {
-        let path = self.object_path(key)?;
-        let options = GetOptions::new().with_if_none_match(Some(etag.0.clone()));
-        self.block(async {
-            match self.inner.get_opts(&path, options).await {
-                Ok(result) => {
-                    let tag = etag_of("get_if_changed", key, result.meta.e_tag.clone())?;
-                    let bytes = result
-                        .bytes()
-                        .await
-                        .map_err(|source| stream_err("get_if_changed", key, source))?;
-                    Ok(Poll::Changed(Fetched {
-                        bytes: bytes.to_vec(),
-                        etag: tag,
-                    }))
-                }
-                Err(ObjError::NotModified { .. }) => Ok(Poll::Unchanged),
-                Err(source) => Err(infra("get_if_changed", key, source)),
-            }
-        })?
-    }
-
-    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create> {
-        let body = body.into();
-        let path = self.object_path(key)?;
-        let payload = body.bytes.to_vec();
-        let opts = fenced_put(PutMode::Create, body.token);
-        let raw = self.block(async {
+    fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, S3Error> {
+        let path = Self::path_of("create_head", head_key)?;
+        let payload = body.to_vec();
+        self.block("create_head", head_key, async {
+            let opts = PutOptions {
+                mode: PutMode::Create,
+                ..PutOptions::default()
+            };
             match self.inner.put_opts(&path, payload.into(), opts).await {
-                Ok(result) => Ok(Create::Created(etag_of("put_create", key, result.e_tag)?)),
-                Err(source) => create_from_put(key, source),
+                Ok(result) => Ok(ConditionalOutcome::Published {
+                    version: version_of("create_head", head_key, result.e_tag)?,
+                }),
+                Err(source) if is_unproved(&source) => Ok(ConditionalOutcome::Indeterminate),
+                Err(ObjError::AlreadyExists { .. } | ObjError::Precondition { .. }) => {
+                    Ok(ConditionalOutcome::PreconditionFailed)
+                }
+                Err(source) => Err(infra("create_head", head_key, source)),
             }
-        })??;
-        prove_create(self, key, body.bytes, raw)
+        })?
     }
 
-    fn put_swap<'a>(
+    fn replace_head(
         &self,
-        key: &StoreKey,
-        body: impl Into<Fenced<'a>>,
-        etag: &Etag,
-    ) -> Result<Swap> {
-        let body = body.into();
-        let path = self.object_path(key)?;
-        let payload = body.bytes.to_vec();
-        let expected = etag.0.clone();
-        let token = body.token;
-        let head = GetOptions::new()
-            .with_head(true)
-            .with_if_match(Some(expected.clone()));
-        let opts = fenced_put(
-            PutMode::Update(UpdateVersion {
-                e_tag: Some(expected),
-                version: None,
-            }),
-            token,
-        );
-        let raw = self.block(async {
-            match self.inner.get_opts(&path, head).await {
-                Ok(result) => {
-                    if let Some(moved) = swap_fence(token, stored_generation(&result.attributes)) {
-                        return Ok(moved);
-                    }
-                }
-                Err(ObjError::NotFound { .. } | ObjError::Precondition { .. }) => {
-                    return Ok(Swap::Moved);
-                }
-                Err(source) => return Err(infra("put_swap", key, source)),
-            }
+        head_key: &str,
+        expected: &HeadVersion,
+        body: &[u8],
+    ) -> Result<ConditionalOutcome, S3Error> {
+        let path = Self::path_of("replace_head", head_key)?;
+        let payload = body.to_vec();
+        let etag = etag_text(expected);
+        self.block("replace_head", head_key, async {
+            let opts = PutOptions {
+                mode: PutMode::Update(UpdateVersion {
+                    e_tag: Some(etag),
+                    version: None,
+                }),
+                ..PutOptions::default()
+            };
             match self.inner.put_opts(&path, payload.into(), opts).await {
-                Ok(result) => Ok(Swap::Swapped(etag_of("put_swap", key, result.e_tag)?)),
-                Err(source) => swap_from_put(key, source),
+                Ok(result) => Ok(ConditionalOutcome::Published {
+                    version: version_of("replace_head", head_key, result.e_tag)?,
+                }),
+                Err(source) if is_unproved(&source) => Ok(ConditionalOutcome::Indeterminate),
+                Err(ObjError::Precondition { .. } | ObjError::NotFound { .. }) => {
+                    Ok(ConditionalOutcome::PreconditionFailed)
+                }
+                // The crate can remap a conditional conflict onto
+                // AlreadyExists; without a proved status that is unproved.
+                Err(ObjError::AlreadyExists { .. }) => Ok(ConditionalOutcome::Indeterminate),
+                Err(source) => Err(infra("replace_head", head_key, source)),
             }
-        })??;
-        prove_swap(self, key, body.bytes, raw)
+        })?
     }
 
-    fn delete(&self, key: &StoreKey) -> Result<()> {
-        let path = self.object_path(key)?;
-        self.block(async {
+    fn put_object(&self, key: &str, body: &[u8]) -> Result<PutOutcome, S3Error> {
+        let path = Self::path_of("put_object", key)?;
+        let payload = body.to_vec();
+        self.block("put_object", key, async {
+            match self.inner.put(&path, payload.into()).await {
+                Ok(_) => Ok(PutOutcome::Stored),
+                Err(source) if is_unproved(&source) => Ok(PutOutcome::Indeterminate),
+                Err(source) => Err(infra("put_object", key, source)),
+            }
+        })?
+    }
+
+    fn get_object(&self, key: &str) -> Result<ObjectRead, S3Error> {
+        let path = Self::path_of("get_object", key)?;
+        self.block("get_object", key, async {
+            match self.inner.get_opts(&path, GetOptions::new()).await {
+                Ok(result) => {
+                    let bytes = result
+                        .bytes()
+                        .await
+                        .map_err(|source| infra("get_object", key, source))?;
+                    Ok(ObjectRead::Present {
+                        body: Box::from(bytes.as_ref()),
+                    })
+                }
+                Err(ObjError::NotFound { .. }) => Ok(ObjectRead::Absent),
+                Err(source) => Err(infra("get_object", key, source)),
+            }
+        })?
+    }
+
+    fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, S3Error> {
+        const PAGE: usize = 1_000;
+        // Recursive delimiter listing enumerates actual extant names — no
+        // historical slot scan. The returned page is bounded; the caller
+        // resumes with the continuation token.
+        let trimmed = prefix.trim_end_matches('/');
+        let root = Path::parse(trimmed).map_err(|source| S3Error {
+            op: "list_objects",
+            key: prefix.to_string(),
+            source: io::Error::other(source),
+        })?;
+        let resume: Option<String> = after.map(|token| String::from_utf8_lossy(token).into_owned());
+        let mut keys: Vec<String> = self.block("list_objects", prefix, async {
+            let mut found = Vec::new();
+            let mut stack = vec![root];
+            while let Some(dir) = stack.pop() {
+                let listed = self
+                    .inner
+                    .list_with_delimiter(Some(&dir))
+                    .await
+                    .map_err(|source| infra("list_objects", prefix, source))?;
+                for object in listed.objects {
+                    found.push(object.location.to_string());
+                }
+                stack.extend(listed.common_prefixes);
+            }
+            Ok::<_, S3Error>(found)
+        })??;
+        keys.sort();
+        let keys: Vec<String> = keys
+            .into_iter()
+            .filter(|key| key.starts_with(prefix))
+            .filter(|key| resume.as_deref().is_none_or(|resume| key.as_str() > resume))
+            .take(PAGE)
+            .collect();
+        let next = if keys.len() == PAGE {
+            keys.last().map(|last| Box::from(last.as_bytes()))
+        } else {
+            None
+        };
+        Ok(ListPage { keys, next })
+    }
+
+    fn delete_object(&self, key: &str) -> Result<(), S3Error> {
+        let path = Self::path_of("delete_object", key)?;
+        self.block("delete_object", key, async {
             match self.inner.delete(&path).await {
                 Ok(()) | Err(ObjError::NotFound { .. }) => Ok(()),
-                Err(source) => Err(infra("delete", key, source)),
+                Err(source) => Err(infra("delete_object", key, source)),
             }
         })?
     }
@@ -541,260 +479,66 @@ mod tests {
         }
     }
 
-    #[test]
-    fn join_prefix_omits_the_slash_on_an_empty_prefix() {
-        assert_eq!(join_prefix("", "manifest"), "manifest");
-        assert_eq!(
-            join_prefix("smoke/run", "log/c00000000/1"),
-            "smoke/run/log/c00000000/1"
-        );
+    fn config() -> S3Config {
+        S3Config {
+            endpoint: Some("http://127.0.0.1:1".into()),
+            region: "us-east-1".into(),
+            bucket: "bucket".into(),
+            credentials: static_keys(),
+        }
     }
 
     #[test]
     fn constructor_builds_without_touching_the_network() {
-        let store = S3Store::new(&S3Config {
-            endpoint: None,
-            region: "us-east-1".into(),
-            bucket: "example".into(),
-            credentials: static_keys(),
-            prefix: "/smoke/run/".into(),
-        })
-        .expect("build");
-        let path = store.object_path(&StoreKey::of("manifest")).expect("path");
-        assert_eq!(path.as_ref(), "smoke/run/manifest");
-    }
-
-    #[test]
-    fn constructor_refuses_inside_an_async_context() {
-        let nested = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("nested runtime");
-        let opened = nested.block_on(async {
-            S3Store::new(&S3Config {
-                endpoint: None,
-                region: "us-east-1".into(),
-                bucket: "example".into(),
-                credentials: static_keys(),
-                prefix: String::new(),
-            })
-        });
-        match opened {
-            Err(err) => assert_eq!(err.op, "open"),
-            Ok(_) => panic!("S3Store must refuse construction inside an async context"),
-        }
-    }
-
-    #[test]
-    fn verbs_refuse_inside_an_async_context() {
-        let store = S3Store::new(&S3Config {
-            endpoint: None,
-            region: "us-east-1".into(),
-            bucket: "example".into(),
-            credentials: static_keys(),
-            prefix: String::new(),
-        })
-        .expect("build");
-        let key = StoreKey::of("manifest");
-        let nested = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("nested runtime");
-        let got = nested.block_on(async { store.get(&key) });
-        match got {
-            Err(err) => assert_eq!(err.op, "block"),
-            Ok(_) => panic!("a sync verb is uncallable from an async context"),
-        }
-    }
-
-    #[test]
-    fn constructor_accepts_a_refresh_without_calling_it() {
-        let store = S3Store::new(&S3Config {
-            endpoint: Some("https://example.r2.cloudflarestorage.com".into()),
-            region: "auto".into(),
-            bucket: "example".into(),
-            credentials: S3Credentials::Refresh(Arc::new(|| {
-                panic!("refresh is not called at construction")
-            })),
-            prefix: String::new(),
-        })
-        .expect("build");
-        let path = store
-            .object_path(&StoreKey::of("ckpt/digest.mdb"))
-            .expect("path");
-        assert_eq!(path.as_ref(), "ckpt/digest.mdb");
+        let store = S3Store::new(&config()).expect("build");
+        drop(store);
     }
 
     #[test]
     fn constructor_refuses_region_auto_without_an_endpoint() {
-        let opened = S3Store::new(&S3Config {
+        let bad = S3Config {
             endpoint: None,
             region: "auto".into(),
-            bucket: "example".into(),
-            credentials: static_keys(),
-            prefix: String::new(),
-        });
-        match opened {
-            Err(err) => assert_eq!(err.op, "open"),
-            Ok(_) => panic!("region auto without an endpoint is refused"),
-        }
-    }
-
-    #[test]
-    fn constructor_refuses_a_reserved_prefix() {
-        let opened = S3Store::new(&S3Config {
-            endpoint: None,
-            region: "us-east-1".into(),
-            bucket: "example".into(),
-            credentials: static_keys(),
-            prefix: "~tmp/smoke".into(),
-        });
-        match opened {
-            Err(err) => assert_eq!(err.op, "open"),
-            Ok(_) => panic!("reserved prefix is refused"),
-        }
-    }
-
-    fn conflict_exists(path: &str) -> ObjError {
-        ObjError::AlreadyExists {
-            path: path.into(),
-            source: "409 Conflict".into(),
-        }
-    }
-
-    #[test]
-    fn conflict_on_create_is_ambiguous_never_exists() {
-        let key = StoreKey::of("log/c00000000/1");
-        assert!(matches!(
-            create_from_put(&key, conflict_exists(key.as_str())),
-            Ok(Create::Ambiguous)
-        ));
-        assert!(
-            !matches!(
-                create_from_put(&key, conflict_exists(key.as_str())),
-                Ok(Create::Exists | Create::Created(_))
-            ),
-            "409 is not a proved occupation"
-        );
-        let proved = ObjError::Precondition {
-            path: key.to_string(),
-            source: "412 Precondition Failed".into(),
+            ..config()
         };
-        assert!(matches!(create_from_put(&key, proved), Ok(Create::Exists)));
+        assert!(S3Store::new(&bad).is_err());
     }
 
     #[test]
-    fn conflict_on_swap_is_ambiguous_never_moved() {
-        let key = StoreKey::of("manifest");
-        assert!(matches!(
-            swap_from_put(&key, conflict_exists(key.as_str())),
-            Ok(Swap::Ambiguous)
-        ));
-        assert!(
-            !matches!(
-                swap_from_put(&key, conflict_exists(key.as_str())),
-                Ok(Swap::Moved | Swap::Swapped(_))
-            ),
-            "409 is not a proved mismatch"
-        );
-        let proved = ObjError::Precondition {
-            path: key.to_string(),
-            source: "412 Precondition Failed".into(),
+    fn constructor_and_verbs_refuse_inside_an_async_context() {
+        let store = S3Store::new(&config()).expect("build outside");
+        let runtime = Builder::new_current_thread().build().unwrap();
+        runtime.block_on(async {
+            assert!(S3Store::new(&config()).is_err());
+            assert!(store.read_head("t/HEAD").is_err());
+            assert!(store.get_object("t/objects/1/chunk/aa").is_err());
+        });
+    }
+
+    #[test]
+    fn hostile_keys_refuse_before_any_request() {
+        let store = S3Store::new(&config()).expect("build");
+        for key in ["~tmp/x", "a/../b", "a//b", "x.lock"] {
+            assert!(store.get_object(key).is_err(), "{key}");
+        }
+    }
+
+    #[test]
+    fn unproved_conflicts_and_timeouts_are_indeterminate_shapes() {
+        let conflict = ObjError::AlreadyExists {
+            path: "p".into(),
+            source: Box::new(io::Error::other("Client error with status 409 Conflict")),
         };
-        assert!(matches!(swap_from_put(&key, proved), Ok(Swap::Moved)));
-    }
-
-    #[test]
-    fn timed_out_put_is_ambiguous() {
-        let key = StoreKey::of("log/c00000000/1");
-        let timed = ObjError::Generic {
+        assert!(is_unproved(&conflict));
+        let timeout = ObjError::Generic {
             store: "S3",
-            source: "request timed out".into(),
+            source: Box::new(io::Error::new(io::ErrorKind::TimedOut, "timed out")),
         };
-        assert!(matches!(
-            create_from_put(&key, timed),
-            Ok(Create::Ambiguous)
-        ));
-    }
-
-    #[test]
-    fn stream_failure_is_err_store() {
-        let key = StoreKey::of("ckpt/digest.mdb");
-        let err: StoreError = stream_err(
-            "get",
-            &key,
-            ObjError::Generic {
-                store: "S3",
-                source: "body closed mid-stream".into(),
-            },
-        );
-        assert_eq!(err.op, "get");
-        assert_eq!(err.key, key.as_str());
-        assert!(err.source.to_string().contains("body closed mid-stream"));
-    }
-
-    #[test]
-    fn static_keys_are_consulted_per_request() {
-        let provider = request_credentials(&static_keys());
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
-        runtime.block_on(async {
-            let first = provider.get_credential().await.expect("first");
-            let second = provider.get_credential().await.expect("second");
-            assert_eq!(first.key_id, "AKIAEXAMPLE");
-            assert_eq!(second.key_id, first.key_id);
-            assert!(
-                !Arc::ptr_eq(&first, &second),
-                "each sign receives a fresh credential value"
-            );
-        });
-    }
-
-    #[test]
-    fn a_lower_token_loses_swap_when_the_etag_matches() {
-        let stored = generation_attributes(7);
-        assert_eq!(stored_generation(&stored), 7);
-        assert_eq!(stored_generation(&Attributes::new()), 0);
-        assert!(
-            matches!(swap_fence(3, stored_generation(&stored)), Some(Swap::Moved)),
-            "a matching etag does not waive body.token < stored generation"
-        );
-        assert!(
-            swap_fence(7, 7).is_none(),
-            "the current token is the generation the CAS still wins"
-        );
-        assert!(swap_fence(8, 7).is_none());
-        assert!(
-            matches!(swap_fence(0, 1), Some(Swap::Moved)),
-            "an unfenced write loses to a stored generation"
-        );
-    }
-
-    #[test]
-    fn refresh_is_consulted_per_request() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let calls = Arc::new(AtomicU64::new(0));
-        let counted = Arc::clone(&calls);
-        let provider = RefreshProvider {
-            refresh: Arc::new(move || {
-                counted.fetch_add(1, Ordering::SeqCst);
-                Ok(StaticKeys {
-                    access_key_id: "AKIA".into(),
-                    secret_access_key: "secret".into(),
-                    session_token: None,
-                })
-            }),
+        assert!(is_unproved(&timeout));
+        let denied = ObjError::Generic {
+            store: "S3",
+            source: Box::new(io::Error::other("403 Forbidden")),
         };
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
-        runtime.block_on(async {
-            provider.get_credential().await.expect("first");
-            provider.get_credential().await.expect("second");
-        });
-        assert_eq!(calls.load(Ordering::SeqCst), 2, "refresh is not memoized");
+        assert!(!is_unproved(&denied), "a proved denial is not ambiguity");
     }
 }

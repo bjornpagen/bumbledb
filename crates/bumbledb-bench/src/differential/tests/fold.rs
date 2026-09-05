@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, Row, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    FieldId, RelationDescriptor, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
     CmpOp, Comparison, ConditionTree, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
@@ -24,11 +23,9 @@ fn descriptor() -> SchemaDescriptor {
                 extension: None,
                 name: "Reading".into(),
                 fields: vec![
-                    FieldDescriptor {
-                        name: "id".into(),
-                        value_type: ValueType::U64,
-                        generation: Generation::Fresh,
-                    },
+                    // Application-owned id with a declared key below: the
+                    // successor has no fresh generation attribute.
+                    field("id", ValueType::U64),
                     field("kind", ValueType::U64),
                     field("value", ValueType::I64),
                 ],
@@ -56,18 +53,26 @@ fn descriptor() -> SchemaDescriptor {
                 fields: vec![field("rank", ValueType::U64)],
             },
         ],
-        statements: vec![StatementDescriptor::Containment {
-            source: Side {
+        statements: vec![
+            // The declared id key replaces the retired fresh auto-key at
+            // the same materialized position.
+            StatementDescriptor::Functionality {
                 relation: READING,
-                projection: Box::new([FieldId(1)]),
-                selection: Box::new([]),
-            },
-            target: Side {
-                relation: KIND,
                 projection: Box::new([FieldId(0)]),
-                selection: Box::new([]),
             },
-        }],
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: READING,
+                    projection: Box::new([FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: KIND,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+            },
+        ],
     }
 }
 
@@ -294,6 +299,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
             let model = match naive.query(&query, &params) {
                 Ok(rows) => Answers::Ok(rows),
                 Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                Err(QueryError::Scalar { .. }) => Answers::Scalar,
             };
             assert_eq!(on, off, "folded and unfolded disagree: {query:?}");
             assert_eq!(on, model, "engine and model disagree: {query:?}");

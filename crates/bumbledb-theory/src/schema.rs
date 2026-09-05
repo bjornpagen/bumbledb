@@ -17,20 +17,45 @@ pub struct RelationId(pub u32);
 pub struct FieldId(pub u16);
 
 /// Dense statement id: the statement's index in the schema-global
-/// materialized order — fresh auto-[`StatementDescriptor::Functionality`]
-/// statements first, then closed auto-keys, then declared statements in
-/// declaration order ([`SchemaDescriptor::materialized_statements`] owns
-/// the rule).
+/// materialized order — closed relations' auto-handle
+/// [`StatementDescriptor::Functionality`] statements first, then declared
+/// statements in declaration order
+/// ([`SchemaDescriptor::materialized_statements`] owns the rule).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StatementId(pub u16);
 
-/// The element domain of an Interval: closed to the two orderable scalars.
-/// A flat enum, deliberately — no `Interval(Box<ValueType>)` recursion, so
-/// illegal elements are unrepresentable rather than rejected.
+/// The element domain of a general Interval: closed to the three
+/// orderable scalars. A flat enum, deliberately — no
+/// `Interval(Box<ValueType>)` recursion, so illegal elements are
+/// unrepresentable rather than rejected. `F64` is the dense numeric line
+/// with canonical binary64 endpoints; the integers keep their discrete
+/// point domains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntervalElement {
     U64,
     I64,
+    F64,
+}
+
+/// The element domain of a fixed-width interval: the discrete integers
+/// only. `FixedInterval<F64>` is unrepresentable by this type — rounded
+/// `start + width` is not an exact fixed-width representation on the
+/// dense line, so the illegal state has no descriptor spelling at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FixedIntervalElement {
+    U64,
+    I64,
+}
+
+impl FixedIntervalElement {
+    /// The general element domain this discrete element embeds into.
+    #[must_use]
+    pub const fn element(self) -> IntervalElement {
+        match self {
+            Self::U64 => IntervalElement::U64,
+            Self::I64 => IntervalElement::I64,
+        }
+    }
 }
 
 /// A structural value type: the description *is* the identity — structural
@@ -44,6 +69,11 @@ pub enum ValueType {
     String,
     F64,
 
+    /// The application-owned 128-bit identity scalar: sixteen exact bytes.
+    /// Nominal host wrappers lower here; the name is not a second kernel,
+    /// and no database issuance/reservation authority exists for it.
+    Id128,
+
     FixedBytes {
         len: u16,
     },
@@ -53,9 +83,11 @@ pub enum ValueType {
     },
 
     /// `interval<E, w>` — width is the type; encoding stores only the start.
-    /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`. A width that merely checks is refused.
+    /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`. A width that merely
+    /// checks is refused, and the element domain is discrete by type:
+    /// no `FixedInterval<F64>` can be declared.
     FixedInterval {
-        element: IntervalElement,
+        element: FixedIntervalElement,
         width: u64,
     },
 }
@@ -66,8 +98,8 @@ impl ValueType {
         match self {
             Self::Bool => 1,
             Self::U64 | Self::I64 | Self::F64 | Self::String | Self::FixedInterval { .. } => 8,
+            Self::Id128 | Self::Interval { .. } => 16,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
-            Self::Interval { .. } => 16,
         }
     }
 
@@ -79,27 +111,35 @@ impl ValueType {
     #[must_use]
     pub const fn interval_element(self) -> Option<IntervalElement> {
         match self {
-            Self::Interval { element } | Self::FixedInterval { element, .. } => Some(element),
+            Self::Interval { element } => Some(element),
+            Self::FixedInterval { element, .. } => Some(element.element()),
             _ => None,
         }
     }
+
+    /// Whether this is an interval position with an exact integer duration
+    /// — the only interval family a grouped duration measure or a
+    /// duration-dimension bound may read. Dense float intervals have a
+    /// numerical length, never an exact capacity weight.
+    #[must_use]
+    pub const fn is_discrete_interval(self) -> bool {
+        matches!(
+            self,
+            Self::Interval {
+                element: IntervalElement::U64 | IntervalElement::I64,
+            } | Self::FixedInterval { .. }
+        )
+    }
 }
 
-/// Field generation: a storage behavior, not a type
-/// .
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Generation {
-    None,
-
-    Fresh,
-}
-
-/// One field: name + structural type + generation attribute.
+/// One field: name + structural type. There is no generation attribute:
+/// the database issues no identity; application-owned [`crate::Id128`]
+/// values (or any declared key domain) arrive as ordinary input, and key
+/// laws are declared statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldDescriptor {
     pub name: Box<str>,
     pub value_type: ValueType,
-    pub generation: Generation,
 }
 
 /// vocabulary of the checking boundaries (query literals, bound params,
@@ -126,6 +166,7 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
         | (Value::U64(_), ValueType::U64)
         | (Value::I64(_), ValueType::I64)
         | (Value::F64(_), ValueType::F64)
+        | (Value::Id128(_), ValueType::Id128)
         | (Value::String(_), ValueType::String)
         | (
             Value::IntervalU64(_),
@@ -138,20 +179,26 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
             ValueType::Interval {
                 element: IntervalElement::I64,
             },
+        )
+        | (
+            Value::IntervalF64(_),
+            ValueType::Interval {
+                element: IntervalElement::F64,
+            },
         ) => Ok(()),
 
         // `lean/Bumbledb/Values.lean: FixedU64.not_ray`). A wide or
         (
             Value::IntervalU64(interval),
             ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: FixedIntervalElement::U64,
                 width,
             },
         ) if interval.end() - interval.start() == *width && !interval.is_ray() => Ok(()),
         (
             Value::IntervalI64(interval),
             ValueType::FixedInterval {
-                element: IntervalElement::I64,
+                element: FixedIntervalElement::I64,
                 width,
             },
         ) if interval.end().abs_diff(interval.start()) == *width && !interval.is_ray() => Ok(()),
@@ -370,23 +417,6 @@ impl SchemaDescriptor {
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
         for (rel_idx, relation) in self.relations.iter().enumerate() {
-            for (sealed_idx, slot) in relation.sealed_fields().enumerate() {
-                if let SealedField::Declared(field) = slot
-                    && field.generation == Generation::Fresh
-                {
-                    statements.push(StatementDescriptor::Functionality {
-                        relation: RelationId(
-                            u32::try_from(rel_idx).expect("relation count fits u32"),
-                        ),
-                        projection: Box::new([FieldId(
-                            u16::try_from(sealed_idx).expect("field count fits u16"),
-                        )]),
-                    });
-                }
-            }
-        }
-
-        for (rel_idx, relation) in self.relations.iter().enumerate() {
             if relation.extension.is_some() {
                 statements.push(StatementDescriptor::Functionality {
                     relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
@@ -419,5 +449,128 @@ impl StatementDescriptor {
             Self::Containment { .. } => StatementKind::Containment,
             Self::Capacity { .. } => StatementKind::Capacity,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        FieldDescriptor, FieldId, FixedIntervalElement, IntervalElement, RelationDescriptor,
+        RelationId, Row, SchemaDescriptor, StatementDescriptor, ValueMismatch, ValueType,
+        value_matches,
+    };
+    use crate::{F64, Id128, Interval, Value};
+
+    fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
+        FieldDescriptor {
+            name: name.into(),
+            value_type,
+        }
+    }
+
+    /// The materialized order holds only closed auto-handle keys and
+    /// declared statements: no fresh auto-key exists anywhere — E-NO-RESERVE
+    /// at the descriptor layer.
+    #[test]
+    fn materialized_statements_have_no_generated_identity_keys() {
+        let descriptor = SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "Student".into(),
+                    fields: vec![field("id", ValueType::Id128)],
+                    extension: None,
+                },
+                RelationDescriptor {
+                    name: "Kind".into(),
+                    fields: vec![],
+                    extension: Some(Box::new([Row {
+                        handle: "Basic".into(),
+                        values: Box::new([]),
+                    }])),
+                },
+            ],
+            statements: vec![StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            }],
+        };
+        let materialized = descriptor.materialized_statements();
+        // Closed auto-handle key first, then the one declared key. The
+        // ordinary Id128 relation receives no automatic statement.
+        assert_eq!(materialized.len(), 2);
+        assert!(matches!(
+            &materialized[0],
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection,
+            } if **projection == [FieldId(0)]
+        ));
+        assert_eq!(materialized[1], descriptor.statements[0]);
+    }
+
+    #[test]
+    fn value_matches_covers_the_new_scalars_and_refuses_cross_kinds() {
+        let id = Value::Id128(Id128::from_bytes([7; 16]));
+        assert_eq!(value_matches(&id, &ValueType::Id128), Ok(()));
+        // Id128 is nominal: not raw bytes<16>, not an integer pair.
+        assert_eq!(
+            value_matches(&id, &ValueType::FixedBytes { len: 16 }),
+            Err(ValueMismatch::Type)
+        );
+        assert_eq!(
+            value_matches(&Value::FixedBytes(Box::from([0u8; 16])), &ValueType::Id128),
+            Err(ValueMismatch::Type)
+        );
+
+        let dense =
+            Value::IntervalF64(Interval::<F64>::new(F64::ZERO, F64::from(1.0)).expect("checked"));
+        assert_eq!(
+            value_matches(
+                &dense,
+                &ValueType::Interval {
+                    element: IntervalElement::F64
+                }
+            ),
+            Ok(())
+        );
+        // No implicit integer/float interval coercion in either direction.
+        assert_eq!(
+            value_matches(
+                &dense,
+                &ValueType::Interval {
+                    element: IntervalElement::U64
+                }
+            ),
+            Err(ValueMismatch::Type)
+        );
+        assert_eq!(
+            value_matches(
+                &Value::IntervalU64(Interval::<u64>::new(0, 1).expect("checked")),
+                &ValueType::Interval {
+                    element: IntervalElement::F64
+                }
+            ),
+            Err(ValueMismatch::Type)
+        );
+    }
+
+    /// A fixed-width float interval has no descriptor spelling: the element
+    /// enum is discrete by type, and the width/element vocabulary stays
+    /// exact. The refusal is structural, not a validation branch.
+    #[test]
+    fn fixed_interval_elements_are_discrete_by_construction() {
+        for element in [FixedIntervalElement::U64, FixedIntervalElement::I64] {
+            let ty = ValueType::FixedInterval { element, width: 8 };
+            assert!(ty.is_interval());
+            assert!(ty.is_discrete_interval());
+            assert_ne!(ty.interval_element(), Some(IntervalElement::F64));
+        }
+        let dense = ValueType::Interval {
+            element: IntervalElement::F64,
+        };
+        assert!(dense.is_interval());
+        assert!(!dense.is_discrete_interval());
+        assert_eq!(dense.width(), 16);
+        assert_eq!(ValueType::Id128.width(), 16);
     }
 }

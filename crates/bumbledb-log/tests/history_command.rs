@@ -4,8 +4,7 @@
 use std::time::Duration;
 
 use bumbledb::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _,
-    ValueType,
+    FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _, ValueType,
 };
 use bumbledb::work::Resource;
 use bumbledb::{
@@ -16,14 +15,15 @@ use bumbledb_log::history::command::{
     Command, CommandError, CommandMetadata, FrameError, Limits, decode_command, encode_command,
 };
 use bumbledb_log::history::{
-    CommandId, Condition, DatabaseId, DatabaseIdentity, IncarnationId, ReceiptEpoch, RequestId,
-    StateStamp,
+    CommandId, CommandResult, Condition, DatabaseId, DatabaseIdentity, IncarnationId, ReceiptEpoch,
+    RequestId, StateStamp,
 };
 
 const LIMITS: Limits = Limits {
     envelope_bytes: 100_000,
     change_bytes: 90_000,
     evidence_bytes: 1000,
+    result_bytes: 1000,
 };
 
 fn schema(name: &str, value_type: ValueType) -> Schema {
@@ -33,7 +33,6 @@ fn schema(name: &str, value_type: ValueType) -> Schema {
             fields: vec![FieldDescriptor {
                 name: "value".into(),
                 value_type,
-                generation: Generation::None,
             }],
             extension: None,
         }],
@@ -93,7 +92,14 @@ fn sealed_command_retains_exact_core_allocation_and_live_memory_charge() {
     let charged = source_work.used(Resource::WorkingBytes);
     assert!(charged >= changes.as_bytes().len() as u64);
     let seal_work = work();
-    let command = Command::seal(metadata(&schema), changes.clone(), LIMITS, &seal_work).unwrap();
+    let command = Command::seal(
+        metadata(&schema),
+        changes.clone(),
+        CommandResult::empty(),
+        LIMITS,
+        &seal_work,
+    )
+    .unwrap();
     assert_eq!(command.changes().as_bytes().as_ptr(), native_bytes);
     assert_eq!(
         source_work.used(Resource::WorkingBytes),
@@ -120,6 +126,7 @@ fn equal_normalized_intents_hash_identically_and_owned_parse_uses_core_decoder()
     let left = Command::seal(
         metadata(&schema),
         numbers(&schema, &work(), false),
+        CommandResult::empty(),
         LIMITS,
         &work(),
     )
@@ -127,6 +134,7 @@ fn equal_normalized_intents_hash_identically_and_owned_parse_uses_core_decoder()
     let right = Command::seal(
         metadata(&schema),
         numbers(&schema, &work(), true),
+        CommandResult::empty(),
         LIMITS,
         &work(),
     )
@@ -156,7 +164,14 @@ fn equal_normalized_intents_hash_identically_and_owned_parse_uses_core_decoder()
         incarnation: conditional.identity.incarnation_id,
         data_revision: 0,
     });
-    let conditional = Command::seal(conditional, left.changes().clone(), LIMITS, &work()).unwrap();
+    let conditional = Command::seal(
+        conditional,
+        left.changes().clone(),
+        CommandResult::empty(),
+        LIMITS,
+        &work(),
+    )
+    .unwrap();
     assert_ne!(conditional.command_ref().digest, left.command_ref().digest);
 }
 
@@ -195,7 +210,13 @@ fn complete_schema_identity_limits_and_work_are_enforced_before_sealing() {
     let other = self::schema("OtherNumber", ValueType::U64);
     let changes = numbers(&schema, &work(), false);
     assert!(matches!(
-        Command::seal(metadata(&other), changes.clone(), LIMITS, &work()),
+        Command::seal(
+            metadata(&other),
+            changes.clone(),
+            CommandResult::empty(),
+            LIMITS,
+            &work()
+        ),
         Err(CommandError::SchemaMismatch)
     ));
     let wire = encode_command(metadata(&schema), changes.as_bytes(), LIMITS).unwrap();
@@ -208,13 +229,25 @@ fn complete_schema_identity_limits_and_work_are_enforced_before_sealing() {
         ..LIMITS
     };
     assert!(matches!(
-        Command::seal(metadata(&schema), changes.clone(), tiny, &work()),
+        Command::seal(
+            metadata(&schema),
+            changes.clone(),
+            CommandResult::empty(),
+            tiny,
+            &work()
+        ),
         Err(CommandError::Frame(FrameError::LimitExceeded))
     ));
     let cancelled = work();
     cancelled.cancel();
     assert!(matches!(
-        Command::seal(metadata(&schema), changes.clone(), LIMITS, &cancelled),
+        Command::seal(
+            metadata(&schema),
+            changes.clone(),
+            CommandResult::empty(),
+            LIMITS,
+            &cancelled
+        ),
         Err(CommandError::Work(WorkError::Cancelled))
     ));
     let none = ExecutionPolicy {
@@ -224,7 +257,13 @@ fn complete_schema_identity_limits_and_work_are_enforced_before_sealing() {
     .start()
     .unwrap();
     assert!(matches!(
-        Command::seal(metadata(&schema), changes, LIMITS, &none),
+        Command::seal(
+            metadata(&schema),
+            changes,
+            CommandResult::empty(),
+            LIMITS,
+            &none
+        ),
         Err(CommandError::Work(WorkError::Exhausted {
             resource: Resource::WorkUnits,
             ..
@@ -260,14 +299,27 @@ fn large_core_payload_hash_is_charged_in_bounded_chunks_without_a_copy() {
     .start()
     .unwrap();
     assert!(matches!(
-        Command::seal(metadata(&schema), changes.clone(), LIMITS, &limited),
+        Command::seal(
+            metadata(&schema),
+            changes.clone(),
+            CommandResult::empty(),
+            LIMITS,
+            &limited
+        ),
         Err(CommandError::Work(WorkError::Exhausted {
             resource: Resource::WorkUnits,
             ..
         }))
     ));
     let context = work();
-    let command = Command::seal(metadata(&schema), changes, LIMITS, &context).unwrap();
+    let command = Command::seal(
+        metadata(&schema),
+        changes,
+        CommandResult::empty(),
+        LIMITS,
+        &context,
+    )
+    .unwrap();
     assert!(context.used(Resource::WorkUnits) >= 16);
     let bytes = encode_command(command.metadata(), command.changes().as_bytes(), LIMITS).unwrap();
     assert_eq!(

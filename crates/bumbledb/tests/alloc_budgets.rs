@@ -16,16 +16,17 @@ bumbledb::schema! {
     pub Budget;
 
     relation Holder {
-        id: u64 as HolderId, fresh,
+        id: u64 as HolderId,
         tag: u64,
     }
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         bal: i64,
     }
 
     Account(holder) <= Holder(id);
+    Account(id) -> Account;
 }
 
 const COMMIT_BATCH: u64 = 64;
@@ -99,8 +100,8 @@ fn assert_zero(window_name: &str, shape: &str, w: AllocWindow) {
 
 fn seed_store(db: &Db<Budget>) -> (HolderId, AccountId, Holder, Account) {
     db.write(|tx| {
-        let hid = tx.reserve::<HolderId>(1)?.start().expect("holder id");
-        let aid = tx.reserve::<AccountId>(1)?.start().expect("account id");
+        let hid = HolderId(1);
+        let aid = AccountId(1);
         let holder = Holder { id: hid, tag: 7 };
         let account = Account {
             id: aid,
@@ -124,16 +125,8 @@ fn seed_heap() -> (
     Account,
 ) {
     let mut builder = InstanceBuilder::new(Budget).expect("valid");
-    let hid = builder
-        .reserve::<HolderId>(1)
-        .expect("reserve")
-        .start()
-        .expect("holder id");
-    let aid = builder
-        .reserve::<AccountId>(1)
-        .expect("reserve")
-        .start()
-        .expect("account id");
+    let hid = HolderId(1);
+    let aid = AccountId(1);
     let holder = Holder { id: hid, tag: 7 };
     let account = Account {
         id: aid,
@@ -180,10 +173,10 @@ fn warm_query_heap(
 
 fn point_read_store(db: &Db<Budget>, id: AccountId, fact: &Account) {
     db.read(|snap| {
-        let _ = snap.get(id)?.expect("present");
+        let _ = snap.get(AccountById { id })?.expect("present");
         assert!(snap.contains(fact)?);
         alloc_counter::reset();
-        let got = snap.get(id)?.expect("present");
+        let got = snap.get(AccountById { id })?.expect("present");
         assert_eq!(got.bal, fact.bal);
         assert!(snap.contains(fact)?);
         assert_zero("allocs_per_point_read", "store", window());
@@ -193,10 +186,16 @@ fn point_read_store(db: &Db<Budget>, id: AccountId, fact: &Account) {
 }
 
 fn point_read_heap(instance: &bumbledb::OwnedInstance<Budget>, id: AccountId, fact: &Account) {
-    let _ = instance.get(id).expect("get").expect("present");
+    let _ = instance
+        .get(AccountById { id })
+        .expect("get")
+        .expect("present");
     assert!(instance.contains(fact).expect("contains"));
     alloc_counter::reset();
-    let got = instance.get(id).expect("get").expect("present");
+    let got = instance
+        .get(AccountById { id })
+        .expect("get")
+        .expect("present");
     assert_eq!(got.bal, fact.bal);
     assert!(instance.contains(fact).expect("contains"));
     assert_zero("allocs_per_point_read", "heap", window());
@@ -223,7 +222,7 @@ fn insert_batch(db: &Db<Budget>, next_tag: &mut u64) {
     *next_tag += COMMIT_BATCH;
     common::expect_admitted(db.write(|tx| {
         for i in 0..COMMIT_BATCH {
-            let hid = tx.reserve::<HolderId>(1)?.start().expect("holder id");
+            let hid = HolderId(1_000 + base + i);
             tx.insert([&Holder {
                 id: hid,
                 tag: base + i,
@@ -236,16 +235,8 @@ fn insert_batch(db: &Db<Budget>, next_tag: &mut u64) {
 fn admission_peak_bound() {
     const CHUNK: u64 = 64 * 1024;
     let mut builder = InstanceBuilder::new(Budget).expect("valid");
-    let hid = builder
-        .reserve::<HolderId>(1)
-        .expect("reserve")
-        .start()
-        .expect("holder id");
-    let aid = builder
-        .reserve::<AccountId>(1)
-        .expect("reserve")
-        .start()
-        .expect("account id");
+    let hid = HolderId(1);
+    let aid = AccountId(1);
     builder.load([&Holder { id: hid, tag: 1 }]).expect("load");
     builder
         .load([&Account {

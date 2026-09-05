@@ -355,7 +355,6 @@ static SYNTHETIC_ID: std::sync::LazyLock<FieldDescriptor> =
     std::sync::LazyLock::new(|| FieldDescriptor {
         name: "id".into(),
         value_type: ValueType::U64,
-        generation: super::Generation::None,
     });
 
 impl Names for DeclaredNames<'_> {
@@ -618,8 +617,15 @@ fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
         Value::U64(v) => write!(f, "{v}"),
         Value::I64(v) => write!(f, "{v}"),
         Value::F64(v) => write!(f, "f64:0x{:016x}", v.to_bits()),
+        Value::Id128(id) => write!(f, "id128:{id}"),
         Value::IntervalU64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
         Value::IntervalI64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
+        Value::IntervalF64(interval) => write!(
+            f,
+            "f64:0x{:016x}..f64:0x{:016x}",
+            interval.start().to_bits(),
+            interval.end().to_bits()
+        ),
         Value::String(text) => {
             write!(f, "\"")?;
             for c in text.chars() {

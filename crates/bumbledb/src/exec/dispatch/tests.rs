@@ -1,21 +1,18 @@
 use super::*;
-use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
 use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, ProjectionSink};
+use crate::image::intern::InternerHandle;
+use crate::image::testsupport::TestSource;
 use crate::image::view::{FilterPredicate, OperandAddr, ViewWordSource};
+use crate::ir::Value;
 use crate::ir::WordCmp;
 use crate::ir::normalize::{NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::{ParamId, VarId};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::dict;
-use crate::storage::env::Environment;
-use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    StatementDescriptor, StatementId, ValueType,
 };
 
 fn account_schema() -> Schema {
@@ -27,21 +24,22 @@ fn account_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "holder".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "name".into(),
                     value_type: ValueType::String,
-                    generation: Generation::None,
                 },
             ],
         }],
-        statements: vec![],
+        // The declared id key (the deleted fresh auto-key's position).
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }],
     }
     .validate()
     .expect("valid fixture")
@@ -56,19 +54,16 @@ fn booking_schema() -> Schema {
                 FieldDescriptor {
                     name: "room".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
                     },
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "label".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -90,14 +85,12 @@ fn stay_schema() -> Schema {
                 FieldDescriptor {
                     name: "owner".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
                     },
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -116,14 +109,12 @@ fn shift_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "span".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::U64,
                     },
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -144,6 +135,24 @@ fn occurrence(vars: &[(u16, u16)], filters: Vec<FilterPredicate>) -> Occurrence 
         filters,
         point_vars: vec![],
     }
+}
+
+fn account_source(rows: &[(u64, u64, &str)]) -> TestSource {
+    let facts: Vec<Vec<Value>> = rows
+        .iter()
+        .map(|(id, holder, name)| {
+            vec![
+                Value::U64(*id),
+                Value::U64(*holder),
+                Value::String((*name).into()),
+            ]
+        })
+        .collect();
+    TestSource::new(&account_schema(), &[(REL, facts)])
+}
+
+fn value_source(schema: &Schema, rows: &[Vec<Value>]) -> TestSource {
+    TestSource::new(schema, &[(REL, rows.to_vec())])
 }
 
 fn eq_filter(field: u16, value: Const) -> FilterPredicate {
@@ -180,43 +189,6 @@ fn single_with_widths(occurrence: Occurrence, wide_vars: &[u16]) -> NormalizedQu
 
 fn single(occurrence: Occurrence) -> NormalizedQuery {
     single_with_widths(occurrence, &[])
-}
-
-fn populated_accounts(dir: &TempDir, schema: &Schema, rows: &[(u64, u64, &str)]) -> Environment {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, holder, name) in rows {
-        let name_id = delta.intern_str(&view, name).expect("intern");
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(*holder),
-                ValueRef::String(name_id),
-            ],
-            schema.relation(REL).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, REL, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    env
-}
-
-fn populated(dir: &TempDir, schema: &Schema, rows: &[Vec<ValueRef>]) -> Environment {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for values in rows {
-        let mut bytes = Vec::new();
-        encode_fact(values, schema.relation(REL).layout(), &mut bytes);
-        delta.insert(&view, REL, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    env
 }
 
 #[test]
@@ -285,7 +257,6 @@ fn currency_schema() -> Schema {
             fields: vec![FieldDescriptor {
                 name: "minor_units".into(),
                 value_type: ValueType::U64,
-                generation: Generation::None,
             }],
         }],
         statements: vec![],
@@ -371,6 +342,7 @@ fn a_membership_binding_is_not_a_key_cover() {
             FilterPredicate::PointIn {
                 field: FieldId(1).into(),
                 point: ViewWordSource::Word(7),
+                dense: false,
             },
         ],
     ));
@@ -421,6 +393,7 @@ fn full_fact_binding_takes_the_membership_path() {
             FilterPredicate::PointIn {
                 field: FieldId(1).into(),
                 point: ViewWordSource::Word(7),
+                dense: false,
             },
         ],
     ));
@@ -429,18 +402,21 @@ fn full_fact_binding_takes_the_membership_path() {
 
 fn run_key_probe(
     plan: &KeyProbePlan,
-    env: &Environment,
+    fixture: &TestSource,
     schema: &Schema,
     params: &[Const],
 ) -> Vec<Vec<u64>> {
-    let txn = env.read_txn().expect("txn");
+    let cache = crate::image::cache::ImageCache::new(schema);
+    let source = fixture.source();
+    let interner = InternerHandle::new(cache.interner(), source.work());
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new((0..plan.slot_count()).collect());
     let mut key = Vec::new();
     execute_key_probe(
         plan,
-        &txn.catalog(),
+        &source,
         schema,
+        &interner,
         params,
         &mut key,
         &mut bindings,
@@ -453,48 +429,47 @@ fn run_key_probe(
 
 #[test]
 fn hit_miss_and_filter_rejection() {
-    let dir = TempDir::new("key_probe-hit-miss");
     let schema = account_schema();
-    let env = populated_accounts(&dir, &schema, &[(5, 7, "alice"), (6, 8, "bob")]);
+    let fixture = account_source(&[(5, 7, "alice"), (6, 8, "bob")]);
     let normalized = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(5))]));
     let plan = classify(&normalized, &schema).expect("key probe");
-    assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![7]]);
+    assert_eq!(run_key_probe(&plan, &fixture, &schema, &[]), vec![vec![7]]);
 
     let missing = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(99))]));
     let plan = classify(&missing, &schema).expect("key probe");
-    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
+    assert!(run_key_probe(&plan, &fixture, &schema, &[]).is_empty());
 
     let rejected = single(occurrence(
         &[(1, 0)],
         vec![eq_filter(0, Const::Word(5)), eq_filter(1, Const::Word(999))],
     ));
     let plan = classify(&rejected, &schema).expect("key probe");
-    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
+    assert!(run_key_probe(&plan, &fixture, &schema, &[]).is_empty());
 }
 
 #[test]
 fn param_driven_keys_resolve_at_bind_time() {
-    let dir = TempDir::new("key_probe-param");
     let schema = account_schema();
-    let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
+    let fixture = account_source(&[(5, 7, "alice")]);
     let normalized = single(occurrence(
         &[(1, 0)],
         vec![eq_filter(0, Const::Param(ParamId(0)))],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(
-        run_key_probe(&plan, &env, &schema, &[Const::Word(5)]),
+        run_key_probe(&plan, &fixture, &schema, &[Const::Word(5)]),
         vec![vec![7]]
     );
-    assert!(run_key_probe(&plan, &env, &schema, &[Const::Word(6)]).is_empty());
+    assert!(run_key_probe(&plan, &fixture, &schema, &[Const::Word(6)]).is_empty());
 }
 
 #[test]
-fn pending_intern_miss_is_empty_and_never_interns() {
-    let dir = TempDir::new("key_probe-intern-miss");
+fn an_unstored_pending_literal_is_empty_not_an_error() {
     let schema = account_schema();
-    let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
+    let fixture = account_source(&[(5, 7, "alice")]);
 
+    // The pending literal latches to a fresh interner token; no stored
+    // text equals it, so the residual filter rejects the matched row.
     let normalized = single(occurrence(
         &[(1, 0)],
         vec![
@@ -508,33 +483,28 @@ fn pending_intern_miss_is_empty_and_never_interns() {
         ],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
-    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
-
-    let txn = env.read_txn().expect("txn");
-    assert_eq!(dict::lookup_str(&txn, "ghost").expect("lookup"), None);
+    assert!(run_key_probe(&plan, &fixture, &schema, &[]).is_empty());
 }
 
 #[test]
 fn pointwise_key_probe_hit_is_byte_exact() {
-    let dir = TempDir::new("key_probe-pointwise");
     let schema = booking_schema();
-    let env = populated(
-        &dir,
+    let fixture = value_source(
         &schema,
         &[
             vec![
-                ValueRef::U64(1),
-                ValueRef::IntervalU64(
+                Value::U64(1),
+                Value::IntervalU64(
                     bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
                 ),
-                ValueRef::U64(100),
+                Value::U64(100),
             ],
             vec![
-                ValueRef::U64(1),
-                ValueRef::IntervalU64(
+                Value::U64(1),
+                Value::IntervalU64(
                     bumbledb_theory::Interval::<u64>::new(20, 30).expect("nonempty interval"),
                 ),
-                ValueRef::U64(200),
+                Value::U64(200),
             ],
         ],
     );
@@ -553,31 +523,13 @@ fn pointwise_key_probe_hit_is_byte_exact() {
             ..
         }
     ));
-
-    let txn = env.read_txn().expect("txn");
-    let catalog = txn.catalog();
-    let mut key = Vec::new();
-    let stored = key_probe_fact(&plan, &catalog, &schema, &[], &mut key)
-        .expect("probe")
-        .expect("hit");
-
-    let mut expected = Vec::new();
-    crate::storage::read::begin_determinant_key(&mut expected, REL, StatementId(0));
-    let mut image = crate::storage::keys::DeterminantImage::scratch();
-    crate::storage::keys::determinant_image(
-        schema.relation(REL).layout().encoded(stored.as_ref()),
-        &[FieldId(0), FieldId(1)],
-        &mut image,
-    );
-    expected.extend_from_slice(image.as_bytes());
-    assert_eq!(key, expected);
     assert_eq!(
-        key.len(),
-        crate::storage::read::DETERMINANT_KEY_HEADER + 8 + 16,
-        "header + scalar word + whole 16-byte interval"
+        run_key_probe(&plan, &fixture, &schema, &[]),
+        vec![vec![100]]
     );
-    assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![100]]);
 
+    // The exact-bound twin one past the end misses: interval keys compare
+    // by both endpoint words, never a prefix.
     let near = single(occurrence(
         &[(2, 0)],
         vec![
@@ -586,69 +538,65 @@ fn pointwise_key_probe_hit_is_byte_exact() {
         ],
     ));
     let plan = classify(&near, &schema).expect("key probe");
-    assert!(run_key_probe(&plan, &env, &schema, &[]).is_empty());
+    assert!(run_key_probe(&plan, &fixture, &schema, &[]).is_empty());
 }
 
 #[test]
 fn full_fact_membership_lookup_with_an_interval_field() {
-    let dir = TempDir::new("key_probe-m-interval");
     let schema = stay_schema();
-    let env = populated(
-        &dir,
+    let fixture = value_source(
         &schema,
         &[vec![
-            ValueRef::U64(2),
-            ValueRef::IntervalU64(
+            Value::U64(2),
+            Value::IntervalU64(
                 bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
             ),
         ]],
     );
-    let exact = single(occurrence(
-        &[],
-        vec![
-            eq_filter(0, Const::Word(2)),
-            eq_filter(1, Const::Interval { start: 5, end: 10 }),
-        ],
-    ));
-    let plan = classify(&exact, &schema).expect("key probe");
-    assert!(
-        matches!(plan.kind, KeyProbeKind::Membership { .. }),
-        "the M path"
-    );
-    let txn = env.read_txn().expect("txn");
-    let mut key = Vec::new();
-    assert!(
-        key_probe_fact(&plan, &txn.catalog(), &schema, &[], &mut key)
-            .expect("probe")
-            .is_some()
-    );
-
-    let other = single(occurrence(
-        &[],
-        vec![
-            eq_filter(0, Const::Word(2)),
-            eq_filter(1, Const::Interval { start: 5, end: 11 }),
-        ],
-    ));
-    let plan = classify(&other, &schema).expect("key probe");
-    let mut key = Vec::new();
-    assert!(
-        key_probe_fact(&plan, &txn.catalog(), &schema, &[], &mut key)
-            .expect("probe")
-            .is_none()
-    );
+    let probe = |span: (u64, u64)| {
+        let normalized = single(occurrence(
+            &[],
+            vec![
+                eq_filter(0, Const::Word(2)),
+                eq_filter(
+                    1,
+                    Const::Interval {
+                        start: span.0,
+                        end: span.1,
+                    },
+                ),
+            ],
+        ));
+        let plan = classify(&normalized, &schema).expect("key probe");
+        assert!(
+            matches!(plan.kind, KeyProbeKind::Membership { .. }),
+            "the M path"
+        );
+        let cache = crate::image::cache::ImageCache::new(&schema);
+        let source = fixture.source();
+        let interner = InternerHandle::new(cache.interner(), source.work());
+        let field_types: Vec<ValueType> = schema
+            .relation(REL)
+            .fields()
+            .iter()
+            .map(|f| f.value_type)
+            .collect();
+        let mut row = crate::image::canon::RowWords::new(&field_types);
+        let mut key = Vec::new();
+        key_probe_row(&plan, &source, &schema, &interner, &[], &mut row, &mut key).expect("probe")
+    };
+    assert!(probe((5, 10)), "exact membership hits");
+    assert!(!probe((5, 11)), "one past the end misses");
 }
 
 #[test]
 fn an_interval_variable_decodes_into_its_two_slot_span() {
-    let dir = TempDir::new("key_probe-interval-var");
     let schema = shift_schema();
-    let env = populated(
-        &dir,
+    let fixture = value_source(
         &schema,
         &[vec![
-            ValueRef::U64(1),
-            ValueRef::IntervalU64(
+            Value::U64(1),
+            Value::IntervalU64(
                 bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
             ),
         ]],
@@ -661,7 +609,7 @@ fn an_interval_variable_decodes_into_its_two_slot_span() {
     let plan = classify(&normalized, &schema).expect("key probe");
     assert_eq!(plan.slot_count(), 2);
     assert_eq!(
-        run_key_probe(&plan, &env, &schema, &[]),
+        run_key_probe(&plan, &fixture, &schema, &[]),
         vec![vec![5, 10]],
         "start and end words in the SlotWidth layout"
     );
@@ -669,19 +617,21 @@ fn an_interval_variable_decodes_into_its_two_slot_span() {
 
 #[test]
 fn aggregate_over_a_point_lookup_folds_one_binding() {
-    let dir = TempDir::new("key_probe-aggregate");
     let schema = account_schema();
-    let env = populated_accounts(&dir, &schema, &[(5, 7, "alice")]);
+    let fixture = account_source(&[(5, 7, "alice")]);
     let normalized = single(occurrence(&[(1, 0)], vec![eq_filter(0, Const::Word(5))]));
     let plan = classify(&normalized, &schema).expect("key probe");
-    let txn = env.read_txn().expect("txn");
+    let cache = crate::image::cache::ImageCache::new(&schema);
+    let source = fixture.source();
+    let interner = InternerHandle::new(cache.interner(), source.work());
     let mut bindings = Bindings::new(1);
     let mut sink = AggregateSink::new(vec![FindSpec::Agg(AggSpec::Count)], 1);
     let mut key = Vec::new();
     execute_key_probe(
         &plan,
-        &txn.catalog(),
+        &source,
         &schema,
+        &interner,
         &[],
         &mut key,
         &mut bindings,

@@ -1,20 +1,11 @@
 /**
- * @bjornpagen/bumbledb — the type-theoretic TypeScript SDK for the
- * bumbledb embedded relational engine. Public surface: the structural type
- * kernel (fields as pure structure, `relation`, `closed` — domains are
- * never declared: THE LAWS TYPE THE COLUMNS, `schema` computing every
- * field's equivalence class FROM the statement list at both tiers), the
- * statement algebra with `schema` and `SchemaSpec` lowering (PRD-06), the `Db`
- * runtime (exclusive-lock stores, transactions, typed violations, callback
- * instance reads, one-shot `write`/`writeFrom` with `abandon` — PRD-07), the query surface (kysely-shaped:
- * `query(S).rule(r => { const { id, name } = v(Holder); return r.match(Holder, { id, name }).find({ name }) })` —
- * variables minted by `v` and joined by OBJECT REFERENCE (reuse is the
- * join), the head a `find` RECORD whose keys name the answer columns
- * (renames are real), params still STRING-named, plus negation,
- * conditions, aggregates, and interiors / one linear rec via
- * `q.interior` / `q.reach` —
- * `db.prepare` as a plain value; comparisons and connectives live on
- * the rule scope). The raw native bridge is not exported.
+ * @bjornpagen/bumbledb — the Effect-native TypeScript SDK for the
+ * bumbledb embedded relational engine (chapter 35 surface). Pure
+ * schema/query/scalar construction is synchronous metadata; all work is
+ * lazy, scoped and bounded on the one native runtime. No Promise, sync,
+ * or disposal twin. The raw native bridge is not exported; the internal*
+ * and runtime wire exports are the private cross-package seams the log
+ * package consumes literally.
  */
 
 export type {
@@ -23,10 +14,12 @@ export type {
 	CapacityWindow,
 	DurationRef,
 	FieldRef,
-	UnitWindowBan,
+	UnitDimensionBan,
 	WeightOnSource
 } from "#capacity.ts"
 export { duration, ref, weigh, within } from "#capacity.ts"
+export type { ChangeDraft } from "#changes.ts"
+export { ChangeSet, internalChanges } from "#changes.ts"
 export type {
 	AnyClosed,
 	AnySelectedClosed,
@@ -42,47 +35,21 @@ export type {
 	SelectedClosed
 } from "#closed.ts"
 export { closed } from "#closed.ts"
+export type { RowShape } from "#codec.ts"
+export { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowSchema, rowShape } from "#codec.ts"
+export type { CompiledSchema, SchemaId } from "#compile.ts"
+export { Schema } from "#compile.ts"
 export type {
-	Abandon,
-	AbandonedArm,
-	Admission,
-	CapacityViolation,
-	CollectionWrite,
-	Committed,
-	ContainmentViolation,
-	DeclaredKeyFact,
-	DeclaredKeyViolation,
-	DeltaBuild,
-	FreshRange,
-	ImpliedKeyViolation,
-	MemberRelation,
-	MirrorViolation,
-	MutationReport,
-	OffendingFact,
-	OwnedInstance,
-	Prepared,
-	ReadInstance,
-	SyncResult,
-	Violation,
-	Witness,
-	WriteFromOutcome,
-	WriteOutcome,
-	WriteTx
+	ApplyExpected,
+	ApplyOptions,
+	ApplyOutcome,
+	CoreWitness,
+	DbInspection,
+	ExecutionSession,
+	QueryReader,
+	Snapshot
 } from "#db.ts"
-export {
-	abandon,
-	Db,
-	ErrAsyncCallback,
-	ErrFingerprintMismatch,
-	ErrForeignPrepared,
-	ErrForeignWitness,
-	ErrIrError,
-	ErrNewtypeMismatch,
-	ErrSchemaError,
-	ErrSpentHandle,
-	ErrUseAfterScope,
-	InstanceBuilder
-} from "#db.ts"
+export { Db, internalPublishedReader } from "#db.ts"
 export {
 	AuthoringError,
 	NativeLoadError,
@@ -117,68 +84,35 @@ export type {
 	ClosedIdField,
 	ClosedRoster,
 	F64Field,
-	FreshU64Field,
+	FloatIntervalValue,
 	I64Field,
+	Id128Field,
 	Infer,
+	IntervalElementKind,
 	IntervalField,
 	IntervalValue,
 	SignatureOf,
 	StrField,
 	U64Field
 } from "#fields.ts"
-export { bool, bytes, f64, i64, interval, span, str, u64 } from "#fields.ts"
+export { bool, bytes, f64, i64, id128, interval, span, str, u64 } from "#fields.ts"
+export { Id128 } from "#id128.ts"
 export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower } from "#lower.ts"
-export type { KeyFact } from "#marshal.ts"
-export { factOf, rowOf } from "#marshal.ts"
+export { internalMigrationRead, internalMigrationSchema } from "#migration.ts"
 export type {
 	FactValue,
-	LogBatch,
-	LogBatchDecodeKind,
-	LogBatchEncodeKind,
-	LogBatchHeader,
-	LogBraidComponent,
-	LogBraids,
-	LogChain,
-	LogChainEntry,
-	LogCheckpointDoc,
-	LogCheckpointHead,
-	LogCheckpointKind,
-	LogCodecHandle,
-	LogManifestDoc,
-	LogManifestKind,
-	LogOpIn,
-	LogOpKind,
-	LogOpOut,
-	LogPendingBatch,
-	LogResult,
-	LogSidecarKind,
-	ParsedQuery,
-	QueryIr,
 	SealedDescriptor,
 	SealedHi,
 	SealedSide,
 	SealedStatement,
 	SealedWeight,
-	StatementKindTag
+	StatementKindTag,
+	Violation,
+	ViolationFact
 } from "#native.ts"
-export {
-	internalBlake3,
-	internalDescriptor,
-	internalLogBraidsOf,
-	internalLogCodec,
-	internalLogDecodeBatch,
-	internalLogEncodeBatch,
-	internalLogParseCheckpoint,
-	internalLogParseCkptScratch,
-	internalLogParseManifest,
-	internalLogParseSidecar,
-	internalLogRenderCheckpoint,
-	internalLogRenderCkptScratch,
-	internalLogRenderManifest,
-	internalLogRenderSidecar
-} from "#native.ts"
+export { internalBlake3, internalDescriptor, internalLogIdentities, internalLogSchema } from "#native.ts"
 export type {
 	AnyCond,
 	BindingInput,
@@ -192,6 +126,8 @@ export type {
 	Tree
 } from "#query/atom.ts"
 export { ALLEN } from "#query/atom.ts"
+export type { AnyComputeExpr, ComputeData, ComputeExpr, ComputeKind } from "#query/compute.ts"
+export { Compute } from "#query/compute.ts"
 export type { Agg, FindEntry } from "#query/find.ts"
 export type {
 	AnyQuery,
@@ -228,7 +164,6 @@ export type {
 	AnySelected,
 	Fact,
 	FieldsShape,
-	FreshKeys,
 	Relation,
 	RelationData,
 	RelationField,
@@ -238,12 +173,20 @@ export type {
 	SelectionInput
 } from "#relation.ts"
 export { relation } from "#relation.ts"
+export type { CompleteResult } from "#result.ts"
+export type { CellValue } from "#rows.ts"
+export { cellBytes, cellOf, factOfCells, flatRowsOf, keyCellsOf } from "#rows.ts"
 export type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
-export { NativeRuntime } from "#runtime.ts"
+export { finalizeClose, NativeRuntime, nativeOperation, nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
 export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
-export { CloseFailure, DbError } from "#runtime-errors.ts"
-export type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
+export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
+export type { CloseWire, DirectoryHandle, InspectionWire, OperationHandle, PolicyWire, RuntimeHandle } from "#runtime-native.ts"
+export { runtimeNative } from "#runtime-native.ts"
+export type { NumericCast, ScalarExpr, ScalarNode } from "#scalar.ts"
+export { Scalar } from "#scalar.ts"
+export type { AnySchema, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"
+export type { Key, QueryTemplate, Rel } from "#shape.ts"
 export type {
 	CapacityBoundSpec,
 	CapacityWindowSpec,
@@ -256,8 +199,7 @@ export type {
 	SideSpec,
 	StatementSpec,
 	ValueSpec,
-	ValueTypeSpec,
-	WeightSpec
+	ValueTypeSpec
 } from "#spec.ts"
 export type {
 	CapacityData,

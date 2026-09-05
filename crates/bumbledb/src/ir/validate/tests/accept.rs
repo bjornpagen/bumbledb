@@ -1,6 +1,7 @@
 use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{CmpOp, Comparison, Value};
+use bumbledb_theory::schema::FixedIntervalElement;
 
 #[test]
 fn accepts_the_containment_walk_join_with_conditions() {
@@ -305,7 +306,6 @@ fn mixed_width_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -322,7 +322,7 @@ fn mixed_width_schema() -> Schema {
                 field(
                     "lane",
                     ValueType::FixedInterval {
-                        element: IntervalElement::U64,
+                        element: FixedIntervalElement::U64,
                         width: 5,
                     },
                 ),

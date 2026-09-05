@@ -1,6 +1,16 @@
-//! The pairing rationale, recorded once: - **Durable** pairs `Db::create` —
-//! LMDB on macOS issues sibling: a misconfigured twin fails before flattering
-//! anyone.
+//! The durability axis, post-ENG-008: exactly one point, **durable**.
+//!
+//! The old two-point axis paired `Db::create_nosync` (`MDB_NOSYNC`) with
+//! SQLite `synchronous=OFF` so neither twin ever crossed a sync boundary.
+//! The successor deleted the no-sync constructor surface entirely (ENG-008:
+//! benchmark-only weakening must never be a production capability), and the
+//! bench cannot honestly weaken the engine from outside the store — so the
+//! ours-side NOSYNC lane is dropped, and with it its SQLite OFF twin (an
+//! unpaired OFF mirror would compare a syncing engine against a non-syncing
+//! one, which chapter 40's fairness rule forbids). Durable pairs `Db::create`
+//! (LMDB issues `F_FULLFSYNC` unconditionally on macOS) with SQLite WAL
+//! `synchronous=FULL fullfsync=ON`; a misconfigured twin fails before
+//! flattering anyone.
 use rusqlite::Connection;
 
 use crate::storemode::StoreMode;
@@ -8,17 +18,15 @@ use crate::storemode::StoreMode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DurabilityLane {
     Durable,
-    Nosync,
 }
 
-pub const ALL: [DurabilityLane; 2] = [DurabilityLane::Durable, DurabilityLane::Nosync];
+pub const ALL: [DurabilityLane; 1] = [DurabilityLane::Durable];
 
 impl DurabilityLane {
     #[must_use]
     pub fn store_mode(self) -> StoreMode {
         match self {
             Self::Durable => StoreMode::Durable,
-            Self::Nosync => StoreMode::Nosync,
         }
     }
 
@@ -26,7 +34,6 @@ impl DurabilityLane {
     pub fn label(self) -> &'static str {
         match self {
             Self::Durable => "durable",
-            Self::Nosync => "nosync",
         }
     }
 
@@ -34,7 +41,6 @@ impl DurabilityLane {
     pub fn sqlite_sync_label(self) -> &'static str {
         match self {
             Self::Durable => "wal+synchronous=FULL+fullfsync=ON",
-            Self::Nosync => "wal+synchronous=OFF",
         }
     }
 
@@ -46,14 +52,6 @@ impl DurabilityLane {
                  synchronous=FULL fullfsync=ON checkpoint_fullfsync=ON, cache_size=-262144, \
                  temp_store=MEMORY, whole-file mmap (coverage asserted), wal_autocheckpoint=0 — \
                  both engines flush to media on every commit"
-            }
-            Self::Nosync => {
-                "Db::create_nosync (MDB_NOSYNC: pages and meta pwritten, no sync boundary ever \
-                 crossed; durable-shaped store, not a kind) vs SQLite WAL synchronous=OFF \
-                 fullfsync=OFF checkpoint_fullfsync=OFF, cache_size=-262144, temp_store=MEMORY, \
-                 whole-file mmap (coverage asserted), wal_autocheckpoint=0 — WAL frames written, \
-                 never synced (OFF, not NORMAL: NORMAL still syncs at checkpoints, which would \
-                 cross-match a lane that never syncs)"
             }
         }
     }
@@ -67,24 +65,14 @@ impl DurabilityLane {
                 crate::corpus::configure_sqlite(conn)
                     .map_err(|e| format!("configure (durable): {e}"))?;
             }
-            Self::Nosync => {
-                let mode: String = conn
-                    .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
-                    .map_err(|e| format!("pragma journal_mode: {e}"))?;
-                assert_eq!(mode.to_lowercase(), "wal", "WAL must engage");
-                pragma(conn, "synchronous", "OFF")?;
-                pragma(conn, "fullfsync", "OFF")?;
-                pragma(conn, "checkpoint_fullfsync", "OFF")?;
-                pragma(conn, "cache_size", -262_144)?;
-                pragma(conn, "temp_store", "MEMORY")?;
-            }
         }
         pragma(conn, "wal_autocheckpoint", 0)?;
         crate::sqlite_run::mmap_whole_file(conn)?;
         Ok(())
     }
 
-    /// `Nosync`. A misconfigured twin fails before flattering anyone.
+    /// The parity readback: a misconfigured twin fails before flattering
+    /// anyone.
     /// # Errors
     pub fn assert_parity(self, conn: &Connection) -> Result<(), String> {
         let journal: String = conn
@@ -98,7 +86,6 @@ impl DurabilityLane {
         }
         let expected_sync: i64 = match self {
             Self::Durable => 2,
-            Self::Nosync => 0,
         };
         let sync: i64 = conn
             .query_row("PRAGMA synchronous", [], |row| row.get(0))
@@ -111,7 +98,6 @@ impl DurabilityLane {
         }
         let expected_fullfsync: i64 = match self {
             Self::Durable => 1,
-            Self::Nosync => 0,
         };
         let fullfsync: i64 = conn
             .query_row("PRAGMA fullfsync", [], |row| row.get(0))

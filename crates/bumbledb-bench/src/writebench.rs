@@ -2,12 +2,46 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::Path;
 
-use bumbledb::{Answers, Db, RelationId};
+use bumbledb::{Answers, Db, RelationId, Value};
 
 use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
 use crate::families::{self, param_args};
 use crate::harness::{self, Measurement, Protocol, Rotation};
 use crate::schema::{AccountId, InstrumentId, JournalEntryId, Ledger, Posting, PostingId, ids};
+
+/// Application-owned posting-id authority (E-NO-RESERVE): the successor
+/// engine mints nothing — entity identity is application data — so each
+/// write family derives its next id from the store itself, `MAX(id) + 1`
+/// over the live postings: exactly the mint the SQLite twin has always
+/// used (`lanes::writes::next_posting_id`). Probed once per family entry
+/// (untimed setup — an O(n) decode at bench scales, never inside a timed
+/// window), then advanced locally. A refused commit leaves a gap in the
+/// id space, which is ordinary application data, not a burn.
+pub(crate) struct PostingMint(u64);
+
+impl PostingMint {
+    pub(crate) fn probe(db: &Db<Ledger>) -> Result<Self, String> {
+        let next = db
+            .read(|snap| {
+                let mut max: Option<u64> = None;
+                for fact in snap.scan(ids::POSTING)? {
+                    let row = fact?;
+                    if let Some(Value::U64(id)) = row.first() {
+                        max = Some(max.map_or(*id, |seen| seen.max(*id)));
+                    }
+                }
+                Ok(max.map_or(0, |seen| seen + 1))
+            })
+            .map_err(|e| format!("posting mint probe: {e:?}"))?;
+        Ok(Self(next))
+    }
+
+    pub(crate) fn next(&mut self) -> PostingId {
+        let id = PostingId(self.0);
+        self.0 += 1;
+        id
+    }
+}
 
 /// The registered protocol for a write family (shared with the `SQLite` mirror
 /// runners in `sqlite_run`).
@@ -36,9 +70,10 @@ pub(crate) fn prepared_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> P
 pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0001);
+    let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_single"), || {
         db.write(|tx| {
-            let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+            let id = mint.next();
             tx.insert([&prepared_posting(&mut rng, &sizes, id)])
         })
         .map(|_| 1)
@@ -51,10 +86,11 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
 pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0003);
+    let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_witnessed"), || {
         db.read(|instance| {
             db.write_from(&instance.witness()?, |tx| {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                let id = mint.next();
                 tx.insert([&prepared_posting(&mut rng, &sizes, id)])
             })?
             .unwrap();
@@ -69,10 +105,11 @@ pub fn commit_witnessed_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Meas
 pub fn commit_batch_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0002);
+    let mut mint = PostingMint::probe(db)?;
     harness::measure(write_protocol("commit_batch"), || {
         db.write(|tx| {
             for _ in 0..512 {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                let id = mint.next();
                 tx.insert([&prepared_posting(&mut rng, &sizes, id)])?;
             }
             Ok(())
@@ -175,15 +212,16 @@ pub(crate) fn posting_swap(
     db: &Db<Ledger>,
     rng: &mut Rng,
     sizes: &Sizes,
+    mint: &mut PostingMint,
     prev: &Posting,
 ) -> Result<Posting, String> {
+    let id = mint.next();
     db.write(|tx| {
         if tx.delete([prev])?.changed() == 0 {
             return Err(bumbledb::Error::from(std::io::Error::other(
                 "the swap touch must be delete-bearing: the previous revision was absent",
             )));
         }
-        let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
         let next = prepared_posting(rng, sizes, id);
         tx.insert([&next])?;
         Ok(next)
@@ -200,9 +238,10 @@ pub(crate) fn posting_swap_seed(
     db: &Db<Ledger>,
     rng: &mut Rng,
     sizes: &Sizes,
+    mint: &mut PostingMint,
 ) -> Result<Posting, String> {
+    let id = mint.next();
     db.write(|tx| {
-        let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
         let seed = prepared_posting(rng, sizes, id);
         tx.insert([&seed])?;
         Ok(seed)
@@ -228,11 +267,12 @@ pub fn cold_containment_walk_delete(
     let mut buffer = Answers::new();
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0004);
-    let mut prev = posting_swap_seed(db, &mut rng, &sizes)?;
+    let mut mint = PostingMint::probe(db)?;
+    let mut prev = posting_swap_seed(db, &mut rng, &sizes, &mut mint)?;
     harness::measure_cold(
         write_protocol("cold_containment_walk_delete"),
         || {
-            prev = posting_swap(db, &mut rng, &sizes, &prev)?;
+            prev = posting_swap(db, &mut rng, &sizes, &mut mint, &prev)?;
             Ok(())
         },
         || {
@@ -261,12 +301,13 @@ pub fn trace_cold_containment_walk_delete(
     let mut buffer = Answers::new();
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0115_0005);
-    let mut prev = posting_swap_seed(db, &mut rng, &sizes)?;
+    let mut mint = PostingMint::probe(db)?;
+    let mut prev = posting_swap_seed(db, &mut rng, &sizes, &mut mint)?;
     crate::trace_out::traced_cold_solo(
         dir,
         "cold_containment_walk_delete",
         &mut || {
-            prev = posting_swap(db, &mut rng, &sizes, &prev)?;
+            prev = posting_swap(db, &mut rng, &sizes, &mut mint, &prev)?;
             Ok(())
         },
         &mut || {
@@ -471,18 +512,22 @@ mod tests {
         let db = containment_target_db(&dir);
         let sizes = Sizes::of(CFG.scale);
         let mut rng = Rng::new(CFG.seed ^ 0x0115_0004);
+        let mut mint = PostingMint::probe(&db).expect("probe");
 
-        let seed = posting_swap_seed(&db, &mut rng, &sizes).expect("seed");
+        let seed = posting_swap_seed(&db, &mut rng, &sizes, &mut mint).expect("seed");
         let generation_before = db.generation().expect("generation");
-        let next = posting_swap(&db, &mut rng, &sizes, &seed).expect("swap");
-        assert!(next.id.0 > seed.id.0, "fresh ids mint forward");
+        let next = posting_swap(&db, &mut rng, &sizes, &mut mint, &seed).expect("swap");
+        assert!(
+            next.id.0 > seed.id.0,
+            "the application-owned cursor mints forward"
+        );
         assert!(
             db.generation().expect("generation") > generation_before,
             "the swap is one state-changing commit"
         );
 
         let generation_at_refusal = db.generation().expect("generation");
-        let refusal = posting_swap(&db, &mut rng, &sizes, &seed);
+        let refusal = posting_swap(&db, &mut rng, &sizes, &mut mint, &seed);
         assert!(
             refusal.is_err(),
             "a swap whose delete is a no-op must refuse"
@@ -495,8 +540,13 @@ mod tests {
             "a refused swap must leave the store untouched"
         );
 
-        let after = posting_swap(&db, &mut rng, &sizes, &next).expect("swap chain");
+        let after = posting_swap(&db, &mut rng, &sizes, &mut mint, &next).expect("swap chain");
         assert!(after.id.0 > next.id.0);
+
+        // The mint re-derives from the live store: a fresh probe never
+        // collides with anything committed (MAX + 1 over live rows).
+        let reprobed = PostingMint::probe(&db).expect("reprobe");
+        assert_eq!(reprobed.0, after.id.0 + 1, "MAX(id) + 1 over live rows");
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

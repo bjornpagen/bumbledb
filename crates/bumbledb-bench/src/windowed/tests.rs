@@ -115,18 +115,30 @@ fn the_window_rows_run_their_protocols() {
         .expect("accepted");
     super::load(&unwindowed, Mass::BENCH).expect("load baseline");
 
-    let admission =
-        super::commit_window_admission(&windowed, write_protocol("commit_window_admission"))
-            .expect("admission");
+    let mut admission_mint = super::MINT_BASE;
+    let mut baseline_mint = super::MINT_BASE;
+    let mut exclusion_mint = super::MINT_BASE + (1 << 20);
+    let admission = super::commit_window_admission(
+        &windowed,
+        write_protocol("commit_window_admission"),
+        &mut admission_mint,
+    )
+    .expect("admission");
     assert_eq!(admission.work, 64, "one row per sample");
     assert!(admission.stats.min > 0);
-    let baseline_row =
-        super::commit_window_baseline(&unwindowed, write_protocol("commit_window_baseline"))
-            .expect("baseline");
+    let baseline_row = super::commit_window_baseline(
+        &unwindowed,
+        write_protocol("commit_window_baseline"),
+        &mut baseline_mint,
+    )
+    .expect("baseline");
     assert_eq!(baseline_row.work, 64);
-    let exclusion =
-        super::commit_window_exclusion(&windowed, write_protocol("commit_window_exclusion"))
-            .expect("exclusion");
+    let exclusion = super::commit_window_exclusion(
+        &windowed,
+        write_protocol("commit_window_exclusion"),
+        &mut exclusion_mint,
+    )
+    .expect("exclusion");
     assert_eq!(exclusion.work, 64);
     drop(windowed);
     drop(unwindowed);
@@ -146,7 +158,7 @@ fn traced_windowed_lands_the_judgment_spans() {
         },
         &dir.join("scratch"),
         &|name| name == "commit_window_admission",
-        crate::storemode::StoreMode::Nosync,
+        crate::storemode::StoreMode::Durable,
         Some(&trace_dir),
         &mut flames,
     )

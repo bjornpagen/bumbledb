@@ -1,5 +1,5 @@
 use bumbledb::ir::Rule;
-use bumbledb::schema::{Generation, IntervalElement, ValueType};
+use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{Atom, AtomSource, Basic, CmpOp, FindTerm, FoldOp, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
@@ -40,6 +40,9 @@ fn type_index(ty: &ValueType) -> usize {
         ValueType::String => 3,
         ValueType::FixedBytes { .. } => 4,
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => 5,
+        ValueType::Id128 => {
+            unreachable!("the querygen target declares no id128 column — widen the matrix with it")
+        }
     }
 }
 
@@ -285,6 +288,7 @@ impl Coverage {
                     match element {
                         IntervalElement::U64 => self.membership_u64 += 1,
                         IntervalElement::I64 => self.membership_i64 += 1,
+                        IntervalElement::F64 => self.membership_f64 += 1,
                     }
                 }
             }
@@ -310,6 +314,7 @@ impl Coverage {
                     match element_of(&ty) {
                         Some(IntervalElement::U64) => self.allen_u64 += 1,
                         Some(IntervalElement::I64) => self.allen_i64 += 1,
+                        Some(IntervalElement::F64) => self.allen_f64 += 1,
                         None => unreachable!("Allen is interval-typed by construction"),
                     }
                     if mask.popcount() > 1 {
@@ -327,6 +332,7 @@ impl Coverage {
                 CmpOp::PointIn => match element_of(&ty) {
                     Some(IntervalElement::U64) => self.point_in_u64 += 1,
                     Some(IntervalElement::I64) => self.point_in_i64 += 1,
+                    Some(IntervalElement::F64) => self.point_in_f64 += 1,
                     None => unreachable!("PointIn's left side is interval-typed"),
                 },
                 _ => {}
@@ -357,8 +363,8 @@ impl Coverage {
                 self.negation_gate += 1;
                 continue;
             }
-            let relation = match atom.source {
-                AtomSource::Edb(relation) => target::schema().relation(relation),
+            let rel_id = match atom.source {
+                AtomSource::Edb(relation) => relation,
                 AtomSource::Interior(_) => {
                     self.negation_open += 1;
                     for (_, term) in &atom.bindings {
@@ -372,17 +378,24 @@ impl Coverage {
                     continue;
                 }
             };
-            let key_covered = atom
-                .bindings
-                .iter()
-                .any(|(field, _)| relation.field(*field).generation == Generation::Fresh);
+            // Key-covered: some DECLARED key statement of the negated
+            // relation has its whole projection bound in the atom, so at
+            // most one witness can match (the successor's declared-key
+            // reality — the retired fresh generation attribute is gone;
+            // chapter 10: keys are declared statements only).
+            let key_covered = target::schema().keys().iter().any(|statement| {
+                statement.relation == rel_id
+                    && !statement.form().is_pointwise()
+                    && statement
+                        .projection
+                        .iter()
+                        .all(|key_field| atom.bindings.iter().any(|(field, _)| field == key_field))
+            });
             if key_covered {
                 self.negation_key_covered += 1;
             } else {
                 self.negation_open += 1;
-                if let AtomSource::Edb(rel) = atom.source
-                    && (rel == ids::POSTING_TAG || rel == ids::POSTING)
-                {
+                if rel_id == ids::POSTING_TAG || rel_id == ids::POSTING {
                     self.negation_multi_witness += 1;
                 }
             }
@@ -416,6 +429,10 @@ impl Coverage {
                     } else {
                         projected_words += 1;
                     }
+                }
+                // A computed head projects one finalized scalar word.
+                FindTerm::Compute(_) => {
+                    projected_words += 1;
                 }
                 FindTerm::Aggregate { op, over } => {
                     aggregates += 1;

@@ -1,58 +1,40 @@
-use super::{Db, ParkedReader, ReadInstance, ScratchPool};
-use crate::error::Result;
-use crate::image::LmdbSource;
-use crate::storage::env::GenerationId;
+//! [`Db::read`]: one owned coherent snapshot per lease.
+//!
+//! Deliberately no parked-reader cache: a permanently parked LMDB read
+//! transaction would block the elastic map's exclusive resize forever. The
+//! store's gate reports long-held snapshots by age instead of invalidating
+//! them; leases are scoped to the closure, so growth is never starved by
+//! the embedding read path.
+
+use std::marker::PhantomData;
+
+use super::{Db, ReadInstance, embedded_work};
+use crate::error::{Error, Result};
 
 impl<S> Db<S> {
-    /// Runs `f` over one LMDB read lease: a consistent generation for
+    /// Prepare one query against a scoped read lease. The prepared plan is
+    /// owned and outlives the lease; execution binds a lease again.
     /// # Errors
-    pub fn read<R>(&self, f: impl FnOnce(&ReadInstance<'_, S>) -> Result<R>) -> Result<R> {
-        use std::sync::atomic::Ordering;
-        let generation = GenerationId::from_storage(self.generation.load(Ordering::Acquire));
-        let parked = self
-            .read_cache
-            .try_lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
-            .and_then(|parked| (parked.generation == generation).then_some(parked.txn));
-        let txn = match parked {
-            Some(raw) => self.env.resume_read_txn(raw),
-            None => self.env.read_txn()?,
-        };
-        let scratch = self
-            .scratch
-            .try_lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
-            .unwrap_or_else(ScratchPool::new);
-        let instance = ReadInstance {
-            core: super::instance::InstanceCore::assemble(
-                std::sync::Arc::clone(&self.schema),
-                self.env.identity().clone(),
-                LmdbSource::new(txn, &self.cache),
-                scratch,
-            ),
-            thread_bound: std::marker::PhantomData,
-        };
-        let result = f(&instance);
+    /// Prepare-time validation or storage failure.
+    pub fn prepare(&self, query: &crate::ir::Query) -> Result<crate::PreparedQuery<S>> {
+        self.read(|instance| instance.prepare(query))
+    }
 
-        let ReadInstance { core, .. } = instance;
-        let (source, scratch) = core.into_parts();
-        let txn = source.into_txn();
-        if GenerationId::from_storage(self.generation.load(Ordering::Acquire)) == generation
-            && let Ok(mut slot) = self.read_cache.try_lock()
-            && slot.is_none()
-        {
-            *slot = Some(ParkedReader {
-                txn: txn.into_raw_txn(),
-                generation,
-            });
-        }
-        if let Ok(mut slot) = self.scratch.try_lock()
-            && slot.is_none()
-        {
-            *slot = Some(scratch);
-        }
-        result
+    /// Runs `f` over one read lease: a coherent generation for prepared
+    /// queries, point reads and export.
+    /// # Errors
+    /// Storage failure opening the snapshot, or the closure's own error.
+    pub fn read<R>(&self, f: impl FnOnce(&ReadInstance<'_, S>) -> Result<R>) -> Result<R> {
+        let work = embedded_work()?;
+        let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
+        let instance = ReadInstance {
+            schema: &self.schema,
+            closed: self.closed.as_ref(),
+            snapshot,
+            work,
+            thread_bound: PhantomData,
+            marker: PhantomData,
+        };
+        f(&instance)
     }
 }

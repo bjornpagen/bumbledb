@@ -1,16 +1,23 @@
-//! `WriteTx` point reads: `contains` / `get` / `get_dyn` read **committed state overlaid
-//! with the pending delta** — the same final-state view the judgment phase
-//! judges — so read-modify-write idioms (upsert, check-then-act conditions)
-//! are sound without exposing query machinery to the write path. These are
-//! determinant gets: no images, no plans, no `ReadInstance`.
-use super::collection::shape_mismatch;
-use super::{Fact, Key, Probe, WriteTx};
-use crate::encoding::encode_u64;
-use crate::error::{DynIdError, FactShapeError, Mismatch, Result};
+//! Shared point-read machinery: keyed lookup by decoded value equality.
+//!
+//! A key statement's determinant is the projected value tuple. The
+//! reference read walks the relation's final-state rows, decodes each, and
+//! compares the projection exactly — value equality over canonical scalars,
+//! never a fingerprint verdict. Determinant acceleration (order-preserving
+//! or bucketed probes) is the recorded C04/C05 follow-up shared with
+//! P01/P03; admission correctness never depends on it because the store's
+//! reference indexer is judgment-complete without entries.
+//!
+//! Closed relations read from the schema's sealed extension (no store row
+//! can exist for them); their sealed rows decode through the sealed-row
+//! codec, which refuses text columns by construction.
+
+use crate::error::{DynIdError, Result};
 use crate::ir::Value;
-use crate::schema::{KeyForm, KeyId, KeyStatement, Relation, RelationBody, Schema, StatementView};
-use crate::storage::read;
-use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
+use crate::schema::{KeyId, KeyStatement, Relation, Schema, StatementView};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId, value_matches};
+
+use super::collection::shape_mismatch;
 
 pub(super) fn key_statement_of(
     schema: &Schema,
@@ -37,19 +44,19 @@ pub(super) fn key_statement_of(
     Ok((key_id, statement))
 }
 
-pub(super) fn encode_determinant_with(
+/// Judge the key tuple's shape against the projection's field types before
+/// any row is read — a mistyped key is a typed refusal, not a miss.
+pub(super) fn check_key_shape(
     schema: &Schema,
     relation: RelationId,
     projection: &[FieldId],
     key_values: &[Value],
-    out: &mut Vec<u8>,
-    mut resolve_str: impl FnMut(&str) -> Result<Option<crate::encoding::InternId>>,
-) -> Result<bool> {
+) -> Result<()> {
     let rel = schema.relation(relation);
     if key_values.len() != projection.len() {
-        return Err(FactShapeError::ArityMismatch {
+        return Err(crate::error::FactShapeError::ArityMismatch {
             relation,
-            mismatch: Mismatch {
+            mismatch: crate::error::Mismatch {
                 witnessed: key_values.len(),
                 required: projection.len(),
             },
@@ -57,141 +64,68 @@ pub(super) fn encode_determinant_with(
         .into());
     }
     for (value, &field) in key_values.iter().zip(projection) {
-        if let Err(mismatch) =
-            bumbledb_theory::schema::value_matches(value, &rel.field(field).value_type)
-        {
+        if let Err(mismatch) = value_matches(value, &rel.field(field).value_type) {
             return Err(shape_mismatch(relation, field, mismatch).into());
         }
-        match value {
-            Value::String(text) => match resolve_str(text)? {
-                Some(id) => out.extend_from_slice(&encode_u64(id.raw())),
-                None => return Ok(false),
-            },
+    }
+    Ok(())
+}
 
-            _ => {
-                crate::encoding::encode_literal(value, rel.field(field).value_type, out);
-            }
+/// Does this decoded row match the key on every projected field?
+pub(super) fn projection_matches(
+    row: &[Value],
+    projection: &[FieldId],
+    key_values: &[Value],
+) -> bool {
+    projection.iter().zip(key_values).all(|(&field, key)| {
+        row.get(usize::from(field.0))
+            .is_some_and(|value| value == key)
+    })
+}
+
+/// Decode one closed relation's sealed row to canonical values. Sealed rows
+/// are encoded once at schema validation and refuse text columns, so the
+/// intern resolver is unreachable.
+pub(super) fn decode_sealed_row(rel: &Relation, fact: &[u8]) -> Vec<Value> {
+    crate::encoding::decode_values(rel.layout().encoded(fact), |_| {
+        unreachable!("closed relations refuse str columns")
+    })
+    .expect("sealed extension rows decode by construction")
+}
+
+/// Reference keyed lookup over one committed snapshot: walk the relation's
+/// rows, decode, compare the projection exactly.
+pub(super) fn find_snapshot_row<'s>(
+    snapshot: &'s crate::storage::store::OwnedSnapshot,
+    schema: &Schema,
+    relation: RelationId,
+    projection: &[FieldId],
+    key_values: &[Value],
+    work: &crate::work::WorkContext,
+) -> Result<Option<&'s [u8]>> {
+    let fields = schema.relation(relation).fields();
+    let iterator = snapshot
+        .rows(relation)
+        .map_err(crate::error::Error::from_store)?;
+    for entry in iterator {
+        work.step(1).map_err(|error| {
+            crate::error::Error::from_store(crate::storage::store::StoreError::Work(error))
+        })?;
+        let (_, row) = entry.map_err(crate::error::Error::from_store)?;
+        let decoded = crate::canonical::decode(fields, row, work).map_err(super::tx::row_error)?;
+        if projection_matches(&decoded.values, projection, key_values) {
+            return Ok(Some(row));
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
-pub(super) fn fresh_row_id(determinant: &[u8]) -> u64 {
-    let Ok(word) = <[u8; 8]>::try_from(determinant) else {
-        unreachable!("KeyForm::FreshRow determinant is one encoded u64");
-    };
-    u64::from_be_bytes(word)
-}
-
-pub(crate) enum PointRead {
-    Closed,
-    FreshRow { row_id: u64 },
-    Determinant,
-}
-
-pub(crate) fn point_read(
-    rel: &Relation,
+/// Find the closed-relation row matching the key projection.
+pub(super) fn closed_row_by_key<'c>(
+    rows: &'c [super::closed::ClosedRow],
     statement: &KeyStatement,
-    determinant: &[u8],
-) -> PointRead {
-    match rel.body() {
-        RelationBody::Closed { .. } => PointRead::Closed,
-        RelationBody::Ordinary { .. } => match statement.form() {
-            KeyForm::FreshRow { .. } => PointRead::FreshRow {
-                row_id: fresh_row_id(determinant),
-            },
-            KeyForm::Scalar | KeyForm::Pointwise { .. } => PointRead::Determinant,
-        },
-    }
-}
-
-/// Shared by both transaction kinds (a closed relation reads identically
-/// everywhere: no delta arm can exist — writes are refused at entry).
-pub(super) fn closed_fact_by_determinant<'rel>(
-    rel: &'rel Relation,
-    statement: &KeyStatement,
-    determinant: &[u8],
-) -> Option<&'rel [u8]> {
-    let extension = rel.body().closed_rows()?;
-    let mut derived =
-        crate::storage::keys::DeterminantImage::scratch_with_capacity(determinant.len());
-    for row in extension {
-        crate::storage::keys::determinant_image(
-            rel.layout().encoded(&row.fact),
-            &statement.projection,
-            &mut derived,
-        );
-        if derived.as_bytes() == determinant {
-            return Some(&row.fact);
-        }
-    }
-    None
-}
-
-impl<S> WriteTx<'_, S> {
-    /// otherwise. Before commit it answers exactly what a post-commit
-    /// # Errors
-    pub fn contains<'f, F: Fact<'f, Schema = S>>(&mut self, fact: &F) -> Result<bool> {
-        self.mutation.contains(fact)
-    }
-
-    /// pages, stable for the transaction by LMDB `CoW`) or from this
-    /// ```
-    /// ```
-    /// # Errors
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "a key value is the read's input, spelled `tx.get(id)`: fresh \
-                  newtypes are Copy and generated key structs are small — \
-                  by-value keeps every call site free of `&` noise"
-    )]
-    pub fn get<'tx, K: Key<'tx, Schema = S>>(&'tx mut self, key: K) -> Result<Option<K::Fact>> {
-        let relation = <K::Fact as Fact<'tx>>::RELATION;
-        let (key_id, _) = key_statement_of(self.mutation.schema(), relation, K::STATEMENT)?;
-        let mut key_bytes = std::mem::take(&mut self.mutation.scratch);
-        key_bytes.clear();
-        read::begin_determinant_key(&mut key_bytes, relation, K::STATEMENT);
-        let filled = key.encode_determinant(self, &mut key_bytes);
-        self.mutation.scratch = key_bytes;
-        if matches!(filled?, Probe::ProvablyAbsent) {
-            return Ok(None);
-        }
-        let this: &'tx Self = self;
-        match this
-            .mutation
-            .fact_by_key(relation, key_id, &this.mutation.scratch)?
-        {
-            Some(bytes) => K::Fact::decode(this, bytes).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    /// # Errors
-    pub fn get_dyn(
-        &mut self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-    ) -> Result<Option<Vec<Value>>> {
-        let mut out = Vec::new();
-        Ok(self
-            .get_dyn_into(relation, key, key_values, &mut out)?
-            .then_some(out))
-    }
-
-    /// # Errors
-    pub fn get_dyn_into(
-        &mut self,
-        relation: RelationId,
-        key: StatementId,
-        key_values: &[Value],
-        out: &mut Vec<Value>,
-    ) -> Result<bool> {
-        self.mutation.get_dyn_into(relation, key, key_values, out)
-    }
-
-    /// # Errors
-    pub fn contains_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        self.mutation.contains_dyn(rel, values)
-    }
+    key_values: &[Value],
+) -> Option<&'c super::closed::ClosedRow> {
+    rows.iter()
+        .find(|row| projection_matches(&row.values, &statement.projection, key_values))
 }

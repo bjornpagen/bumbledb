@@ -1,5 +1,6 @@
 mod corpus_digest;
 mod digest_hex;
+pub mod float_corpus;
 pub mod irgen;
 mod mandate;
 pub mod opgen;

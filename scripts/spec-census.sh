@@ -3,7 +3,7 @@
 # (c) every `lean/…` citation in the surviving markdown (lean/README.md,
 # lean/conformance/README.md, docs/cookbook.md, ts/COOKBOOK.md,
 # (k) the banned-token roster (scripts/banned-tokens.txt) is empty of
-# hits in crates/bumbledb-log/src, ts-log/src, examples/lambda/src.
+# hits in crates/bumbledb-log/src, ts-log/src, examples/notes/src.
 # (l) the surface manifest (crates/bumbledb-log/conformance/v3/
 # surfaces.json) is pin-complete: every protocol surface names a live
 # golden, and every golden family names its surface.

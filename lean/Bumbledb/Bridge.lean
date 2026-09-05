@@ -11,8 +11,10 @@ import Bumbledb.Exec.Rewrites
 import Bumbledb.Exec.Reach
 import Bumbledb.Exec.SemiNaive
 import Bumbledb.Txn
-import Bumbledb.Txn.Fresh
-import Bumbledb.Txn.Braids
+import Bumbledb.Txn.Support
+import Bumbledb.Float64.Sum
+import Bumbledb.FloatInterval
+import Bumbledb.Query.Stages
 import Bumbledb.Decide
 import Bumbledb.Oracle
 import Bumbledb.Countermodels
@@ -86,9 +88,12 @@ def Obligation.row {α : Sort u} (_checked : α) (theoremName : Lean.Name)
     (premise mechanism instrument : String) : Obligation :=
   { theoremName, premise, mechanism, instrument }
 
-/-- The obligation ledger. Ordered by → 09, then the fresh
-allocation model); collated exhaustively from the module docs'
-`Bridge:` notes. -/
+/-- The obligation ledger. Ordered by → 09, then the successor
+modules (mutable support, exact float accumulation, dense float
+intervals, staged composition); collated exhaustively from the module
+docs' `Bridge:` notes. The retired fresh-mint and braid rows are
+DELETED with their premises — their theorems no longer exist to
+reference, so relabeling them as successor proof is a build error. -/
 def ledger : List Obligation := [
 
   .row @interval_nonempty `Bumbledb.interval_nonempty
@@ -500,24 +505,6 @@ def ledger : List Obligation := [
     "ReadInstance::scan (crates/bumbledb/src/api/db/read_instance.rs); Db::write (crates/bumbledb/src/api/db/write.rs)"
     "r28_migration_is_etl (crates/bumbledb-query/tests/cookbook.rs)",
 
-  .row @Txn.Fresh.never_reissue_observable
-    `Bumbledb.Txn.Fresh.never_reissue_observable
-    "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; EVERY transaction persists its final mark — committed, no-op, or aborted alike — because reserve already handed the id to the host (an aborted run is NOT discarded)."
-    "WriteDelta::reserve (crates/bumbledb/src/storage/delta/alloc.rs); advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs); dirty_fresh_marks (crates/bumbledb/src/storage/delta/accessors.rs)"
-    "reserve_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_reserved_in_a_rejected_txn_are_burned (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
-
-  .row @Txn.Fresh.resupply_legal_monotone
-    `Bumbledb.Txn.Fresh.resupply_legal_monotone
-    "Explicit fresh values are legal on the normal write path and advance the mark past the supplied value — re-supply of a deleted id preserves monotonicity, and the generator never returns a supplied id afterwards."
-    "advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs)"
-    "explicit_value_above_mark_advances_generated_successors (crates/bumbledb/src/storage/delta/tests.rs); mixed_explicit_and_generated_reserve_tracks_running_maximum (crates/bumbledb/src/storage/delta/tests.rs)",
-
-  .row @Txn.Fresh.materialized_key_ordinary
-    `Bumbledb.Txn.Fresh.materialized_key_ordinary
-    "The auto-materialized key statement rides the ordinary final-state judgment — ids are writable-by-default, so the statement, never the generator, owns uniqueness."
-    "SchemaDescriptor::materialized_statements (crates/bumbledb-theory/src/schema.rs)"
-    "statement_ids_are_auto_fds_first_then_declared_order (crates/bumbledb/src/schema/tests/valid.rs); scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
-
   .row @Query.evalQuery_cq `Bumbledb.Query.evalQuery_cq
     "Empty-prefix cq denotes the union of its main rules over the instance."
     "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
@@ -611,22 +598,109 @@ def ledger : List Obligation := [
     "InstanceBuilder (crates/bumbledb/src/api/db/builder.rs); engine_admit (crates/bumbledb-bench/src/differential.rs); judge_complete (crates/bumbledb-bench/src/naive.rs); generate_complete_corpus (crates/bumbledb-bench/src/conformance/complete.rs)"
     "complete_admission_includes_closed_source_containments (crates/bumbledb-bench/src/conformance/complete.rs); three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); complete_admission_rejects_unhandled_closed_source (crates/bumbledb-bench/src/naive/tests/closed.rs)",
 
-  .row @Txn.Braids.L9 `Bumbledb.Txn.Braids.L9
-    "Component locality: a statement's obligation instances read and write only relations inside one braid component, so judgment and application over one braid are invariant under any other braid's history — cross-braid commits are concurrent with nothing consulted across the seam."
-    "braids (crates/bumbledb-log/src/braids.rs)"
-    "braid_goldens_match (crates/bumbledb-log/tests/lane_a_braids.rs); multi_braid_interleavings_converge_to_one_digest (crates/bumbledb-log/tests/f2_commutativity.rs)",
+  .row @Txn.Support.judgment_stable_outside_mutable_support
+    `Bumbledb.Txn.Support.judgment_stable_outside_mutable_support
+    "The ASS-001 successor: a delta touching no relation of one statement's MUTABLE consulted support leaves that statement's judgment unchanged while all closed denotations remain fixed — the premise IS the runtime support derivation, not a component partition over closed targets; it licenses scoped admission planning only, never a publication lane or causal read cut."
+    "mark_insert (crates/bumbledb/src/storage/commit/plan.rs); judge (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "judgment_stable_under_untouched_relations (crates/bumbledb-bench/src/naive/successor/admission.rs)",
 
-  .row @Txn.Braids.L10 `Bumbledb.Txn.Braids.L10
-    "Replay idempotence: re-applying a batch whose effects the state already contains is the identity with an accepted verdict and no generation advance, so every crash window heals by replaying forward — recovery is the catch-up loop, never an intent record."
-    "apply (crates/bumbledb-log/src/apply.rs); Replica::resolve_pending (crates/bumbledb-log/src/replica.rs); Writer::clear_pending (crates/bumbledb-log/src/writer/discipline.rs)"
-    "double_apply_every_batch_at_every_prefix_leaves_digest_generation_vector_unmoved (crates/bumbledb-log/tests/f4_crash.rs)"
+  .row @Txn.Support.disjoint_mutable_locality
+    `Bumbledb.Txn.Support.disjoint_mutable_locality
+    "Shared closed vocabulary never merges two mutable components: a delta local to one statement's mutable support leaves any statement with a disjoint mutable support unmoved, even when both statements cite the same sealed closed relations."
+    "mark_insert (crates/bumbledb/src/storage/commit/plan.rs)"
+    "shared_closed_vocabulary_does_not_merge_supports (crates/bumbledb-bench/src/naive/successor/admission.rs)",
+
+  .row @Txn.Support.normalize_applyTo
+    `Bumbledb.Txn.Support.normalize_applyTo
+    "The one-command tie rule: canonicalizing a delta to its add-wins normal form changes nothing because application already reads add-wins; normalization is idempotent, and the rule is a same-command normalization, never cross-command conflict resolution."
+    "WriteDelta (crates/bumbledb/src/storage/delta.rs)"
+    "same_command_tie_rule_add_wins (crates/bumbledb-bench/src/naive/successor/admission.rs)",
+
+  .row @Txn.Support.applyTo_comm_of_disjoint
+    `Bumbledb.Txn.Support.applyTo_comm_of_disjoint
+    "Raw commutation at its real strength: two deltas with no cross add/remove conflicts commute as SET transformations only — the theorem says nothing about admission outcomes, exact-state witnesses or capacity interactions, and no public commutativity flag spends it."
+    "WriteDelta (crates/bumbledb/src/storage/delta.rs)"
+    "raw_commutation_does_not_commute_admission (crates/bumbledb-bench/src/naive/successor/admission.rs)",
+
+  .row @F64.Agg.accumulator_within_34_limbs
+    `Bumbledb.F64.Agg.accumulator_within_34_limbs
+    "The 34-limb sufficiency bound: under the u64 count limit every finite exact float total sits strictly below 2^2175 in magnitude, inside a signed 2,176-bit accumulator — proved from the single-value scaled bound, not accepted from prose."
+    "finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
+    "exact_sum_matches_rational_oracle (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+
+  .row @F64.Agg.fold_perm `Bumbledb.F64.Agg.fold_perm
+    "Exact float accumulation is order- and partition-independent: the canonical merge table is associative and commutative with the empty identity, so no plan, iteration order, merge tree or spill partition can change sum or mean."
+    "finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
+    "sum_is_permutation_and_partition_independent (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+
+  .row @F64.Agg.merge_not_idempotent
+    `Bumbledb.F64.Agg.merge_not_idempotent
+    "The accumulator merge is NOT idempotent: merging one finite partial state with itself doubles its contribution and count, so exact set deduplication must precede accumulation — the accumulator carries no binding provenance to detect replay."
+    "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs)"
+    "partial_state_replay_is_not_idempotent (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+
+  .row @F64.Agg.sum_max_max_overflows
+    `Bumbledb.F64.Agg.sum_max_max_overflows
+    "Mean divides the exact rational total by the exact count and rounds ONCE: the MAX-FINITE pair's once-rounded sum is the infinity payload while its once-rounded exact mean is exactly MAX-FINITE — mean is never rounded-sum over count."
+    "finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
+    "mean_divides_exact_rational_not_rounded_sum (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+
+  .row @FInterval.nonempty `Bumbledb.FInterval.nonempty
+    "Float intervals denote NONEMPTY dense numeric ranges with exact rational endpoint order: every checked interval — finite spans, rays including [-Infinity, -MAX_FINITE), and the whole line — contains a dense point; infinity placement is a theorem of the strict endpoint order, not a side condition."
+    "crate::Interval::new (crates/bumbledb-theory/src/interval.rs)"
+    "neg_inf_to_neg_max_ray_is_nonempty (crates/bumbledb-bench/src/verify/finterval_oracle.rs)",
+
+  .row @FInterval.join_points `Bumbledb.FInterval.join_points
+    "Half-open adjacency coalesces exactly on the dense line, while a representable-neighbor gap never coalesces: a dense point escapes any pair whose first interval ends strictly below where the next begins, even when no machine float lies between the bounds."
+    "interval/sweep.rs::sweep (crates/bumbledb/src/interval/sweep.rs)"
+    "adjacent_coalesces_and_representable_gap_does_not (crates/bumbledb-bench/src/verify/finterval_oracle.rs)",
+
+  .row @containsF64_iff_orderKey `Bumbledb.containsF64_iff_orderKey
+    "On strictly finite probes the dense membership denotation IS the physical order-key comparison — the non-NaN order-key mapping executes float interval membership exactly, with no epsilon and no discrete-point reinterpretation."
+    "crate::allen::classify (crates/bumbledb/src/allen.rs)"
+    "order_key_execution_matches_dense_membership (crates/bumbledb-bench/src/verify/finterval_oracle.rs)",
+
+  .row @neg_inf_probe_needs_guard `Bumbledb.neg_inf_probe_needs_guard
+    "The finite-probe guard is load-bearing: the raw order-key comparison ADMITS a -Infinity probe on a left-unbounded interval while the denotation refuses every nonfinite probe — an engine executing bare key comparisons without the nonfinite guard answers wrongly on this fixture."
+    "crate::ir::CmpOp::PointIn (crates/bumbledb/src/ir.rs)"
+    "nonfinite_probes_return_false (crates/bumbledb-bench/src/verify/finterval_oracle.rs)",
+
+  .row @Query.Stages.consumer_of_error
+    `Bumbledb.Query.Stages.consumer_of_error
+    "A required producer's error surfaces through every consumer: a stage reading an erroring producer errors, so a downstream filter cannot suppress a required upstream overflow/cast/measure error."
+    "crate::ir::Atom (crates/bumbledb/src/ir.rs)"
+    "consumer_filter_cannot_hide_producer_error (crates/bumbledb-bench/src/naive/successor/staged.rs)",
+
+  .row @Query.Stages.unread_stage_invisible
+    `Bumbledb.Query.Stages.unread_stage_invisible
+    "A name is a compositional handle, not a materialization command: replacing a stage no later stage reads changes no other outcome, so unreferenced definitions need not execute and naming forces no intermediate table."
+    "crate::ir::Atom (crates/bumbledb/src/ir.rs)"
+    "naming_does_not_force_materialization (crates/bumbledb-bench/src/naive/successor/staged.rs)",
+
+  .row @Query.Stages.inline_runStage
+    `Bumbledb.Query.Stages.inline_runStage
+    "Inlining preserves completed values AND errors: a consumer of one produced table equals the composed stage evaluating the producer inline, so fusion can avoid storing intermediate rows without erasing the producer's error boundary."
+    "crate::ir::Atom (crates/bumbledb/src/ir.rs)"
+    "inline_and_materialized_stages_agree (crates/bumbledb-bench/src/naive/successor/staged.rs)",
+
+  .row @Query.Stages.iterate_subset_dom
+    `Bumbledb.Query.Stages.iterate_subset_dom
+    "The restricted recursive node stays inside its frozen finite domain: with projection-only steps over frozen inputs — aggregate and computed predecessor outputs included, frozen once — the whole iteration selects only existing domain values; the premise concerns actual frozen values, never where a name was spelled."
+    "RecStep (crates/bumbledb/src/ir.rs)"
+    "frozen_computed_predecessors_stay_in_domain (crates/bumbledb-bench/src/naive/successor/staged.rs)",
+
+  .row @Query.Stages.value_creation_escapes
+    `Bumbledb.Query.Stages.value_creation_escapes
+    "Value creation in the recursive feedback cycle escapes every frozen finite domain — the countermodel behind refusing aggregation, arithmetic and value invention inside the cycle."
+    "NonlinearRecArm (crates/bumbledb/src/error.rs)"
+    "value_creation_feedback_is_refused (crates/bumbledb-bench/src/naive/successor/staged.rs)"
 
 ]
 
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 104 := rfl
+theorem ledger_count : ledger.length = 116 := rfl
 
 end Bridge
 end Bumbledb

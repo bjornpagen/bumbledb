@@ -7,15 +7,15 @@ use bumbledb::schema::spec::{
     RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
 };
 use bumbledb::schema::{
-    Bound, FieldDescriptor, Generation, IntervalElement, RelationManifest, SealedField, Side,
+    Bound, FieldDescriptor, IntervalElement, RelationManifest, SealedField, Side,
     StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
     AcceptedCollection, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp,
-    CollectionBuilder, Comparison, ConditionTree, F64, FieldId, FindTerm, FoldOp, HeadOp, HeadTerm,
-    Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId, ProjectionRule, Query, Rec,
-    RecRule, RecStep, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
-    StatementId, StatementKind, Term, Value, VarId,
+    CollectionBuilder, Comparison, ConditionTree, F64, FieldId, FindTerm, FixedIntervalElement,
+    FoldOp, HeadOp, HeadTerm, Id128, Interior, InteriorId, Interval, Manifest, NonEmpty, ParamId,
+    Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule, ScalarExpr,
+    SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -160,6 +160,35 @@ fn interval_i64_in(
     })
 }
 
+fn interval_f64_in(
+    obj: &Object,
+    ctx: impl std::fmt::Display + Copy,
+) -> napi::Result<Interval<F64>> {
+    let start_raw = req::<f64>(obj, "start", ctx)?;
+    let end_raw = req::<f64>(obj, "end", ctx)?;
+    let start = F64::from(start_raw);
+    let end = F64::from(end_raw);
+    Interval::<F64>::new(start, end).ok_or_else(|| {
+        err(format!(
+            "bumbledb marshal: {ctx}: not a dense-line interval (need non-NaN start < end, got start {start_raw} end {end_raw})"
+        ))
+    })
+}
+
+pub(crate) fn id128_in(text: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<Id128> {
+    Id128::from_hex(text).map_err(|error| err(format!("bumbledb marshal: {ctx}: {error}")))
+}
+
+pub(crate) fn id128_hex(id: Id128) -> String {
+    use std::fmt::Write as _;
+    id.as_bytes()
+        .iter()
+        .fold(String::with_capacity(32), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
 fn interval_in(
     obj: &Object,
     element: IntervalElement,
@@ -168,6 +197,7 @@ fn interval_in(
     match element {
         IntervalElement::U64 => interval_u64_in(obj, ctx).map(Value::IntervalU64),
         IntervalElement::I64 => interval_i64_in(obj, ctx).map(Value::IntervalI64),
+        IntervalElement::F64 => interval_f64_in(obj, ctx).map(Value::IntervalF64),
     }
 }
 
@@ -202,7 +232,7 @@ fn bytes_width_mismatch(ctx: CellCtx<'_>, len: u16, witnessed: usize) -> napi::E
               JS type); every cast below is fenced by the `get_type` check in \
               its own arm"
 )]
-fn schema_value(
+pub(crate) fn schema_value_in(
     expected: &ValueType,
     value: &Unknown,
     relation: &str,
@@ -251,6 +281,13 @@ fn schema_value(
             let text = unsafe { value.cast::<String>()? };
             Ok(Value::String(text.into()))
         }
+        ValueType::Id128 => {
+            if got != JsType::String {
+                return Err(mismatch("string (32 lowercase hex characters)"));
+            }
+            let text = unsafe { value.cast::<String>()? };
+            Ok(Value::Id128(id128_in(&text, ctx)?))
+        }
         ValueType::FixedBytes { len } => {
             if got != JsType::Object {
                 return Err(mismatch("Uint8Array"));
@@ -261,22 +298,36 @@ fn schema_value(
             }
             Ok(Value::FixedBytes(bytes.to_vec().into_boxed_slice()))
         }
-        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
+        ValueType::Interval { element } => {
             if got != JsType::Object {
-                return Err(mismatch("{ start, end } bigint pair"));
+                return Err(mismatch(interval_pair_name(*element)));
             }
             interval_in(&unsafe { value.cast::<Object>()? }, *element, ctx)
+        }
+        ValueType::FixedInterval { element, .. } => {
+            if got != JsType::Object {
+                return Err(mismatch(interval_pair_name(element.element())));
+            }
+            interval_in(&unsafe { value.cast::<Object>()? }, element.element(), ctx)
         }
     }
 }
 
-/// One sealed field slot's spec-only attributes — `fresh` and the host
-/// newtype name, which the engine descriptor drops after resolution. The
-/// bridge carries them alongside the descriptor so the manifest wire
-/// speaks the spec's whole field vocabulary; nothing here is judged.
+const fn interval_pair_name(element: IntervalElement) -> &'static str {
+    match element {
+        IntervalElement::U64 | IntervalElement::I64 => "{ start, end } bigint pair",
+        IntervalElement::F64 => "{ start, end } number pair",
+    }
+}
+
+/// One sealed field slot's spec-only attributes — the host newtype name,
+/// which the engine descriptor drops after resolution. The bridge carries
+/// it alongside the descriptor so the manifest wire speaks the spec's
+/// whole field vocabulary; nothing here is judged. The historical `fresh`
+/// attribute is gone with the whole fresh/reserve issuance authority: the
+/// successor identity vocabulary is application-owned `Id128`.
 #[derive(Clone)]
 pub struct FieldAttrs {
-    pub(crate) fresh: bool,
     pub(crate) newtype: Option<Box<str>>,
 }
 
@@ -292,11 +343,9 @@ pub(crate) fn field_attrs(spec: &SchemaSpec) -> Vec<Vec<FieldAttrs>> {
                 .closed
                 .iter()
                 .map(|closed| FieldAttrs {
-                    fresh: false,
                     newtype: Some(closed.newtype.clone()),
                 })
                 .chain(relation.fields.iter().map(|field| FieldAttrs {
-                    fresh: field.fresh,
                     newtype: field.newtype.clone(),
                 }))
                 .collect()
@@ -319,13 +368,12 @@ pub(crate) fn sealed_rosters(descriptor: &SchemaDescriptor) -> Vec<SealedRoster>
                 .sealed_fields()
                 .map(|slot| match slot {
                     // The synthetic handle slot materializes as an ordinary
-                    // descriptor (name "id", u64, no generation): the bridge
-                    // only reads name + type, and the sealed ORDER stays the
+                    // descriptor (name "id", u64): the bridge only reads
+                    // name + type, and the sealed ORDER stays the
                     // iterator's law, restated nowhere.
                     SealedField::SyntheticId => FieldDescriptor {
                         name: Box::from(slot.name()),
                         value_type: *slot.value_type(),
-                        generation: Generation::None,
                     },
                     SealedField::Declared(field) => field.clone(),
                 })
@@ -458,6 +506,17 @@ fn push_cell(
             let text = unsafe { value.cast::<String>()? };
             builder.push_str(&text)
         }
+        ValueType::Id128 => {
+            if got != JsType::String {
+                return Err(cell_mismatch(
+                    ctx,
+                    "string (32 lowercase hex characters)",
+                    got,
+                ));
+            }
+            let text = unsafe { value.cast::<String>()? };
+            builder.push_id128(id128_in(&text, ctx)?)
+        }
         ValueType::FixedBytes { len } => {
             if got != JsType::Object {
                 return Err(cell_mismatch(ctx, "Uint8Array", got));
@@ -468,14 +527,29 @@ fn push_cell(
             }
             builder.push_bytes(&bytes)
         }
-        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
+        ValueType::Interval { element } => {
             if got != JsType::Object {
-                return Err(cell_mismatch(ctx, "{ start, end } bigint pair", got));
+                return Err(cell_mismatch(ctx, interval_pair_name(*element), got));
             }
             let obj = unsafe { value.cast::<Object>()? };
             match element {
                 IntervalElement::U64 => builder.push_interval_u64(interval_u64_in(&obj, ctx)?),
                 IntervalElement::I64 => builder.push_interval_i64(interval_i64_in(&obj, ctx)?),
+                IntervalElement::F64 => builder.push_interval_f64(interval_f64_in(&obj, ctx)?),
+            }
+        }
+        ValueType::FixedInterval { element, .. } => {
+            if got != JsType::Object {
+                return Err(cell_mismatch(
+                    ctx,
+                    interval_pair_name(element.element()),
+                    got,
+                ));
+            }
+            let obj = unsafe { value.cast::<Object>()? };
+            match element {
+                FixedIntervalElement::U64 => builder.push_interval_u64(interval_u64_in(&obj, ctx)?),
+                FixedIntervalElement::I64 => builder.push_interval_i64(interval_i64_in(&obj, ctx)?),
             }
         }
     };
@@ -497,7 +571,12 @@ fn one_fact_row(
     let mut row = Vec::with_capacity(fields.len());
     for (index, field) in (0..values.len()).zip(fields.iter()) {
         let value = req_at::<Unknown>(values, index, format_args!("relation `{name}` row"))?;
-        row.push(schema_value(&field.value_type, &value, name, &field.name)?);
+        row.push(schema_value_in(
+            &field.value_type,
+            &value,
+            name,
+            &field.name,
+        )?);
     }
     Ok(row)
 }
@@ -552,7 +631,12 @@ pub(crate) fn key_row(
             ))
         })?;
         let value = req_at::<Unknown>(values, index, format_args!("key of `{name}`"))?;
-        row.push(schema_value(&field.value_type, &value, &name, &field.name)?);
+        row.push(schema_value_in(
+            &field.value_type,
+            &value,
+            &name,
+            &field.name,
+        )?);
     }
     Ok((rel, statement_id, row))
 }
@@ -577,6 +661,10 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
         tags::value::STRING => Ok(Value::String(
             req::<String>(obj, "value", "string value")?.into(),
         )),
+        tags::value::ID128 => Ok(Value::Id128(id128_in(
+            &req::<String>(obj, "value", "id128 value")?,
+            "id128 value",
+        )?)),
         tags::value::FIXED_BYTES => Ok(Value::FixedBytes(
             req::<Uint8Array>(obj, "value", "fixedBytes value")?
                 .to_vec()
@@ -584,6 +672,7 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
         )),
         tags::value::INTERVAL_U64 => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
         tags::value::INTERVAL_I64 => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
+        tags::value::INTERVAL_F64 => interval_in(obj, IntervalElement::F64, "intervalF64 value"),
         other => Err(err(format!(
             "bumbledb marshal: unknown value kind `{other}`"
         ))),
@@ -623,6 +712,7 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
         tags::value_type::I64 => Ok(ValueType::I64),
         tags::value_type::F64 => Ok(ValueType::F64),
         tags::value_type::STRING => Ok(ValueType::String),
+        tags::value_type::ID128 => Ok(ValueType::Id128),
         tags::value_type::FIXED_BYTES => {
             let len = ordinal(req::<f64>(obj, "len", "fixedBytes type")?, "bytes width")?;
             let len = u16::try_from(len)
@@ -641,7 +731,23 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
                 .map(|w| u64_in(&w, "interval width"))
                 .transpose()?;
             Ok(match width {
-                Some(width) => ValueType::FixedInterval { element, width },
+                Some(width) => {
+                    // The fixed-width interval is discrete by type: no
+                    // `FixedInterval<F64>` can be declared, so a dense
+                    // element with a width is a shape refusal here.
+                    let element = match element {
+                        IntervalElement::U64 => FixedIntervalElement::U64,
+                        IntervalElement::I64 => FixedIntervalElement::I64,
+                        IntervalElement::F64 => {
+                            return Err(err(
+                                "bumbledb marshal: fixed interval widths are discrete-only; \
+                                 there is no fixed f64 interval"
+                                    .into(),
+                            ));
+                        }
+                    };
+                    ValueType::FixedInterval { element, width }
+                }
                 None => ValueType::Interval { element },
             })
         }
@@ -813,7 +919,6 @@ pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
                 name: req::<String>(&field, "name", "field spec")?.into(),
                 value_type: value_type_in(&value_type)?,
                 newtype: field.get::<String>("newtype")?.map(Into::into),
-                fresh: req::<bool>(&field, "fresh", "field spec")?,
             });
         }
         // Closedness as one sum, mirroring the fused `RelationSpec`
@@ -893,10 +998,77 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
     }
 }
 
+/// The one bound on wire scalar-expression nesting (mirrors the migration
+/// plan grammar's depth fence; a hostile deep tree refuses before recursion
+/// can exhaust the stack).
+const MAX_SCALAR_DEPTH: usize = 128;
+
+/// Parses one computed-find scalar expression: the exact core `ScalarExpr`
+/// roster, spelled as the plan JSON grammar spells it (`var` binds a rule
+/// variable ordinal on this lane — the query IR's own variable space).
+fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
+    if depth > MAX_SCALAR_DEPTH {
+        return Err(err(format!(
+            "bumbledb marshal: scalar expression deeper than {MAX_SCALAR_DEPTH}"
+        )));
+    }
+    let kind: String = req(obj, "kind", "scalar expression")?;
+    match kind.as_str() {
+        tags::scalar_expr::VAR => Ok(ScalarExpr::Var(var_in(obj, "var", "scalar var")?)),
+        tags::scalar_expr::LITERAL => {
+            let value: Object = req(obj, "value", "scalar literal")?;
+            Ok(ScalarExpr::Literal(tagged_value(&value)?))
+        }
+        tags::scalar_expr::NEGATE => Ok(ScalarExpr::Negate(Box::new(scalar_child(
+            obj, "expr", depth,
+        )?))),
+        tags::scalar_expr::ADD => Ok(ScalarExpr::Add(
+            Box::new(scalar_child(obj, "left", depth)?),
+            Box::new(scalar_child(obj, "right", depth)?),
+        )),
+        tags::scalar_expr::SUBTRACT => Ok(ScalarExpr::Subtract(
+            Box::new(scalar_child(obj, "left", depth)?),
+            Box::new(scalar_child(obj, "right", depth)?),
+        )),
+        tags::scalar_expr::MULTIPLY => Ok(ScalarExpr::Multiply(
+            Box::new(scalar_child(obj, "left", depth)?),
+            Box::new(scalar_child(obj, "right", depth)?),
+        )),
+        tags::scalar_expr::DIVIDE => Ok(ScalarExpr::Divide(
+            Box::new(scalar_child(obj, "left", depth)?),
+            Box::new(scalar_child(obj, "right", depth)?),
+        )),
+        tags::scalar_expr::CAST => {
+            let cast: String = req(obj, "cast", "scalar cast")?;
+            let kind = tags::numeric_cast::parse(&cast)
+                .ok_or_else(|| err(format!("bumbledb marshal: unknown cast kind `{cast}`")))?;
+            Ok(ScalarExpr::Cast {
+                kind,
+                expr: Box::new(scalar_child(obj, "expr", depth)?),
+            })
+        }
+        tags::scalar_expr::IS_NAN => Ok(ScalarExpr::IsNaN(Box::new(scalar_child(
+            obj, "expr", depth,
+        )?))),
+        tags::scalar_expr::IS_FINITE => Ok(ScalarExpr::IsFinite(Box::new(scalar_child(
+            obj, "expr", depth,
+        )?))),
+        other => Err(err(format!(
+            "bumbledb marshal: unknown scalar expression kind `{other}`"
+        ))),
+    }
+}
+
+fn scalar_child(obj: &Object, key: &str, depth: usize) -> napi::Result<ScalarExpr> {
+    let child: Object = req(obj, key, "scalar expression")?;
+    scalar_expr_in(&child, depth + 1)
+}
+
 fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
     let kind: String = req(obj, "kind", "head term")?;
     match kind.as_str() {
         tags::head_term::VAR => Ok(HeadTerm::Var),
+        tags::head_term::COMPUTE => Ok(HeadTerm::Compute),
         tags::head_term::AGGREGATE => {
             let op: String = req(obj, "op", "head aggregate")?;
             let op = tags::head_op::parse(&op)
@@ -931,6 +1103,10 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
     let kind: String = req(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
+        tags::find_term::COMPUTE => {
+            let expr: Object = req(obj, "expr", "compute find")?;
+            Ok(FindTerm::Compute(scalar_expr_in(&expr, 1)?))
+        }
         tags::find_term::COUNT => {
             if obj.get::<f64>("over")?.is_some() {
                 return Err(err("bumbledb marshal: Count carries no over".to_string()));
@@ -1121,16 +1297,6 @@ fn vars_only(finds: &[FindTerm]) -> napi::Result<Vec<VarId>> {
         .collect()
 }
 
-fn projection_rule_in(obj: &Object) -> napi::Result<ProjectionRule> {
-    let rule = rule_in(obj)?;
-    Ok(ProjectionRule {
-        finds: vars_only(&rule.finds)?,
-        atoms: rule.atoms,
-        negated: rule.negated,
-        conditions: rule.conditions,
-    })
-}
-
 fn rec_rule_in(obj: &Object) -> napi::Result<RecRule> {
     let rule = rule_in(obj)?;
     if !rule.negated.is_empty() {
@@ -1206,16 +1372,15 @@ fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
     let mut interiors = Vec::with_capacity(interiors_arr.len() as usize);
     // The wire's interior `head` is the TS builder's alignment datum; the
     // core `Interior` carries no head (the engine recomputes it from
-    // finds), so the bridge reads the rules only.
+    // finds), so the bridge reads the rules only. Interiors are FULL typed
+    // stages (P03's generalized `Interior { rules: Vec<Rule> }`):
+    // aggregate/computed interior heads are legal; only the recursive
+    // cycle stays projection-only (`rec_rule_in`/`rec_step_in`).
     for index in 0..interiors_arr.len() {
         let interior = req_at::<Object>(&interiors_arr, index, "query interiors")?;
-        let rules_arr: Array = req(&interior, "rules", "interior rules")?;
-        let mut rules = Vec::with_capacity(rules_arr.len() as usize);
-        for rule_index in 0..rules_arr.len() {
-            let rule = req_at::<Object>(&rules_arr, rule_index, "interior rules")?;
-            rules.push(projection_rule_in(&rule)?);
-        }
-        interiors.push(Interior { rules });
+        interiors.push(Interior {
+            rules: rules_in(&interior, "rules", "interior rules")?,
+        });
     }
     Ok(interiors)
 }
@@ -1255,9 +1420,22 @@ pub enum ValueOut {
     I64(i64),
     F64(F64),
     Text(String),
+    /// Canonical 32-lowercase-hex text — the TypeScript spelling of an
+    /// application-owned `Id128` (chapter 32).
+    Id128(String),
     Bytes(Vec<u8>),
-    IntervalU64 { start: u64, end: u64 },
-    IntervalI64 { start: i64, end: i64 },
+    IntervalU64 {
+        start: u64,
+        end: u64,
+    },
+    IntervalI64 {
+        start: i64,
+        end: i64,
+    },
+    IntervalF64 {
+        start: F64,
+        end: F64,
+    },
 }
 
 impl ValueOut {
@@ -1274,6 +1452,7 @@ impl ValueOut {
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
             Value::F64(v) => Self::F64(v),
+            Value::Id128(v) => Self::Id128(id128_hex(v)),
             Value::String(text) => Self::Text(text.into()),
             Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
             Value::IntervalU64(interval) => Self::IntervalU64 {
@@ -1281,6 +1460,10 @@ impl ValueOut {
                 end: interval.end(),
             },
             Value::IntervalI64(interval) => Self::IntervalI64 {
+                start: interval.start(),
+                end: interval.end(),
+            },
+            Value::IntervalF64(interval) => Self::IntervalF64 {
                 start: interval.start(),
                 end: interval.end(),
             },
@@ -1303,8 +1486,15 @@ impl ToNapiValue for ValueOut {
             Self::U64(v) => unsafe { u64::to_napi_value(env, v) },
             Self::I64(v) => unsafe { i64n::to_napi_value(env, i64n(v)) },
             Self::F64(v) => unsafe { f64::to_napi_value(env, v.to_f64()) },
-            Self::Text(v) => unsafe { String::to_napi_value(env, v) },
+            Self::Text(v) | Self::Id128(v) => unsafe { String::to_napi_value(env, v) },
             Self::Bytes(v) => unsafe { Uint8Array::to_napi_value(env, Uint8Array::new(v)) },
+            Self::IntervalF64 { start, end } => {
+                let env_handle = Env::from_raw(env);
+                let mut obj = Object::new(&env_handle)?;
+                obj.set("start", start.to_f64())?;
+                obj.set("end", end.to_f64())?;
+                unsafe { Object::to_napi_value(env, obj) }
+            }
             Self::IntervalU64 { start, end } => {
                 let env_handle = Env::from_raw(env);
                 let mut obj = Object::new(&env_handle)?;
@@ -1339,12 +1529,17 @@ pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
                     AnswerValue::I64(v) => ValueOut::I64(v),
                     AnswerValue::F64(v) => ValueOut::F64(v),
                     AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
+                    AnswerValue::Id128(v) => ValueOut::Id128(id128_hex(v)),
                     AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_vec()),
                     AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
                         start: v.start(),
                         end: v.end(),
                     },
                     AnswerValue::IntervalI64(v) => ValueOut::IntervalI64 {
+                        start: v.start(),
+                        end: v.end(),
+                    },
+                    AnswerValue::IntervalF64(v) => ValueOut::IntervalF64 {
                         start: v.start(),
                         end: v.end(),
                     },
@@ -1371,7 +1566,12 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
     // payload attributes are matched here.
     obj.set("kind", tags::value_type::tag(ty))?;
     match ty {
-        ValueType::Bool | ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => {}
+        ValueType::Bool
+        | ValueType::U64
+        | ValueType::I64
+        | ValueType::F64
+        | ValueType::Id128
+        | ValueType::String => {}
         ValueType::FixedBytes { len } => {
             obj.set("len", u32::from(*len))?;
         }
@@ -1379,7 +1579,7 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
             obj.set("element", tags::interval_element::tag(element))?;
         }
         ValueType::FixedInterval { element, width } => {
-            obj.set("element", tags::interval_element::tag(element))?;
+            obj.set("element", tags::interval_element::tag(&element.element()))?;
             obj.set("width", *width)?;
         }
     }
@@ -1425,7 +1625,6 @@ fn relation_objects<'env>(
             // rendered against this same live `env`, one line up.
             let ty = unsafe { Unknown::from_raw_unchecked(env, ty) };
             field_obj.set("valueType", ty)?;
-            field_obj.set("fresh", attr.fresh)?;
             if let Some(newtype) = &attr.newtype {
                 field_obj.set("newtype", newtype.as_ref())?;
             }

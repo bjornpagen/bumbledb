@@ -72,13 +72,15 @@ main. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
  exact equalities with or without a screen, so the premise belongs
  to acceptance readings, not to the agreement.
 
-## The creation-quarantine gravestones (law text; the full record is
-`Txn/Fresh.lean`'s module doc)
+## The creation-quarantine gravestones (law text)
 
-`fresh` never appears in a rule head, and no arithmetic appears in a
-rule head — both UNREPRESENTABLE in this IR, permanently: `Term` has
-no mint constructor (the mint is the write path's, Level 2 —
-`Txn/Fresh.lean`), heads are projected variables, and the measure is
+No mint exists anywhere in the successor: the fresh generator, its
+Lean allocation model (`Txn/Fresh.lean`) and its reservation API are
+DELETED — entity identity is an application-owned 128-bit value fixed
+before command sealing (chapter 10 §5), never database-issued. The
+head laws stand on their own: no value creation appears in a rule
+head — UNREPRESENTABLE in this IR, permanently: `Term` has no mint
+constructor, heads are projected variables, and the measure is
 the one arithmetic, its positions boundary-only (`Rule.WellTyped`).
 Interior and rec heads are `List VarId` too, so recursion's safety
 roster (`MeasureInInterior` and kin) is this same creation-quarantine

@@ -169,14 +169,19 @@ impl ChangeSet {
     }
 }
 
-pub(crate) struct ChangeRef<'a> {
+/// Bridge-facing view of one accepted change record. Not embedding API.
+#[doc(hidden)]
+pub struct ChangeRef<'a> {
     pub relation: RelationId,
     pub kind: ChangeKind,
     pub row: &'a [u8],
 }
 
 impl ChangeSet {
-    pub(crate) fn records(&self) -> impl Iterator<Item = ChangeRef<'_>> {
+    /// Bridge-facing record walk (the one canonical decoder rides it).
+    /// Not embedding API.
+    #[doc(hidden)]
+    pub fn records(&self) -> impl Iterator<Item = ChangeRef<'_>> {
         let mut rest = &self.0.bytes[HEADER..];
         std::iter::from_fn(move || {
             if rest.is_empty() {

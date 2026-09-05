@@ -1,4 +1,4 @@
-use bumbledb::{InteriorId, ProjectionRule, Query, RecRule, RecStep, Rule};
+use bumbledb::{InteriorId, Query, RecRule, RecStep, Rule};
 
 pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
     let mut out: Vec<Rule> = Vec::new();
@@ -10,7 +10,7 @@ pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
             ..
         } => {
             for interior in interiors {
-                out.extend(interior.rules.iter().map(ProjectionRule::to_rule));
+                out.extend(interior.rules.iter().cloned());
             }
             out.extend(rules.iter().cloned());
         }
@@ -22,7 +22,7 @@ pub fn rules(query: &Query) -> impl Iterator<Item = Rule> {
         } => {
             let rec_id = InteriorId(u32::try_from(interiors.len()).expect("interior id fits u32"));
             for interior in interiors {
-                out.extend(interior.rules.iter().map(ProjectionRule::to_rule));
+                out.extend(interior.rules.iter().cloned());
             }
             out.extend(rec.base.iter().map(RecRule::to_rule));
             out.extend(rec.rec.iter().map(|step| RecStep::to_rule(step, rec_id)));
@@ -41,14 +41,10 @@ pub fn every_rule_mut(query: &mut Query, mut f: impl FnMut(&mut Rule) -> bool) -
             ..
         } => {
             for interior in interiors {
-                for proj in &mut interior.rules {
-                    let mut rule = proj.to_rule();
-                    if !f(&mut rule) {
+                for rule in &mut interior.rules {
+                    if !f(rule) {
                         return false;
                     }
-                    proj.conditions = rule.conditions;
-                    proj.atoms = rule.atoms;
-                    proj.negated = rule.negated;
                 }
             }
             rules.iter_mut().all(f)
@@ -61,14 +57,10 @@ pub fn every_rule_mut(query: &mut Query, mut f: impl FnMut(&mut Rule) -> bool) -
         } => {
             let rec_id = InteriorId(u32::try_from(interiors.len()).expect("interior id fits u32"));
             for interior in interiors {
-                for proj in &mut interior.rules {
-                    let mut rule = proj.to_rule();
-                    if !f(&mut rule) {
+                for rule in &mut interior.rules {
+                    if !f(rule) {
                         return false;
                     }
-                    proj.conditions = rule.conditions;
-                    proj.atoms = rule.atoms;
-                    proj.negated = rule.negated;
                 }
             }
             for base in rec.base.iter_mut() {

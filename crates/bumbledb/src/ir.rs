@@ -444,9 +444,11 @@ impl<T> std::ops::Index<usize> for NonEmpty<T> {
     }
 }
 
-/// One interior rule: bound-variable finds only. Aggregates and the
-/// measure are unrepresentable — the creation-quarantine law
-/// (`lean/Bumbledb/Query/Syntax.lean: Interior` / `Rule.finds: List VarId`).
+/// One projection-only stage rule: bound-variable finds only. Retained
+/// as the convenient constructor for the projection case (and the shape
+/// the RECURSIVE cycle still requires); a full [`Interior`] stage rule is
+/// an ordinary [`Rule`] via [`ProjectionRule::to_rule`] /
+/// [`Interior::from_projections`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionRule {
     pub finds: Vec<VarId>,
@@ -471,23 +473,40 @@ impl ProjectionRule {
     }
 }
 
-/// A named interior: a finite CQ (union of conjunctive rules), evaluated
+impl From<ProjectionRule> for Rule {
+    fn from(rule: ProjectionRule) -> Self {
+        rule.to_rule()
+    }
+}
+
+/// A named interior: one typed nonrecursive relation stage — a finite
+/// union of [`Rule`]s whose heads may include **aggregate and computed
+/// outputs** (chapter 12's uniform nonrecursive composition; the old
+/// projection-only wall is deleted). Evaluated **once**, not an lfp.
 /// Declaration order is topological order: interior `i` may read
-/// `Interior(j)` only for `j < i`. Head width is `rules[0].finds.len`;
-/// there is no separate head — aggregates cannot be written.
-/// **once**, not an lfp (`lean/Bumbledb/Query/Syntax.lean: Interior`).
+/// `Interior(j)` only for `j < i`, and NO interior may read the rec —
+/// the recursive cycle stays projection-only with no aggregation or
+/// value creation in its feedback (`lean/Bumbledb/Query/Stages.lean`).
+/// A name is a compositional handle, never a materialization directive:
+/// the head is `rules[0].head()`, exactly like main.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interior {
-    pub rules: Vec<ProjectionRule>,
+    pub rules: Vec<Rule>,
 }
 
 impl Interior {
     #[must_use]
     pub fn head(&self) -> Vec<HeadTerm> {
-        self.rules
-            .first()
-            .map(|rule| ProjectionRule::projection_head(&rule.finds))
-            .unwrap_or_default()
+        self.rules.first().map(Rule::head).unwrap_or_default()
+    }
+
+    /// The projection-only convenience: lift stage rules written in the
+    /// old bound-variable shape.
+    #[must_use]
+    pub fn from_projections(rules: &[ProjectionRule]) -> Self {
+        Self {
+            rules: rules.iter().map(ProjectionRule::to_rule).collect(),
+        }
     }
 }
 
@@ -667,7 +686,7 @@ mod tests {
     use bumbledb_theory::Interval;
 
     #[test]
-    fn point_lookup_by_fresh_key() {
+    fn point_lookup_by_param_bound_key() {
         let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![Atom {
@@ -790,6 +809,8 @@ mod tests {
             Value::Bool(true),
             Value::U64(u64::MAX),
             Value::I64(i64::MIN),
+            Value::F64(bumbledb_theory::F64::from(1.5)),
+            Value::Id128(bumbledb_theory::Id128::from_bytes([0xA5; 16])),
             Value::String(Box::from("text")),
             Value::FixedBytes(Box::from(&[0xDEu8, 0xAD][..])),
             Value::IntervalU64(
@@ -799,8 +820,15 @@ mod tests {
                 bumbledb_theory::Interval::<i64>::new(i64::MIN, i64::MAX)
                     .expect("nonempty interval"),
             ),
+            Value::IntervalF64(
+                bumbledb_theory::Interval::new(
+                    bumbledb_theory::F64::NEG_INFINITY,
+                    bumbledb_theory::F64::from(0.0),
+                )
+                .expect("nonempty interval"),
+            ),
         ];
-        assert_eq!(values.len(), 7);
+        assert_eq!(values.len(), 10);
     }
 
     #[test]

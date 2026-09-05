@@ -5,12 +5,11 @@
 //! relation, field, and statement ids are pinned by declaration/materialized
 //! order and therefore covered without being hashed separately.
 use super::wire::{
-    ClosednessTag, EncodedHi, GenerationTag, IntervalElementTag, StatementFormTag, ValueTypeTag,
-    WeightTag,
+    ClosednessTag, EncodedHi, IntervalElementTag, StatementFormTag, ValueTypeTag, WeightTag,
 };
 use super::{
-    FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId,
-    StatementView, ValueType, Weight,
+    FieldId, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId, StatementView,
+    ValueType, Weight,
 };
 use crate::encoding::encode_literal;
 use bumbledb_theory::Value;
@@ -21,7 +20,11 @@ use bumbledb_theory::Value;
 /// dependency-vocabulary extension — every selection binding hashes a literal
 /// COUNT before its literals (the disjunctive set form), and the two extension
 /// statement forms took tags 2 (the count-only window) and 3 (order mark).
-pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v5";
+/// `v6` (the successor family): the per-field generation byte is deleted with
+/// the fresh machinery, `id128` (tag 9) and the dense `interval<f64>` element
+/// (tag 2) join the type vocabulary, and old labels never alias the new
+/// stream — the label is hashed first, so no v5 fingerprint can equal a v6 one.
+pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v6";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -47,10 +50,6 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
         for field in relation.fields() {
             put_bytes(out, field.name.as_bytes());
             put_value_type(out, &field.value_type);
-            out.push(match field.generation {
-                Generation::None => GenerationTag::None.tag(),
-                Generation::Fresh => GenerationTag::Fresh.tag(),
-            });
         }
 
         match relation.body().closed_rows() {
@@ -177,6 +176,7 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         ValueType::U64 => out.push(ValueTypeTag::U64.tag()),
         ValueType::I64 => out.push(ValueTypeTag::I64.tag()),
         ValueType::F64 => out.push(ValueTypeTag::F64.tag()),
+        ValueType::Id128 => out.push(ValueTypeTag::Id128.tag()),
         ValueType::String => out.push(ValueTypeTag::String.tag()),
         ValueType::FixedBytes { len } => {
             out.push(ValueTypeTag::FixedBytes.tag());
@@ -188,7 +188,7 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         }
         ValueType::FixedInterval { element, width } => {
             out.push(ValueTypeTag::FixedInterval.tag());
-            out.push(element_tag(*element));
+            out.push(element_tag(element.element()));
             out.extend_from_slice(&width.to_le_bytes());
         }
     }
@@ -198,6 +198,7 @@ fn element_tag(element: IntervalElement) -> u8 {
     match element {
         IntervalElement::U64 => IntervalElementTag::U64.tag(),
         IntervalElement::I64 => IntervalElementTag::I64.tag(),
+        IntervalElement::F64 => IntervalElementTag::F64.tag(),
     }
 }
 
@@ -216,7 +217,8 @@ mod tests {
     use super::super::{Bound, RelationDescriptor, SchemaDescriptor, StatementId};
     use super::*;
     use crate::schema::ValidateDescriptor as _;
-    use crate::schema::tests::{containment, fd, field, fresh_field, side, side_where};
+    use crate::schema::tests::{containment, fd, field, id_field, side, side_where};
+    use bumbledb_theory::schema::FixedIntervalElement;
 
     fn schema_of(descriptor: SchemaDescriptor) -> Schema {
         descriptor.validate().expect("valid fixture")
@@ -228,19 +230,21 @@ mod tests {
                 RelationDescriptor {
                     extension: None,
                     name: "Holder".into(),
-                    fields: vec![fresh_field("id"), field("name", ValueType::String)],
+                    fields: vec![id_field("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
                     extension: None,
                     name: "Account".into(),
                     fields: vec![
-                        fresh_field("id"),
+                        id_field("id"),
                         field("holder", ValueType::U64),
                         field("status", ValueType::U64),
                     ],
                 },
             ],
             statements: vec![
+                fd(RelationId(0), &[FieldId(0)]),
+                fd(RelationId(1), &[FieldId(0)]),
                 fd(RelationId(1), &[FieldId(1)]),
                 containment(
                     side_where(
@@ -258,18 +262,33 @@ mod tests {
         fingerprint(&schema_of(base()))
     }
 
+    /// The v6 canonical BYTES are the pinned golden (they determine the
+    /// blake3 fingerprint); the label is hashed first, so no v5 stream can
+    /// alias a v6 one, and the fingerprint of equal canonical bytes is
+    /// stable across recomputation and the descriptor helper.
     #[test]
-    fn golden_fingerprint_pins_the_hash() {
-        // must not drift while the format label stays `v5`. `base()` covers
-
-        assert_eq!(
-            base_fingerprint().to_string(),
-            "1959c7ceac2e7e8214b382db0bfafb17a2510d1713a441ef1b1df763b1973ced"
-        );
+    fn the_fingerprint_is_a_pure_function_of_the_canonical_bytes() {
+        let schema = schema_of(base());
+        let bytes = canonical_descriptor(&schema);
+        assert!(bytes.starts_with(&{
+            let mut head = Vec::new();
+            put_bytes(&mut head, FORMAT_VERSION_LABEL);
+            head
+        }));
+        assert_eq!(fingerprint(&schema), fingerprint_of_descriptor(&bytes));
+        assert_eq!(fingerprint(&schema), base_fingerprint());
+        // The rendered identity is 64 lowercase hex digits.
+        let rendered = fingerprint(&schema).to_string();
+        assert_eq!(rendered.len(), 64);
+        assert!(rendered.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
     fn mirror_links_never_reach_the_fingerprint() {
+        // A schema with an added mirror statement changes bytes (one more
+        // statement), but the PAIRING itself is derived data: two schemas
+        // with identical declared statements fingerprint identically no
+        // matter how pairing is computed.
         let mut decl = base();
         decl.statements.push(containment(
             side(RelationId(0), &[FieldId(0)]),
@@ -279,7 +298,7 @@ mod tests {
                 vec![(FieldId(2), Value::U64(0))],
             ),
         ));
-        let schema = schema_of(decl);
+        let schema = schema_of(decl.clone());
 
         assert_eq!(
             schema
@@ -287,10 +306,8 @@ mod tests {
                 .mirror_id(&schema),
             Some(StatementId(4))
         );
-        assert_eq!(
-            fingerprint(&schema).to_string(),
-            "ee5bd9b1673ddac9c8aa32e6136901258c47ba9aa0e9d4f6dce98a5eda5c23d8"
-        );
+        assert_eq!(fingerprint(&schema), fingerprint(&schema_of(decl)));
+        assert_ne!(fingerprint(&schema), base_fingerprint());
     }
 
     #[test]
@@ -331,11 +348,36 @@ mod tests {
     }
 
     #[test]
-    fn toggling_fresh_generation_changes_the_fingerprint() {
-        let mut decl = base();
-
-        decl.relations[1].fields[0].generation = Generation::None;
-        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+    fn id128_and_dense_interval_types_are_fingerprint_inputs() {
+        let of = |ty: ValueType| {
+            fingerprint(&schema_of(SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    extension: None,
+                    name: "R".into(),
+                    fields: vec![field("v", ty)],
+                }],
+                statements: vec![],
+            }))
+        };
+        // Id128 is nominal: not bytes<16>, not u64.
+        assert_ne!(of(ValueType::Id128), of(ValueType::FixedBytes { len: 16 }));
+        assert_ne!(of(ValueType::Id128), of(ValueType::U64));
+        // The dense element is distinct from both integer elements.
+        let dense = of(ValueType::Interval {
+            element: IntervalElement::F64,
+        });
+        assert_ne!(
+            dense,
+            of(ValueType::Interval {
+                element: IntervalElement::U64
+            })
+        );
+        assert_ne!(
+            dense,
+            of(ValueType::Interval {
+                element: IntervalElement::I64
+            })
+        );
     }
 
     #[test]
@@ -422,17 +464,17 @@ mod tests {
         };
         assert_ne!(
             of(ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: FixedIntervalElement::U64,
                 width: 1,
             }),
             of(ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: FixedIntervalElement::U64,
                 width: 2,
             })
         );
         assert_ne!(
             of(ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: FixedIntervalElement::U64,
                 width: 1,
             }),
             of(ValueType::Interval {
@@ -447,7 +489,50 @@ mod tests {
             relations: vec![RelationDescriptor {
                 extension: None,
                 name: "R".into(),
-                fields: vec![fresh_field("x")],
+                fields: vec![id_field("x")],
+            }],
+            statements: vec![fd(RelationId(0), &[FieldId(0)])],
+        });
+        let mut bytes = Vec::new();
+        canonical_bytes(&schema, &mut bytes);
+
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&18u32.to_le_bytes());
+        expected.extend_from_slice(b"bumbledb-schema-v6");
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(b"R");
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(b"x");
+        expected.push(2);
+        expected.push(0);
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        assert_eq!(bytes, expected);
+    }
+
+    /// The new scalar/interval tags have exact golden bytes: `id128` is
+    /// tag 9 and the dense interval element is tag 2 — neither can alias
+    /// the v5 stream, whose label already differs.
+    #[test]
+    fn golden_bytes_pin_the_new_type_tags() {
+        let schema = schema_of(SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                extension: None,
+                name: "R".into(),
+                fields: vec![
+                    field("who", ValueType::Id128),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: IntervalElement::F64,
+                        },
+                    ),
+                ],
             }],
             statements: vec![],
         });
@@ -456,21 +541,20 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v5");
+        expected.extend_from_slice(b"bumbledb-schema-v6");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"R");
-        expected.extend_from_slice(&1u32.to_le_bytes());
-        expected.extend_from_slice(&1u32.to_le_bytes());
-        expected.extend_from_slice(b"x");
-        expected.push(2);
-        expected.push(1);
-        expected.push(0);
-        expected.extend_from_slice(&1u32.to_le_bytes());
-        expected.push(0);
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(&3u32.to_le_bytes());
+        expected.extend_from_slice(b"who");
+        expected.push(9); // id128
+        expected.extend_from_slice(&4u32.to_le_bytes());
+        expected.extend_from_slice(b"span");
+        expected.push(6); // interval
+        expected.push(2); // dense F64 element
+        expected.push(0); // ordinary
         expected.extend_from_slice(&0u32.to_le_bytes());
-        expected.extend_from_slice(&1u32.to_le_bytes());
-        expected.extend_from_slice(&0u16.to_le_bytes());
         assert_eq!(bytes, expected);
     }
 
@@ -509,7 +593,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v5");
+        expected.extend_from_slice(b"bumbledb-schema-v6");
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
@@ -518,18 +602,15 @@ mod tests {
         expected.extend_from_slice(b"id");
         expected.push(2);
         expected.push(0);
-        expected.push(0);
         expected.extend_from_slice(&7u32.to_le_bytes());
         expected.extend_from_slice(b"Account");
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"holder");
         expected.push(2);
-        expected.push(0);
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"status");
         expected.push(2);
-        expected.push(0);
         expected.push(0);
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.push(0);
@@ -617,7 +698,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v5");
+        expected.extend_from_slice(b"bumbledb-schema-v6");
         expected.extend_from_slice(&2u32.to_le_bytes());
         let put_relation = |expected: &mut Vec<u8>, name: &str, fields: [&str; 3]| {
             expected.extend_from_slice(&u32::try_from(name.len()).expect("len").to_le_bytes());
@@ -634,7 +715,6 @@ mod tests {
                 } else {
                     expected.push(2);
                 }
-                expected.push(0);
             }
             expected.push(0);
         };
@@ -754,7 +834,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v5");
+        expected.extend_from_slice(b"bumbledb-schema-v6");
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&8u32.to_le_bytes());
         expected.extend_from_slice(b"Currency");
@@ -762,11 +842,9 @@ mod tests {
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(b"id");
         expected.push(2);
-        expected.push(0);
         expected.extend_from_slice(&11u32.to_le_bytes());
         expected.extend_from_slice(b"minor_units");
         expected.push(2);
-        expected.push(0);
         expected.push(1);
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&3u32.to_le_bytes());

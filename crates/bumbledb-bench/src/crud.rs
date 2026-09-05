@@ -15,7 +15,7 @@ bumbledb::schema! {
     pub CrudWorld;
 
     relation Doc {
-        id: u64 as CrudDocId, fresh,
+        id: u64 as CrudDocId,
         key: u64,
         val: i64,
         payload: bytes<32>,
@@ -24,6 +24,11 @@ bumbledb::schema! {
         key: u64,
         val: i64,
     }
+
+    // Declared id key first (E-NO-RESERVE): the retired fresh auto-key is
+    // an ordinary declared statement now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Doc(id) -> Doc;
 
     Doc(key) -> Doc;
     Counter(key) -> Counter;
@@ -49,7 +54,7 @@ pub fn schema() -> &'static bumbledb::Schema {
     })
 }
 
-/// fresh minting after load therefore starts at `docs + delete_pool` on
+/// application-owned minting after load therefore starts at `docs + delete_pool` on
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrudSizes {
     pub docs: u64,
@@ -102,7 +107,7 @@ pub fn families() -> &'static [CrudFamily] {
         },
         CrudFamily {
             name: "crud_insert",
-            about: "one fresh Doc row per commit (fsync-bound single-writer floor)",
+            about: "one new Doc row per commit (fsync-bound single-writer floor)",
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -110,7 +115,7 @@ pub fn families() -> &'static [CrudFamily] {
         },
         CrudFamily {
             name: "crud_insert_10",
-            about: "10 fresh Doc rows per commit",
+            about: "10 new Doc rows per commit",
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -118,7 +123,7 @@ pub fn families() -> &'static [CrudFamily] {
         },
         CrudFamily {
             name: "crud_insert_100",
-            about: "100 fresh Doc rows per commit",
+            about: "100 new Doc rows per commit",
             protocol: Protocol {
                 warmups: 4,
                 samples: 32,
@@ -126,7 +131,7 @@ pub fn families() -> &'static [CrudFamily] {
         },
         CrudFamily {
             name: "crud_insert_1k",
-            about: "1000 fresh Doc rows per commit",
+            about: "1000 new Doc rows per commit",
             protocol: Protocol {
                 warmups: 2,
                 samples: 16,

@@ -14,14 +14,20 @@ pub mod world {
         pub WindowedWorld;
 
         relation WParent {
-            id: u64 as WParentId, fresh,
+            id: u64 as WParentId,
             kind: u64,
         }
         relation WChild {
-            id: u64 as WChildId, fresh,
+            id: u64 as WChildId,
             parent: u64 as WParentId,
             flag: u64,
         }
+
+        // Declared id keys first (E-NO-RESERVE): the retired fresh
+        // auto-keys are ordinary declared statements now, at the head so
+        // the later declared statement ids keep their historical slots.
+        WParent(id) -> WParent;
+        WChild(id)  -> WChild;
 
         WChild(parent) <= WParent(id);
         WParent(id) <={0..64} WChild(parent);
@@ -34,14 +40,17 @@ pub mod baseline {
         pub UnwindowedWorld;
 
         relation WParent {
-            id: u64 as WParentId, fresh,
+            id: u64 as WParentId,
             kind: u64,
         }
         relation WChild {
-            id: u64 as WChildId, fresh,
+            id: u64 as WChildId,
             parent: u64 as WParentId,
             flag: u64,
         }
+
+        WParent(id) -> WParent;
+        WChild(id)  -> WChild;
 
         WChild(parent) <= WParent(id);
     }
@@ -77,6 +86,14 @@ impl Mass {
 }
 
 pub const PARENTS: u64 = Mass::BENCH.parents;
+
+/// The application-owned child-id mint base for the measured commit
+/// families (E-NO-RESERVE): corpus child ids are dense from 0, and the
+/// sweep lane's engineered probe ids live at `1 << 32` and above on its
+/// own scratch stores — cursors seeded here collide with neither; each
+/// family owns one cursor that persists across its timed window and any
+/// traced re-run.
+pub const MINT_BASE: u64 = 1 << 24;
 
 #[must_use]
 pub fn parent_kind(i: u64) -> u64 {
@@ -126,12 +143,14 @@ fn unselected_parent(rng: &mut Rng) -> u64 {
 pub fn commit_window_admission(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
+    mint: &mut u64,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0117_0001);
     harness::measure(proto, || {
         let parent = world::WParentId(rng.range(PARENTS));
+        let id = world::WChildId(*mint);
+        *mint += 1;
         db.write(|tx| {
-            let id: world::WChildId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&world::WChild {
                 id,
                 parent,
@@ -148,12 +167,14 @@ pub fn commit_window_admission(
 pub fn commit_window_baseline(
     db: &Db<baseline::UnwindowedWorld>,
     proto: Protocol,
+    mint: &mut u64,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0117_0001);
     harness::measure(proto, || {
         let parent = baseline::WParentId(rng.range(PARENTS));
+        let id = baseline::WChildId(*mint);
+        *mint += 1;
         db.write(|tx| {
-            let id: baseline::WChildId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&baseline::WChild {
                 id,
                 parent,
@@ -170,12 +191,14 @@ pub fn commit_window_baseline(
 pub fn commit_window_exclusion(
     db: &Db<world::WindowedWorld>,
     proto: Protocol,
+    mint: &mut u64,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0117_0002);
     harness::measure(proto, || {
         let parent = world::WParentId(unselected_parent(&mut rng));
+        let id = world::WChildId(*mint);
+        *mint += 1;
         db.write(|tx| {
-            let id: world::WChildId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&world::WChild {
                 id,
                 parent,
@@ -239,14 +262,21 @@ pub fn write_families(
     };
     // Baseline first: the control's clock shadow must not carry the
 
+    // One persistent mint per family: admission and exclusion share the
+    // windowed store, so their bases are disjoint blocks, and each cursor
+    // survives the traced re-run (a re-invocation keeps inserting NEW
+    // rows instead of degrading into no-op duplicate commits).
+    let mut baseline_mint = MINT_BASE;
+    let mut admission_mint = MINT_BASE;
+    let mut exclusion_mint = MINT_BASE + (1 << 20);
     push("commit_window_baseline", &mut |proto| {
-        commit_window_baseline(&unwindowed, proto)
+        commit_window_baseline(&unwindowed, proto, &mut baseline_mint)
     })?;
     push("commit_window_admission", &mut |proto| {
-        commit_window_admission(&windowed, proto)
+        commit_window_admission(&windowed, proto, &mut admission_mint)
     })?;
     push("commit_window_exclusion", &mut |proto| {
-        commit_window_exclusion(&windowed, proto)
+        commit_window_exclusion(&windowed, proto, &mut exclusion_mint)
     })?;
     Ok(out)
 }

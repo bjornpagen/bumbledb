@@ -15,7 +15,6 @@ fn field(name: &str, newtype: Option<&str>) -> FieldSpec {
         name: name.into(),
         value_type: ValueType::U64,
         newtype: newtype.map(Into::into),
-        fresh: false,
     }
 }
 
@@ -213,6 +212,117 @@ fn the_issue_list_is_complete_in_one_pass() {
     else {
         panic!("the complete list in spec order, not {:?}", err.issues());
     };
+}
+
+/// Harmless equivalent capacity spellings normalize to one canonical law
+/// instead of refusing (the ban tables are deleted): `{n..n}` is the
+/// exact window, `{0..0}` the exclusion, and unit floors — including the
+/// `{1..*}` existence window — are ordinary grouped-measure windows.
+/// Inverted literal bounds and dependent floors still refuse.
+#[test]
+fn equivalent_capacity_spellings_normalize_and_real_errors_still_refuse() {
+    use bumbledb_theory::schema::Bound;
+    use bumbledb_theory::schema::spec::{BoundSpec, CapacityWindowSpec, WeightSpec};
+
+    let with_window = |window: CapacityWindowSpec| SchemaSpec {
+        relations: vec![
+            RelationSpec {
+                name: "Student".into(),
+                fields: vec![field("id", None)],
+                closed: None,
+            },
+            RelationSpec {
+                name: "Attempt".into(),
+                fields: vec![field("student", None)],
+                closed: None,
+            },
+        ],
+        statements: vec![StatementSpec::Capacity {
+            target: SideSpec {
+                relation: "Student".into(),
+                projection: vec!["id".into()],
+                selection: vec![],
+            },
+            weight: WeightSpec::Unit,
+            window,
+            source: SideSpec {
+                relation: "Attempt".into(),
+                projection: vec!["student".into()],
+                selection: vec![],
+            },
+        }],
+    };
+    let lowered = |window: CapacityWindowSpec| {
+        let descriptor = with_window(window).descriptor().expect("lowers clean");
+        let StatementDescriptor::Capacity { lo, hi, .. } = descriptor.statements[0].clone() else {
+            panic!("one capacity lowered");
+        };
+        (lo, hi)
+    };
+
+    // Exact window and its equal-bound range spelling are one law.
+    assert_eq!(
+        lowered(CapacityWindowSpec::Exact(BoundSpec::Lit(3))),
+        (3, Some(Bound::Lit(3)))
+    );
+    assert_eq!(
+        lowered(CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(3),
+            hi: BoundSpec::Lit(3)
+        }),
+        (3, Some(Bound::Lit(3)))
+    );
+    // The exclusion and its range spelling are one law.
+    assert_eq!(
+        lowered(CapacityWindowSpec::Exact(BoundSpec::Lit(0))),
+        (0, Some(Bound::Lit(0)))
+    );
+    assert_eq!(
+        lowered(CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(0),
+            hi: BoundSpec::Lit(0)
+        }),
+        (0, Some(Bound::Lit(0)))
+    );
+    // Unit floors are grouped-measure windows, not bans: existence and
+    // at-least-N both lower; the vacuous floor lowers and judges trivially.
+    assert_eq!(
+        lowered(CapacityWindowSpec::Floor(BoundSpec::Lit(1))),
+        (1, None)
+    );
+    assert_eq!(
+        lowered(CapacityWindowSpec::Floor(BoundSpec::Lit(4))),
+        (4, None)
+    );
+    assert_eq!(
+        lowered(CapacityWindowSpec::Floor(BoundSpec::Lit(0))),
+        (0, None)
+    );
+
+    // Genuinely different semantics still refuse: inverted literal bounds…
+    let err = with_window(CapacityWindowSpec::Range {
+        lo: BoundSpec::Lit(5),
+        hi: BoundSpec::Lit(2),
+    })
+    .descriptor()
+    .expect_err("inverted refuses");
+    assert!(err.issues().iter().any(|issue| matches!(
+        issue,
+        SpecIssue::CapacityInverted {
+            statement: 0,
+            lo: 5,
+            hi: 2
+        }
+    )));
+    // …and a dependent bound in the floor slot.
+    let err = with_window(CapacityWindowSpec::Floor(BoundSpec::Field("id".into())))
+        .descriptor()
+        .expect_err("dependent floor refuses");
+    assert!(
+        err.issues()
+            .iter()
+            .any(|issue| matches!(issue, SpecIssue::CapacityDependentFloor { statement: 0 }))
+    );
 }
 
 /// The sealed-field cap (finding 059): a relation past the u16 field-id

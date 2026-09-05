@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.bumbledb/
+next-env.d.ts
+*.tsbuildinfo
+# Written by the F3 runner to point the example at the STAGED tarballs
+# (the SDK versions are unpublished until promotion); never committed.
+pnpm-workspace.yaml
+pnpm-lock.yaml

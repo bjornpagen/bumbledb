@@ -35,7 +35,7 @@ import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 
-const Holder = relation("Holder", { id: u64.fresh, name: str })
+const Holder = relation("Holder", { id: u64, name: str })
 const Session = relation("Session", {
 	holder: u64,
 	at: u64,

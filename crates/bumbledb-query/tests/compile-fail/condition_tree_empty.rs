@@ -16,4 +16,5 @@ pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
         (c) | Parent(child: c, parent: p), and();
     })
+    .into_query()
 }

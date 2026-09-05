@@ -159,7 +159,6 @@ mod on_a_live_ram_disk {
             samples: None,
             trace: false,
             alloc: false,
-            ephemeral: false,
             proxy_per_rep: false,
             out: None,
             i_am_lying: true,

@@ -1,8 +1,8 @@
 use super::*;
-use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Result;
 use crate::exec::colt::Colt;
 use crate::exec::run::{Counters, Executor};
+use crate::image::testsupport::TestSource;
 use crate::image::view::{FilterPredicate, OperandAddr, apply};
 use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, OccBind, OccId, Occurrence, Role, SlotWidth};
@@ -10,13 +10,9 @@ use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -35,17 +31,14 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "account".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "amount".into(),
                         value_type: ValueType::I64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -56,12 +49,10 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "posting".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "tag".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -72,19 +63,16 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "emp".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "during".into(),
                         value_type: ValueType::Interval {
                             element: IntervalElement::I64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -100,75 +88,53 @@ const TAG: RelationId = RelationId(1);
 const PAYROLL: RelationId = RelationId(2);
 
 fn views_of(
-    dir: &TempDir,
     schema: &Schema,
     postings: &[(u64, u64, i64)],
     tags: &[(u64, u64)],
 ) -> Vec<Arc<crate::image::RelationImage>> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, account, amount) in postings {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(*account),
-                ValueRef::I64(*amount),
-            ],
-            schema.relation(POSTING).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, POSTING, &bytes).expect("insert");
-    }
-    for (posting, tag) in tags {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(*posting), ValueRef::U64(*tag)],
-            schema.relation(TAG).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, TAG, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
+    let posting_rows: Vec<Vec<crate::ir::Value>> = postings
+        .iter()
+        .map(|(id, account, amount)| {
+            vec![
+                crate::ir::Value::U64(*id),
+                crate::ir::Value::U64(*account),
+                crate::ir::Value::I64(*amount),
+            ]
+        })
+        .collect();
+    let tag_rows: Vec<Vec<crate::ir::Value>> = tags
+        .iter()
+        .map(|(posting, tag)| vec![crate::ir::Value::U64(*posting), crate::ir::Value::U64(*tag)])
+        .collect();
+    let source = TestSource::new(schema, &[(POSTING, posting_rows), (TAG, tag_rows)]);
+    let cache = crate::image::cache::ImageCache::new(schema);
     [POSTING, TAG]
         .iter()
-        .map(|rel| crate::image::build(&txn.catalog(), schema, *rel).expect("build"))
+        .map(|rel| source.image(&cache, *rel))
         .collect()
 }
 
 fn payroll_views_of(
-    dir: &TempDir,
     schema: &Schema,
     rows: &[(u64, u64, (i64, i64))],
 ) -> Vec<Arc<crate::image::RelationImage>> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, emp, (start, end)) in rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(*emp),
-                ValueRef::IntervalI64(
+    let payroll_rows: Vec<Vec<crate::ir::Value>> = rows
+        .iter()
+        .map(|(id, emp, (start, end))| {
+            vec![
+                crate::ir::Value::U64(*id),
+                crate::ir::Value::U64(*emp),
+                crate::ir::Value::IntervalI64(
                     bumbledb_theory::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
                 ),
-            ],
-            schema.relation(PAYROLL).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, PAYROLL, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-
+            ]
+        })
+        .collect();
+    let source = TestSource::new(schema, &[(PAYROLL, payroll_rows)]);
+    let cache = crate::image::cache::ImageCache::new(schema);
     [POSTING, TAG, PAYROLL]
         .iter()
-        .map(|rel| crate::image::build(&txn.catalog(), schema, *rel).expect("build"))
+        .map(|rel| source.image(&cache, *rel))
         .collect()
 }
 

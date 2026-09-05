@@ -19,4 +19,5 @@ pub fn q() -> bumbledb::Query {
               c == ?root,
               p == ?0;
     })
+    .into_query()
 }

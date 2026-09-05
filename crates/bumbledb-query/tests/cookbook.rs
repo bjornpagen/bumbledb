@@ -62,8 +62,10 @@ macro_rules! recipe {
             /// Prepares every query fence against a real store of this
             /// recipe's theory and renders it — the `pin()` discipline.
             pub fn pin() -> Vec<String> {
+                // `.into_query()`: the typed templates are per-expansion
+                // types; the roster array carries the plain owned IR.
                 crate::pin_all(concat!("cookbook-pin-", stringify!($m)), $theory, &[$(
-                    bumbledb_query::query!($theory { $($q)* })
+                    bumbledb_query::query!($theory { $($q)* }).into_query()
                 ),*])
             }
         }
@@ -73,9 +75,10 @@ macro_rules! recipe {
 recipe!(r01, Uptime, {
     pub Uptime;
 
-    relation Service { id: u64 as ServiceId, fresh, name: str }
+    relation Service { id: u64 as ServiceId, name: str }
     relation Outage  { service: u64 as ServiceId, window: interval<i64> }
 
+    Service(id) -> Service;
     Outage(service) <= Service(id);
     Outage(service, window) -> Outage;
 }, queries {
@@ -90,10 +93,11 @@ recipe!(r02, Grading, {
 
     closed relation Kind as KindId = { Deterministic, CustomOperator };
 
-    relation Task { id: u64 as TaskId, fresh, kind: u64 as KindId }
+    relation Task { id: u64 as TaskId, kind: u64 as KindId }
     relation DeterministicGrading  { task: u64 as TaskId, tolerance: i64 }
     relation CustomOperatorGrading { task: u64 as TaskId, operator: str }
 
+    Task(id) -> Task;
     Task(kind) <= Kind(id);
     DeterministicGrading(task)  -> DeterministicGrading;
     CustomOperatorGrading(task) -> CustomOperatorGrading;
@@ -104,9 +108,10 @@ recipe!(r02, Grading, {
 recipe!(r03, Optionality, {
     pub Optionality;
 
-    relation Business { id: u64 as BusinessId, fresh, name: str }
+    relation Business { id: u64 as BusinessId, name: str }
     relation MailingAddress { business: u64 as BusinessId, line: str, city: str }
 
+    Business(id) -> Business;
     MailingAddress(business) -> MailingAddress;
     MailingAddress(business) <= Business(id);
 }, queries {
@@ -119,14 +124,15 @@ recipe!(r04, Money, {
 
     closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
 
-    relation Account { id: u64 as AccountId, fresh, name: str }
+    relation Account { id: u64 as AccountId, name: str }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         account: u64 as AccountId,
         currency: u64 as CurrencyId,
         minor: i64 as Minor,
     }
 
+    Account(id) -> Account;
     Posting(account)  <= Account(id);
     Posting(currency) <= Currency(id);
 }, queries {
@@ -140,12 +146,13 @@ recipe!(r05, Content, {
     closed relation Region as RegionId = { Us, Eu };
 
     relation Document {
-        id: u64 as DocumentId, fresh,
+        id: u64 as DocumentId,
         name: str,
         payload: bytes<32> as PayloadHash,
     }
     relation Replica { payload: bytes<32> as PayloadHash, region: u64 as RegionId }
 
+    Document(id) -> Document;
     Document(payload) -> Document;
     Replica(payload) <= Document(payload);
     Replica(region)  <= Region(id);
@@ -160,11 +167,12 @@ recipe!(r06, Tickets, {
     closed relation Priority as PriorityId = { Low, Normal, Urgent };
 
     relation Ticket {
-        id: u64 as TicketId, fresh,
+        id: u64 as TicketId,
         priority: u64 as PriorityId,
         opened_at: i64,
     }
 
+    Ticket(id) -> Ticket;
     Ticket(priority) <= Priority(id);
 }, queries {
     urgent: { (t) | Ticket(id: t, priority == Urgent); }
@@ -183,9 +191,10 @@ recipe!(r07, Review, {
         Failed     { mastered: false, rank: 10 },
     };
 
-    relation Attempt { id: u64 as AttemptId, fresh, kind: u64 as KindId }
+    relation Attempt { id: u64 as AttemptId, kind: u64 as KindId }
     relation Certificate { attempt: u64 as AttemptId, kind: u64 as KindId }
 
+    Attempt(id) -> Attempt;
     Attempt(kind) <= Kind(id);
     Certificate(attempt) -> Certificate;
     Certificate(attempt) <= Attempt(id);
@@ -208,7 +217,7 @@ recipe!(r08, Oncall, {
     };
 
     relation Incident {
-        id: u64 as IncidentId, fresh,
+        id: u64 as IncidentId,
         severity: u64 as SeverityId,
     }
     relation Escalation {
@@ -217,6 +226,7 @@ recipe!(r08, Oncall, {
         at: i64,
     }
 
+    Incident(id) -> Incident;
     Incident(severity) <= Severity(id);
     Escalation(incident) <= Incident(id);
     Escalation(severity) <= Severity(id | pages == true);
@@ -228,10 +238,11 @@ recipe!(r08, Oncall, {
 recipe!(r09, Playlists, {
     pub Playlists;
 
-    relation Playlist { id: u64 as PlaylistId, fresh, name: str }
+    relation Playlist { id: u64 as PlaylistId, name: str }
     relation Extent { playlist: u64 as PlaylistId, span: interval<u64> }
     relation Slot { playlist: u64 as PlaylistId, slot: interval<u64, 1>, track: str }
 
+    Playlist(id) -> Playlist;
     Extent(playlist) <= Playlist(id);
     Slot(playlist)   <= Playlist(id);
     Extent(playlist) -> Extent;
@@ -248,11 +259,12 @@ recipe!(r10, Ast, {
 
     closed relation Kind as KindId = { Lit, Add };
 
-    relation Node { id: u64 as NodeId, fresh, kind: u64 as KindId }
+    relation Node { id: u64 as NodeId, kind: u64 as KindId }
     relation Lit  { node: u64 as NodeId, value: i64 }
     relation Add  { node: u64 as NodeId, lhs: u64 as NodeId, rhs: u64 as NodeId }
     relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
 
+    Node(id) -> Node;
     Node(kind) <= Kind(id);
     Lit(node) -> Lit;
     Add(node) -> Add;
@@ -271,11 +283,13 @@ recipe!(r10, Ast, {
 recipe!(r11, Graph, {
     pub Graph;
 
-    relation Person { id: u64 as PersonId, fresh, name: str }
-    relation Repo   { id: u64 as RepoId, fresh, name: str }
+    relation Person { id: u64 as PersonId, name: str }
+    relation Repo   { id: u64 as RepoId, name: str }
     relation Follows   { follower: u64 as PersonId, followee: u64 as PersonId }
     relation Maintains { person: u64 as PersonId, repo: u64 as RepoId }
 
+    Person(id) -> Person;
+    Repo(id) -> Repo;
     Follows(follower) <= Person(id);
     Follows(followee) <= Person(id);
     Follows(follower, followee) -> Follows;
@@ -292,11 +306,12 @@ recipe!(r11, Graph, {
 recipe!(r12, Ecs, {
     pub Ecs;
 
-    relation Entity { id: u64 as EntityId, fresh, name: str }
+    relation Entity { id: u64 as EntityId, name: str }
     relation Transform  { entity: u64 as EntityId, x: i64, y: i64 }
     relation Velocity   { entity: u64 as EntityId, dx: i64, dy: i64 }
     relation Renderable { entity: u64 as EntityId, mesh: str }
 
+    Entity(id) -> Entity;
     Transform(entity)  -> Transform;
     Transform(entity)  <= Entity(id);
     Velocity(entity)   -> Velocity;
@@ -314,10 +329,11 @@ recipe!(r13, Orders, {
 
     closed relation State as StateId = { Cart, Placed, Shipped };
 
-    relation Order { id: u64 as OrderId, fresh, state: u64 as StateId }
+    relation Order { id: u64 as OrderId, state: u64 as StateId }
     relation Placement { order: u64 as OrderId, at: i64 }
     relation Shipment  { order: u64 as OrderId, carrier: str, at: i64 }
 
+    Order(id) -> Order;
     Order(state) <= State(id);
     Placement(order) -> Placement;
     Shipment(order)  -> Shipment;
@@ -334,11 +350,11 @@ recipe!(r14, Calendar, {
     closed relation Rsvp as RsvpId = { Accepted, Tentative, Declined };
     closed relation Arm as ArmId = { Busy, Ooo };
 
-    relation Person { id: u64 as PersonId, fresh, name: str }
-    relation Room   { id: u64 as RoomId, fresh, name: str }
-    relation Event  { id: u64 as EventId, fresh, span: interval<i64> }
+    relation Person { id: u64 as PersonId, name: str }
+    relation Room   { id: u64 as RoomId, name: str }
+    relation Event  { id: u64 as EventId, span: interval<i64> }
     relation Attendance {
-        id: u64 as AttendanceId, fresh,
+        id: u64 as AttendanceId,
         event: u64 as EventId,
         person: u64 as PersonId,
         rsvp: u64 as RsvpId,
@@ -352,6 +368,7 @@ recipe!(r14, Calendar, {
     relation Booking   { room: u64 as RoomId, event: u64 as EventId, span: interval<i64> }
     relation WorkHours { person: u64 as PersonId, hours: interval<i64> }
 
+    Person(id) -> Person;
     Attendance(event)  <= Event(id);
     Attendance(person) <= Person(id);
     Attendance(rsvp)   <= Rsvp(id);
@@ -375,9 +392,10 @@ recipe!(r14, Calendar, {
 recipe!(r15, Pricing, {
     pub Pricing;
 
-    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Policy  { id: u64 as PolicyId, live: interval<i64> }
     relation Version { policy: u64 as PolicyId, rate_bps: i64, valid: interval<i64> }
 
+    Policy(id) -> Policy;
     Version(policy) <= Policy(id);
     Version(policy, valid) -> Version;
     Policy(id, live) <= Version(policy, valid);
@@ -393,9 +411,10 @@ recipe!(r15, Pricing, {
 recipe!(r16, Payroll, {
     pub Payroll;
 
-    relation FiscalYear { id: u64 as FiscalYearId, fresh, span: interval<i64> }
+    relation FiscalYear { id: u64 as FiscalYearId, span: interval<i64> }
     relation PayPeriod  { year: u64 as FiscalYearId, seq: u64, span: interval<i64> }
 
+    FiscalYear(id) -> FiscalYear;
     PayPeriod(year) <= FiscalYear(id);
     PayPeriod(year, seq)  -> PayPeriod;
     PayPeriod(year, span) -> PayPeriod;
@@ -411,7 +430,7 @@ recipe!(r17, Tax, {
     closed relation Status as StatusId = { Single, MarriedJoint, HeadOfHousehold };
 
     relation Regime {
-        id: u64 as RegimeId, fresh,
+        id: u64 as RegimeId,
         year: i64,
         status: u64 as StatusId,
     }
@@ -419,6 +438,7 @@ recipe!(r17, Tax, {
     relation Residency { person: u64, span: interval<i64> }
     relation Earned { person: u64, regime: u64 as RegimeId, span: interval<i64>, minor: i64 }
 
+    Regime(id) -> Regime;
     Regime(status) <= Status(id);
     Regime(year, status) -> Regime;
     Bracket(regime) <= Regime(id);
@@ -436,9 +456,10 @@ recipe!(r17, Tax, {
 recipe!(r18, FreeTime, {
     pub FreeTime;
 
-    relation Person { id: u64 as PersonId, fresh, name: str }
+    relation Person { id: u64 as PersonId, name: str }
     relation Claim  { person: u64 as PersonId, span: interval<i64> }
 
+    Person(id) -> Person;
     Claim(person) <= Person(id);
 }, queries {
     busy: { (person, busy: Pack(span)) | Claim(person, span); }
@@ -448,15 +469,16 @@ recipe!(r18, FreeTime, {
 recipe!(r19, Ledger, {
     pub Ledger;
 
-    relation Account      { id: u64 as AccountId, fresh, name: str }
-    relation JournalEntry { id: u64 as JournalEntryId, fresh, at: i64, memo: str }
+    relation Account      { id: u64 as AccountId, name: str }
+    relation JournalEntry { id: u64 as JournalEntryId, at: i64, memo: str }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         entry: u64 as JournalEntryId,
         account: u64 as AccountId,
         minor: i64,
     }
 
+    Account(id) -> Account;
     Posting(entry)   <= JournalEntry(id);
     Posting(account) <= Account(id);
 }, queries {
@@ -472,12 +494,13 @@ recipe!(r20, Jobs, {
     closed relation State as StateId = { Queued, Running, Done };
 
     relation Job {
-        id: u64 as JobId, fresh,
+        id: u64 as JobId,
         state: u64 as StateId,
         payload: str,
     }
     relation Lease { job: u64 as JobId, worker: u64, until: i64 }
 
+    Job(id) -> Job;
     Job(state) <= State(id);
     Lease(job) -> Lease;
     Lease(job) == Job(id | state == Running);
@@ -514,10 +537,11 @@ recipe!(r22, Payments, {
 
     closed relation Kind as KindId = { Card, Ach };
 
-    relation Payment { id: u64 as PaymentId, fresh, kind: u64 as KindId }
+    relation Payment { id: u64 as PaymentId, kind: u64 as KindId }
     relation Card { payment: u64 as PaymentId, last4: u64 }
     relation Ach  { payment: u64 as PaymentId, routing: u64 }
 
+    Payment(id) -> Payment;
     Payment(kind) <= Kind(id);
     Card(payment) -> Card;
     Ach(payment)  -> Ach;
@@ -537,8 +561,9 @@ recipe!(r23, Gravestones, {
     relation Score { subject: u64, bps: i64 }
     relation ActiveRun { student: u64, run: u64 }
     relation Usage { meter: u64, period: u64, used: interval<i64> }
-    relation Event { id: u64 as GravestoneEventId, fresh, at: i64 }
+    relation Event { id: u64 as GravestoneEventId, at: i64 }
 
+    Event(id) -> Event;
     Step(flow, pos)    -> Step;
     Score(subject)     -> Score;
     ActiveRun(student) -> ActiveRun;
@@ -548,9 +573,10 @@ recipe!(r23, Gravestones, {
 recipe!(r24, Closure, {
     pub Closure;
 
-    relation Node   { id: u64 as NodeId, fresh, name: str }
+    relation Node   { id: u64 as NodeId, name: str }
     relation Parent { child: u64 as NodeId, parent: u64 as NodeId }
 
+    Node(id) -> Node;
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
@@ -568,14 +594,15 @@ recipe!(r24, Closure, {
 recipe!(r25, Accounts, {
     pub Accounts;
 
-    relation Account { id: u64 as AccountId, fresh, name: str }
+    relation Account { id: u64 as AccountId, name: str }
     relation AccountParent { child: u64 as AccountId, parent: u64 as AccountId }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         account: u64 as AccountId,
         minor: i64,
     }
 
+    Account(id) -> Account;
     AccountParent(child) -> AccountParent;
     AccountParent(child)  <= Account(id);
     AccountParent(parent) <= Account(id);
@@ -596,9 +623,10 @@ recipe!(r25, Accounts, {
 recipe!(r26, ExactPartition, {
     pub ExactPartition;
 
-    relation Policy  { id: u64 as PolicyId, fresh, live: interval<i64> }
+    relation Policy  { id: u64 as PolicyId, live: interval<i64> }
     relation Version { policy: u64 as PolicyId, valid: interval<i64> }
 
+    Policy(id) -> Policy;
     Version(policy) <= Policy(id);
     Version(policy, valid) -> Version;
     Policy(id, live) -> Policy;
@@ -646,13 +674,14 @@ mod composite_partition {
 recipe!(r28, Payroll, {
     pub Payroll;
 
-    relation Employee { id: u64 as EmployeeId, fresh, name: str }
+    relation Employee { id: u64 as EmployeeId, name: str }
     relation Salary {
         employee: u64 as EmployeeId,
         amount: i64,
         applies: interval<i64>,
     }
 
+    Employee(id) -> Employee;
     Salary(employee) <= Employee(id);
     Salary(employee, applies) -> Salary;
 }, queries {
@@ -670,7 +699,7 @@ mod r28_old {
     bumbledb::schema! {
         pub PayrollV1;
 
-        relation Employee { id: u64 as EmployeeId, fresh, name: str }
+        relation Employee { id: u64 as EmployeeId, name: str }
         relation Salary   { employee: u64 as EmployeeId, amount: i64 }
 
         Salary(employee) <= Employee(id);
@@ -682,11 +711,12 @@ recipe!(r29, ZoneLedger, {
 
     closed relation Kind as KindId = { Unit, Pair };
 
-    relation Ledger   { id: u64 as LedgerId, fresh, name: str }
+    relation Ledger   { id: u64 as LedgerId, name: str }
     relation Zone     { ledger: u64 as LedgerId, kind: u64 as KindId, at: interval<u64> }
     relation UnitSlot { ledger: u64 as LedgerId, at: interval<u64, 1>, entry: u64 }
     relation PairSlot { ledger: u64 as LedgerId, at: interval<u64, 2>, entry: u64 }
 
+    Ledger(id) -> Ledger;
     Zone(ledger) <= Ledger(id);
     Zone(kind)   <= Kind(id);
     Zone(ledger, at) -> Zone;
@@ -699,13 +729,14 @@ recipe!(r29, ZoneLedger, {
 recipe!(r30, KeyedRead, {
     pub KeyedRead;
 
-    relation Grp     { id: u64 as GrpId, fresh, label: str }
+    relation Grp     { id: u64 as GrpId, label: str }
     relation Course {
-        id: u64 as CourseId, fresh,
+        id: u64 as CourseId,
         grp: u64 as GrpId,
         title: str,
     }
 
+    Grp(id) -> Grp;
     Course(grp) <= Grp(id);
     Course(grp) -> Course;
 });
@@ -713,15 +744,16 @@ recipe!(r30, KeyedRead, {
 recipe!(r31, Racks, {
     pub Racks;
 
-    relation Pool  { id: u64 as PoolId, fresh, supply: u64 }
-    relation Model { id: u64 as ModelId, fresh, watts: u64 }
+    relation Pool  { id: u64 as PoolId, supply: u64 }
+    relation Model { id: u64 as ModelId, watts: u64 }
     relation Device {
-        id: u64 as DeviceId, fresh,
+        id: u64 as DeviceId,
         pool: u64 as PoolId,
         model: u64 as ModelId,
         watts: u64,
     }
 
+    Pool(id) -> Pool;
     Device(pool) <= Pool(id);
     Model(id, watts) -> Model;
     Device(model, watts) <= Model(id, watts);
@@ -734,13 +766,14 @@ recipe!(r31, Racks, {
 recipe!(r32, Rooms, {
     pub Rooms;
 
-    relation Room { id: u64 as RoomId, fresh, span: interval<i64> }
+    relation Room { id: u64 as RoomId, span: interval<i64> }
     relation Booking {
-        id: u64 as BookingId, fresh,
+        id: u64 as BookingId,
         room: u64 as RoomId,
         booked: interval<i64>,
     }
 
+    Room(id) -> Room;
     Booking(room) <= Room(id);
     Booking(room, booked) -> Booking;
     Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room);
@@ -1322,7 +1355,7 @@ fn unit(p: u64) -> bumbledb::Interval<u64> {
 /// one delta — the partition never passes through an invalid state.
 #[test]
 fn r09_ordering_triple_commit_matrix() {
-    use r09::{Extent, Playlist, Playlists, Slot};
+    use r09::{Extent, Playlist, PlaylistId, Playlists, Slot};
 
     // The tiling: span [0,3) exactly partitioned by unit slots 0, 1, 2.
     let dir = TempDir::new("r09-tiling");
@@ -1331,7 +1364,7 @@ fn r09_ordering_triple_commit_matrix() {
         .expect("accepted");
     let list = db
         .write(|tx| {
-            let list = tx.reserve(1)?.start().expect("nonempty");
+            let list = PlaylistId(1);
             tx.insert([&Playlist {
                 id: list,
                 name: "road trip",
@@ -1390,7 +1423,7 @@ fn r09_ordering_triple_commit_matrix() {
 #[test]
 fn r09_gap_and_overlap_deltas_abort() {
     use bumbledb::schema::StatementId;
-    use r09::{Extent, Playlist, Playlists, Slot};
+    use r09::{Extent, Playlist, PlaylistId, Playlists, Slot};
 
     // The gap: span [0,3) with slots 0 and 2 only — point 1 uncovered,
     // the span-side coverage direction of the `==` convicts (its second
@@ -1400,7 +1433,7 @@ fn r09_gap_and_overlap_deltas_abort() {
         .expect("create gap store")
         .expect("accepted");
     let error = db.write(|tx| {
-        let list = tx.reserve(1)?.start().expect("nonempty");
+        let list = PlaylistId(1);
         tx.insert([&Playlist {
             id: list,
             name: "gapped",
@@ -1430,7 +1463,7 @@ fn r09_gap_and_overlap_deltas_abort() {
         .expect("create overlap store")
         .expect("accepted");
     let error = db.write(|tx| {
-        let list = tx.reserve(1)?.start().expect("nonempty");
+        let list = PlaylistId(1);
         tx.insert([&Playlist {
             id: list,
             name: "doubled",
@@ -1461,7 +1494,7 @@ fn r09_gap_and_overlap_deltas_abort() {
 /// witness and width arms live in the honesty test below.
 #[test]
 fn r29_zone_ledger_commit_matrix() {
-    use r29::{Kind, Ledger, PairSlot, UnitSlot, Zone, ZoneLedger};
+    use r29::{Kind, Ledger, LedgerId, PairSlot, UnitSlot, Zone, ZoneLedger};
 
     fn pair(p: u64) -> bumbledb::Interval<u64> {
         bumbledb::Interval::<u64>::fixed(p, 2)
@@ -1475,7 +1508,7 @@ fn r29_zone_ledger_commit_matrix() {
         .expect("create zone ledger store")
         .expect("accepted");
     db.write(|tx| {
-        let ledger = tx.reserve(1)?.start().expect("nonempty");
+        let ledger = LedgerId(1);
         tx.insert([&Ledger {
             id: ledger,
             name: "day plan",
@@ -1512,7 +1545,7 @@ fn r29_zone_ledger_commit_matrix() {
         .expect("create overlap store")
         .expect("accepted");
     let error = db.write(|tx| {
-        let ledger = tx.reserve(1)?.start().expect("nonempty");
+        let ledger = LedgerId(1);
         tx.insert([&Ledger {
             id: ledger,
             name: "collided",
@@ -1546,7 +1579,7 @@ fn r29_zone_ledger_commit_matrix() {
 /// value is a typed shape error — the width is enforced by type.
 #[test]
 fn r29_coalescing_insensitivity_and_width_by_type() {
-    use r29::{Kind, Ledger, UnitSlot, Zone, ZoneLedger};
+    use r29::{Kind, Ledger, LedgerId, UnitSlot, Zone, ZoneLedger};
 
     // Coalescing insensitivity, pinned: one Unit-kind zone [4,6) beside
     // two unit slots [4,5), [5,6) — equal point supports, so both `==`
@@ -1556,7 +1589,7 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
         .expect("create coalesced store")
         .expect("accepted");
     db.write(|tx| {
-        let ledger = tx.reserve(1)?.start().expect("nonempty");
+        let ledger = LedgerId(1);
         tx.insert([&Ledger {
             id: ledger,
             name: "coalesced",
@@ -1588,7 +1621,7 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
         .expect("accepted");
     let error = db
         .write(|tx| {
-            let ledger = tx.reserve(1)?.start().expect("nonempty");
+            let ledger = LedgerId(1);
             tx.insert([&Ledger {
                 id: ledger,
                 name: "wide",
@@ -1667,14 +1700,14 @@ fn every_doc_query_compiles_prepares_and_round_trips() {
 /// so two different address facts for one business abort together.
 #[test]
 fn r03_a_second_optional_child_is_rejected() {
-    use r03::{Business, MailingAddress, Optionality};
+    use r03::{Business, BusinessId, MailingAddress, Optionality};
 
     let dir = TempDir::new("r03-second-child");
     let db = Db::create(dir.path(), Optionality)
         .expect("create optionality store")
         .expect("accepted");
     let error = db.write(|tx| {
-        let business = tx.reserve(1)?.start().expect("nonempty");
+        let business = BusinessId(1);
         tx.insert([&Business {
             id: business,
             name: "one",
@@ -1735,7 +1768,7 @@ fn r08_sub_vocabulary_violating_insert_aborts() {
         .expect("create the Oncall store")
         .expect("accepted");
     db.write(|tx| {
-        let id: IncidentId = tx.reserve(1)?.start().expect("nonempty");
+        let id = IncidentId(1);
         tx.insert([&Incident {
             id,
             severity: Severity::Critical.id(),
@@ -1750,7 +1783,7 @@ fn r08_sub_vocabulary_violating_insert_aborts() {
     .expect("a paging escalation commits")
     .unwrap();
     let _ = expect_rejected(db.write(|tx| {
-        let id: IncidentId = tx.reserve(1)?.start().expect("nonempty");
+        let id = IncidentId(2);
         tx.insert([&Incident {
             id,
             severity: Severity::Info.id(),
@@ -1807,8 +1840,11 @@ fn r24_closure_idiom_reaches_the_exact_set() {
     let ids = db
         .write(|tx| {
             let mut ids: Vec<NodeId> = Vec::new();
-            for name in ["root", "a", "b", "c", "d", "e", "stray"] {
-                let id: NodeId = tx.reserve(1)?.start().expect("nonempty");
+            for (ordinal, name) in ["root", "a", "b", "c", "d", "e", "stray"]
+                .into_iter()
+                .enumerate()
+            {
+                let id = NodeId(u64::try_from(ordinal).expect("small roster") + 1);
                 tx.insert([&Node { id, name }])?;
                 ids.push(id);
             }
@@ -1889,8 +1925,11 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     let ids = db
         .write(|tx| {
             let mut ids: Vec<AccountId> = Vec::new();
-            for name in ["assets", "cash", "receivables", "checking", "savings"] {
-                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            for (ordinal, name) in ["assets", "cash", "receivables", "checking", "savings"]
+                .into_iter()
+                .enumerate()
+            {
+                let id = AccountId(u64::try_from(ordinal).expect("small roster") + 1);
                 tx.insert([&Account { id, name }])?;
                 ids.push(id);
             }
@@ -1902,8 +1941,8 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
                 }])?;
             }
             // Postings — the two equal 700s to checking are distinct facts
-            // (the fresh id keeps both bindings; recipe 19's discipline).
-            for (account, minor) in [
+            // (the declared id key keeps both bindings; recipe 19's discipline).
+            for (ordinal, (account, minor)) in [
                 (3usize, 5_000i64),
                 (3, 700),
                 (3, 700),
@@ -1911,8 +1950,11 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
                 (1, 2),
                 (2, 9_999),
                 (0, 1),
-            ] {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = PostingId(u64::try_from(ordinal).expect("small roster") + 1);
                 tx.insert([&Posting {
                     id,
                     account: ids[account],
@@ -2126,7 +2168,7 @@ fn r27_maintenance_rederives_after_generation_movement() {
 /// theories. Seeds a v1 store, proves the fingerprint refusal, exports
 /// under one snapshot, transforms (the ray supplies the missing
 /// `applies` dimension), loads containment targets first, then proves
-/// the three laws: identity, mint catch-up, judgment under v2.
+/// the three laws: identity, application-owned ids, judgment under v2.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -2139,27 +2181,26 @@ fn r28_migration_is_etl() {
     let dir_v1 = TempDir::new("r28-v1");
     let dir_v2 = TempDir::new("r28-v2");
 
-    // Seed the v1 store; remember the fresh high water.
+    // Seed the v1 store with application-owned ids.
     let v1 = Db::create(dir_v1.path(), r28_old::PayrollV1)
         .expect("create the v1 store")
         .expect("accepted");
-    let high_water = v1
-        .write(|tx| {
-            let mut max = 0;
-            for (name, amount) in [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)] {
-                let id: r28_old::EmployeeId = tx.reserve(1)?.start().expect("nonempty");
-                tx.insert([&r28_old::Employee { id, name }])?;
-                tx.insert([&r28_old::Salary {
-                    employee: id,
-                    amount,
-                }])?;
-                max = max.max(id.0);
-            }
-            Ok(max)
-        })
-        .expect("seed the v1 store")
-        .unwrap()
-        .value;
+    v1.write(|tx| {
+        for (ordinal, (name, amount)) in [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)]
+            .into_iter()
+            .enumerate()
+        {
+            let id = r28_old::EmployeeId(u64::try_from(ordinal).expect("small roster") + 1);
+            tx.insert([&r28_old::Employee { id, name }])?;
+            tx.insert([&r28_old::Salary {
+                employee: id,
+                amount,
+            }])?;
+        }
+        Ok(())
+    })
+    .expect("seed the v1 store")
+    .unwrap();
 
     // Export under ONE snapshot (one generation — a consistent instant);
     // the transform appends the ray.
@@ -2194,7 +2235,7 @@ fn r28_migration_is_etl() {
         "{err:?}"
     );
 
-    // Load containment targets first; explicit fresh values keep identity.
+    // Load containment targets first; explicit id values keep identity.
     let v2 = Db::create(dir_v2.path(), r28::Payroll)
         .expect("create the v2 store")
         .expect("accepted");
@@ -2217,17 +2258,23 @@ fn r28_migration_is_etl() {
         .value;
     assert_eq!(loaded, 3);
 
-    // The mint sequence cleared the imported high water: no collision.
+    // Identity is application-owned: a post-import insert under an unused
+    // id coexists with the imported rows — no allocator, no catch-up.
     v2.write(|tx| {
-        let next: r28::EmployeeId = tx.reserve(1)?.start().expect("nonempty");
-        assert!(
-            next.0 > high_water,
-            "minted {} at or below the imported high water {high_water}",
-            next.0
-        );
+        let next = r28::EmployeeId(100);
+        tx.insert([&r28::Employee {
+            id: next,
+            name: "dee",
+        }])?;
+        tx.insert([&r28::Salary {
+            employee: next,
+            amount: 60_000,
+            applies: bumbledb::Interval::<i64>::new(EPOCH, i64::MAX)
+                .expect("the migration ray is nonempty"),
+        }])?;
         Ok(())
     })
-    .expect("mint after import")
+    .expect("insert after import under a fresh application-owned id")
     .unwrap();
 
     // The migrated store answers under the new theory: every v1 salary
@@ -2256,18 +2303,27 @@ fn r28_migration_is_etl() {
         };
         answers.insert((name.to_owned(), amount));
     }
-    let expected: BTreeSet<(String, i64)> = [("ada", 90_000i64), ("bo", 70_000), ("cy", 80_000)]
-        .into_iter()
-        .map(|(n, a)| (n.to_owned(), a))
-        .collect();
-    assert_eq!(answers, expected, "the v1 facts answer under the v2 theory");
+    let expected: BTreeSet<(String, i64)> = [
+        ("ada", 90_000i64),
+        ("bo", 70_000),
+        ("cy", 80_000),
+        ("dee", 60_000),
+    ]
+    .into_iter()
+    .map(|(n, a)| (n.to_owned(), a))
+    .collect();
+    assert_eq!(
+        answers, expected,
+        "the v1 facts and the post-import insert answer under the v2 theory"
+    );
 }
 
 /// Recipe 30: the keyed read — the declared law `Course(grp) -> Course`
 /// made callable. The generated key struct (`CourseByGrp`, the
-/// `{R}By{Fields}` derived-name rule) answers on BOTH scopes, the fresh
-/// newtype reads the primary form, and a determinant nobody wrote misses
-/// cleanly — the recipe's taught spellings, exercised verbatim.
+/// `{R}By{Fields}` derived-name rule) answers on BOTH scopes, and a
+/// determinant nobody wrote misses cleanly — the recipe's taught
+/// spellings, exercised verbatim. (The fresh-newtype primary read
+/// retired with the fresh mechanism: keys are declared statements.)
 #[test]
 fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
     use r30::{Course, CourseByGrp, CourseId, Grp, GrpId, KeyedRead};
@@ -2278,17 +2334,17 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
         .expect("accepted");
     let (grp, empty_grp, course) = db
         .write(|tx| {
-            let grp: GrpId = tx.reserve(1)?.start().expect("nonempty");
+            let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
                 label: "algebra",
             }])?;
-            let empty_grp: GrpId = tx.reserve(1)?.start().expect("nonempty");
+            let empty_grp = GrpId(2);
             tx.insert([&Grp {
                 id: empty_grp,
                 label: "geometry",
             }])?;
-            let course: CourseId = tx.reserve(1)?.start().expect("nonempty");
+            let course = CourseId(1);
             tx.insert([&Course {
                 id: course,
                 grp,
@@ -2310,15 +2366,9 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
                 title: "linear equations",
             })
         );
-        // The fresh newtype is the primary key made callable.
-        assert_eq!(
-            snap.get(course)?,
-            Some(Course {
-                id: course,
-                grp,
-                title: "linear equations",
-            })
-        );
+        // (The fresh-newtype primary read retired WITH the fresh
+        // mechanism: keys are declared statements only, and this recipe
+        // declares exactly `Course(grp) -> Course`.)
         // A group with no course misses cleanly — no fold, no assumption.
         assert_eq!(snap.get(CourseByGrp { grp: empty_grp })?, None);
         Ok(())
@@ -2331,14 +2381,7 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
             .get(CourseByGrp { grp })?
             .expect("the law answers in write scope");
         assert_eq!(found.id, course);
-        assert_eq!(
-            tx.get(course)?,
-            Some(Course {
-                id: course,
-                grp,
-                title: "linear equations",
-            })
-        );
+        assert_eq!(tx.get(CourseByGrp { grp: empty_grp })?, None);
         Ok(())
     })
     .expect("write-scope keyed reads")
@@ -2371,7 +2414,7 @@ fn assert_capacity_measure<T: std::fmt::Debug>(
 /// the path-refusal diagnostic names, judged for real.
 #[test]
 fn r31_power_budget_commit_matrix() {
-    use r31::{Device, Model, ModelId, Pool, PoolId, Racks};
+    use r31::{Device, DeviceId, Model, ModelId, Pool, PoolId, Racks};
 
     let schema = r31::validate().expect("the power-budget schema validates");
     let dir = TempDir::new("r31-power-budget");
@@ -2382,18 +2425,18 @@ fn r31_power_budget_commit_matrix() {
     // Within budget: 40 + 40 = 80 ≤ supply 100 — the weighted walk admits.
     let (pool, model) = db
         .write(|tx| {
-            let pool: PoolId = tx.reserve(1)?.start().expect("nonempty");
+            let pool = PoolId(1);
             tx.insert([&Pool {
                 id: pool,
                 supply: 100,
             }])?;
-            let model: ModelId = tx.reserve(1)?.start().expect("nonempty");
+            let model = ModelId(1);
             tx.insert([&Model {
                 id: model,
                 watts: 40,
             }])?;
-            for _ in 0..2 {
-                let id = tx.reserve(1)?.start().expect("nonempty");
+            for ordinal in 0u64..2 {
+                let id = DeviceId(ordinal + 1);
                 tx.insert([&Device {
                     id,
                     pool,
@@ -2410,7 +2453,7 @@ fn r31_power_budget_commit_matrix() {
     // Over budget: the third device makes Σ watts = 120 > 100; the refusal
     // reports the full group total, not the clipped prefix.
     let error = db.write(|tx| {
-        let id = tx.reserve(1)?.start().expect("nonempty");
+        let id = DeviceId(3);
         tx.insert([&Device {
             id,
             pool,
@@ -2424,7 +2467,7 @@ fn r31_power_budget_commit_matrix() {
     // The pinned column: a device claiming watts its model does not have
     // dies on the two-column containment — the join stated as a law.
     let error = db.write(|tx| {
-        let id = tx.reserve(1)?.start().expect("nonempty");
+        let id = DeviceId(4);
         tx.insert([&Device {
             id,
             pool,
@@ -2450,7 +2493,7 @@ fn r31_power_budget_commit_matrix() {
 /// booking here overlaps nothing.
 #[test]
 fn r32_calendar_capacity_commit_matrix() {
-    use r32::{Booking, Room, RoomId, Rooms};
+    use r32::{Booking, BookingId, Room, RoomId, Rooms};
 
     let schema = r32::validate().expect("the calendar-capacity schema validates");
     let dir = TempDir::new("r32-calendar-capacity");
@@ -2462,13 +2505,13 @@ fn r32_calendar_capacity_commit_matrix() {
     // room's own Duration([0,100)) — both window ends inclusive.
     let room = db
         .write(|tx| {
-            let room: RoomId = tx.reserve(1)?.start().expect("nonempty");
+            let room = RoomId(1);
             tx.insert([&Room {
                 id: room,
                 span: span(0, 100),
             }])?;
-            for booked in [span(0, 50), span(50, 100)] {
-                let id = tx.reserve(1)?.start().expect("nonempty");
+            for (ordinal, booked) in [span(0, 50), span(50, 100)].into_iter().enumerate() {
+                let id = BookingId(u64::try_from(ordinal).expect("small roster") + 1);
                 tx.insert([&Booking { id, room, booked }])?;
             }
             Ok(room)
@@ -2481,7 +2524,7 @@ fn r32_calendar_capacity_commit_matrix() {
     // to 160 > 100 — the capacity law convicts where the pointwise key
     // cannot, with the full weighted total as the witness.
     let error = db.write(|tx| {
-        let id = tx.reserve(1)?.start().expect("nonempty");
+        let id = BookingId(3);
         tx.insert([&Booking {
             id,
             room,

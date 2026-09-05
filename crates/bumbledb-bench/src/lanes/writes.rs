@@ -1,6 +1,8 @@
-//! The durability axis is [`crate::duralane::DurabilityLane`] — the one
-//! `ANALYZE` after load, `wal_checkpoint(TRUNCATE)` after load — then the
-//! pragmas back: a misconfigured twin fails before flattering
+//! The durability axis is [`crate::duralane::DurabilityLane`] — post-ENG-008
+//! a single durable point (the engine's no-sync surface is deleted; see
+//! `duralane.rs` for the recorded decision). `ANALYZE` after load,
+//! `wal_checkpoint(TRUNCATE)` after load — then the pragmas back: a
+//! misconfigured twin fails before flattering
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -204,10 +206,14 @@ fn commit_engine(
     rng: &mut Rng,
 ) -> Result<Measurement, String> {
     let sizes = Sizes::of(cfg.scale);
+    // Application-owned ids: MAX(id) + 1 probed before the timed window —
+    // the exact mint the SQLite twin uses (`next_posting_id`), so the two
+    // engines pay symmetric per-row work inside the samples.
+    let mut mint = writebench::PostingMint::probe(db)?;
     harness::measure(proto, || {
         db.write(|tx| {
             for _ in 0..batch {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                let id = mint.next();
                 tx.insert([&writebench::prepared_posting(rng, &sizes, id)])?;
             }
             Ok(())
@@ -256,6 +262,7 @@ fn seed_delete_rows(
 ) -> Result<(VecDeque<Posting>, VecDeque<u64>), String> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ DELETE_SEED ^ u64::from(batch));
+    let mut mint = writebench::PostingMint::probe(db)?;
     let mut recorded: VecDeque<Posting> = VecDeque::new();
     let mut remaining = total;
     while remaining > 0 {
@@ -264,7 +271,7 @@ fn seed_delete_rows(
             .write(|tx| {
                 let mut out = Vec::with_capacity(usize::try_from(chunk).expect("small chunk"));
                 for _ in 0..chunk {
-                    let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+                    let id = mint.next();
                     let posting = writebench::prepared_posting(&mut rng, &sizes, id);
                     tx.insert([&posting])?;
                     out.push(posting);
@@ -668,7 +675,6 @@ fn run_lane(
     ))
 }
 
-/// clock shadow, so they land after every nosync sample), then the two
 /// # Errors
 /// The device-honesty refusal; setup failures; the post-state gate.
 pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
@@ -778,25 +784,24 @@ mod tests {
         dir
     }
 
+    /// ENG-008: exactly one durability point remains, and it is the durable
+    /// one — no weakened lane exists to select, spell, or fall back to.
     #[test]
-    fn the_durability_axis_has_exactly_two_points() {
+    fn the_durability_axis_has_exactly_one_durable_point() {
+        assert_eq!(crate::duralane::ALL.len(), 1);
         assert_eq!(DurabilityLane::Durable.label(), "durable");
-        assert_eq!(DurabilityLane::Nosync.label(), "nosync");
         assert_eq!(
             DurabilityLane::Durable.sqlite_sync_label(),
             "wal+synchronous=FULL+fullfsync=ON"
-        );
-        assert_eq!(
-            DurabilityLane::Nosync.sqlite_sync_label(),
-            "wal+synchronous=OFF"
         );
         assert_eq!(
             DurabilityLane::Durable.store_mode(),
             crate::storemode::StoreMode::Durable
         );
         assert_eq!(
-            DurabilityLane::Nosync.store_mode(),
-            crate::storemode::StoreMode::Nosync
+            DurabilityLane::Durable.store_mode().label(),
+            "durable",
+            "the store mode has no weakened spelling left"
         );
     }
 
@@ -808,8 +813,8 @@ mod tests {
             seed: 9,
             samples: 8,
             lanes: vec![LaneReport {
-                lane: DurabilityLane::Nosync.label(),
-                sqlite_sync: DurabilityLane::Nosync.sqlite_sync_label(),
+                lane: DurabilityLane::Durable.label(),
+                sqlite_sync: DurabilityLane::Durable.sqlite_sync_label(),
                 rows: vec![
                     WriteRow {
                         name: "append".to_owned(),
@@ -861,10 +866,13 @@ mod tests {
         assert_eq!(parsed.get("samples").and_then(Value::as_f64), Some(8.0));
         let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
         assert_eq!(lanes.len(), 1);
-        assert_eq!(lanes[0].get("lane").and_then(Value::as_str), Some("nosync"));
+        assert_eq!(
+            lanes[0].get("lane").and_then(Value::as_str),
+            Some("durable")
+        );
         assert_eq!(
             lanes[0].get("sqlite_sync").and_then(Value::as_str),
-            Some("wal+synchronous=OFF")
+            Some("wal+synchronous=FULL+fullfsync=ON")
         );
         let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
         assert_eq!(rows.len(), 2);
@@ -916,7 +924,7 @@ mod tests {
             scale: Scale::Tiny,
             seed: 1,
             dir: dir.clone(),
-            lanes: vec![DurabilityLane::Nosync],
+            lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10],
             samples: Some(4),
             trace: false,
@@ -927,10 +935,13 @@ mod tests {
         let parsed = lane_rows(&out);
         let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
         assert_eq!(lanes.len(), 1);
-        assert_eq!(lanes[0].get("lane").and_then(Value::as_str), Some("nosync"));
+        assert_eq!(
+            lanes[0].get("lane").and_then(Value::as_str),
+            Some("durable")
+        );
         assert_eq!(
             lanes[0].get("sqlite_sync").and_then(Value::as_str),
-            Some("wal+synchronous=OFF")
+            Some("wal+synchronous=FULL+fullfsync=ON")
         );
         let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
         let names: Vec<&str> = rows
@@ -973,42 +984,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn durable_lane_runs_the_same_contract() {
-        let dir = scratch("durable-lane");
-        let out = dir.join("out");
-        let code = run(&crate::cli::WritesArgs {
-            scale: Scale::Tiny,
-            seed: 1,
-            dir: dir.clone(),
-            lanes: vec![DurabilityLane::Durable],
-            batches: vec![1],
-            samples: Some(4),
-            trace: false,
-            out: Some(out.clone()),
-        })
-        .expect("the durable lane runs");
-        assert_eq!(code, 0);
-        let parsed = lane_rows(&out);
-        let lanes = parsed.get("lanes").and_then(Value::as_arr).expect("lanes");
-        assert_eq!(lanes.len(), 1);
-        assert_eq!(
-            lanes[0].get("lane").and_then(Value::as_str),
-            Some("durable")
-        );
-        assert_eq!(
-            lanes[0].get("sqlite_sync").and_then(Value::as_str),
-            Some("wal+synchronous=FULL+fullfsync=ON")
-        );
-        let rows = lanes[0].get("rows").and_then(Value::as_arr).expect("rows");
-        let names: Vec<&str> = rows
-            .iter()
-            .filter_map(|row| row.get("name").and_then(Value::as_str))
-            .collect();
-        assert_eq!(names, vec!["commit_b1", "delete_b1", "insert_stream"]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     /// same body again REFUSES — and the refusal commits NOTHING (the
     #[test]
     fn delete_refuses_a_missing_row() {
@@ -1030,10 +1005,10 @@ mod tests {
         }
         let sizes = Sizes::of(cfg.scale);
         let mut rng = Rng::new(cfg.seed ^ DELETE_SEED ^ 1);
+        let mut mint = writebench::PostingMint::probe(&db).expect("probe");
         let posting = db
             .write(|tx| {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
-                let posting = writebench::prepared_posting(&mut rng, &sizes, id);
+                let posting = writebench::prepared_posting(&mut rng, &sizes, mint.next());
                 tx.insert([&posting])?;
                 Ok(posting)
             })
@@ -1109,7 +1084,7 @@ mod tests {
             scale: Scale::Tiny,
             seed: 1,
             dir: dir.clone(),
-            lanes: vec![DurabilityLane::Nosync],
+            lanes: vec![DurabilityLane::Durable],
             batches: vec![1],
             samples: Some(2),
             trace: true,
@@ -1119,7 +1094,7 @@ mod tests {
         assert_eq!(code, 0);
         let md = std::fs::read_to_string(out.join("writes-report.md")).expect("markdown");
         assert!(md.contains("Flame summaries"), "{md}");
-        let lane_dir = out.join("trace").join("writes").join("nosync");
+        let lane_dir = out.join("trace").join("writes").join("durable");
         for cell in ["commit_b1", "delete_b1"] {
             let json_path = lane_dir.join(format!("{cell}.json"));
             let text = std::fs::read_to_string(&json_path)

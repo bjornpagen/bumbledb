@@ -1,21 +1,18 @@
 use super::{Answers, ParamArg, PreparedQuery};
 
+use crate::api::db::ReadInstance;
 use crate::error::Result;
 use crate::image::view::{Const, FilterPredicate};
-use crate::storage::env::ReadTxn;
 
 impl<S> PreparedQuery<S> {
     /// # Errors
     pub(crate) fn introspect(
         &mut self,
-        txn: &ReadTxn<'_>,
-        cache: &crate::image::cache::ImageCache,
+        instance: &ReadInstance<'_, S>,
         params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
-        let catalog = txn.catalog();
-        let images = crate::image::LmdbSource::bind(txn, cache);
         let mut out = Answers::new();
-        self.execute_on(txn.identity(), &catalog, &images, params, &mut out)?;
+        self.execute(instance, params, &mut out)?;
         let mut report = format!("query:\n{}\nsignature: {}\n", self.rendered, self.signature);
         if let Some(pending) = self.pending_literal_note() {
             report.push_str(&pending);

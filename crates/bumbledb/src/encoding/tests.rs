@@ -5,7 +5,7 @@ use super::encode::{encode_interval_i64, encode_interval_u64};
 use super::*;
 use crate::encoding::FieldDecodeError;
 use crate::error::CorruptionError;
-use bumbledb_theory::schema::IntervalElement;
+use bumbledb_theory::schema::{FixedIntervalElement, IntervalElement};
 
 fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(FixedBytesValue::new(raw).padded());
@@ -204,8 +204,7 @@ fn field_bytes_slices_equal_independent_encodings() {
 }
 
 #[test]
-fn append_field_matches_determinant_image_slices() {
-    use bumbledb_theory::schema::FieldId;
+fn append_field_matches_stored_fact_slices() {
     let layout = FactLayout::new(&[
         ValueType::Bool,
         ValueType::U64,
@@ -219,11 +218,11 @@ fn append_field_matches_determinant_image_slices() {
             element: IntervalElement::I64,
         },
         ValueType::FixedInterval {
-            element: IntervalElement::U64,
+            element: FixedIntervalElement::U64,
             width: 5,
         },
         ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: FixedIntervalElement::I64,
             width: 3,
         },
     ]);
@@ -252,15 +251,10 @@ fn append_field_matches_determinant_image_slices() {
     for (idx, &value) in values.iter().enumerate() {
         let mut appended = Vec::new();
         append_field(value, layout.field_type(idx), &mut appended);
-        let mut sliced = crate::storage::keys::DeterminantImage::scratch();
-        crate::storage::keys::determinant_image(
-            layout.encoded(&fact),
-            &[FieldId(u16::try_from(idx).expect("nine fields fit u16"))],
-            &mut sliced,
-        );
+        let sliced = field_bytes(layout.encoded(&fact), idx);
         assert_eq!(
             appended.as_slice(),
-            sliced.as_bytes(),
+            sliced,
             "field {idx}: append_field diverges from the stored-fact slice"
         );
     }
@@ -592,10 +586,7 @@ fn exhaustive_string_id_word_preserves_id_order_only() {
         let m = 1u64 << (8 * k);
         set.extend([m - 1, m, m + 1]);
     }
-    set.extend([
-        crate::storage::dict::SENTINEL_ID - 1,
-        crate::storage::dict::SENTINEL_ID,
-    ]);
+    set.extend([InternId::SENTINEL.raw() - 1, InternId::SENTINEL.raw()]);
     let domain: Vec<u64> = set.into_iter().collect();
     assert_eq!(domain.len(), 278, "the derived id domain");
     for &x in &domain {
@@ -697,27 +688,17 @@ fn exhaustive_interval_encoding_orders_by_endpoint_pair_on_the_grid() {
 }
 
 #[test]
-fn nullary_fact_layout_and_hash() {
+fn nullary_fact_layout_is_empty() {
     let layout = FactLayout::new(&[]);
     assert_eq!(layout.fact_width(), 0);
     let mut fact = Vec::new();
     encode_fact(&[], &layout, &mut fact);
     assert!(fact.is_empty());
-    assert_eq!(fact_hash(&fact), *blake3::hash(b"").as_bytes());
-}
-
-#[test]
-fn fact_hash_is_full_32_byte_blake3() {
-    let bytes = b"arbitrary fact bytes";
-    let hash = fact_hash(bytes);
-    assert_eq!(hash.len(), 32);
-    assert_eq!(hash, *blake3::hash(bytes).as_bytes());
-    assert_ne!(fact_hash(b"a"), fact_hash(b"b"));
 }
 
 // (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
 
-fn fixed_layout(element: IntervalElement, width: u64) -> FactLayout {
+fn fixed_layout(element: FixedIntervalElement, width: u64) -> FactLayout {
     FactLayout::new(&[ValueType::U64, ValueType::FixedInterval { element, width }])
 }
 
@@ -733,7 +714,7 @@ fn interval_words_reads_through_the_layout_width() {
     assert_eq!(interval_words(general, &encoded[..8]), None);
 
     let fixed = ValueType::FixedInterval {
-        element: IntervalElement::U64,
+        element: FixedIntervalElement::U64,
         width: 5,
     };
     assert_eq!(fixed.width(), 8);
@@ -747,7 +728,7 @@ fn interval_words_reads_through_the_layout_width() {
 #[test]
 fn fixed_interval_round_trips_one_word() {
     for (start, width) in [(0u64, 1u64), (3, 5), (1 << 40, 1 << 20), (u64::MAX - 3, 1)] {
-        let layout = fixed_layout(IntervalElement::U64, width);
+        let layout = fixed_layout(FixedIntervalElement::U64, width);
         assert_eq!(layout.fact_width(), 16, "8-byte scalar + 8-byte start");
         let interval =
             bumbledb_theory::Interval::<u64>::fixed(start, width).expect("in-domain fixed value");
@@ -764,7 +745,7 @@ fn fixed_interval_round_trips_one_word() {
         );
     }
     for (start, width) in [(i64::MIN, 7u64), (-1, 2), (0, 1), (i64::MAX - 3, 1)] {
-        let layout = fixed_layout(IntervalElement::I64, width);
+        let layout = fixed_layout(FixedIntervalElement::I64, width);
         let interval =
             bumbledb_theory::Interval::<i64>::fixed(start, width).expect("in-domain fixed value");
         let mut fact = Vec::new();
@@ -784,7 +765,7 @@ fn fixed_interval_round_trips_one_word() {
 #[test]
 fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
     for width in [1u64, 5, 1 << 33] {
-        let layout = fixed_layout(IntervalElement::U64, width);
+        let layout = fixed_layout(FixedIntervalElement::U64, width);
         let bound = u64::MAX - width;
         for start in [bound, bound + 1, u64::MAX] {
             let mut fact = Vec::new();
@@ -816,7 +797,7 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
         );
     }
 
-    let layout = fixed_layout(IntervalElement::I64, 4);
+    let layout = fixed_layout(FixedIntervalElement::I64, 4);
     let mut fact = Vec::new();
     encode_fact(
         &[ValueRef::U64(0), ValueRef::I64(i64::MAX - 4)],
@@ -838,7 +819,7 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
 #[test]
 fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     for width in [1u64, 2, 255, 1 << 32, u64::MAX - 2] {
-        let layout = fixed_layout(IntervalElement::U64, width);
+        let layout = fixed_layout(FixedIntervalElement::U64, width);
         let ceiling = u64::MAX - width;
         let mut starts = std::collections::BTreeSet::new();
         starts.extend(0..=64u64);
@@ -868,7 +849,7 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
         }
     }
 
-    let layout = fixed_layout(IntervalElement::I64, 3);
+    let layout = fixed_layout(FixedIntervalElement::I64, 3);
     let starts: Vec<i64> = (-40..=40).collect();
     let encoded: Vec<Vec<u8>> = starts
         .iter()
@@ -920,4 +901,80 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     for idx in [0, 1, 3, 5, 6, 7] {
         assert_eq!(decoded[idx], plain[idx]);
     }
+}
+
+/// Id128 physical words: the sixteen exact bytes, byte order = total
+/// order; decode is total and returns the same identity (E-CODEC).
+#[test]
+fn id128_field_roundtrips_verbatim_and_orders_by_bytes() {
+    use bumbledb_theory::Id128;
+    let layout = FactLayout::new(&[ValueType::Id128, ValueType::U64]);
+    assert_eq!(layout.fact_width(), 24);
+    let id = Id128::from_bytes(*b"exact-sixteen-b!");
+    let mut fact = Vec::new();
+    encode_fact(&[ValueRef::Id128(id), ValueRef::U64(9)], &layout, &mut fact);
+    assert_eq!(&fact[..16], &id.to_bytes()[..]);
+    assert_eq!(decode_id128(layout.encoded(&fact), 0), id);
+    assert_eq!(
+        decode_field(layout.encoded(&fact), 0),
+        Ok(ValueRef::Id128(id))
+    );
+    // Byte order is the one total order: no reinterpretation, no words.
+    let smaller = Id128::from_bytes([0x00; 16]);
+    let larger = Id128::from_bytes([0xff; 16]);
+    assert!(encode_id128(smaller) < encode_id128(larger));
+    assert_eq!(smaller.cmp(&larger), std::cmp::Ordering::Less);
+}
+
+/// Dense float interval physical words: two order keys, lexicographic by
+/// `(start, end)`; corrupt words (noncanonical holes, NaN endpoints,
+/// empty/inverted bounds) refuse instead of normalizing (F-INTERVAL).
+#[test]
+fn interval_f64_words_roundtrip_and_reject_corruption() {
+    use bumbledb_theory::{F64, Interval};
+    let ty = ValueType::Interval {
+        element: IntervalElement::F64,
+    };
+    assert_eq!(ty.width(), 16);
+    let layout = FactLayout::new(&[ty]);
+    let span = Interval::<F64>::new(F64::NEG_INFINITY, F64::from(2.5)).expect("left ray");
+    let mut fact = Vec::new();
+    encode_fact(&[ValueRef::IntervalF64(span)], &layout, &mut fact);
+    assert_eq!(decode_interval_f64(layout.encoded(&fact), 0), Ok(span));
+    assert_eq!(
+        decode_field(layout.encoded(&fact), 0),
+        Ok(ValueRef::IntervalF64(span))
+    );
+
+    // The two halves sort lexicographically by (start, end).
+    let low =
+        encode_interval_f64(Interval::<F64>::new(F64::from(1.0), F64::from(2.0)).expect("checked"));
+    let high =
+        encode_interval_f64(Interval::<F64>::new(F64::from(1.0), F64::from(3.0)).expect("checked"));
+    assert!(low < high);
+
+    // Corrupt stored words refuse: an order-key hole (negative zero),
+    // a NaN endpoint (canonical key but invalid bound), and an empty span.
+    let order_key_of = |value: F64| value.to_order_key().to_be_bytes();
+    let mut corrupt = Vec::new();
+    corrupt.extend_from_slice(&(0x8000_0000_0000_0000u64 ^ u64::MAX).to_be_bytes());
+    corrupt.extend_from_slice(&order_key_of(F64::from(1.0)));
+    assert!(matches!(
+        decode_interval_f64(layout.encoded(&corrupt), 0),
+        Err(FieldDecodeError::NonCanonicalF64(_))
+    ));
+    let mut nan_end = Vec::new();
+    nan_end.extend_from_slice(&order_key_of(F64::ZERO));
+    nan_end.extend_from_slice(&order_key_of(F64::NAN));
+    assert!(matches!(
+        decode_interval_f64(layout.encoded(&nan_end), 0),
+        Err(FieldDecodeError::InvalidInterval(_))
+    ));
+    let mut empty = Vec::new();
+    empty.extend_from_slice(&order_key_of(F64::from(1.0)));
+    empty.extend_from_slice(&order_key_of(F64::from(1.0)));
+    assert!(matches!(
+        decode_interval_f64(layout.encoded(&empty), 0),
+        Err(FieldDecodeError::InvalidInterval(_))
+    ));
 }

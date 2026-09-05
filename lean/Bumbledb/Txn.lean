@@ -129,10 +129,11 @@ when a key fails, and both the engine and the naive model preempt
  a SEQUENCE of ordinary commits, each judged
  (`committed_states_model` covers every prefix) — that loop is not
  an API. Recipe 28's first law — load containment targets first —
- is host-facing when the host chunks its own writes. Recipe 28's
- second law (fresh identity survives, the mint catches up) is
- id-allocation mechanism, not modeled; the third law is
- `etl_lands_valid`.
+ is host-facing when the host chunks its own writes. Its historical
+ second law concerned the retired fresh mint: the successor has no
+ id-allocation mechanism at all — entity identity is
+ application-owned data sealed before submission (`Txn/Fresh.lean`
+ deleted; E-NO-RESERVE); the third law is `etl_lands_valid`.
 * **Engine-only query resource errors.** `Error::Overflow(OriginCapacity)`
  and `Error::ResultBytesOverflow` abort a well-typed query whose Lean
  denotation is still a finite tuple set. They are representation

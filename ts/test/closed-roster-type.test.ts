@@ -39,7 +39,7 @@ const Kind = closed("Kind", ["DirectPass", "JudgedPass", "Failed"])
 const Method = closed("Method", ["DirectPass", "Manual"])
 
 const Certificate = relation("Certificate", {
-	id: u64.fresh,
+	id: u64,
 	student: u64,
 	kind: Kind.id
 })

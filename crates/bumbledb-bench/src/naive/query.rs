@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::{
-    Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadTerm,
-    InteriorId, Query, RecRule, RecStep, Rule, Term, Value, VarId,
+    Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, F64, FindTerm, FoldOp, HeadTerm,
+    InteriorId, NumericCast, Query, RecRule, RecStep, Rule, ScalarExpr, Term, Value, VarId,
 };
 
 use super::tuple::{cmp_value, endpoints, point, point_in};
@@ -16,7 +16,173 @@ pub enum ParamValue {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryError {
-    Overflow { find: usize },
+    Overflow {
+        find: usize,
+    },
+
+    /// A computed head refused: type mismatch, integer overflow, division
+    /// by zero, or an inexact checked cast at head position `find`.
+    Scalar {
+        find: usize,
+    },
+}
+
+/// Independent evaluation of one computed head over one binding row.
+///
+/// The model's own semantics, from chapters 11/12: exact checked integer
+/// arithmetic (widened through `i128`, narrowed back or refused), IEEE
+/// binary64 operations canonicalized per node (`F64::from_bits`
+/// renormalizes every zero and NaN encoding), exact-or-refused casts, and
+/// no mixed-type promotion anywhere.
+fn eval_scalar(expr: &ScalarExpr, binding: &Tuple, find: usize) -> Result<Value, QueryError> {
+    let refuse = QueryError::Scalar { find };
+    match expr {
+        ScalarExpr::Var(var) => Ok(binding.0[usize::from(var.0)].clone()),
+        ScalarExpr::Literal(value) => Ok(value.clone()),
+        ScalarExpr::Negate(value) => match eval_scalar(value, binding, find)? {
+            Value::F64(value) => Ok(canonical_float(-value.to_f64())),
+            Value::I64(value) => i64::try_from(-i128::from(value))
+                .map(Value::I64)
+                .map_err(|_| refuse),
+            _ => Err(refuse),
+        },
+        ScalarExpr::IsNaN(value) => match eval_scalar(value, binding, find)? {
+            Value::F64(value) => Ok(Value::Bool(value.to_f64().is_nan())),
+            _ => Err(refuse),
+        },
+        ScalarExpr::IsFinite(value) => match eval_scalar(value, binding, find)? {
+            Value::F64(value) => Ok(Value::Bool(value.to_f64().is_finite())),
+            _ => Err(refuse),
+        },
+        ScalarExpr::Cast { kind, expr } => {
+            eval_scalar_cast(*kind, eval_scalar(expr, binding, find)?, refuse)
+        }
+        ScalarExpr::Add(a, b)
+        | ScalarExpr::Subtract(a, b)
+        | ScalarExpr::Multiply(a, b)
+        | ScalarExpr::Divide(a, b) => {
+            let (a, b) = (
+                eval_scalar(a, binding, find)?,
+                eval_scalar(b, binding, find)?,
+            );
+            eval_scalar_arithmetic(expr, a, b, refuse)
+        }
+    }
+}
+
+/// One canonical binary64 value: `F64::from_bits` renormalizes every zero
+/// and NaN encoding, the per-node canonicalization chapter 11 requires.
+fn canonical_float(value: f64) -> Value {
+    Value::F64(F64::from_bits(value.to_bits()))
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::float_cmp,
+    reason = "the checked-cast semantics ARE the casts: lossy ToF64 is the \
+              rounding cast by definition, and every exact form re-checks \
+              its own round-trip bit-exactly before admitting the value"
+)]
+fn eval_scalar_cast(
+    kind: NumericCast,
+    value: Value,
+    refuse: QueryError,
+) -> Result<Value, QueryError> {
+    let exact_int = |raw: f64| {
+        if !raw.is_finite() {
+            return Err(refuse);
+        }
+        // A saturated narrowing is caught by the round-trip below or by the
+        // final u64/i64 range check at the caller.
+        let wide = raw as i128;
+        if wide as f64 == raw {
+            Ok(wide)
+        } else {
+            Err(refuse)
+        }
+    };
+    match (kind, value) {
+        (NumericCast::ToF64 | NumericCast::ToF64Exact, Value::F64(value)) => Ok(Value::F64(value)),
+        (NumericCast::ToF64, Value::I64(value)) => Ok(canonical_float(value as f64)),
+        (NumericCast::ToF64, Value::U64(value)) => Ok(canonical_float(value as f64)),
+        (NumericCast::ToF64Exact, Value::I64(value)) => {
+            let raw = value as f64;
+            if raw as i128 == i128::from(value) {
+                Ok(canonical_float(raw))
+            } else {
+                Err(refuse)
+            }
+        }
+        (NumericCast::ToF64Exact, Value::U64(value)) => {
+            let raw = value as f64;
+            if raw >= 0.0 && raw as u128 == u128::from(value) {
+                Ok(canonical_float(raw))
+            } else {
+                Err(refuse)
+            }
+        }
+        (NumericCast::ToI64Exact, Value::F64(value)) => {
+            let wide = exact_int(value.to_f64())?;
+            i64::try_from(wide).map(Value::I64).map_err(|_| refuse)
+        }
+        (NumericCast::ToU64Exact, Value::F64(value)) => {
+            let wide = exact_int(value.to_f64())?;
+            u64::try_from(wide).map(Value::U64).map_err(|_| refuse)
+        }
+        (NumericCast::ToI64Exact, Value::I64(value)) => Ok(Value::I64(value)),
+        (NumericCast::ToU64Exact, Value::U64(value)) => Ok(Value::U64(value)),
+        (NumericCast::ToI64Exact, Value::U64(value)) => {
+            i64::try_from(value).map(Value::I64).map_err(|_| refuse)
+        }
+        (NumericCast::ToU64Exact, Value::I64(value)) => {
+            u64::try_from(value).map(Value::U64).map_err(|_| refuse)
+        }
+        _ => Err(refuse),
+    }
+}
+
+fn eval_scalar_arithmetic(
+    expr: &ScalarExpr,
+    a: Value,
+    b: Value,
+    refuse: QueryError,
+) -> Result<Value, QueryError> {
+    let wide = |a: i128, b: i128| match expr {
+        ScalarExpr::Add(..) => Some(a + b),
+        ScalarExpr::Subtract(..) => Some(a - b),
+        ScalarExpr::Multiply(..) => a.checked_mul(b),
+        ScalarExpr::Divide(..) => {
+            if b == 0 {
+                None
+            } else {
+                Some(a / b)
+            }
+        }
+        _ => unreachable!("the caller narrowed to arithmetic"),
+    };
+    match (a, b) {
+        (Value::F64(a), Value::F64(b)) => {
+            let (a, b) = (a.to_f64(), b.to_f64());
+            Ok(canonical_float(match expr {
+                ScalarExpr::Add(..) => a + b,
+                ScalarExpr::Subtract(..) => a - b,
+                ScalarExpr::Multiply(..) => a * b,
+                ScalarExpr::Divide(..) => a / b,
+                _ => unreachable!("the caller narrowed to arithmetic"),
+            }))
+        }
+        (Value::I64(a), Value::I64(b)) => {
+            let wide = wide(i128::from(a), i128::from(b)).ok_or(refuse)?;
+            i64::try_from(wide).map(Value::I64).map_err(|_| refuse)
+        }
+        (Value::U64(a), Value::U64(b)) => {
+            let wide = wide(i128::from(a), i128::from(b)).ok_or(refuse)?;
+            u64::try_from(wide).map(Value::U64).map_err(|_| refuse)
+        }
+        _ => Err(refuse),
+    }
 }
 
 #[must_use]
@@ -56,6 +222,23 @@ fn pack_segments(claims: &[&Value]) -> Vec<Value> {
             )
             .expect("packing preserves nonempty intervals"),
         ),
+        Value::IntervalF64(..) => {
+            // The sweep ran on independent canonical order keys, which are
+            // exactly touching-faithful on the dense line (equal endpoint
+            // payloads coalesce; representable neighbors do not).
+            let bits = |key: i128| {
+                crate::verify::f64_oracle::order_key_inverse(
+                    u64::try_from(key).expect("order keys round-trip"),
+                )
+            };
+            Value::IntervalF64(
+                bumbledb::Interval::<bumbledb::F64>::new(
+                    bumbledb::F64::from_bits(bits(start)),
+                    bumbledb::F64::from_bits(bits(end)),
+                )
+                .expect("packing preserves nonempty intervals"),
+            )
+        }
         other => panic!("validated: Pack takes an interval, got {other:?}"),
     };
     merged.into_iter().map(rebuild).collect()
@@ -168,13 +351,8 @@ impl NaiveDb {
                 interval: &interval,
             };
             let head = interior.head();
-            let rules: Vec<Rule> = interior
-                .rules
-                .iter()
-                .map(bumbledb::ProjectionRule::to_rule)
-                .collect();
-            let rows = self.rows_for(&head, &rules, params, &derived)?;
-            interval.push(self.seal_intervals(&head, &rules, &interval));
+            let rows = self.rows_for(&head, &interior.rules, params, &derived)?;
+            interval.push(self.seal_intervals(&head, &interior.rules, &interval));
             sets.push(rows);
         }
         if let Some(rec) = rec {
@@ -242,7 +420,10 @@ impl NaiveDb {
             .map(|find| match find {
                 FindTerm::Var(var) => var_is_interval(*var),
                 FindTerm::Pack { .. } => true,
-                FindTerm::Count | FindTerm::Aggregate { .. } => false,
+                // Computed heads finalize scalars (or booleans), never
+                // intervals — chapter 12 keeps arithmetic off intervals —
+                // and counts/folds are scalar outputs too.
+                FindTerm::Compute(_) | FindTerm::Count | FindTerm::Aggregate { .. } => false,
             })
             .collect()
     }
@@ -331,10 +512,13 @@ impl NaiveDb {
                 let row: Result<Vec<Value>, QueryError> = rule
                     .finds
                     .iter()
-                    .map(|term| match term {
+                    .enumerate()
+                    .map(|(index, term)| match term {
                         FindTerm::Var(var)
                         | FindTerm::Aggregate { over: var, .. }
                         | FindTerm::Pack { over: var } => Ok(binding.0[usize::from(var.0)].clone()),
+
+                        FindTerm::Compute(expr) => eval_scalar(expr, binding, index),
 
                         FindTerm::Count => Ok(Value::Bool(false)),
                     })
@@ -348,7 +532,7 @@ impl NaiveDb {
             let key = Tuple(
                 head.iter()
                     .zip(&row.0)
-                    .filter(|(term, _)| matches!(term, FindTerm::Var(_)))
+                    .filter(|(term, _)| matches!(term, FindTerm::Var(_) | FindTerm::Compute(_)))
                     .map(|(_, value)| value.clone())
                     .collect(),
             );
@@ -364,7 +548,9 @@ impl NaiveDb {
                         .iter()
                         .enumerate()
                         .map(|(index, term)| match term {
-                            FindTerm::Var(_) => Ok(group[0].0[index].clone()),
+                            FindTerm::Var(_) | FindTerm::Compute(_) => {
+                                Ok(group[0].0[index].clone())
+                            }
                             FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                             FindTerm::Count
                             | FindTerm::Aggregate { .. }
@@ -381,7 +567,7 @@ impl NaiveDb {
                 .iter()
                 .enumerate()
                 .map(|(index, term)| match term {
-                    FindTerm::Var(_) => Ok(group[0].0[index].clone()),
+                    FindTerm::Var(_) | FindTerm::Compute(_) => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
@@ -478,6 +664,11 @@ fn count_vars(rule: &Rule) -> usize {
         match find {
             FindTerm::Var(var) => see(&mut count, *var),
             FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => see(&mut count, *over),
+            FindTerm::Compute(expr) => {
+                for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
             FindTerm::Count => {}
         }
     }
@@ -804,6 +995,7 @@ fn pack_group_rows(
             .enumerate()
             .map(|(index, find)| match find {
                 FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
+                FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
                 FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                     unreachable!("validated: Pack mixes with no other aggregate")
@@ -819,9 +1011,12 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
     let mut groups: BTreeMap<Tuple, Vec<&Tuple>> = BTreeMap::new();
     for binding in bindings {
         let mut key = Vec::new();
-        for find in finds {
+        for (index, find) in finds.iter().enumerate() {
             match find {
                 FindTerm::Var(var) => key.push(binding.0[usize::from(var.0)].clone()),
+                // A computed head is a per-row output like a variable: its
+                // value distinguishes rows, so it joins the group key.
+                FindTerm::Compute(expr) => key.push(eval_scalar(expr, binding, index)?),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
             }
         }
@@ -838,6 +1033,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 .enumerate()
                 .map(|(index, find)| match find {
                     FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
+                    FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
@@ -856,10 +1052,15 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
 fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |row| &row.0[index]);
     if matches!(op, FoldOp::Sum | FoldOp::Mean) && matches!(values().next(), Some(Value::F64(_))) {
-        return Ok(Value::F64(crate::float::reduce(values().map(|value| {
-            let Value::F64(value) = value else { unreachable!("typed float group") };
-            *value
-        }), op == FoldOp::Mean)));
+        return Ok(Value::F64(crate::float::reduce(
+            values().map(|value| {
+                let Value::F64(value) = value else {
+                    unreachable!("typed float group")
+                };
+                *value
+            }),
+            op == FoldOp::Mean,
+        )));
     }
     match op {
         FoldOp::Mean => unreachable!("validated: Mean requires F64"),
@@ -896,10 +1097,15 @@ fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, Qu
 fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |b| &b.0[usize::from(over.0)]);
     if matches!(op, FoldOp::Sum | FoldOp::Mean) && matches!(values().next(), Some(Value::F64(_))) {
-        return Ok(Value::F64(crate::float::reduce(values().map(|value| {
-            let Value::F64(value) = value else { unreachable!("typed float group") };
-            *value
-        }), op == FoldOp::Mean)));
+        return Ok(Value::F64(crate::float::reduce(
+            values().map(|value| {
+                let Value::F64(value) = value else {
+                    unreachable!("typed float group")
+                };
+                *value
+            }),
+            op == FoldOp::Mean,
+        )));
     }
     match op {
         FoldOp::Mean => unreachable!("validated: Mean requires F64"),

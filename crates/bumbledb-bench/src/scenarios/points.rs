@@ -12,11 +12,11 @@ bumbledb::schema! {
     pub Points;
 
     relation Bucket {
-        id: u64 as PBucketId, fresh,
+        id: u64 as PBucketId,
         class: u64 as PClassId,
     }
     relation Doc {
-        id: u64 as PDocId, fresh,
+        id: u64 as PDocId,
         key: str,
         bucket: u64 as PBucketId,
         size: i64,
@@ -24,6 +24,12 @@ bumbledb::schema! {
     }
 
     closed relation Class as PClassId = { Hot, Warm, Cold, Frozen };
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Bucket(id) -> Bucket;
+    Doc(id)    -> Doc;
 
     Bucket(class) <= Class(id);
     Doc(key) -> Doc;

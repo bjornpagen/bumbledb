@@ -1,5 +1,5 @@
 use bumbledb::Theory as _;
-use bumbledb::schema::{Generation, SealedBound, SealedWeight, StatementDescriptor, ValueType};
+use bumbledb::schema::{SealedBound, SealedWeight, StatementDescriptor, ValueType};
 use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::Scale;
@@ -44,14 +44,15 @@ fn the_lawful_schema_validates_and_carries_every_statement_family() {
         .iter()
         .filter(|statement| matches!(statement, StatementDescriptor::Functionality { .. }))
         .count();
-    assert_eq!(declared_keys, 4, "the four declared keys");
-    let fresh_autos = descriptor
-        .relations
-        .iter()
-        .flat_map(|relation| &relation.fields)
-        .filter(|field| field.generation == Generation::Fresh)
-        .count();
-    assert_eq!(fresh_autos, 3, "Task.id, Attempt.id, Steer.id");
+    assert_eq!(
+        declared_keys, 7,
+        "the three declared application-owned id keys plus the four \
+         declared composite keys — no fresh auto-keys exist"
+    );
+    // No generated field CAN remain: `FieldDescriptor` no longer carries a
+    // generation attribute at all (compile-time truth — the fresh mint was
+    // deleted with its mechanism, E-NO-RESERVE). Identity is
+    // application-owned data.
     let closed_autos = descriptor
         .relations
         .iter()
@@ -60,7 +61,7 @@ fn the_lawful_schema_validates_and_carries_every_statement_family() {
     assert_eq!(closed_autos, 3, "the three closed vocabularies");
     assert_eq!(
         schema.keys().len(),
-        declared_keys + fresh_autos + closed_autos,
+        declared_keys + closed_autos,
         "every key family materialized"
     );
 

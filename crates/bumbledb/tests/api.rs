@@ -1,4 +1,4 @@
-//! end to end through the public surface — create → write{reserve+insert} →
+//! end to end through the public surface — create → write{insert} →
 //! read{point lookup, join, aggregate} → mutate via delete+insert → read
 //! the export → collection-insert ETL round trip on both lanes (`insert`
 use bumbledb::ir::{
@@ -24,16 +24,23 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Holder {
-        id: u64 as HolderId, fresh,
+        id: u64 as HolderId,
         name: str,
     }
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         balance: i64,
     }
 
     Account(holder) <= Holder(id);
+}
+
+/// The database issues no identity: tests mint application-owned ids from
+/// one process-wide counter (unique, increasing — the old fresh shape).
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn mint() -> u64 {
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 fn join_query() -> Query {
@@ -130,19 +137,19 @@ fn usage_shapes_end_to_end() {
 
     let accounts = db
         .write(|tx| {
-            let alice: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let alice = HolderId(mint());
             tx.insert([&Holder {
                 id: alice,
                 name: "alice",
             }])?;
-            let bob: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let bob = HolderId(mint());
             tx.insert([&Holder {
                 id: bob,
                 name: "bob",
             }])?;
             let mut accounts = Vec::new();
             for (holder, balance) in [(alice, 100), (alice, -25), (bob, 40)] {
-                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                let id = AccountId(mint());
                 tx.insert([&Account {
                     id,
                     holder,
@@ -221,7 +228,7 @@ fn aborted_writes_leave_prior_state_intact() {
         .expect("create")
         .expect("accepted");
     db.write(|tx| {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         tx.insert([&Holder { id, name: "keep" }])
     })
     .expect("seed")
@@ -230,7 +237,7 @@ fn aborted_writes_leave_prior_state_intact() {
     // A panicking closure: the delta dies in the unwind, LMDB untouched.
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = db.write(|tx| -> bumbledb::Result<()> {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let id = HolderId(mint());
             tx.insert([&Holder {
                 id,
                 name: "doomed-by-panic",
@@ -241,7 +248,7 @@ fn aborted_writes_leave_prior_state_intact() {
     assert!(panicked.is_err());
 
     let failed = db.write(|tx| -> bumbledb::Result<()> {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         tx.insert([&Holder {
             id,
             name: "doomed-by-error",
@@ -255,7 +262,7 @@ fn aborted_writes_leave_prior_state_intact() {
     assert!(failed.is_err());
 
     db.write(|tx| {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         tx.insert([&Holder { id, name: "after" }])
     })
     .expect("mutex usable after a panic")
@@ -289,12 +296,12 @@ fn concurrent_readers_while_writing() {
         .expect("accepted");
 
     db.write(|tx| {
-        let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let holder = HolderId(mint());
         tx.insert([&Holder {
             id: holder,
             name: "seed",
         }])?;
-        let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+        let id = AccountId(mint());
         tx.insert([&Account {
             id,
             holder,
@@ -308,12 +315,12 @@ fn concurrent_readers_while_writing() {
         let writer = scope.spawn(|| {
             for round in 0..20 {
                 db.write(|tx| {
-                    let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                    let holder = HolderId(mint());
                     tx.insert([&Holder {
                         id: holder,
                         name: &format!("holder-{round}"),
                     }])?;
-                    let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                    let id = AccountId(mint());
                     tx.insert([&Account {
                         id,
                         holder,
@@ -356,9 +363,9 @@ fn export_scan_inserts_into_a_fresh_database() {
         .write(|tx| {
             let mut max = 0;
             for (name, balance) in [("alice", 100i64), ("bob", -7), ("carol", 40)] {
-                let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                let holder = HolderId(mint());
                 tx.insert([&Holder { id: holder, name }])?;
-                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                let id = AccountId(mint());
                 tx.insert([&Account {
                     id,
                     holder,
@@ -417,8 +424,8 @@ fn export_scan_inserts_into_a_fresh_database() {
         name_amount_answers(&answers_new)
     );
 
-    new.write(|tx| {
-        let next: HolderId = tx.reserve(1)?.start().expect("nonempty");
+    new.write(|_tx| {
+        let next = HolderId(mint());
         assert!(
             next.0 > max_holder,
             "minted {} at or below the imported high water {max_holder}",
@@ -439,7 +446,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         .expect("accepted");
     let holder = db
         .write(|tx| {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let id = HolderId(mint());
             tx.insert([&Holder { id, name: "alice" }])?;
             Ok(id)
         })
@@ -567,7 +574,6 @@ fn open_mismatches_and_snapshot_usability() {
             fields: vec![bumbledb::schema::FieldDescriptor {
                 name: "x".into(),
                 value_type: bumbledb::schema::ValueType::U64,
-                generation: bumbledb::schema::Generation::None,
             }],
         }],
         statements: vec![],
@@ -584,7 +590,7 @@ fn open_mismatches_and_snapshot_usability() {
 
     let db = Db::open(dir.path(), Ledger).expect("open");
     db.write(|tx| {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         tx.insert([&Holder { id, name: "bo" }])
     })
     .expect("seed")
@@ -612,7 +618,7 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
         .expect("create")
         .expect("accepted");
     db.write(|tx| {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         tx.insert([&Holder { id, name: "first" }])
     })
     .expect("seed")
@@ -626,7 +632,7 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
 
         for round in 0..2 {
             db.write(|tx| {
-                let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                let id = HolderId(mint());
                 tx.insert([&Holder {
                     id,
                     name: &format!("later-{round}"),
@@ -717,7 +723,6 @@ fn collection_insert_equals_sequential_inserts() {
 
 #[test]
 fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
-    use bumbledb::Fresh as _;
     let dir = common::TempDir::new("api-insert-typed");
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
@@ -726,7 +731,7 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     let n = 4_100u64;
     let names = ["ada", "bob", "eve"];
     let holder = |i: u64| Holder {
-        id: HolderId::from_fresh(i),
+        id: HolderId(i),
         name: names[usize::try_from(i % 3).expect("small")],
     };
     let holders: Vec<_> = (0..n).map(holder).collect();
@@ -748,8 +753,8 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     assert_eq!(persisted, usize::try_from(n).expect("64-bit"));
 
     let account = |i: u64| Account {
-        id: AccountId::from_fresh(i),
-        holder: HolderId::from_fresh(if i == 4_099 { n + 7 } else { i % 3 }),
+        id: AccountId(i),
+        holder: HolderId(if i == 4_099 { n + 7 } else { i % 3 }),
         balance: 1,
     };
     let accounts: Vec<_> = (0..n).map(account).collect();
@@ -772,7 +777,7 @@ fn disk_size_and_generation_report_store_state() {
 
     db.write(|tx| {
         for _ in 0..10_000u64 {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let id = HolderId(mint());
             tx.insert([&Holder {
                 id,
                 name: &format!("holder-{}", id.0),
@@ -799,7 +804,7 @@ fn cover_choice_iterates_the_selected_side() {
     db.write(|tx| {
         let mut holders = Vec::new();
         for i in 0..500u64 {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let id = HolderId(mint());
             let name = if i < 7 {
                 "target".to_owned()
             } else {
@@ -809,7 +814,7 @@ fn cover_choice_iterates_the_selected_side() {
             holders.push(id);
         }
         for i in 0..10_000u64 {
-            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            let id = AccountId(mint());
             tx.insert([&Account {
                 id,
                 holder: holders[usize::try_from(i % 500).expect("small")],
@@ -869,7 +874,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     for round in 0..40u64 {
         db.write(|tx| {
             for i in 0..250u64 {
-                let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+                let id = HolderId(mint());
                 tx.insert([&Holder {
                     id,
                     name: &format!("h{round}-{i}"),
@@ -912,7 +917,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 
     compacted
         .write(|tx| {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let id = HolderId(mint());
             tx.insert([&Holder {
                 id,
                 name: "post-compaction",
@@ -941,9 +946,9 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
         .expect("accepted");
     for (db, name, balance) in [(&db_a, "alice", 10), (&db_b, "bob", 20)] {
         db.write(|tx| {
-            let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let holder = HolderId(mint());
             tx.insert([&Holder { id: holder, name }])?;
-            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            let id = AccountId(mint());
             tx.insert([&Account {
                 id,
                 holder,
@@ -1091,7 +1096,7 @@ fn nested_write_panics_instead_of_deadlocking() {
     assert!(message.contains("nested Db::write"), "{message}");
 
     db.write(|tx| {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         tx.insert([&Holder {
             id,
             name: "after the panic",
@@ -1109,17 +1114,17 @@ fn prepared_executions_observe_exactly_one_generation() {
         .expect("accepted");
     let (hx, hy, ax, ay) = db
         .write(|tx| {
-            let hx: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let hx = HolderId(mint());
             tx.insert([&Holder { id: hx, name: "x" }])?;
-            let hy: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let hy = HolderId(mint());
             tx.insert([&Holder { id: hy, name: "y" }])?;
-            let ax: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            let ax = AccountId(mint());
             tx.insert([&Account {
                 id: ax,
                 holder: hx,
                 balance: 0,
             }])?;
-            let ay: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            let ay = AccountId(mint());
             tx.insert([&Account {
                 id: ay,
                 holder: hy,
@@ -1184,69 +1189,43 @@ fn prepared_executions_observe_exactly_one_generation() {
     });
 }
 
-/// The generation must not move for either — `Q` marks are not query-visible
-/// state.
+/// The old escaped-fresh-id halves retired with the fresh machinery
+/// (E-NO-RESERVE): there is no bare reserve and no `Q` mark. What
+/// survives is the state-change law itself — a write that nets to
+/// nothing must not move the generation.
 #[test]
-fn escaped_fresh_ids_survive_noop_commits() {
+fn a_nets_to_nothing_write_is_not_a_state_change() {
     let dir = common::TempDir::new("api-fresh-escape");
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
         .expect("accepted");
 
-    let a: HolderId = db
-        .write(|tx| Ok(tx.reserve(1)?.start().expect("nonempty")))
-        .expect("bare reserve")
-        .unwrap()
-        .value;
-    let generation_after_a = db.generation().expect("generation");
-    let b: HolderId = db
-        .write(|tx| {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
-            tx.insert([&Holder {
-                id,
-                name: "first real holder",
-            }])?;
-            Ok(id)
-        })
-        .expect("real write")
-        .unwrap()
-        .value;
-    assert!(b.0 > a.0, "escaped id {a:?} re-issued as {b:?}");
+    db.write(|tx| {
+        tx.insert([&Holder {
+            id: HolderId(mint()),
+            name: "first real holder",
+        }])
+        .map(|_| ())
+    })
+    .expect("real write")
+    .unwrap();
+    let generation_after_seed = db.generation().expect("generation");
+    assert_eq!(generation_after_seed.value(), 1);
 
-    let c: HolderId = db
-        .write(|tx| {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
-            let ghost = Holder { id, name: "ghost" };
-            tx.insert([&ghost])?;
-            tx.delete([&ghost])?;
-            Ok(id)
-        })
-        .expect("nets to nothing")
-        .unwrap()
-        .value;
-    let generation_after_c = db.generation().expect("generation");
-    let d: HolderId = db
-        .write(|tx| {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
-            tx.insert([&Holder {
-                id,
-                name: "second real holder",
-            }])?;
-            Ok(id)
-        })
-        .expect("real write")
-        .unwrap()
-        .value;
-    assert!(d.0 > c.0, "escaped id {c:?} re-issued as {d:?}");
-
+    db.write(|tx| {
+        let ghost = Holder {
+            id: HolderId(mint()),
+            name: "ghost",
+        };
+        tx.insert([&ghost])?;
+        tx.delete([&ghost])?;
+        Ok(())
+    })
+    .expect("nets to nothing")
+    .unwrap();
     assert_eq!(
-        generation_after_a.value(),
-        0,
-        "a bare reserve is not a state change"
-    );
-    assert_eq!(
-        generation_after_c.value(),
-        1,
+        db.generation().expect("generation"),
+        generation_after_seed,
         "a nets-to-nothing write is not a state change"
     );
 }
@@ -1259,7 +1238,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
         .expect("accepted");
     let holder = db
         .write(|tx| {
-            let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let id = HolderId(mint());
             tx.insert([&Holder { id, name: "real" }])?;
             Ok(id)
         })
@@ -1299,7 +1278,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     assert_eq!(db.generation().expect("generation"), generation);
 
     db.write(|tx| {
-        let id: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let id = HolderId(mint());
         let transient = Holder {
             id,
             name: "transient",
@@ -1371,10 +1350,10 @@ fn a_plain_query_executes_as_today() {
         .expect("accepted");
     db.write(|tx| {
         for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {
-            let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+            let holder = HolderId(mint());
             tx.insert([&Holder { id: holder, name }])?;
             for balance in balances {
-                let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+                let id = AccountId(mint());
                 tx.insert([&Account {
                     id,
                     holder,
@@ -1430,13 +1409,13 @@ fn prepare_executes_recursion_under_the_driver() {
         .expect("create")
         .expect("accepted");
     db.write(|tx| {
-        let holder: HolderId = tx.reserve(1)?.start().expect("nonempty");
+        let holder = HolderId(mint());
         tx.insert([&Holder {
             id: holder,
             name: "alice",
         }])?;
         for balance in [100, -25, 40] {
-            let id: AccountId = tx.reserve(1)?.start().expect("nonempty");
+            let id = AccountId(mint());
             tx.insert([&Account {
                 id,
                 holder,

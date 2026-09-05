@@ -11,7 +11,7 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * engine's exact rule so `lower` never emits an engine-refused
  * containment. The type tier is `law.ts`'s `TargetKeyWall` (best effort,
  * statically known tuples); every OTHER semantic judgment (key-internal
- * legality, fresh-on-u64, …) stays the engine's `SchemaError` at
+ * legality, …) stays the engine's `SchemaError` at
  * `Db.create` — the engine is the final authority for every boundary,
  * this wall just makes the SDK agree with it first.
  */
@@ -44,12 +44,6 @@ function collectImplied(name: string, relations: SchemaRelations): ImpliedKeys {
 		const projections: Array<readonly string[]> = []
 		if (isClosedMember(member)) {
 			projections.push(Object.freeze(["id"]))
-		} else {
-			for (const declared of member.data.fields) {
-				if ("fresh" in declared.field && declared.field.fresh === true) {
-					projections.push(Object.freeze([declared.name]))
-				}
-			}
 		}
 		for (const projection of projections) {
 			rendered.add(`${member.name}(${projection.join(", ")}) -> ${member.name}`)
@@ -201,7 +195,7 @@ function verifyClosedReferenceBinding(
  * `resolve_capacity_target` mirrored exactly): every `contained`/
  * `mirrors`/`capacity` statement's target projection must resolve a key
  * of the target relation, judged over the SAME key population the engine
- * materializes — the fresh-implied and closed auto-keys
+ * materializes — the closed auto-keys
  * ({@link collectImplied}'s roster) first, then the declared `key`
  * statements in written order (a key may be declared after its probe, so
  * this wall runs over the COMPLETE list, never inside the statement
@@ -337,7 +331,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 		verifyMembership(name, relations, statement, rendered)
 		if (implied.rendered.has(rendered)) {
 			throw new AuthoringError({
-				message: `schema ${name}: ${rendered} is redundant here (the fresh mark or closedness already implies it) — and rejected as a duplicate`
+				message: `schema ${name}: ${rendered} is redundant here (closedness already implies it) — and rejected as a duplicate`
 			})
 		}
 		if (seen.has(rendered)) {

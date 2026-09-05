@@ -18,4 +18,5 @@ pub fn q() -> bumbledb::Query {
         interior mid(c, p) | Parent(child: c, parent: p);
         (x) | mid(0: x, 1 == Usd);
     })
+    .into_query()
 }

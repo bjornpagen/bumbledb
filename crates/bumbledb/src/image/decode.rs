@@ -28,6 +28,14 @@ pub(super) enum Decode {
         end_column: usize,
     },
 
+    /// A dense-line `interval<f64>`: two order-key words, each checked
+    /// canonical (no order-key hole) before entering the columns.
+    IntervalF64 {
+        offset: usize,
+        start_column: usize,
+        end_column: usize,
+    },
+
     FixedInterval {
         offset: usize,
         width: u64,
@@ -101,6 +109,13 @@ pub(super) fn decode_plan(
                     offset,
                     start: words_start(columns[first]),
                 },
+                // Sixteen exact identity bytes over two word columns:
+                // verbatim big-endian words, no pad bytes to check.
+                (ColumnWidth::Words { .. }, ValueType::Id128) => Decode::FixedBytes {
+                    offset,
+                    starts: (0..2).map(|i| words_start(columns[first + i])).collect(),
+                    pad_mask: 0,
+                },
                 (ColumnWidth::Word, _) => Decode::Word {
                     offset,
                     start: words_start(columns[first]),
@@ -113,6 +128,19 @@ pub(super) fn decode_plan(
                         end_column: words_start(columns[first + 1]),
                     }
                 }
+                // Dense-line endpoints: refuse a non-canonical order-key
+                // hole at decode (corrupt stored data refuses, never
+                // normalizes) in addition to the strict `start < end`.
+                (
+                    ColumnWidth::WordPair,
+                    ValueType::Interval {
+                        element: bumbledb_theory::schema::IntervalElement::F64,
+                    },
+                ) => Decode::IntervalF64 {
+                    offset,
+                    start_column: words_start(columns[first]),
+                    end_column: words_start(columns[first + 1]),
+                },
                 (ColumnWidth::WordPair, _) => Decode::Interval {
                     offset,
                     start_column: words_start(columns[first]),
@@ -132,32 +160,12 @@ pub(super) fn decode_plan(
 }
 
 #[expect(
-    clippy::too_many_arguments,
-    reason = "the split borrows and execution context are clearer unpacked"
-)]
-pub(super) fn fill_one(
-    rel: RelationId,
-    plan: &[Decode],
-    fact_width: usize,
-    fact_bytes: &[u8],
-    position: usize,
-    row_count: usize,
-    words: &mut [u64],
-    bytes: &mut [u8],
-) -> Result<usize> {
-    if position >= row_count {
-        return Err(Error::Corruption(CorruptionError::RowCountMismatch {
-            relation: rel,
-            stored: row_count as u64,
-        }));
-    }
-    decode_fact(rel, plan, fact_width, fact_bytes, position, words, bytes)?;
-    Ok(position + 1)
-}
-
-#[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the per-type decode arms are one linear wire table"
 )]
 pub(super) fn decode_fact(
     rel: RelationId,
@@ -238,6 +246,28 @@ pub(super) fn decode_fact(
 
                 // strict `start < end` invariant IS this u64 compare.
 
+                if start_word >= end_word {
+                    return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
+                }
+                unsafe {
+                    *words.get_unchecked_mut(start_column + position) = start_word;
+                    *words.get_unchecked_mut(end_column + position) = end_word;
+                }
+            }
+            Decode::IntervalF64 {
+                offset,
+                start_column,
+                end_column,
+            } => {
+                // SAFETY: offset + 16 <= fact_width (layout-derived).
+                let halves: [u8; 16] =
+                    unsafe { fact_bytes.as_ptr().add(*offset).cast::<[u8; 16]>().read() };
+                let (start_half, end_half) = crate::encoding::split_halves(halves);
+                // Order-key canonicality: a hole refuses as corruption.
+                let start = crate::encoding::decode_f64(start_half)?;
+                let end = crate::encoding::decode_f64(end_half)?;
+                let start_word = start.to_order_key();
+                let end_word = end.to_order_key();
                 if start_word >= end_word {
                     return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
                 }

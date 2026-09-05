@@ -1,6 +1,7 @@
-import type { Infer } from "#fields.ts"
+import type { AnyField, Infer } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
 import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
+import type { AnyComputeExpr, ComputeExpr } from "#query/compute.ts"
 import type { AnyVar, MintSlotOf } from "#query/scope.ts"
 
 type FoldOpName = "sum" | "mean" | "min" | "max" | "pack"
@@ -16,7 +17,7 @@ interface Agg<Op extends FoldOpName, Over extends AnyVar> {
 
 type AnyAgg = CountAgg | Agg<FoldOpName, AnyVar>
 
-type FindEntry = AnyVar | AnyAgg
+type FindEntry = AnyVar | AnyAgg | AnyComputeExpr
 
 type FindShape = Readonly<Record<string, FindEntry>>
 
@@ -67,7 +68,9 @@ type FindEntryOk<E> = E extends AnyVar
 				? NumericVarOk<O>
 				: E extends Agg<"pack", infer V extends AnyVar>
 					? IntervalVarOk<V>
-					: false
+					: E extends AnyComputeExpr
+						? true
+						: false
 
 type CheckFind<F extends FindShape> = {
 	readonly [K in keyof F]: FindEntryOk<F[K]> extends true ? F[K] : never
@@ -85,7 +88,9 @@ type FindValue<E> = E extends AnyVar
 			? Infer<O["field"]>
 			: E extends Agg<"pack", infer V extends AnyVar>
 				? Infer<V["field"]>
-				: never
+				: E extends ComputeExpr<infer T>
+					? T
+					: never
 
 type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]> }
 
@@ -95,7 +100,11 @@ type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]>
  * signature an interior join pairs against (`F` is variable-only there).
  */
 type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
-	readonly [K in keyof F]: F[K] extends AnyVar ? MintSlotOf<Classes, F[K]> : never
+	readonly [K in keyof F]: F[K] extends AnyVar
+		? MintSlotOf<Classes, F[K]>
+		: F[K] extends AnyComputeExpr
+			? { readonly field: AnyField; readonly class: undefined }
+			: never
 }
 
 export type { Agg, CheckFind, CheckRecFind, FindEntry, FindShape, HeadRecordOf, RowOfFind }

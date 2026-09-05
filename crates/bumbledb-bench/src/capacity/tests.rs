@@ -291,17 +291,30 @@ fn the_capacity_rows_run_their_protocols() {
         .expect("accepted");
     super::load(&rooms, Mass::BENCH, calendar_rows).expect("load calendar");
 
-    let sum =
-        super::commit_capacity_sum(&budgeted, write_protocol("commit_capacity_sum")).expect("sum");
+    let mut sum_mint = super::MINT_BASE;
+    let mut baseline_mint = super::MINT_BASE;
+    let mut duration_mint = super::MINT_BASE;
+    let sum = super::commit_capacity_sum(
+        &budgeted,
+        write_protocol("commit_capacity_sum"),
+        &mut sum_mint,
+    )
+    .expect("sum");
     assert_eq!(sum.work, 64, "one row per sample");
     assert!(sum.stats.min > 0);
-    let baseline =
-        super::commit_capacity_baseline(&control, write_protocol("commit_capacity_baseline"))
-            .expect("baseline");
+    let baseline = super::commit_capacity_baseline(
+        &control,
+        write_protocol("commit_capacity_baseline"),
+        &mut baseline_mint,
+    )
+    .expect("baseline");
     assert_eq!(baseline.work, 64);
-    let duration =
-        super::commit_capacity_duration(&rooms, write_protocol("commit_capacity_duration"))
-            .expect("duration");
+    let duration = super::commit_capacity_duration(
+        &rooms,
+        write_protocol("commit_capacity_duration"),
+        &mut duration_mint,
+    )
+    .expect("duration");
     assert_eq!(duration.work, 64);
     let _ = PARENTS;
     drop(budgeted);
@@ -323,7 +336,7 @@ fn traced_capacity_lands_the_judgment_spans() {
         },
         &dir.join("scratch"),
         &|name| name == "commit_capacity_sum",
-        crate::storemode::StoreMode::Nosync,
+        crate::storemode::StoreMode::Durable,
         Some(&trace_dir),
         &mut flames,
     )

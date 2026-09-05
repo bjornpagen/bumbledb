@@ -2,8 +2,22 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import { type Axioms, closed } from "#closed.ts"
-import { type BoolField, bool, bytes, type Infer, type IntervalValue, i64, interval, str, u64 } from "#fields.ts"
-import { type AnyRelation, type Fact, type FreshKeys, relation } from "#relation.ts"
+import {
+	type BoolField,
+	bool,
+	bytes,
+	type FloatIntervalValue,
+	f64,
+	type Infer,
+	type IntervalValue,
+	i64,
+	id128,
+	interval,
+	str,
+	u64
+} from "#fields.ts"
+import { Id128 } from "#id128.ts"
+import { type AnyRelation, type Fact, relation } from "#relation.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
@@ -21,30 +35,33 @@ const Grade = closed(
 )
 const Tag = bytes(32)
 const ActiveDuring = interval(i64)
+const Confidence = interval(f64)
 
 const Stay = interval(u64, 7n)
 
 const RawBytes = bytes(4)
 const RawInterval = interval(u64)
 
-const Holder = relation("Holder", { id: u64.fresh, name: str })
+const Holder = relation("Holder", { id: id128, name: str })
 const Account = relation("Account", {
-	id: u64.fresh,
-	holder: u64,
+	id: id128,
+	holder: id128,
 	kind: Kind.id,
 	active: ActiveDuring
 })
 
 const Everything = relation("Everything", {
-	id: u64.fresh,
+	id: id128,
 	flag: bool,
 	note: str,
 	tag: Tag,
 	raw: u64,
 	score: i64,
+	weight: f64,
 	kind: Kind.id,
 	at: RawInterval,
-	stay: Stay
+	stay: Stay,
+	sureness: Confidence
 })
 
 const Pair = relation("Pair", { a: u64, b: u64 })
@@ -52,8 +69,10 @@ const Pair = relation("Pair", { a: u64, b: u64 })
 test("the minimal kernel loads and the roster is pure data at runtime", function probeCompiled() {
 	assert.deepEqual(Kind.data.handles, ["Checking", "Savings"])
 	assert.deepEqual(Grade.data.handles, ["DirectPass", "Failed"])
-	assert.equal(u64.fresh.fresh, true)
 	assert.equal(u64.kind, "u64")
+	assert.equal(id128.kind, "id128")
+	assert.equal(f64.kind, "f64")
+	assert.equal(Confidence.element, "f64")
 })
 
 type Cases = [
@@ -61,8 +80,8 @@ type Cases = [
 		Equal<
 			Fact<typeof Account>,
 			{
-				id: bigint
-				holder: bigint
+				id: Id128
+				holder: Id128
 				kind: "Checking" | "Savings"
 				active: IntervalValue
 			}
@@ -72,49 +91,70 @@ type Cases = [
 		Equal<
 			Fact<typeof Everything>,
 			{
-				id: bigint
+				id: Id128
 				flag: boolean
 				note: string
 				tag: Uint8Array
 				raw: bigint
 				score: bigint
+				weight: number
 				kind: "Checking" | "Savings"
 				at: IntervalValue
 				stay: IntervalValue
+				sureness: FloatIntervalValue
 			}
 		>
 	>,
-	Expect<Equal<FreshKeys<typeof Account>, "id">>,
-	Expect<Equal<FreshKeys<typeof Pair>, never>>,
+	// The same id128 field infers the SAME host value everywhere: the
+	// canonical Id128, never a per-relation generated entity class.
 	Expect<Equal<Fact<typeof Holder>["id"], Fact<typeof Account>["holder"]>>,
 	Expect<Equal<typeof i64, { readonly kind: "i64" }>>,
 	Expect<Equal<typeof bool, { readonly kind: "bool" }>>,
 	Expect<Equal<typeof str, { readonly kind: "str" }>>,
-	Expect<Equal<(typeof u64)["fresh"], { readonly kind: "u64"; readonly fresh: true }>>,
+	Expect<Equal<typeof f64, { readonly kind: "f64" }>>,
+	Expect<Equal<typeof id128, { readonly kind: "id128" }>>,
 	Expect<Equal<typeof Tag, { readonly kind: "bytes"; readonly width: 32 }>>,
 	Expect<Equal<typeof Stay, { readonly kind: "interval"; readonly element: "u64"; readonly width: 7n }>>,
+	Expect<
+		Equal<typeof Confidence, { readonly kind: "interval"; readonly element: "f64"; readonly width: undefined }>
+	>,
 	Expect<Equal<Infer<typeof bool>, boolean>>,
 	Expect<Equal<Infer<typeof str>, string>>,
 	Expect<Equal<Infer<typeof u64>, bigint>>,
 	Expect<Equal<Infer<typeof i64>, bigint>>,
-	Expect<Equal<Infer<typeof u64.fresh>, bigint>>,
+	// No implicit bigint/number coercion: integers are bigint, f64 is number.
+	Expect<Equal<Infer<typeof f64>, number>>,
+	Expect<Equal<Infer<typeof id128>, Id128>>,
 	Expect<Equal<Infer<typeof Tag>, Uint8Array>>,
 	Expect<Equal<Infer<typeof RawBytes>, Uint8Array>>,
 	Expect<Equal<Infer<typeof ActiveDuring>, IntervalValue>>,
 	Expect<Equal<Infer<typeof Stay>, IntervalValue>>,
+	// The dense float interval infers the number-endpoint value, never the
+	// bigint one — the two interval shapes cannot cross-assign.
+	Expect<Equal<Infer<typeof Confidence>, FloatIntervalValue>>,
+	Expect<Equal<Infer<typeof Confidence> extends IntervalValue ? true : false, false>>,
+	Expect<Equal<Infer<typeof ActiveDuring> extends FloatIntervalValue ? true : false, false>>,
 	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
 	Expect<Equal<Infer<typeof Grade.id>, "DirectPass" | "Failed">>,
-	Expect<Equal<(typeof u64.fresh)["fresh"], true>>,
-	Expect<Equal<typeof u64.fresh extends { fresh: true } ? true : false, true>>,
-	Expect<Equal<typeof u64 extends { fresh: true } ? true : false, false>>,
 	Expect<Equal<(typeof Tag)["width"], 32>>,
 	Expect<Equal<(typeof RawBytes)["width"], 4>>,
 	Expect<Equal<(typeof Stay)["width"], 7n>>,
 	Expect<Equal<(typeof Stay)["element"], "u64">>,
 	Expect<Equal<(typeof ActiveDuring)["width"], undefined>>,
 	Expect<Equal<(typeof ActiveDuring)["element"], "i64">>,
+	// The fresh mark is DELETED from the whole field roster: no field
+	// carries it, no builder mints it (E-NO-RESERVE; the database issues
+	// no identity).
+	Expect<Equal<"fresh" extends keyof typeof u64 ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof i64 ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof id128 ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof f64 ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof bool ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof str ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof RawBytes ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof RawInterval ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof Kind.id ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof u64 ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof u64.fresh ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof bool ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof str ? true : false, false>>,
@@ -123,23 +163,16 @@ type Cases = [
 	Expect<Equal<"domain" extends keyof typeof Kind.id ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof i64 ? true : false, false>>,
+	Expect<Equal<"as" extends keyof typeof id128 ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof RawInterval ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof bool ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof str ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof Kind.id ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof u64 ? true : false, true>>,
-	Expect<Equal<"fresh" extends keyof typeof i64 ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof bool ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof RawBytes ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof Kind.id ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
 	Expect<Equal<(typeof Kind.data.handles)[number], string>>,
 	Expect<
 		Equal<
@@ -155,7 +188,11 @@ type Cases = [
 	Expect<Equal<typeof Grade extends AnyRelation ? true : false, false>>,
 	Expect<Equal<typeof Account extends AnyRelation ? true : false, true>>,
 	Expect<Equal<"where" extends keyof typeof Kind ? true : false, false>>,
-	Expect<Equal<"fields" extends keyof typeof Grade ? true : false, false>>
+	Expect<Equal<"fields" extends keyof typeof Grade ? true : false, false>>,
+	// An Id128 is a BRANDED canonical-hex string: an arbitrary string does
+	// not typecheck where an Id128 is required.
+	Expect<Equal<string extends Id128 ? true : false, false>>,
+	Expect<Equal<Id128 extends string ? true : false, true>>
 ]
 
 function asIsDeleted(): unknown[] {
@@ -177,19 +214,15 @@ function asIsDeleted(): unknown[] {
 	]
 }
 
-function freshStaysU64Only(): unknown[] {
+function freshIsDeleted(): unknown[] {
 	return [
-		// @ts-expect-error — fresh is legal on u64 only, never i64
+		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
+		u64.fresh,
+		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
 		i64.fresh,
-		// @ts-expect-error — fresh is legal on u64 only, never bool
-		bool.fresh,
-		// @ts-expect-error — fresh is legal on u64 only, never str
-		str.fresh,
-		// @ts-expect-error — fresh is legal on u64 only, never bytes
-		RawBytes.fresh,
-		// @ts-expect-error — fresh is legal on u64 only, never an interval
-		RawInterval.fresh,
-		// @ts-expect-error — a closed reference field is never minted
+		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
+		id128.fresh,
+		// @ts-expect-error — a closed reference field was never minted, and no field mints now
 		Kind.id.fresh
 	]
 }
@@ -215,25 +248,29 @@ type BrandIsGone = typeof import("#brand.ts")
  * comparator exists anywhere on a `bytes`/interval value (the exact-keyof
  * pin in {@link OrderCases} holds the interval value to `start`/`end` and
  * nothing else, and the method probes below are type-level absences).
- * JavaScript's bare `<` on two objects is not refusable by TypeScript (the
- * language types relational operators on any mutually-assignable pair), so
- * the wall is the absence of any order VOCABULARY here plus the query
- * surface's own operator typing — the engine refuses order on
- * bytes/intervals as the final authority.
  */
 type OrderCases = [
 	Expect<Equal<keyof Infer<typeof ActiveDuring>, "start" | "end">>,
-	Expect<Equal<keyof Infer<typeof Stay>, "start" | "end">>
+	Expect<Equal<keyof Infer<typeof Stay>, "start" | "end">>,
+	Expect<Equal<keyof Infer<typeof Confidence>, "start" | "end">>
 ]
 
+declare const someId: Id128
+
 function insertTakesCompleteFacts(): unknown {
-	// @ts-expect-error — Fact requires every field, including the fresh cell; mint with reserve first
+	// @ts-expect-error — Fact requires every field, including the application-owned id
 	const omitted: Fact<typeof Account> = {
-		holder: 1n,
+		holder: someId,
 		kind: "Checking",
 		active: { start: 0n, end: 1n }
 	}
 	return omitted
+}
+
+function idsAreCheckedValuesNotStrings(): unknown {
+	// @ts-expect-error — a bare string is not an Id128; parse it (Id128.fromHex) or generate it (Id128.random)
+	const forged: Fact<typeof Holder> = { id: "not-an-id", name: "x" }
+	return forged
 }
 
 function orderStaysRefused(
@@ -251,4 +288,4 @@ function orderStaysRefused(
 }
 
 export type { BrandIsGone, Cases, OrderCases }
-export { asIsDeleted, freshStaysU64Only, insertTakesCompleteFacts, newtypeIsGone, orderStaysRefused }
+export { asIsDeleted, freshIsDeleted, idsAreCheckedValuesNotStrings, insertTakesCompleteFacts, newtypeIsGone, orderStaysRefused }

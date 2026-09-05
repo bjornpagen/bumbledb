@@ -4,8 +4,8 @@
 //! `(2^53 - 1) * 2^2045 < 2^2098` in scaled units. For n <= 2^64-1,
 //! the triangle inequality gives `abs(total) < 2^(2098+64) = 2^2162`.
 //! A 34-limb signed magnitude has 2176 magnitude bits, so neither a valid push
-//! nor a count-checked merge can overflow its finite storage. This is the
-//! implementation bound argument, not a completed Lean proof.
+//! nor a count-checked merge can overflow its finite storage. The bound is
+//! proved: `lean/Bumbledb/Float64/Sum.lean:accumulator_within_34_limbs`.
 
 use super::FloatCardinalityOverflow;
 use bumbledb_theory::F64;
@@ -79,10 +79,7 @@ impl ExactF64Accumulator {
             Total::Finite(finite)
         };
         self.merge(&Self {
-            state: State::NonEmpty {
-                count,
-                total,
-            },
+            state: State::NonEmpty { count, total },
         })
     }
 
@@ -112,6 +109,89 @@ impl ExactF64Accumulator {
 
     pub(crate) fn sum(&self) -> Option<F64> {
         self.round(NonZeroU64::MIN)
+    }
+
+    /// Exact byte image for the one scratch map (chapter 12 §4): a spilled
+    /// group's accumulator round-trips bit-for-bit, so partition merges
+    /// across the RAM→disk transition are the SAME merges the in-RAM bank
+    /// performs (`lean/Bumbledb/Float64/Sum.lean` merge laws — exactness
+    /// lives in the limbs, and the limbs are copied verbatim).
+    ///
+    /// Layout: `[0x00]` for Empty; `[0x01][count u64 BE][total tag]` for
+    /// `NonEmpty`, where the total tag is `0x01 ‖ negative u8 ‖ 34×u64 BE`
+    /// (finite), `0x02` (+∞), `0x03` (−∞) or `0x04` (NaN).
+    pub(crate) fn encode_into(&self, out: &mut Vec<u8>) {
+        match &self.state {
+            State::Empty => out.push(0x00),
+            State::NonEmpty { count, total } => {
+                out.push(0x01);
+                out.extend_from_slice(&count.get().to_be_bytes());
+                match total {
+                    Total::Finite(finite) => {
+                        out.push(0x01);
+                        out.push(u8::from(finite.negative));
+                        for limb in &finite.limbs {
+                            out.extend_from_slice(&limb.to_be_bytes());
+                        }
+                    }
+                    Total::PositiveInfinity => out.push(0x02),
+                    Total::NegativeInfinity => out.push(0x03),
+                    Total::NaN => out.push(0x04),
+                }
+            }
+        }
+    }
+
+    /// Decode one accumulator from the front of `bytes`; returns the
+    /// accumulator and the number of bytes consumed. `None` is corruption
+    /// of our own scratch write — the caller refuses, never repairs.
+    pub(crate) fn decode_from(bytes: &[u8]) -> Option<(Self, usize)> {
+        let (&state_tag, rest) = bytes.split_first()?;
+        match state_tag {
+            0x00 => Some((Self::default(), 1)),
+            0x01 => {
+                let (count, rest) = rest.split_at_checked(8)?;
+                let count =
+                    NonZeroU64::new(u64::from_be_bytes(count.try_into().expect("eight bytes")))?;
+                let (&total_tag, rest) = rest.split_first()?;
+                let (total, used) = match total_tag {
+                    0x01 => {
+                        let (&negative, rest) = rest.split_first()?;
+                        if negative > 1 {
+                            return None;
+                        }
+                        let limb_bytes = rest.get(..LIMBS * 8)?;
+                        let mut limbs = [0u64; LIMBS];
+                        for (limb, chunk) in limbs.iter_mut().zip(limb_bytes.as_chunks::<8>().0) {
+                            *limb = u64::from_be_bytes(*chunk);
+                        }
+                        // Zero's sign is canonically positive (Finite's
+                        // invariant): a negative zero image is corruption.
+                        if negative == 1 && limbs.iter().all(|&limb| limb == 0) {
+                            return None;
+                        }
+                        (
+                            Total::Finite(Finite {
+                                negative: negative == 1,
+                                limbs,
+                            }),
+                            1 + 1 + LIMBS * 8,
+                        )
+                    }
+                    0x02 => (Total::PositiveInfinity, 1),
+                    0x03 => (Total::NegativeInfinity, 1),
+                    0x04 => (Total::NaN, 1),
+                    _ => return None,
+                };
+                Some((
+                    Self {
+                        state: State::NonEmpty { count, total },
+                    },
+                    1 + 8 + used,
+                ))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn mean(&self) -> Option<F64> {
@@ -150,7 +230,10 @@ impl Total {
 }
 
 impl Finite {
-    #[expect(clippy::cast_possible_truncation, reason = "low limb of a base-2^64 product")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "low limb of a base-2^64 product"
+    )]
     fn multiply(&mut self, count: u64) {
         let mut carry = 0u128;
         for limb in &mut self.limbs {

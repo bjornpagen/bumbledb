@@ -18,12 +18,11 @@ fn assert_batch_equality(
 
 #[test]
 fn postings_without_tag_ignores_tag_multiplicity() {
-    let dir = TempDir::new("run-anti-multiplicity");
     let schema = schema(2);
 
     let postings: Vec<(u64, u64)> = (0..10).map(|i| (i, 100 + i)).collect();
     let tags = vec![(1u64, 7u64), (2, 7), (2, 8), (3, 7), (3, 8), (3, 9)];
-    let views = views_of(&dir, &schema, &[postings.clone(), tags.clone()]);
+    let views = views_of(&schema, &[postings.clone(), tags.clone()]);
 
     let normalized = normalized(
         vec![
@@ -51,12 +50,11 @@ fn postings_without_tag_ignores_tag_multiplicity() {
 
 #[test]
 fn negated_atom_with_literal_binding_rejects_only_matching_kind() {
-    let dir = TempDir::new("run-anti-literal");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..6).map(|i| (i, i * 10)).collect();
 
     let s = vec![(1u64, 7u64), (2, 8), (3, 7), (3, 8)];
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone()]);
 
     let mut neg = negated(1, 1, &[(0, 0)]);
     neg.filters = vec![FilterPredicate::Compare {
@@ -90,8 +88,7 @@ fn zero_binding_negated_atom_is_an_emptiness_gate() {
     let schema = schema(2);
     let r = vec![(1u64, 2u64), (3, 4), (5, 6)];
     for (gate_rows, expect_all) in [(vec![(9u64, 9u64)], false), (vec![], true)] {
-        let dir = TempDir::new(&format!("run-anti-gate-{expect_all}"));
-        let views = views_of(&dir, &schema, &[r.clone(), gate_rows]);
+        let views = views_of(&schema, &[r.clone(), gate_rows]);
 
         let normalized = normalized(
             vec![occurrence(0, 0, &[(0, 0), (1, 1)]), negated(1, 1, &[])],
@@ -121,12 +118,11 @@ fn zero_binding_negated_atom_is_an_emptiness_gate() {
 /// before any deeper probing.
 #[test]
 fn negation_at_a_middle_node_compacts_before_descending() {
-    let dir = TempDir::new("run-anti-middle");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..12).map(|i| (i % 5, i % 4)).collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i % 4, i % 3)).collect();
     let blocked = vec![(1u64, 0u64), (3, 0)];
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone(), blocked.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone(), blocked.clone()]);
 
     let normalized = normalized(
         vec![
@@ -158,12 +154,11 @@ fn negation_at_a_middle_node_compacts_before_descending() {
 
 #[test]
 fn negation_over_variables_bound_at_different_nodes() {
-    let dir = TempDir::new("run-anti-split");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..9).map(|i| (i % 3, i % 4)).collect();
     let s: Vec<(u64, u64)> = (0..12).map(|i| (i % 4, i % 5)).collect();
     let blocked = vec![(0u64, 1u64), (2, 3), (1, 0)];
-    let views = views_of(&dir, &schema, &[r.clone(), s.clone(), blocked.clone()]);
+    let views = views_of(&schema, &[r.clone(), s.clone(), blocked.clone()]);
 
     let normalized = normalized(
         vec![
@@ -197,11 +192,10 @@ fn negation_over_variables_bound_at_different_nodes() {
 fn negation_under_an_aggregate_excludes_rejected_bindings() {
     use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, FoldOp};
 
-    let dir = TempDir::new("run-anti-aggregate");
     let schema = schema(2);
     let postings: Vec<(u64, u64)> = (0..10).map(|i| (i, 100 + i)).collect();
     let tags = vec![(1u64, 7u64), (2, 7), (2, 8), (3, 7), (3, 8), (3, 9)];
-    let views = views_of(&dir, &schema, &[postings.clone(), tags.clone()]);
+    let views = views_of(&schema, &[postings.clone(), tags.clone()]);
 
     let normalized = normalized(
         vec![
@@ -250,11 +244,10 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
 
 #[test]
 fn outer_join_idiom_halves_are_complementary() {
-    let dir = TempDir::new("run-anti-outer-join");
     let schema = schema(2);
     let a: Vec<(u64, u64)> = (0..16).map(|i| (i % 8, i)).collect();
     let b = vec![(2u64, 20u64), (3, 30), (3, 31), (5, 50)];
-    let views = views_of(&dir, &schema, &[a.clone(), b.clone()]);
+    let views = views_of(&schema, &[a.clone(), b.clone()]);
 
     let join_half = normalized(
         vec![

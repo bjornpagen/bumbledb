@@ -1,1075 +1,809 @@
-//! The command codec: one binary batch format, full parse before any
-//! apply, every refusal a typed sum naming relation, row, and field
-//! where one exists. A batch is a header and its ops, nothing else:
-//! commands carry raw values, never intern ids, and every consumer
-//! judges the ops through the engine rather than reading any carried
-//! claim. Illegal combinations are unencodable, not refused: value
-//! payloads parse against the relation layout, and bytes past the last
-//! op refuse as trailing garbage.
+//! The checkpoint stream codec (C08/C12): one canonical logical stream —
+//! schema-bound application facts, retained receipt rows, migration-history
+//! evidence — cut into fixed-target chunks, described by one streamed
+//! manifest, digested by one shared acyclic projection.
+//!
+//! The stream is logical: physical LMDB row IDs, dictionary numbering,
+//! freelist layout and host page sizes never enter it. Facts are ordered
+//! canonically (relation ascending, then full canonical row bytes); receipt
+//! rows are ordered by their storage key (epoch, then request bytes). Chunks
+//! are uncompressed in 1.0 and may split records; the decoder is a bounded
+//! streaming parser.
+//!
+//! The **logical digest projection** here is shared by export, import and
+//! replay checks (chapter 20): the application digest covers exactly the
+//! fact records; the system digest covers exactly the keyed system records
+//! (retained receipt rows under the `r` key prefix, migration/history
+//! evidence under P09's `m` key prefix). Control state, head revisions, certificates and the digests
+//! themselves are excluded — bound instead by the manifest's own hash and
+//! the head that references it. `empty_application_digest`/
+//! `empty_system_digest` are the blank-database projection; P04's
+//! `blank_initial_digests` must equal them (recorded cross-lane patch).
+//!
+//! Physical bytes remain provisional until the F3 format freeze (C12).
 
-use bumbledb::schema::{IntervalElement, RelationId, SchemaDescriptor, ValueType};
-use bumbledb::{F64, Interval, Value};
+use crate::history::authority::{HeadAuthority, decode_control, encode_control};
+use crate::history::{
+    DatabaseId, DatabaseIdentity, DecisionDigest, DecisionStamp, FrameError, IncarnationId,
+    SchemaId, StateStamp,
+};
+use crate::manifest::wire::{self, Reader};
+use crate::manifest::{put_object_ref, read_object_ref};
+use crate::store::{ObjectKind, ObjectRef};
 
-use crate::braids::{BraidId, Braids, braids};
+/// Default fixed-target chunk size: 8 MiB, uncompressed.
+pub const CHUNK_TARGET: usize = 8 * 1024 * 1024;
 
-/// The four magic bytes opening every batch object.
-pub const MAGIC: [u8; 4] = *b"BDBL";
+pub const MANIFEST_FAMILY: &[u8] = b"bumbledb.ckpt.v1\0";
+pub const MANIFEST_LAYOUT: u16 = 1;
+const MANIFEST_KIND: u8 = 1;
 
-/// The one accepted format version; consumers refuse anything else.
-pub const VERSION: u16 = 3;
+pub const APPLICATION_DOMAIN: &str = "bumbledb.checkpoint.v1/application-digest";
+pub const SYSTEM_DOMAIN: &str = "bumbledb.checkpoint.v1/system-digest";
+pub const STREAM_DOMAIN: &str = "bumbledb.checkpoint.v1/stream-digest";
 
-const TAG_BOOL: u8 = 0;
-const TAG_U64: u8 = 1;
-const TAG_I64: u8 = 2;
-const TAG_STRING: u8 = 3;
-const TAG_FIXED_BYTES: u8 = 4;
-const TAG_INTERVAL: u8 = 5;
-const TAG_FIXED_INTERVAL: u8 = 6;
-// Log tags are a separate namespace from the core's physical ValueTypeTag.
-// Existing v3 tags retain their meanings. The successor protocol/format reset
-// is separate work; this extension carries the core's canonical payload bytes.
-const TAG_F64: u8 = 7;
+const TAG_FACT: u8 = 1;
+const TAG_SYSTEM: u8 = 2;
+const TAG_END: u8 = 4;
 
-const OP_INSERT: u8 = 1;
-const OP_DELETE: u8 = 2;
-
-/// A byte destination the one value-encoding function writes into: the
-/// wire buffer, or the counting sink the drain's packing caps measure
-/// with.
-pub(crate) trait ByteSink {
-    fn put(&mut self, bytes: &[u8]);
+/// The canonical application digest of an empty database. One shared value:
+/// genesis sentinels, blank hydration checks and the empty export projection
+/// all name exactly this.
+#[must_use]
+pub fn empty_application_digest() -> [u8; 32] {
+    *blake3::Hasher::new_derive_key(APPLICATION_DOMAIN)
+        .finalize()
+        .as_bytes()
 }
 
-impl ByteSink for Vec<u8> {
-    fn put(&mut self, bytes: &[u8]) {
-        self.extend_from_slice(bytes);
-    }
+/// The canonical system digest of an empty receipt/history table.
+#[must_use]
+pub fn empty_system_digest() -> [u8; 32] {
+    *blake3::Hasher::new_derive_key(SYSTEM_DOMAIN)
+        .finalize()
+        .as_bytes()
 }
 
-/// A string cell: well-formed UTF-8 by construction. The encoder writes
-/// these bytes only; a lone surrogate cannot enter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WellFormedUtf8(Box<str>);
-
-impl WellFormedUtf8 {
-    /// A Rust `str` is well-formed UTF-8; this is the encode-side proof.
-    #[must_use]
-    fn of(text: &str) -> Self {
-        Self(Box::from(text))
-    }
-
-    #[must_use]
-    fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn parse(bytes: &[u8]) -> Result<Self, ()> {
-        std::str::from_utf8(bytes)
-            .map(|text| Self(Box::from(text)))
-            .map_err(|_| ())
-    }
-}
-
-/// Why a raw value refused to encode against its declared type.
+/// Bounds every stream/manifest parse obeys before allocating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValueShape {
-    /// Wrong structural kind, wrong width, an empty or inverted
-    /// interval, or a fixed-width interval that is a ray.
-    Kind { expected: ValueType },
-
-    /// A string longer than the u32 length prefix can carry.
-    Oversize,
+pub struct StreamLimits {
+    /// Largest single record payload (row/receipt/history bytes).
+    pub record_bytes: usize,
+    /// Largest encoded manifest.
+    pub manifest_bytes: usize,
 }
 
-/// The one value-encoding function: `tag u8` + payload, the exact bytes
-/// the wire carries.
-pub(crate) fn append_value<S: ByteSink>(
-    sink: &mut S,
-    value: &Value,
-    expected: ValueType,
-) -> Result<(), ValueShape> {
-    let kind = || ValueShape::Kind { expected };
-    match (value, expected) {
-        (Value::Bool(b), ValueType::Bool) => {
-            sink.put(&[TAG_BOOL, u8::from(*b)]);
-            Ok(())
-        }
-        (Value::U64(v), ValueType::U64) => {
-            sink.put(&[TAG_U64]);
-            sink.put(&v.to_le_bytes());
-            Ok(())
-        }
-        (Value::I64(v), ValueType::I64) => {
-            sink.put(&[TAG_I64]);
-            sink.put(&v.to_le_bytes());
-            Ok(())
-        }
-        (Value::F64(v), ValueType::F64) => {
-            sink.put(&[TAG_F64]);
-            sink.put(&v.to_be_bytes());
-            Ok(())
-        }
-        (Value::String(s), ValueType::String) => {
-            let text = WellFormedUtf8::of(s);
-            let len = u32::try_from(text.as_str().len()).map_err(|_| ValueShape::Oversize)?;
-            sink.put(&[TAG_STRING]);
-            sink.put(&len.to_le_bytes());
-            sink.put(text.as_str().as_bytes());
-            Ok(())
-        }
-        (Value::FixedBytes(raw), ValueType::FixedBytes { len }) => {
-            if raw.len() == usize::from(len) {
-                sink.put(&[TAG_FIXED_BYTES]);
-                sink.put(raw);
-                Ok(())
-            } else {
-                Err(kind())
-            }
-        }
-        (
-            Value::IntervalU64(interval),
-            ValueType::Interval {
-                element: IntervalElement::U64,
-            },
-        ) => {
-            sink.put(&[TAG_INTERVAL]);
-            sink.put(&interval.start().to_le_bytes());
-            sink.put(&interval.end().to_le_bytes());
-            Ok(())
-        }
-        (
-            Value::IntervalI64(interval),
-            ValueType::Interval {
-                element: IntervalElement::I64,
-            },
-        ) => {
-            sink.put(&[TAG_INTERVAL]);
-            sink.put(&interval.start().to_le_bytes());
-            sink.put(&interval.end().to_le_bytes());
-            Ok(())
-        }
-        (
-            Value::IntervalU64(interval),
-            ValueType::FixedInterval {
-                element: IntervalElement::U64,
-                width,
-            },
-        ) => {
-            if interval.end() - interval.start() == width && !interval.is_ray() {
-                sink.put(&[TAG_FIXED_INTERVAL]);
-                sink.put(&interval.start().to_le_bytes());
-                Ok(())
-            } else {
-                Err(kind())
-            }
-        }
-        (
-            Value::IntervalI64(interval),
-            ValueType::FixedInterval {
-                element: IntervalElement::I64,
-                width,
-            },
-        ) => {
-            if interval.end().abs_diff(interval.start()) == width && !interval.is_ray() {
-                sink.put(&[TAG_FIXED_INTERVAL]);
-                sink.put(&interval.start().to_le_bytes());
-                Ok(())
-            } else {
-                Err(kind())
-            }
-        }
-        _ => Err(kind()),
-    }
+impl StreamLimits {
+    pub const DEFAULT: Self = Self {
+        record_bytes: 16 * 1024 * 1024,
+        manifest_bytes: 64 * 1024 * 1024,
+    };
 }
 
-const fn expected_tag(ty: ValueType) -> u8 {
-    match ty {
-        ValueType::Bool => TAG_BOOL,
-        ValueType::U64 => TAG_U64,
-        ValueType::I64 => TAG_I64,
-        ValueType::F64 => TAG_F64,
-        ValueType::String => TAG_STRING,
-        ValueType::FixedBytes { .. } => TAG_FIXED_BYTES,
-        ValueType::Interval { .. } => TAG_INTERVAL,
-        ValueType::FixedInterval { .. } => TAG_FIXED_INTERVAL,
-    }
-}
-
-/// The op verb.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum OpKind {
-    Insert,
-    Delete,
-}
-
-impl OpKind {
-    #[must_use]
-    pub(crate) const fn wire(self) -> u8 {
-        match self {
-            Self::Insert => OP_INSERT,
-            Self::Delete => OP_DELETE,
-        }
-    }
-}
-
-/// One op: a verb, a relation, and its rows (row-major, fields in
-/// declaration order, raw values only).
+/// What one completed stream established.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Op {
-    pub kind: OpKind,
-    pub relation: RelationId,
-    pub rows: Vec<Box<[Value]>>,
+pub struct StreamSummary {
+    pub application_digest: [u8; 32],
+    pub system_digest: [u8; 32],
+    pub stream_digest: [u8; 32],
+    pub total_bytes: u64,
+    pub rows: u64,
+    pub system_records: u64,
+    pub chunks: Vec<ObjectRef>,
 }
 
-/// The batch header: everything apply-time chain checks read before
-/// touching an op — the slot identity (`braid`, `braid_gen`), the
-/// backlink (`prev`), the provenance (`writer`), and the clamped
-/// timestamp whose monotony apply refuses violations of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BatchHeader {
-    pub fingerprint: [u8; 32],
-    pub braid: BraidId,
-    pub braid_gen: u64,
-    pub prev: [u8; 32],
-    pub writer: u64,
-    pub timestamp: u64,
-}
+/// Where finished chunks go: an upload, a file writer, a test buffer. The
+/// sink owns durability of each chunk before returning its reference.
+pub trait ChunkSink {
+    type Error;
 
-/// A fully parsed batch: the header and the ops. A hostile batch can
-/// only be what its ops decode to — the engine's judgment at apply is
-/// the one consumer of their meaning.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Batch {
-    pub header: BatchHeader,
-    pub ops: Vec<Op>,
-}
-
-/// Encode-side refusals: typed, named by op, relation, row, and field
-/// where one exists. `identity` is the cross-implementation name the
-/// identity table pins.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EncodeError {
-    FingerprintMismatch,
-    UnknownBraid {
-        braid: u32,
-    },
-    UnknownRelation {
-        op: usize,
-        relation: RelationId,
-    },
-    ClosedRelation {
-        op: usize,
-        relation: RelationId,
-    },
-    OpRelationOutsideBraid {
-        op: usize,
-        relation: RelationId,
-        braid: BraidId,
-    },
-    Arity {
-        op: usize,
-        relation: RelationId,
-        row: usize,
-    },
-    Value {
-        op: usize,
-        relation: RelationId,
-        row: usize,
-        field: u16,
-        cause: ValueShape,
-    },
-    TooManyOps,
-    TooManyRows {
-        op: usize,
-    },
-}
-
-impl EncodeError {
-    /// The refusal's stable cross-implementation name.
-    #[must_use]
-    pub const fn identity(&self) -> &'static str {
-        match self {
-            Self::FingerprintMismatch => "FingerprintMismatch",
-            Self::UnknownBraid { .. } => "UnknownBraid",
-            Self::UnknownRelation { .. } => "UnknownRelation",
-            Self::ClosedRelation { .. } => "ClosedRelation",
-            Self::OpRelationOutsideBraid { .. } => "OpRelationOutsideBraid",
-            Self::Arity { .. } => "Arity",
-            Self::Value { .. } => "Value",
-            Self::TooManyOps => "TooManyOps",
-            Self::TooManyRows { .. } => "TooManyRows",
-        }
-    }
-}
-
-/// Decode-side refusals. `identity` is the cross-implementation name
-/// the conformance sidecars pin.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodeError {
-    Truncated {
-        offset: usize,
-    },
-    BadMagic {
-        got: [u8; 4],
-    },
-    Version {
-        got: u16,
-    },
-    Flags {
-        got: u16,
-    },
-    FingerprintMismatch {
-        got: [u8; 32],
-    },
-    UnknownBraid {
-        got: u32,
-    },
-    UnknownOpKind {
-        op: usize,
-        got: u8,
-    },
-    UnknownRelation {
-        op: usize,
-        relation: RelationId,
-    },
-    ClosedRelation {
-        op: usize,
-        relation: RelationId,
-    },
-    OpRelationOutsideBraid {
-        op: usize,
-        relation: RelationId,
-        braid: BraidId,
-    },
-    TagMismatch {
-        relation: RelationId,
-        row: usize,
-        field: u16,
-        expected: ValueType,
-        got: u8,
-    },
-    BoolByte {
-        relation: RelationId,
-        row: usize,
-        field: u16,
-        got: u8,
-    },
-    /// Negative zero or an alternate NaN payload is invalid wire data;
-    /// host normalization must happen before sealing a command.
-    NonCanonicalF64 {
-        relation: RelationId,
-        row: usize,
-        field: u16,
-        bits: u64,
-    },
-    InvalidUtf8 {
-        relation: RelationId,
-        row: usize,
-        field: u16,
-    },
-    EmptyInterval {
-        relation: RelationId,
-        row: usize,
-        field: u16,
-    },
-    IntervalOverflow {
-        relation: RelationId,
-        row: usize,
-        field: u16,
-    },
-    TrailingBytes {
-        at: usize,
-    },
-}
-
-impl DecodeError {
-    /// The refusal's stable cross-implementation name.
-    #[must_use]
-    pub const fn identity(&self) -> &'static str {
-        match self {
-            Self::Truncated { .. } => "Truncated",
-            Self::BadMagic { .. } => "BadMagic",
-            Self::Version { .. } => "Version",
-            Self::Flags { .. } => "Flags",
-            Self::FingerprintMismatch { .. } => "FingerprintMismatch",
-            Self::UnknownBraid { .. } => "UnknownBraid",
-            Self::UnknownOpKind { .. } => "UnknownOpKind",
-            Self::UnknownRelation { .. } => "UnknownRelation",
-            Self::ClosedRelation { .. } => "ClosedRelation",
-            Self::OpRelationOutsideBraid { .. } => "OpRelationOutsideBraid",
-            Self::TagMismatch { .. } => "TagMismatch",
-            Self::BoolByte { .. } => "BoolByte",
-            Self::NonCanonicalF64 { .. } => "NonCanonicalF64",
-            Self::InvalidUtf8 { .. } => "InvalidUtf8",
-            Self::EmptyInterval { .. } => "EmptyInterval",
-            Self::IntervalOverflow { .. } => "IntervalOverflow",
-            Self::TrailingBytes { .. } => "TrailingBytes",
-        }
-    }
-}
-
-struct Cursor<'bytes> {
-    bytes: &'bytes [u8],
-    at: usize,
-}
-
-impl<'bytes> Cursor<'bytes> {
-    const fn new(bytes: &'bytes [u8]) -> Self {
-        Self { bytes, at: 0 }
-    }
-
-    fn take(&mut self, len: usize) -> Result<&'bytes [u8], DecodeError> {
-        let end = self
-            .at
-            .checked_add(len)
-            .filter(|end| *end <= self.bytes.len())
-            .ok_or(DecodeError::Truncated { offset: self.at })?;
-        let slice = &self.bytes[self.at..end];
-        self.at = end;
-        Ok(slice)
-    }
-
-    fn u8(&mut self) -> Result<u8, DecodeError> {
-        Ok(self.take(1)?[0])
-    }
-
-    fn u16(&mut self) -> Result<u16, DecodeError> {
-        let bytes = self.take(2)?;
-        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
-    }
-
-    fn u32(&mut self) -> Result<u32, DecodeError> {
-        let bytes = self.take(4)?;
-        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-    }
-
-    fn u64(&mut self) -> Result<u64, DecodeError> {
-        let bytes = self.take(8)?;
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(bytes);
-        Ok(u64::from_le_bytes(raw))
-    }
-
-    fn i64(&mut self) -> Result<i64, DecodeError> {
-        let bytes = self.take(8)?;
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(bytes);
-        Ok(i64::from_le_bytes(raw))
-    }
-
-    fn array32(&mut self) -> Result<[u8; 32], DecodeError> {
-        let bytes = self.take(32)?;
-        let mut raw = [0u8; 32];
-        raw.copy_from_slice(bytes);
-        Ok(raw)
-    }
-
-    const fn remaining(&self) -> usize {
-        self.bytes.len() - self.at
-    }
-}
-
-/// One relation's wire view: whether it is ordinary (writable on the
-/// wire) and its field layout.
-#[derive(Debug, Clone)]
-pub struct RelationInfo {
-    ordinary: bool,
-    layout: Box<[ValueType]>,
-}
-
-impl RelationInfo {
-    #[must_use]
-    pub const fn is_ordinary(&self) -> bool {
-        self.ordinary
-    }
-
-    #[must_use]
-    pub const fn layout(&self) -> &[ValueType] {
-        &self.layout
-    }
-}
-
-/// The descriptor parsed for the wire: per relation, ordinariness and
-/// layout. Closed relations encode nowhere and decode nowhere.
-#[derive(Debug, Clone)]
-pub struct Vocabulary {
-    relations: Box<[RelationInfo]>,
-}
-
-impl Vocabulary {
-    #[must_use]
-    pub fn new(descriptor: &SchemaDescriptor) -> Self {
-        Self {
-            relations: descriptor
-                .relations
-                .iter()
-                .map(|relation| RelationInfo {
-                    ordinary: relation.extension.is_none(),
-                    layout: relation
-                        .fields
-                        .iter()
-                        .map(|field| field.value_type)
-                        .collect(),
-                })
-                .collect(),
-        }
-    }
-
-    /// # Panics
-    #[must_use]
-    pub fn relation(&self, id: RelationId) -> Option<&RelationInfo> {
-        self.relations
-            .get(usize::try_from(id.0).expect("u32 fits usize"))
-    }
-}
-
-/// The codec context: the descriptor parsed once (vocabulary + braid
-/// map) beside the schema fingerprint the wire pins. Encode and decode
-/// allocate output buffers only; everything derived lives here.
-#[derive(Debug, Clone)]
-pub struct Codec {
-    fingerprint: [u8; 32],
-    vocabulary: Vocabulary,
-    braids: Braids,
-}
-
-impl Codec {
-    /// Parses the descriptor into the derived views the codec reads.
-    #[must_use]
-    pub fn new(descriptor: &SchemaDescriptor, fingerprint: [u8; 32]) -> Self {
-        Self {
-            fingerprint,
-            vocabulary: Vocabulary::new(descriptor),
-            braids: braids(descriptor),
-        }
-    }
-
-    #[must_use]
-    pub const fn fingerprint(&self) -> &[u8; 32] {
-        &self.fingerprint
-    }
-
-    #[must_use]
-    pub const fn vocabulary(&self) -> &Vocabulary {
-        &self.vocabulary
-    }
-
-    #[must_use]
-    pub const fn braids(&self) -> &Braids {
-        &self.braids
-    }
-
-    /// Encodes a batch: header, then ops. Nothing else rides the wire.
+    /// Persist one complete chunk and return its verified reference.
     ///
     /// # Errors
-    pub fn encode(&self, header: &BatchHeader, ops: &[Op]) -> Result<Vec<u8>, EncodeError> {
-        if header.fingerprint != self.fingerprint {
-            return Err(EncodeError::FingerprintMismatch);
-        }
-        if self.braids.parse(header.braid.raw()).is_none() {
-            return Err(EncodeError::UnknownBraid {
-                braid: header.braid.raw(),
-            });
-        }
-        let op_count = u32::try_from(ops.len()).map_err(|_| EncodeError::TooManyOps)?;
+    /// The sink's own failure; the writer stops without partial claims.
+    fn chunk(&mut self, bytes: &[u8]) -> Result<ObjectRef, Self::Error>;
+}
 
-        let mut out: Vec<u8> = Vec::new();
-        out.put(&MAGIC);
-        out.put(&VERSION.to_le_bytes());
-        out.put(&0u16.to_le_bytes());
-        out.put(&self.fingerprint);
-        out.put(&header.braid.raw().to_le_bytes());
-        out.put(&header.braid_gen.to_le_bytes());
-        out.put(&header.prev);
-        out.put(&header.writer.to_le_bytes());
-        out.put(&header.timestamp.to_le_bytes());
-        out.put(&op_count.to_le_bytes());
+/// Streaming writer refusals.
+#[derive(Debug)]
+pub enum WriteError<E> {
+    /// Records must arrive facts → receipts → history; order violations are
+    /// a caller bug surfaced as refusal, never silently reordered bytes.
+    OutOfOrder,
+    /// A single record exceeds the configured bound.
+    RecordTooLarge {
+        bytes: usize,
+    },
+    Sink(E),
+}
 
-        for (op_index, op) in ops.iter().enumerate() {
-            let info = match self.vocabulary.relation(op.relation) {
-                Some(info) if info.is_ordinary() => info,
-                Some(_) => {
-                    return Err(EncodeError::ClosedRelation {
-                        op: op_index,
-                        relation: op.relation,
-                    });
-                }
-                None => {
-                    return Err(EncodeError::UnknownRelation {
-                        op: op_index,
-                        relation: op.relation,
-                    });
-                }
-            };
-            if self.braids.braid_of(op.relation) != Some(header.braid) {
-                return Err(EncodeError::OpRelationOutsideBraid {
-                    op: op_index,
-                    relation: op.relation,
-                    braid: header.braid,
-                });
-            }
-            let row_count = u32::try_from(op.rows.len())
-                .map_err(|_| EncodeError::TooManyRows { op: op_index })?;
-            out.put(&[op.kind.wire()]);
-            out.put(&op.relation.0.to_le_bytes());
-            out.put(&row_count.to_le_bytes());
-            let layout = info.layout();
-            for (row_index, row) in op.rows.iter().enumerate() {
-                if row.len() != layout.len() {
-                    return Err(EncodeError::Arity {
-                        op: op_index,
-                        relation: op.relation,
-                        row: row_index,
-                    });
-                }
-                for (field_index, (value, ty)) in row.iter().zip(layout.iter()).enumerate() {
-                    append_value(&mut out, value, *ty).map_err(|cause| EncodeError::Value {
-                        op: op_index,
-                        relation: op.relation,
-                        row: row_index,
-                        field: field_index_u16(field_index),
-                        cause,
-                    })?;
-                }
-            }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Digest {
+    Application,
+    System,
+    Framing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Section {
+    Facts,
+    System,
+    Finished,
+}
+
+/// The bounded streaming encoder: one chunk buffer, three incremental
+/// hashers, no whole-database allocation.
+pub struct StreamWriter<'s, K: ChunkSink> {
+    sink: &'s mut K,
+    chunk_target: usize,
+    limits: StreamLimits,
+    buffer: Vec<u8>,
+    section: Section,
+    application: blake3::Hasher,
+    system: blake3::Hasher,
+    stream: blake3::Hasher,
+    total_bytes: u64,
+    rows: u64,
+    system_records: u64,
+    chunks: Vec<ObjectRef>,
+}
+
+impl<'s, K: ChunkSink> StreamWriter<'s, K> {
+    pub fn new(sink: &'s mut K, chunk_target: usize, limits: StreamLimits) -> Self {
+        Self {
+            sink,
+            chunk_target: chunk_target.max(4_096),
+            limits,
+            buffer: Vec::new(),
+            section: Section::Facts,
+            application: blake3::Hasher::new_derive_key(APPLICATION_DOMAIN),
+            system: blake3::Hasher::new_derive_key(SYSTEM_DOMAIN),
+            stream: blake3::Hasher::new_derive_key(STREAM_DOMAIN),
+            total_bytes: 0,
+            rows: 0,
+            system_records: 0,
+            chunks: Vec::new(),
         }
-        Ok(out)
     }
 
-    /// Decodes a batch: a full sequential parse of every byte before
-    /// any apply, refusing version, flags, fingerprint, braid
-    /// membership, malformed values, and any byte past the last op.
+    fn emit(&mut self, record: &[u8], digest: Digest) -> Result<(), WriteError<K::Error>> {
+        self.stream.update(record);
+        match digest {
+            Digest::Application => {
+                self.application.update(record);
+            }
+            Digest::System => {
+                self.system.update(record);
+            }
+            // Stream framing (the end record) is not logical content: the
+            // empty database's projection digests cover exactly no records.
+            Digest::Framing => {}
+        }
+        self.total_bytes += record.len() as u64;
+        let mut rest = record;
+        while !rest.is_empty() {
+            let space = self.chunk_target - self.buffer.len();
+            let take = space.min(rest.len());
+            self.buffer.extend_from_slice(&rest[..take]);
+            rest = &rest[take..];
+            if self.buffer.len() == self.chunk_target {
+                self.flush()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), WriteError<K::Error>> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let reference = self.sink.chunk(&self.buffer).map_err(WriteError::Sink)?;
+        self.chunks.push(reference);
+        self.buffer.clear();
+        Ok(())
+    }
+
+    fn record(
+        &mut self,
+        tag: u8,
+        key: Option<&[u8]>,
+        payload: &[u8],
+        digest: Digest,
+    ) -> Result<(), WriteError<K::Error>> {
+        if payload.len() > self.limits.record_bytes {
+            return Err(WriteError::RecordTooLarge {
+                bytes: payload.len(),
+            });
+        }
+        let mut head = Vec::with_capacity(16 + key.map_or(0, <[u8]>::len));
+        head.push(tag);
+        if let Some(key) = key {
+            head.extend_from_slice(
+                &u16::try_from(key.len())
+                    .map_err(|_| WriteError::RecordTooLarge { bytes: key.len() })?
+                    .to_be_bytes(),
+            );
+            head.extend_from_slice(key);
+        }
+        head.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        self.emit(&head, digest)?;
+        self.emit(payload, digest)
+    }
+
+    /// One application fact: relation, then full canonical row bytes. The
+    /// caller supplies canonical order.
     ///
     /// # Errors
-    /// # Panics
-    pub fn decode(&self, bytes: &[u8]) -> Result<Batch, DecodeError> {
-        let mut cur = Cursor::new(bytes);
-
-        let magic = cur.take(4)?;
-        if magic != MAGIC {
-            let mut got = [0u8; 4];
-            got.copy_from_slice(magic);
-            return Err(DecodeError::BadMagic { got });
+    /// Order/size refusals and sink failure.
+    pub fn fact(&mut self, relation: u32, row: &[u8]) -> Result<(), WriteError<K::Error>> {
+        if self.section > Section::Facts {
+            return Err(WriteError::OutOfOrder);
         }
-        let version = cur.u16()?;
-        if version != VERSION {
-            return Err(DecodeError::Version { got: version });
+        let mut head = [0u8; 5];
+        head[0] = TAG_FACT;
+        head[1..5].copy_from_slice(&relation.to_be_bytes());
+        self.emit(&head, Digest::Application)?;
+        let len = (row.len() as u64).to_be_bytes();
+        if row.len() > self.limits.record_bytes {
+            return Err(WriteError::RecordTooLarge { bytes: row.len() });
         }
-        let flags = cur.u16()?;
-        if flags != 0 {
-            return Err(DecodeError::Flags { got: flags });
-        }
-        let fingerprint = cur.array32()?;
-        if fingerprint != self.fingerprint {
-            return Err(DecodeError::FingerprintMismatch { got: fingerprint });
-        }
-        let braid_raw = cur.u32()?;
-        let braid = self
-            .braids
-            .parse(braid_raw)
-            .ok_or(DecodeError::UnknownBraid { got: braid_raw })?;
-        let braid_gen = cur.u64()?;
-        let prev = cur.array32()?;
-        let writer = cur.u64()?;
-        let timestamp = cur.u64()?;
-
-        let op_count = cur.u32()?;
-        if !bytes_back(op_count, cur.remaining(), MIN_OP_BYTES) {
-            return Err(DecodeError::Truncated { offset: cur.at });
-        }
-        let mut ops: Vec<Op> =
-            Vec::with_capacity(usize::try_from(op_count).expect("u32 fits usize"));
-        for op_index in 0..op_count {
-            let op_index = usize::try_from(op_index).expect("op index fits usize");
-            ops.push(self.decode_op(&mut cur, op_index, braid)?);
-        }
-
-        if cur.remaining() != 0 {
-            return Err(DecodeError::TrailingBytes { at: cur.at });
-        }
-
-        Ok(Batch {
-            header: BatchHeader {
-                fingerprint,
-                braid,
-                braid_gen,
-                prev,
-                writer,
-                timestamp,
-            },
-            ops,
-        })
+        self.emit(&len, Digest::Application)?;
+        self.emit(row, Digest::Application)?;
+        self.rows += 1;
+        Ok(())
     }
 
-    fn decode_op(
-        &self,
-        cur: &mut Cursor<'_>,
-        op_index: usize,
-        braid: BraidId,
-    ) -> Result<Op, DecodeError> {
-        let kind = match cur.u8()? {
-            OP_INSERT => OpKind::Insert,
-            OP_DELETE => OpKind::Delete,
-            got => return Err(DecodeError::UnknownOpKind { op: op_index, got }),
-        };
-        let relation = RelationId(cur.u32()?);
-        let info = match self.vocabulary.relation(relation) {
-            Some(info) if info.is_ordinary() => info,
-            Some(_) => {
-                return Err(DecodeError::ClosedRelation {
-                    op: op_index,
-                    relation,
-                });
-            }
-            None => {
-                return Err(DecodeError::UnknownRelation {
-                    op: op_index,
-                    relation,
-                });
-            }
-        };
-        if self.braids.braid_of(relation) != Some(braid) {
-            return Err(DecodeError::OpRelationOutsideBraid {
-                op: op_index,
-                relation,
-                braid,
-            });
+    /// One keyed system record: a retained receipt row (`r` key prefix) or
+    /// one migration-history evidence record (`m` key prefix). Keys arrive
+    /// in ascending key order; hydration writes them back verbatim.
+    ///
+    /// # Errors
+    /// Order/size refusals and sink failure.
+    pub fn system(&mut self, key: &[u8], value: &[u8]) -> Result<(), WriteError<K::Error>> {
+        if self.section > Section::System {
+            return Err(WriteError::OutOfOrder);
         }
-        let layout = info.layout();
-        let row_count = cur.u32()?;
-        // A declared count the remaining bytes cannot even open is
-        // Truncated before the loop (zero-width rows, or more rows than
-        // leftover bytes). A complete field whose bytes are present is
-        // parsed first so a named cell fault is not eaten as Truncated.
-        if layout.is_empty() {
-            if row_count != 0 {
-                return Err(DecodeError::Truncated { offset: cur.at });
-            }
-        } else if !bytes_back(row_count, cur.remaining(), 1) {
-            return Err(DecodeError::Truncated { offset: cur.at });
-        }
-        let mut rows: Vec<Box<[Value]>> =
-            Vec::with_capacity(usize::try_from(row_count).expect("u32 fits usize"));
-        for row_index in 0..row_count {
-            let row_index = usize::try_from(row_index).expect("row index fits usize");
-            let mut row: Vec<Value> = Vec::with_capacity(layout.len());
-            for (field_index, ty) in layout.iter().enumerate() {
-                let value =
-                    decode_value(cur, *ty, relation, row_index, field_index_u16(field_index))?;
-                row.push(value);
-            }
-            rows.push(row.into_boxed_slice());
-        }
-        Ok(Op {
-            kind,
-            relation,
-            rows,
+        self.section = Section::System;
+        self.record(TAG_SYSTEM, Some(key), value, Digest::System)?;
+        self.system_records += 1;
+        Ok(())
+    }
+
+    /// Seal the stream: the end record binds the counters, the final partial
+    /// chunk flushes, and the summary carries every digest.
+    ///
+    /// # Errors
+    /// Sink failure.
+    pub fn finish(mut self) -> Result<StreamSummary, WriteError<K::Error>> {
+        let mut end = Vec::with_capacity(17);
+        end.push(TAG_END);
+        end.extend_from_slice(&self.rows.to_be_bytes());
+        end.extend_from_slice(&self.system_records.to_be_bytes());
+        self.section = Section::Finished;
+        self.emit(&end, Digest::Framing)?;
+        self.flush()?;
+        Ok(StreamSummary {
+            application_digest: *self.application.finalize().as_bytes(),
+            system_digest: *self.system.finalize().as_bytes(),
+            stream_digest: *self.stream.finalize().as_bytes(),
+            total_bytes: self.total_bytes,
+            rows: self.rows,
+            system_records: self.system_records,
+            chunks: self.chunks,
         })
     }
 }
 
-fn field_index_u16(index: usize) -> u16 {
-    u16::try_from(index).expect("field count fits u16")
+/// Where decoded records go during import/verification.
+pub trait StreamSink {
+    type Error;
+
+    /// # Errors
+    fn fact(&mut self, relation: u32, row: &[u8]) -> Result<(), Self::Error>;
+    /// # Errors
+    fn system(&mut self, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
 }
 
-/// Kind + relation id + row count: the shortest op the grammar admits.
-const MIN_OP_BYTES: usize = 9;
-
-/// Whether `remaining` can back `count` items of `min_item` bytes.
-/// A zero-width item cannot back a nonzero count.
-fn bytes_back(count: u32, remaining: usize, min_item: usize) -> bool {
-    let declared = usize::try_from(count).expect("u32 fits usize");
-    if declared == 0 {
-        return true;
-    }
-    if min_item == 0 {
-        return false;
-    }
-    remaining / min_item >= declared
+/// Streaming decode refusals.
+#[derive(Debug)]
+pub enum ReadError<E, S> {
+    /// Malformed stream grammar (bad tag, truncation, counter mismatch).
+    Frame(FrameError),
+    /// The chunk supplier failed.
+    Chunk(E),
+    /// The sink refused a record.
+    Sink(S),
 }
 
-fn decode_value(
-    cur: &mut Cursor<'_>,
-    ty: ValueType,
-    relation: RelationId,
-    row: usize,
-    field: u16,
-) -> Result<Value, DecodeError> {
-    let tag = cur.u8()?;
-    if tag != expected_tag(ty) {
-        return Err(DecodeError::TagMismatch {
-            relation,
-            row,
-            field,
-            expected: ty,
-            got: tag,
-        });
+impl<E, S> From<FrameError> for ReadError<E, S> {
+    fn from(error: FrameError) -> Self {
+        Self::Frame(error)
     }
-    match ty {
-        ValueType::Bool => match cur.u8()? {
-            0 => Ok(Value::Bool(false)),
-            1 => Ok(Value::Bool(true)),
-            got => Err(DecodeError::BoolByte {
-                relation,
-                row,
-                field,
-                got,
-            }),
-        },
-        ValueType::U64 => Ok(Value::U64(cur.u64()?)),
-        ValueType::I64 => Ok(Value::I64(cur.i64()?)),
-        ValueType::F64 => {
-            let mut raw = [0; 8];
-            raw.copy_from_slice(cur.take(8)?);
-            F64::from_canonical_be_bytes(raw)
-                .map(Value::F64)
-                .map_err(|_| DecodeError::NonCanonicalF64 {
-                    relation,
-                    row,
-                    field,
-                    bits: u64::from_be_bytes(raw),
-                })
+}
+
+/// Decode a chunked stream with one bounded carry buffer. Records may split
+/// across chunk boundaries; the carry never exceeds one record plus one
+/// chunk. Counters in the end record must match what was decoded, and bytes
+/// after the end record refuse.
+///
+/// # Errors
+/// Grammar refusals, chunk-supplier failures and sink refusals.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one bounded decode loop over the frozen chunk grammar"
+)]
+pub fn read_stream<E, S>(
+    chunks: impl IntoIterator<Item = Result<Vec<u8>, E>>,
+    sink: &mut dyn StreamSink<Error = S>,
+    limits: StreamLimits,
+) -> Result<StreamSummary, ReadError<E, S>> {
+    let mut carry: Vec<u8> = Vec::new();
+    let mut application = blake3::Hasher::new_derive_key(APPLICATION_DOMAIN);
+    let mut system = blake3::Hasher::new_derive_key(SYSTEM_DOMAIN);
+    let mut stream = blake3::Hasher::new_derive_key(STREAM_DOMAIN);
+    let mut total_bytes = 0u64;
+    let mut rows = 0u64;
+    let mut system_records = 0u64;
+    let mut finished: Option<(u64, u64)> = None;
+
+    let mut consume = |carry: &mut Vec<u8>| -> Result<bool, ReadError<E, S>> {
+        // Try to parse one complete record from the carry front.
+        let Some(&tag) = carry.first() else {
+            return Ok(false);
+        };
+        let record_len: usize;
+        match tag {
+            TAG_FACT => {
+                if carry.len() < 13 {
+                    return Ok(false);
+                }
+                let len = u64::from_be_bytes(carry[5..13].try_into().expect("width"));
+                let len = usize::try_from(len).map_err(|_| FrameError::LengthOverflow)?;
+                if len > limits.record_bytes {
+                    return Err(FrameError::LimitExceeded.into());
+                }
+                record_len = 13usize.checked_add(len).ok_or(FrameError::LengthOverflow)?;
+                if carry.len() < record_len {
+                    return Ok(false);
+                }
+            }
+            TAG_SYSTEM => {
+                if carry.len() < 3 {
+                    return Ok(false);
+                }
+                let key_len =
+                    usize::from(u16::from_be_bytes(carry[1..3].try_into().expect("width")));
+                if carry.len() < 3 + key_len + 8 {
+                    return Ok(false);
+                }
+                let len = u64::from_be_bytes(
+                    carry[3 + key_len..3 + key_len + 8]
+                        .try_into()
+                        .expect("width"),
+                );
+                let len = usize::try_from(len).map_err(|_| FrameError::LengthOverflow)?;
+                if len > limits.record_bytes {
+                    return Err(FrameError::LimitExceeded.into());
+                }
+                record_len = (3 + key_len + 8)
+                    .checked_add(len)
+                    .ok_or(FrameError::LengthOverflow)?;
+                if carry.len() < record_len {
+                    return Ok(false);
+                }
+            }
+            TAG_END => {
+                if carry.len() < 17 {
+                    return Ok(false);
+                }
+                record_len = 17;
+            }
+            got => return Err(FrameError::Tag { at: 0, got }.into()),
         }
-        ValueType::String => {
-            let len = cur.u32()?;
-            let bytes = cur.take(usize::try_from(len).expect("u32 fits usize"))?;
-            let text = WellFormedUtf8::parse(bytes).map_err(|()| DecodeError::InvalidUtf8 {
-                relation,
-                row,
-                field,
-            })?;
-            Ok(Value::String(text.0))
+        if finished.is_some() {
+            return Err(FrameError::TrailingBytes { at: 0 }.into());
         }
-        ValueType::FixedBytes { len } => {
-            let bytes = cur.take(usize::from(len))?;
-            Ok(Value::FixedBytes(Box::from(bytes)))
+        let record = &carry[..record_len];
+        stream.update(record);
+        total_bytes += record.len() as u64;
+        match tag {
+            TAG_FACT => {
+                application.update(record);
+                let relation = u32::from_be_bytes(record[1..5].try_into().expect("width"));
+                rows += 1;
+                let row = &record[13..];
+                sink.fact(relation, row).map_err(ReadError::Sink)?;
+            }
+            TAG_SYSTEM => {
+                system.update(record);
+                let key_len =
+                    usize::from(u16::from_be_bytes(record[1..3].try_into().expect("width")));
+                let key = &record[3..3 + key_len];
+                let value = &record[3 + key_len + 8..];
+                system_records += 1;
+                sink.system(key, value).map_err(ReadError::Sink)?;
+            }
+            TAG_END => {
+                finished = Some((
+                    u64::from_be_bytes(record[1..9].try_into().expect("width")),
+                    u64::from_be_bytes(record[9..17].try_into().expect("width")),
+                ));
+            }
+            _ => unreachable!("tag was validated"),
         }
-        ValueType::Interval { element } => match element {
-            IntervalElement::U64 => {
-                let start = cur.u64()?;
-                let end = cur.u64()?;
-                let interval =
-                    Interval::<u64>::new(start, end).ok_or(DecodeError::EmptyInterval {
-                        relation,
-                        row,
-                        field,
-                    })?;
-                Ok(Value::IntervalU64(interval))
-            }
-            IntervalElement::I64 => {
-                let start = cur.i64()?;
-                let end = cur.i64()?;
-                let interval =
-                    Interval::<i64>::new(start, end).ok_or(DecodeError::EmptyInterval {
-                        relation,
-                        row,
-                        field,
-                    })?;
-                Ok(Value::IntervalI64(interval))
-            }
-        },
-        ValueType::FixedInterval { element, width } => match element {
-            IntervalElement::U64 => {
-                let start = cur.u64()?;
-                let interval =
-                    Interval::<u64>::fixed(start, width).ok_or(DecodeError::IntervalOverflow {
-                        relation,
-                        row,
-                        field,
-                    })?;
-                Ok(Value::IntervalU64(interval))
-            }
-            IntervalElement::I64 => {
-                let start = cur.i64()?;
-                let interval =
-                    Interval::<i64>::fixed(start, width).ok_or(DecodeError::IntervalOverflow {
-                        relation,
-                        row,
-                        field,
-                    })?;
-                Ok(Value::IntervalI64(interval))
-            }
-        },
+        carry.drain(..record_len);
+        Ok(true)
+    };
+
+    for chunk in chunks {
+        let chunk = chunk.map_err(ReadError::Chunk)?;
+        carry.extend_from_slice(&chunk);
+        while consume(&mut carry)? {}
     }
+    while consume(&mut carry)? {}
+    if !carry.is_empty() {
+        return Err(FrameError::Truncated { at: carry.len() }.into());
+    }
+    let Some((end_rows, end_system)) = finished else {
+        return Err(FrameError::Truncated { at: 0 }.into());
+    };
+    if end_rows != rows || end_system != system_records {
+        return Err(FrameError::InvalidCount.into());
+    }
+    Ok(StreamSummary {
+        application_digest: *application.finalize().as_bytes(),
+        system_digest: *system.finalize().as_bytes(),
+        stream_digest: *stream.finalize().as_bytes(),
+        total_bytes,
+        rows,
+        system_records,
+        chunks: Vec::new(),
+    })
+}
+
+/// The streamed checkpoint manifest / snapshot certificate: identity, the
+/// captured stamps and control projection, the shared logical digests, and
+/// the ordered chunk references. The manifest never contains its own digest;
+/// the head's `ObjectRef` carries that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointManifest {
+    pub identity: DatabaseIdentity,
+    pub decision: DecisionStamp,
+    pub state: StateStamp,
+    /// The authority control projection at capture — provenance for
+    /// hydration checks, never authority for new admission (the captured
+    /// target head's control is installed instead).
+    pub control_at_capture: HeadAuthority,
+    pub application_digest: [u8; 32],
+    pub system_digest: [u8; 32],
+    pub stream_digest: [u8; 32],
+    pub total_bytes: u64,
+    pub rows: u64,
+    pub system_records: u64,
+    pub chunks: Vec<ObjectRef>,
+}
+
+/// # Errors
+/// Oversized manifests refuse.
+pub fn encode_manifest(
+    manifest: &CheckpointManifest,
+    limits: StreamLimits,
+) -> Result<Vec<u8>, FrameError> {
+    let control = encode_control(&manifest.control_at_capture, limits.manifest_bytes)?;
+    let mut out = wire::frame_header(MANIFEST_FAMILY, MANIFEST_LAYOUT, MANIFEST_KIND);
+    out.extend_from_slice(manifest.identity.database_id.as_core().as_bytes());
+    out.extend_from_slice(manifest.identity.incarnation_id.as_core().as_bytes());
+    out.extend_from_slice(&manifest.identity.schema_id.0);
+    out.extend_from_slice(&manifest.decision.seq.to_be_bytes());
+    out.extend_from_slice(manifest.decision.hash.as_bytes());
+    out.extend_from_slice(manifest.state.incarnation.as_core().as_bytes());
+    out.extend_from_slice(&manifest.state.data_revision.to_be_bytes());
+    wire::put_span(&mut out, &control)?;
+    out.extend_from_slice(&manifest.application_digest);
+    out.extend_from_slice(&manifest.system_digest);
+    out.extend_from_slice(&manifest.stream_digest);
+    out.extend_from_slice(&manifest.total_bytes.to_be_bytes());
+    out.extend_from_slice(&manifest.rows.to_be_bytes());
+    out.extend_from_slice(&manifest.system_records.to_be_bytes());
+    wire::put_u32(
+        &mut out,
+        u32::try_from(manifest.chunks.len()).map_err(|_| FrameError::LengthOverflow)?,
+    );
+    for chunk in &manifest.chunks {
+        put_object_ref(&mut out, chunk);
+    }
+    wire::check_limit(out.len(), limits.manifest_bytes)?;
+    Ok(out)
+}
+
+/// # Errors
+/// Malformed manifests refuse; chunk kinds must be `Chunk`.
+pub fn decode_manifest(
+    bytes: &[u8],
+    limits: StreamLimits,
+) -> Result<CheckpointManifest, FrameError> {
+    let mut input = Reader::begin(
+        bytes,
+        MANIFEST_FAMILY,
+        MANIFEST_LAYOUT,
+        MANIFEST_KIND,
+        limits.manifest_bytes,
+    )?;
+    let identity = DatabaseIdentity {
+        database_id: DatabaseId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        incarnation_id: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        schema_id: SchemaId(input.array()?),
+    };
+    let decision = DecisionStamp {
+        seq: input.u64()?,
+        hash: DecisionDigest::from_bytes(input.array()?),
+    };
+    let state = StateStamp {
+        incarnation: IncarnationId::from_core(bumbledb::Id128::from_bytes(input.array()?)),
+        data_revision: input.u64()?,
+    };
+    let control_bytes = input.span(limits.manifest_bytes)?;
+    let control_at_capture = decode_control(control_bytes, limits.manifest_bytes)?;
+    let application_digest = input.array()?;
+    let system_digest = input.array()?;
+    let stream_digest = input.array()?;
+    let total_bytes = input.u64()?;
+    let rows = input.u64()?;
+    let system_records = input.u64()?;
+    let count = input.u32()? as usize;
+    // Chunk references are 49 encoded bytes each; the remaining input bounds
+    // the count before allocation.
+    if count > bytes.len() / 32 {
+        return Err(FrameError::InvalidCount);
+    }
+    let mut chunks = Vec::with_capacity(count);
+    for _ in 0..count {
+        let reference = read_object_ref(&mut input)?;
+        if reference.kind != ObjectKind::Chunk {
+            return Err(FrameError::Kind { got: 0 });
+        }
+        chunks.push(reference);
+    }
+    input.end()?;
+    if state.incarnation != identity.incarnation_id || control_at_capture.identity != identity {
+        return Err(FrameError::StateIdentityMismatch);
+    }
+    Ok(CheckpointManifest {
+        identity,
+        decision,
+        state,
+        control_at_capture,
+        application_digest,
+        system_digest,
+        stream_digest,
+        total_bytes,
+        rows,
+        system_records,
+        chunks,
+    })
+}
+
+/// Check a decoded stream summary against its manifest: exact digests,
+/// counters and bytes. A mismatch is corruption-class evidence, never a
+/// partial import.
+///
+/// # Errors
+/// The first disagreeing field refuses.
+pub fn verify_summary(
+    manifest: &CheckpointManifest,
+    summary: &StreamSummary,
+) -> Result<(), FrameError> {
+    if manifest.stream_digest != summary.stream_digest
+        || manifest.application_digest != summary.application_digest
+        || manifest.system_digest != summary.system_digest
+        || manifest.total_bytes != summary.total_bytes
+        || manifest.rows != summary.rows
+        || manifest.system_records != summary.system_records
+    {
+        return Err(FrameError::InvalidCount);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Codec, DecodeError, EncodeError, VERSION, bytes_back};
-    use std::path::Path;
+    use bumbledb::Id128;
 
-    use bumbledb::schema::{
-        FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-        SchemaDescriptor, StatementDescriptor, ValueType,
-    };
+    use super::*;
+    use crate::history::authority::{Activation, HeadAuthority};
 
-    fn corpus_fingerprint(schema: &str) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"bumbledb-log corpus fingerprint: ");
-        hasher.update(schema.as_bytes());
-        *hasher.finalize().as_bytes()
+    struct BufferSink {
+        chunks: Vec<Vec<u8>>,
     }
 
-    fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
-        FieldDescriptor {
-            name: name.into(),
-            value_type,
-            generation: Generation::None,
+    impl ChunkSink for BufferSink {
+        type Error = std::convert::Infallible;
+
+        fn chunk(&mut self, bytes: &[u8]) -> Result<ObjectRef, Self::Error> {
+            self.chunks.push(bytes.to_vec());
+            Ok(ObjectRef::of(1, ObjectKind::Chunk, bytes))
         }
     }
 
-    fn kitchen() -> SchemaDescriptor {
-        SchemaDescriptor {
-            relations: vec![RelationDescriptor {
-                name: "Sample".into(),
-                fields: vec![
-                    field("flag", ValueType::Bool),
-                    field("count", ValueType::U64),
-                    field("delta", ValueType::I64),
-                    field("label", ValueType::String),
-                    field("code", ValueType::FixedBytes { len: 3 }),
-                    field(
-                        "span",
-                        ValueType::Interval {
-                            element: IntervalElement::U64,
-                        },
-                    ),
-                    field(
-                        "lane",
-                        ValueType::Interval {
-                            element: IntervalElement::I64,
-                        },
-                    ),
-                    field(
-                        "slot",
-                        ValueType::FixedInterval {
-                            element: IntervalElement::U64,
-                            width: 5,
-                        },
-                    ),
-                    field(
-                        "off",
-                        ValueType::FixedInterval {
-                            element: IntervalElement::I64,
-                            width: 5,
-                        },
-                    ),
-                ],
-                extension: None,
-            }],
-            statements: vec![StatementDescriptor::Functionality {
-                relation: RelationId(0),
-                projection: Box::from([FieldId(1)]),
-            }],
+    #[derive(Default)]
+    struct CollectSink {
+        facts: Vec<(u32, Vec<u8>)>,
+        system: Vec<(Vec<u8>, Vec<u8>)>,
+    }
+
+    impl StreamSink for CollectSink {
+        type Error = std::convert::Infallible;
+
+        fn fact(&mut self, relation: u32, row: &[u8]) -> Result<(), Self::Error> {
+            self.facts.push((relation, row.to_vec()));
+            Ok(())
+        }
+
+        fn system(&mut self, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
+            self.system.push((key.to_vec(), value.to_vec()));
+            Ok(())
         }
     }
 
-    fn blank() -> SchemaDescriptor {
-        SchemaDescriptor {
-            relations: vec![RelationDescriptor {
-                name: "Tick".into(),
-                fields: vec![],
-                extension: None,
-            }],
-            statements: vec![StatementDescriptor::Functionality {
-                relation: RelationId(0),
-                projection: Box::from([]),
-            }],
-        }
+    fn write_sample(chunk_target: usize) -> (Vec<Vec<u8>>, StreamSummary) {
+        let mut sink = BufferSink { chunks: Vec::new() };
+        let mut writer = StreamWriter::new(&mut sink, chunk_target, StreamLimits::DEFAULT);
+        writer.fact(0, b"row-a").unwrap();
+        writer.fact(0, b"row-b-longer-payload").unwrap();
+        writer.fact(3, b"row-c").unwrap();
+        writer.system(b"r-key-1", b"receipt-row-1").unwrap();
+        writer.system(b"r-key-2", b"receipt-row-2").unwrap();
+        writer
+            .system(b"m-batch-1", b"applied-batch-evidence")
+            .unwrap();
+        let summary = writer.finish().unwrap();
+        (sink.chunks, summary)
     }
 
-    fn codec_named(name: &str) -> Codec {
-        let descriptor = match name {
-            "kitchen" => kitchen(),
-            "blank" => blank(),
-            other => panic!("{other}: fixture schema"),
-        };
-        Codec::new(&descriptor, corpus_fingerprint(name))
-    }
-
-    fn batch_bin(stem: &str) -> Vec<u8> {
-        std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("conformance/v3/batch")
-                .join(format!("{stem}.bin")),
+    #[test]
+    fn streams_roundtrip_identically_across_chunk_boundaries() {
+        // A chunk size small enough to split every record proves the carry
+        // parser; the digests must not depend on the chunking.
+        let (big_chunks, big) = write_sample(1 << 20);
+        let (small_chunks, small) = write_sample(4_096);
+        assert!(small_chunks.len() >= big_chunks.len());
+        assert_eq!(big.application_digest, small.application_digest);
+        assert_eq!(big.system_digest, small.system_digest);
+        assert_eq!(big.stream_digest, small.stream_digest);
+        let mut sink = CollectSink::default();
+        let summary = read_stream(
+            small_chunks
+                .into_iter()
+                .map(Ok::<_, std::convert::Infallible>),
+            &mut sink,
+            StreamLimits::DEFAULT,
         )
-        .expect("golden bin")
+        .unwrap();
+        assert_eq!(summary.application_digest, big.application_digest);
+        assert_eq!(summary.system_digest, big.system_digest);
+        assert_eq!(summary.rows, 3);
+        assert_eq!(summary.system_records, 3);
+        assert_eq!(sink.facts.len(), 3);
+        assert_eq!(sink.facts[1].1, b"row-b-longer-payload");
+        assert_eq!(sink.system[0].0, b"r-key-1");
+        assert_eq!(sink.system[2].1, b"applied-batch-evidence");
     }
 
     #[test]
-    fn the_wire_version_is_three() {
-        assert_eq!(VERSION, 3);
+    fn empty_projection_digests_are_the_blank_database_values() {
+        let mut sink = BufferSink { chunks: Vec::new() };
+        let writer = StreamWriter::new(&mut sink, 4_096, StreamLimits::DEFAULT);
+        let summary = writer.finish().unwrap();
+        assert_eq!(summary.application_digest, empty_application_digest());
+        assert_eq!(summary.system_digest, empty_system_digest());
+        assert_eq!(summary.rows, 0);
+        // Recorded cross-lane obligation: P04's blank_initial_digests()
+        // must equal (empty_application_digest(), empty_system_digest())
+        // after its recorded patch; asserted centrally in the lane tests.
     }
 
     #[test]
-    fn a_zero_width_nonzero_count_cannot_be_backed() {
-        assert!(!bytes_back(1, 0, 0));
-        assert!(!bytes_back(1, 100, 0));
-        assert!(bytes_back(0, 0, 0));
-    }
-
-    #[test]
-    fn a_declared_count_cannot_outrun_the_remaining_bytes() {
-        assert!(!bytes_back(u32::MAX, 8, 9));
-        assert!(bytes_back(1, 9, 9));
-        assert!(bytes_back(2, 18, 9));
-        assert!(!bytes_back(2, 17, 9));
-        assert!(bytes_back(1, 1, 1));
-        assert!(!bytes_back(2, 1, 1));
-    }
-
-    #[test]
-    fn truncated_identity_is_stable() {
-        assert_eq!(DecodeError::Truncated { offset: 0 }.identity(), "Truncated");
-        assert_eq!(DecodeError::Version { got: 2 }.identity(), "Version");
-    }
-
-    #[test]
-    fn encode_identity_is_stable() {
-        assert_eq!(EncodeError::TooManyOps.identity(), "TooManyOps");
-        assert_eq!(
-            EncodeError::FingerprintMismatch.identity(),
-            "FingerprintMismatch"
+    fn corruption_truncation_and_counter_mismatch_refuse() {
+        let (chunks, _) = write_sample(4_096);
+        // Truncation of the final chunk.
+        let mut truncated = chunks.clone();
+        let last = truncated.last_mut().unwrap();
+        last.pop();
+        let mut sink = CollectSink::default();
+        assert!(
+            read_stream(
+                truncated.into_iter().map(Ok::<_, std::convert::Infallible>),
+                &mut sink,
+                StreamLimits::DEFAULT
+            )
+            .is_err()
         );
-    }
-
-    #[test]
-    fn a_present_field_fault_keeps_its_name() {
-        let kitchen = codec_named("kitchen");
-        for (stem, want) in [
-            ("r_bool_byte_2", "BoolByte"),
-            ("r_tag_mismatch", "TagMismatch"),
-            ("r_string_bad_utf8", "InvalidUtf8"),
-            ("r_interval_empty", "EmptyInterval"),
-            ("r_interval_inverted", "EmptyInterval"),
-            ("r_fixed_interval_overflow", "IntervalOverflow"),
-            ("r_fixed_interval_ray", "IntervalOverflow"),
-        ] {
-            let got = kitchen.decode(&batch_bin(stem)).expect_err(stem).identity();
-            assert_eq!(got, want, "{stem}");
-        }
-    }
-
-    #[test]
-    fn an_unbacked_count_is_truncated() {
-        let kitchen = codec_named("kitchen");
-        for stem in [
-            "r_row_count_unbacked",
-            "r_op_count_unbacked",
-            "r_truncated_row",
-        ] {
-            assert_eq!(
-                kitchen.decode(&batch_bin(stem)).expect_err(stem).identity(),
-                "Truncated",
-                "{stem}"
-            );
-        }
-        assert_eq!(
-            codec_named("blank")
-                .decode(&batch_bin("r_zero_width_rows"))
-                .expect_err("r_zero_width_rows")
-                .identity(),
-            "Truncated"
+        // A flipped byte inside a record changes a digest but stays
+        // grammatical — the manifest comparison catches it.
+        let (chunks2, honest) = write_sample(4_096);
+        let mut flipped = chunks2;
+        flipped[0][6] ^= 0xff;
+        let mut sink = CollectSink::default();
+        let outcome = read_stream(
+            flipped.into_iter().map(Ok::<_, std::convert::Infallible>),
+            &mut sink,
+            StreamLimits::DEFAULT,
         );
+        if let Ok(summary) = outcome {
+            assert_ne!(summary.stream_digest, honest.stream_digest);
+        }
+        // A bad tag refuses outright.
+        let mut bad = write_sample(1 << 20).0;
+        bad[0][0] = 9;
+        let mut sink = CollectSink::default();
+        assert!(matches!(
+            read_stream(
+                bad.into_iter().map(Ok::<_, std::convert::Infallible>),
+                &mut sink,
+                StreamLimits::DEFAULT
+            ),
+            Err(ReadError::Frame(FrameError::Tag { .. }))
+        ));
+    }
+
+    #[test]
+    fn out_of_order_sections_refuse() {
+        let mut sink = BufferSink { chunks: Vec::new() };
+        let mut writer = StreamWriter::new(&mut sink, 4_096, StreamLimits::DEFAULT);
+        writer.system(b"k", b"r").unwrap();
+        assert!(matches!(
+            writer.fact(0, b"row"),
+            Err(WriteError::OutOfOrder)
+        ));
+    }
+
+    #[test]
+    fn manifests_roundtrip_and_bind_identity_and_chunk_kinds() {
+        let identity = DatabaseIdentity {
+            database_id: DatabaseId::from_core(Id128::from_bytes([1; 16])),
+            incarnation_id: IncarnationId::from_core(Id128::from_bytes([2; 16])),
+            schema_id: SchemaId([3; 32]),
+        };
+        let control = HeadAuthority::genesis(
+            identity,
+            DecisionStamp {
+                seq: 0,
+                hash: DecisionDigest::from_bytes([9; 32]),
+            },
+            Activation::NotActivated,
+        )
+        .unwrap();
+        let manifest = CheckpointManifest {
+            identity,
+            decision: DecisionStamp {
+                seq: 0,
+                hash: DecisionDigest::from_bytes([9; 32]),
+            },
+            state: StateStamp {
+                incarnation: identity.incarnation_id,
+                data_revision: 0,
+            },
+            control_at_capture: control,
+            application_digest: empty_application_digest(),
+            system_digest: empty_system_digest(),
+            stream_digest: [4; 32],
+            total_bytes: 25,
+            rows: 0,
+            system_records: 0,
+            chunks: vec![ObjectRef::of(1, ObjectKind::Chunk, b"chunk")],
+        };
+        let bytes = encode_manifest(&manifest, StreamLimits::DEFAULT).unwrap();
+        assert_eq!(
+            decode_manifest(&bytes, StreamLimits::DEFAULT).unwrap(),
+            manifest
+        );
+        for end in 0..bytes.len() {
+            assert!(decode_manifest(&bytes[..end], StreamLimits::DEFAULT).is_err());
+        }
+        // A decision-kind chunk reference refuses.
+        let mut wrong = manifest.clone();
+        wrong.chunks = vec![ObjectRef::of(1, ObjectKind::Decision, b"chunk")];
+        let bytes = encode_manifest(&wrong, StreamLimits::DEFAULT).unwrap();
+        assert!(decode_manifest(&bytes, StreamLimits::DEFAULT).is_err());
     }
 }

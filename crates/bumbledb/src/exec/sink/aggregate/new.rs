@@ -1,6 +1,6 @@
 use crate::exec::sink::{
     AggSpec, AggregateSink, DENSE_GROUPS_CAP, DedupState, FindSpec, GroupState, GroupTable,
-    SinkSpec,
+    SinkBudget, SinkSpec, SpillSet,
 };
 use crate::exec::wordmap::WordMap;
 
@@ -18,10 +18,15 @@ pub(in crate::exec::sink) fn parse_finds_into(
     parsed.clear();
     for find in finds {
         let spec = match find {
-            FindSpec::Var { slot, width } => SinkSpec::Var { slot: *slot, width: *width },
+            FindSpec::Var { slot, width } => SinkSpec::Var {
+                slot: *slot,
+                width: *width,
+            },
             FindSpec::Agg(spec) => SinkSpec::Agg(*spec),
             FindSpec::Pack { slot } => SinkSpec::Pack { slot: *slot },
-            FindSpec::Compute(_) => unreachable!("computed adapter lowers output slots before constructing inner sink"),
+            FindSpec::Compute(_) => {
+                unreachable!("computed adapter lowers output slots before constructing inner sink")
+            }
         };
         parsed.push(spec);
     }
@@ -120,6 +125,10 @@ impl AggregateSink {
         )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the per-find accumulator selection is one linear table"
+    )]
     fn build(
         finds: &[FindSpec],
         slot_count: usize,
@@ -148,7 +157,7 @@ impl AggregateSink {
         let (dedup, union_words) = match regime {
             DedupRegime::Bindings => (
                 DedupState::Bindings {
-                    seen: WordMap::with_capacity_hint(scratch_words, hint),
+                    seen: SpillSet::with_capacity_hint(scratch_words, hint, false),
                 },
                 0,
             ),
@@ -157,7 +166,7 @@ impl AggregateSink {
                 let words: usize = spans.iter().map(|(_, width)| width).sum();
                 (
                     DedupState::Union {
-                        seen: WordMap::with_capacity_hint(words, hint),
+                        seen: SpillSet::with_capacity_hint(words, hint, false),
                         spans,
                     },
                     words,
@@ -168,7 +177,7 @@ impl AggregateSink {
                 let words: usize = spans.iter().map(|(_, width)| width).sum();
                 (
                     DedupState::DnfUnion {
-                        seen: WordMap::with_capacity_hint(words, hint),
+                        seen: SpillSet::with_capacity_hint(words, hint, false),
                         spans,
                     },
                     words,
@@ -212,6 +221,10 @@ impl AggregateSink {
             share_float_inputs,
             group_counts: Vec::new(),
             cardinality_overflow: false,
+            budget: None,
+            spill: None,
+            error: None,
+            pack_bytes: 0,
             dedup,
             groups,
             key_scratch: vec![0; key_words],
@@ -261,14 +274,40 @@ impl AggregateSink {
         }
     }
 
+    /// Live groups. Exact while resident; once the group state spilled it
+    /// is an upper bound (a group folded across flushes counts in both
+    /// tiers) — downstream it is only a capacity hint, and the exact
+    /// stage-budget judgment never sees a spilled sink (stage sinks carry
+    /// no allowance).
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
+            + self.spill.as_ref().map_or(0, |spill| {
+                usize::try_from(spill.groups).expect("64-bit usize")
+            })
     }
 
     #[must_use]
     pub fn distinct_seen(&self) -> Option<usize> {
-        self.dedup.seen().map(WordMap::len)
+        self.dedup.seen_len()
+    }
+
+    /// Install this execution's allowance on the dedup seen-set AND the
+    /// group-state pressure check (None = RAM-only stage sink, whose
+    /// growth the derived-tuples budget bounds at seal).
+    pub(crate) fn begin(&mut self, budget: Option<SinkBudget>) {
+        if let Some(seen) = self.dedup.seen_mut() {
+            seen.begin(budget.clone());
+        }
+        self.budget = budget;
+    }
+
+    /// The sticky failure recorded by the infallible emit path, if any —
+    /// the group-spill failure first, then the dedup seen-set's.
+    pub(crate) fn take_error(&mut self) -> Option<crate::error::Error> {
+        self.error
+            .take()
+            .or_else(|| self.dedup.seen_mut().and_then(SpillSet::take_error))
     }
 
     #[cfg(test)]
@@ -288,9 +327,16 @@ impl AggregateSink {
         self.float_accs.clear();
         self.group_counts.clear();
         self.cardinality_overflow = false;
+        // Dropping the spill closes its scratch environment before
+        // unlinking the directory (the relation's drop-order contract).
+        self.spill = None;
+        self.error = None;
+        self.pack_bytes = 0;
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
             accs.clear();
         }
+        // Pack claims stay as a capacity pool: `probe_group` clears a
+        // slot on reuse, so stale claims are never read.
         if let Some(seen) = self.dedup.seen_mut() {
             seen.clear();
         }

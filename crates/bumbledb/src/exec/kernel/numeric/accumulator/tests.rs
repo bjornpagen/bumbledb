@@ -123,9 +123,15 @@ fn u64_max_count_bound_and_error_are_numerical_state_independent() {
         assert_eq!(count.get(), u64::MAX);
         let mut repeated = ExactF64Accumulator::default();
         repeated.push_repeated(value, u64::MAX).unwrap();
-        assert_eq!(repeated, full, "scaled constant input equals disjoint exact merges");
+        assert_eq!(
+            repeated, full,
+            "scaled constant input equals disjoint exact merges"
+        );
         repeated.push_repeated(F64::NAN, 0).unwrap();
-        assert_eq!(repeated, full, "zero multiplicity contributes no numerical state");
+        assert_eq!(
+            repeated, full,
+            "zero multiplicity contributes no numerical state"
+        );
         if let Total::Finite(finite) = total {
             // 2162 is an upper bound independent of the storage's 2176 bits.
             assert_eq!(finite.limbs[33] >> 50, 0);
@@ -185,4 +191,79 @@ fn deterministic_random_merge_trees_match_unpartitioned_exact_states() {
         }
         assert_eq!(states[0], expected);
     }
+}
+
+#[test]
+fn scratch_codec_round_trips_every_state_bit_for_bit() {
+    // The group-spill codec (chapter 12 §4): Empty, finite positive and
+    // negative totals, exact zero, subnormals, ±∞ and NaN totals all
+    // round-trip exactly — merges of decoded states equal merges of the
+    // originals, so a spilled partition's Sum/Mean bits never drift.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+    let roundtrip = |acc: &ExactF64Accumulator| -> ExactF64Accumulator {
+        let mut bytes = Vec::new();
+        acc.encode_into(&mut bytes);
+        let (decoded, used) = ExactF64Accumulator::decode_from(&bytes).expect("own bytes decode");
+        assert_eq!(used, bytes.len(), "the codec consumes exactly its image");
+        decoded
+    };
+    assert_eq!(
+        roundtrip(&ExactF64Accumulator::default()),
+        ExactF64Accumulator::default()
+    );
+    for fixture in [
+        vec![F64::from(1e16), F64::from(1.0), F64::from(-1e16)],
+        vec![F64::ZERO, F64::from(-0.0)],
+        vec![F64::from_bits(1), F64::from_bits(0x8000_0000_0000_0001)],
+        vec![F64::INFINITY, F64::from(2.0)],
+        vec![F64::NEG_INFINITY],
+        vec![F64::INFINITY, F64::NEG_INFINITY],
+        vec![F64::NAN],
+    ] {
+        let acc = accumulator(&fixture);
+        assert_eq!(roundtrip(&acc), acc, "{fixture:?}");
+    }
+    let mut random = 0x5eed_cafe_f00d_2026;
+    for _ in 0..64 {
+        let values: Vec<_> = (0..17).map(|_| F64::from_bits(next(&mut random))).collect();
+        let (left, right) = values.split_at(9);
+        let (left, right) = (accumulator(left), accumulator(right));
+        let mut direct = left.clone();
+        direct.merge(&right).expect("small fixture");
+        let mut via_codec = roundtrip(&left);
+        via_codec.merge(&roundtrip(&right)).expect("small fixture");
+        assert_eq!(via_codec, direct, "merge commutes with the codec");
+        assert_eq!(via_codec.sum(), direct.sum());
+        assert_eq!(via_codec.mean(), direct.mean());
+    }
+}
+
+#[test]
+fn scratch_codec_refuses_malformed_images() {
+    // Truncation, unknown tags, a zero count and a negative-zero finite
+    // image are corruption of our own write — refused, never repaired.
+    let mut bytes = Vec::new();
+    accumulator(&[F64::from(3.5)]).encode_into(&mut bytes);
+    assert!(ExactF64Accumulator::decode_from(&bytes[..bytes.len() - 1]).is_none());
+    assert!(ExactF64Accumulator::decode_from(&[]).is_none());
+    assert!(ExactF64Accumulator::decode_from(&[0x02]).is_none());
+    let mut zero_count = bytes.clone();
+    zero_count[1..9].fill(0);
+    assert!(ExactF64Accumulator::decode_from(&zero_count).is_none());
+    let mut bad_tag = bytes.clone();
+    bad_tag[9] = 0x09;
+    assert!(ExactF64Accumulator::decode_from(&bad_tag).is_none());
+    // Negative zero: sign byte says negative, all limbs zero.
+    let mut negative_zero = Vec::new();
+    negative_zero.push(0x01);
+    negative_zero.extend_from_slice(&1u64.to_be_bytes());
+    negative_zero.push(0x01);
+    negative_zero.push(0x01);
+    negative_zero.extend_from_slice(&[0u8; 34 * 8]);
+    assert!(ExactF64Accumulator::decode_from(&negative_zero).is_none());
 }

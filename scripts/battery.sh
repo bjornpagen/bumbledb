@@ -7,6 +7,9 @@ cd "$(dirname "$0")/.."
 echo "==> release-evidence checker regressions (not release qualification)"
 node --test scripts/release-results.test.mjs
 
+echo "==> product absence gate (ts/scripts/absence-gate.ts)"
+node ts/scripts/absence-gate.ts
+
 echo "==> cargo fmt --all --check"
 cargo fmt --all --check
 
@@ -20,6 +23,9 @@ cargo check -p bumbledb-log --no-default-features
 echo "==> cargo nextest run --workspace"
 cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
 cargo nextest run --workspace
+
+echo "==> downstream Rust consumer fixture (examples/consumers/rust)"
+cargo run --manifest-path examples/consumers/rust/Cargo.toml
 
 # Lanes 1–3 are gone from scripts/check.sh.
 echo "==> scripts/check.sh"

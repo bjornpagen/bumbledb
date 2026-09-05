@@ -7,6 +7,8 @@ use crate::corpus_gen::GenConfig;
 mod binary_fingerprint;
 mod check;
 mod display;
+pub mod f64_oracle;
+pub mod finterval_oracle;
 mod run;
 mod run_algebra;
 mod run_calendar;

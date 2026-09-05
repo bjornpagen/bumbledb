@@ -262,7 +262,7 @@ pub fn sample_sqlite(
 
 #[cfg(test)]
 mod tests {
-    use crate::churn::engines::{self, OursLane, SqliteSync};
+    use crate::churn::engines::{self, OursLane};
     use crate::corpus_gen::{GenConfig, Scale};
     use crate::naive::ParamValue;
     use crate::storemode::StoreMode;
@@ -293,8 +293,7 @@ mod tests {
         let dir = scratch(tag);
         let lane =
             engines::create_ours(&dir.join("ours"), tiny(), StoreMode::Durable).expect("ours lane");
-        let conn = engines::create_sqlite(&dir.join("mirror.sqlite"), tiny(), SqliteSync::Full)
-            .expect("mirror");
+        let conn = engines::create_sqlite(&dir.join("mirror.sqlite"), tiny()).expect("mirror");
         let live = ops::LiveSet::from_corpus(tiny());
         (lane, conn, live, dir)
     }

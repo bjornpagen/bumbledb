@@ -3,6 +3,8 @@ use super::{
     CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, KeyId, Relation, RelationBody,
     ValueType,
 };
+// (`fresh_key` and the fresh mint field are deleted: no database-issued
+// identity survives in the successor — ENG-004/ENG-007.)
 
 impl Relation {
     #[must_use]
@@ -49,14 +51,6 @@ impl Relation {
     #[must_use]
     pub fn capacity_targets(&self) -> &[CapacityId] {
         &self.capacity_targets
-    }
-
-    #[must_use]
-    pub(crate) fn fresh_key(&self) -> Option<KeyId> {
-        match self.body {
-            RelationBody::Ordinary { fresh } => fresh,
-            RelationBody::Closed { .. } => None,
-        }
     }
 
     #[must_use]

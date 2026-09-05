@@ -139,7 +139,7 @@ fn render_interiors(
                 out.push('\n');
             }
             let _ = write!(out, "interior {id}");
-            render_rule(out, schema, refs, &rule.to_rule());
+            render_rule(out, schema, refs, rule);
         }
     }
 }
@@ -397,6 +397,21 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
         }
         Value::F64(v) => {
             let _ = write!(out, "f64:0x{:016x}", v.to_bits());
+        }
+        Value::Id128(id) => {
+            // Quoted, matching `query!`'s lexable spelling (`id128:"…"`):
+            // a bare 32-hex body starting `0x…`/`0b…` is not one Rust
+            // token, so the quoted form is the render-reparse fixed point
+            // (P07's recorded request).
+            let _ = write!(out, "id128:\"{id}\"");
+        }
+        Value::IntervalF64(interval) => {
+            let _ = write!(
+                out,
+                "f64:0x{:016x}..f64:0x{:016x}",
+                interval.start().to_bits(),
+                interval.end().to_bits()
+            );
         }
         Value::IntervalU64(interval) => {
             let _ = write!(out, "{}..{}", interval.start(), interval.end());

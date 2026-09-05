@@ -10,15 +10,15 @@ use std::num::NonZeroUsize;
 fn point_parts(
     plan: &ValidatedPlan,
     occ: usize,
-    filters: &[(bumbledb_theory::schema::FieldId, crate::ir::VarId)],
-) -> Vec<(usize, usize, crate::ir::VarId, usize)> {
+    filters: &[(bumbledb_theory::schema::FieldId, crate::ir::VarId, bool)],
+) -> Vec<(usize, usize, crate::ir::VarId, usize, bool)> {
     let occurrence = &plan.occurrences()[occ];
     filters
         .iter()
-        .map(|(field, var)| {
+        .map(|(field, var, dense)| {
             let span = occurrence.spans[usize::from(field.0)];
             let first = usize::from(span.first_column);
-            (first, first + 1, *var, plan.slot_of(*var))
+            (first, first + 1, *var, plan.slot_of(*var), *dense)
         })
         .collect()
 }

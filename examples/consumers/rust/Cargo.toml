@@ -1,0 +1,20 @@
+# The chapter 34 Rust consumer fixture (API-12 / G01 "test public examples
+# as downstream consumers"): a standalone package OUTSIDE the workspace
+# consuming the public core crate the way an installed application would.
+# Crate publication is not authorized (`publish = false` on the core), so a
+# path dependency is the installed-consumer stand-in for Rust.
+#
+# Compile and run in F3:
+#   cargo run --manifest-path examples/consumers/rust/Cargo.toml
+[package]
+name = "bumbledb-consumer-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Detached from the repository workspace on purpose: this package must
+# resolve `bumbledb` as a dependency, never as a workspace sibling.
+[workspace]
+
+[dependencies]
+bumbledb = { path = "../../../crates/bumbledb" }

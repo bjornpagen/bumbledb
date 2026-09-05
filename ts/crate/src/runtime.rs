@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 use bumbledb::work::{ByteReservation, ExecutionPolicy, WorkContext, WorkError};
 
 pub mod owners;
-pub mod fs;
+pub mod session;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     RuntimeAlreadyLive,
     ForeignRuntime,
@@ -24,13 +24,27 @@ pub enum RuntimeError {
     InvalidArgument,
     Internal,
     DirectoryBusy,
+    /// The one LMDB writer for this database is already owned by a live
+    /// write session; the engine ships the refusal, never a queued thread
+    /// blocked on the writer mutex.
+    WriterBusy,
     InvalidPath,
-    Io { kind: std::io::ErrorKind, code: Option<i32> },
+    Io {
+        kind: std::io::ErrorKind,
+        code: Option<i32>,
+    },
     ResourceLimit {
         dimension: &'static str,
         used: u64,
         requested: u64,
         limit: u64,
+    },
+    /// A typed engine refusal crossing the executor as owned data: the
+    /// core error family tag plus its rendered message. Never a raw
+    /// pointer, handle or borrow.
+    Engine {
+        kind: &'static str,
+        message: String,
     },
     Work(WorkError),
 }
@@ -83,11 +97,69 @@ pub enum Output {
     Hash([u8; 32], ByteReservation),
     Directory(owners::DirectoryOwner),
     Db(owners::ManagedDbOutcome),
-    Fs(fs::FsOutput),
+    /// A worker-affine read session opened over a managed database.
+    Session(session::SessionOpened),
+    /// A worker-affine write session opened over a managed database.
+    Writer(session::WriterOpened),
+    /// Owned engine rows crossing back from a session/pool job. Values are
+    /// owned wire data — never a borrow into an LMDB mapping.
+    Rows(Vec<Vec<crate::marshal::ValueOut>>),
+    Row(Option<Vec<crate::marshal::ValueOut>>),
+    Contains(bool),
+    Count(u64),
+    Generation(u64),
+    Prepared(session::PrepareReply),
+    Mutation {
+        submitted: u64,
+        changed: u64,
+    },
+    Write(session::WriteConclusion),
+    Admitted(crate::AdmitOwned),
+    /// A grammar-lane payload (log command/decision framing) computed on
+    /// the executor: owned bytes plus optional owned metadata.
+    Log(crate::log::LogOutput),
+    /// A sealed detached schema descriptor (charged compile/admission).
+    Descriptor(crate::marshal::DescriptorWire),
+    /// A snapshot-bound execution session sharing a pinned read session.
+    ExecSession(crate::db_wire::ExecSessionOpened),
+    /// One sealed completed query result (C05), owned and independent.
+    CompleteResult(bumbledb::CompleteResult),
+    /// The one consuming cursor a spent result's backing moved into.
+    ResultCursor(bumbledb::ResultCursor),
+    /// One owned page off a cursor; `None` is the terminal EOF.
+    Page(Option<Vec<Vec<crate::marshal::ValueOut>>>),
+    /// A database-free change draft (schema compiled on the executor).
+    Draft(crate::db_wire::DraftOpened),
+    /// A sealed immutable `ChangeSet` consumed out of a draft.
+    Changes(crate::db_wire::ChangesOpened),
+    /// One immutable final-state apply outcome (chapter 35 `Db.apply`).
+    Apply(crate::db_wire::ApplyOutcomeOwned),
+    /// Bounded database diagnostics (measurements, never rows).
+    DbReport(crate::db_wire::DbInspectionOwned),
+    /// Owned bounded byte payloads (row codec, migration codec responses).
+    Bytes(Vec<u8>),
+    /// A log-machine payload (histories, commands, caches, admin — C10's
+    /// `LogNative` roster over the internal Rust machine).
+    Machine(crate::log_wire::MachineOutput),
+}
+
+impl Output {
+    /// Whether this outcome is EVIDENCE of a dispatched store mutation. A
+    /// completed mutation is evidence, not a cancellable acquisition:
+    /// interruption may discard its delivery, never rewrite a known
+    /// mutation outcome into a rollback claim (the certainty model's one
+    /// carve-out from post-work cancellation).
+    fn mutation_evidence(&self) -> bool {
+        match self {
+            Self::Write(_) | Self::Apply(_) => true,
+            Self::Machine(output) => output.mutation_evidence(),
+            _ => false,
+        }
+    }
 }
 pub type Work = Box<dyn FnOnce(&WorkContext) -> Result<Output, RuntimeError> + Send>;
-type Notify = Box<dyn FnOnce() + Send>;
-type Report = Box<dyn FnOnce(CloseReport) + Send>;
+pub(crate) type Notify = Box<dyn FnOnce() + Send>;
+pub(crate) type Report = Box<dyn FnOnce(CloseReport) + Send>;
 
 pub struct Operation {
     id: u64,
@@ -95,10 +167,21 @@ pub struct Operation {
     bytes: [u64; 4],
     owner: Option<u64>,
     database: Option<u64>,
+    session: Option<u64>,
     external: bool,
     // Protected exclusively by Runtime.state. Output never escapes a live worker.
     completion: Mutex<Option<Notify>>,
     output: Mutex<Option<Result<Output, RuntimeError>>>,
+}
+
+impl Operation {
+    /// Whether this is an externally driven lease (a persistent
+    /// owner/session hold), rather than a queued one-shot job. The
+    /// `runtime_wire` sibling module cannot read the private field, so this
+    /// accessor is the one authorized crossing.
+    pub(crate) fn is_external(&self) -> bool {
+        self.external
+    }
 }
 
 struct Job {
@@ -120,6 +203,7 @@ enum WaitTarget {
     Operation(u64),
     Owner(u64),
     Database(u64, u64),
+    Session(u64, u64, u64),
 }
 struct State {
     phase: Phase,
@@ -131,6 +215,11 @@ struct State {
     owners: BTreeMap<u64, owners::OwnerEntry>,
     reserved: [u64; 4],
     waiters: Vec<Waiter>,
+    /// Retained bridge-owned native resources (results, cursors, drafts,
+    /// change sets, log capabilities): counted against
+    /// `native_handle_capacity` and byte-charged against the resultBytes
+    /// aggregate while retained.
+    natives: usize,
 }
 
 pub struct Runtime {
@@ -148,6 +237,27 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl State {
+    /// The one aggregate byte-admission gate: reserve `bytes` against the
+    /// runtime allowance or refuse with the exact exhausted dimension.
+    fn charge(&mut self, options: &Options, bytes: [u64; 4]) -> Result<(), RuntimeError> {
+        for (index, requested) in bytes.iter().copied().enumerate() {
+            let used = self.reserved[index];
+            let limit = options.aggregate_bytes[index];
+            if used.checked_add(requested).is_none_or(|next| next > limit) {
+                return Err(RuntimeError::ResourceLimit {
+                    dimension: ["inputBytes", "workingBytes", "scratchBytes", "resultBytes"][index],
+                    used,
+                    requested,
+                    limit,
+                });
+            }
+        }
+        for (used, requested) in self.reserved.iter_mut().zip(bytes) {
+            *used += requested;
+        }
+        Ok(())
+    }
+
     fn inspection(&self) -> Inspection {
         Inspection {
             phase: self.phase,
@@ -155,7 +265,11 @@ impl State {
             active: self.active,
             retained: self.operations.len(),
             owners: self.owners.len(),
-            databases: self.owners.values().map(|owner| owner.databases.len()).sum(),
+            databases: self
+                .owners
+                .values()
+                .map(|owner| owner.databases.len())
+                .sum(),
             reserved: self.reserved,
         }
     }
@@ -201,6 +315,7 @@ impl Runtime {
                 owners: BTreeMap::new(),
                 reserved: [0; 4],
                 waiters: Vec::new(),
+                natives: 0,
             }),
             changed: Condvar::new(),
         });
@@ -285,33 +400,20 @@ impl Runtime {
         {
             return Err(RuntimeError::QueueFull);
         }
-        for (index, requested) in bytes.iter().copied().enumerate() {
-            let used = state.reserved[index];
-            let limit = self.options.aggregate_bytes[index];
-            if used.checked_add(requested).is_none_or(|next| next > limit) {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: ["inputBytes", "workingBytes", "scratchBytes", "resultBytes"][index],
-                    used,
-                    requested,
-                    limit,
-                });
-            }
-        }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
+        state.charge(&self.options, bytes)?;
         let operation = Arc::new(Operation {
             id,
             context,
             bytes,
             owner,
             database,
+            session: None,
             external: false,
             completion: Mutex::new(Some(notify)),
             output: Mutex::new(None),
         });
-        for (used, bytes) in state.reserved.iter_mut().zip(bytes) {
-            *used += bytes;
-        }
         state.operations.insert(id, Arc::clone(&operation));
         drop(state);
         // Bounded native input extraction is charged after registration, before
@@ -413,6 +515,29 @@ impl Runtime {
         }
     }
 
+    /// Deliver one session job's terminal outcome: publish the output,
+    /// wake waiters and fire the completion callback exactly once. The
+    /// session thread is not a pool worker, so `active` is untouched;
+    /// the operation stays retained (reservation held) until taken or
+    /// reclaimed, exactly like pool work.
+    pub(crate) fn complete_operation(
+        &self,
+        operation: &Arc<Operation>,
+        outcome: Result<Output, RuntimeError>,
+    ) {
+        let notify = lock(&operation.completion).take();
+        {
+            let _state = lock(&self.state);
+            *lock(&operation.output) = Some(outcome);
+        }
+        self.changed.notify_all();
+        if let Some(notify) = notify
+            && catch_unwind(AssertUnwindSafe(notify)).is_err()
+        {
+            self.begin_close();
+        }
+    }
+
     fn worker(&self) {
         loop {
             let action = {
@@ -458,8 +583,9 @@ impl Runtime {
             // A completed store mutation is evidence, not a cancellable
             // acquisition. Interruption may discard its delivery, never
             // rewrite a known mutation outcome into a rollback claim.
-            if !matches!(&outcome, Ok(Output::Fs(value)) if value.mutating())
-                && let Err(error) = job.operation.context.checkpoint() {
+            if !matches!(&outcome, Ok(output) if output.mutation_evidence())
+                && let Err(error) = job.operation.context.checkpoint()
+            {
                 outcome = Err(error.into());
             }
             let notify = lock(&job.operation.completion).take();
@@ -480,6 +606,75 @@ impl Runtime {
         }
     }
 
+    /// Registers one bounded operation targeted at a managed database
+    /// (busy/cleanup accounting counts it against the owner AND the child,
+    /// so database/directory teardown drains it). Mirrors `submit`.
+    pub(crate) fn submit_db(
+        self: &Arc<Self>,
+        db: &owners::ManagedDb,
+        policy: ExecutionPolicy,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
+    ) -> Result<Arc<Operation>, RuntimeError> {
+        if !Arc::ptr_eq(self, db.runtime()) {
+            return Err(RuntimeError::ForeignRuntime);
+        }
+        let (owner, database) = db.ids();
+        self.submit_at(Some(owner), Some(database), policy, notify, prepare)
+    }
+
+    /// Admits one retained bridge-owned native resource: counted against
+    /// `native_handle_capacity`, its payload bytes charged against the
+    /// resultBytes aggregate until the returned guard drops. Never a
+    /// silent admission: capacity and byte refusals are typed.
+    pub(crate) fn retain_native(
+        self: &Arc<Self>,
+        bytes: u64,
+    ) -> Result<RetainedNative, RuntimeError> {
+        let mut state = lock(&self.state);
+        if state.phase != Phase::Open {
+            return Err(RuntimeError::ClosedHandle);
+        }
+        if state.natives >= self.options.native_handle_capacity {
+            return Err(RuntimeError::ResourceLimit {
+                dimension: "nativeHandleCapacity",
+                used: state.natives as u64,
+                requested: 1,
+                limit: self.options.native_handle_capacity as u64,
+            });
+        }
+        let used = state.reserved[3];
+        let limit = self.options.aggregate_bytes[3];
+        if used.checked_add(bytes).is_none_or(|next| next > limit) {
+            return Err(RuntimeError::ResourceLimit {
+                dimension: "resultBytes",
+                used,
+                requested: bytes,
+                limit,
+            });
+        }
+        state.reserved[3] += bytes;
+        state.natives += 1;
+        drop(state);
+        Ok(RetainedNative {
+            runtime: Arc::clone(self),
+            bytes,
+        })
+    }
+
+    /// Operations currently bound to one managed database (queued, active
+    /// or retained) — a bounded diagnostic for `Db.inspect`.
+    pub(crate) fn database_operations(&self, owner: u64, database: u64) -> u64 {
+        let state = lock(&self.state);
+        state
+            .operations
+            .values()
+            .filter(|operation| {
+                operation.owner == Some(owner) && operation.database == Some(database)
+            })
+            .count() as u64
+    }
+
     fn supervise(&self, workers: Vec<JoinHandle<()>>) {
         let mut workers = Some(workers);
         loop {
@@ -493,13 +688,20 @@ impl Runtime {
                     .then_some(id)
                 })
                 .collect();
-            let discarded: Vec<_> = completed.into_iter().filter_map(|id| state.remove(id)).collect();
+            let discarded: Vec<_> = completed
+                .into_iter()
+                .filter_map(|id| state.remove(id))
+                .collect();
             if !discarded.is_empty() {
                 drop(state);
                 drop(discarded);
                 state = lock(&self.state);
             }
-            if state.phase == Phase::Closing && state.workers == 0 && state.operations.is_empty() && state.owners.is_empty() {
+            if state.phase == Phase::Closing
+                && state.workers == 0
+                && state.operations.is_empty()
+                && state.owners.is_empty()
+            {
                 drop(state);
                 for worker in workers.take().unwrap_or_default() {
                     let _ = worker.join();
@@ -547,6 +749,47 @@ impl Runtime {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
         }
+    }
+}
+
+/// The retained-native accounting guard: releases its handle-count slot and
+/// resultBytes charge when the resource actually leaves the registry —
+/// however it leaves (explicit close, take failure, or GC of the wrapper).
+pub(crate) struct RetainedNative {
+    runtime: Arc<Runtime>,
+    bytes: u64,
+}
+
+impl RetainedNative {
+    /// Grows this resource's retained byte charge (draft chunks accumulate;
+    /// chunks never reset the aggregate). Refuses typed at the aggregate
+    /// resultBytes cap before any growth is recorded.
+    pub(crate) fn grow(&mut self, bytes: u64) -> Result<(), RuntimeError> {
+        let mut state = lock(&self.runtime.state);
+        let used = state.reserved[3];
+        let limit = self.runtime.options.aggregate_bytes[3];
+        if used.checked_add(bytes).is_none_or(|next| next > limit) {
+            return Err(RuntimeError::ResourceLimit {
+                dimension: "resultBytes",
+                used,
+                requested: bytes,
+                limit,
+            });
+        }
+        state.reserved[3] += bytes;
+        drop(state);
+        self.bytes += bytes;
+        Ok(())
+    }
+}
+
+impl Drop for RetainedNative {
+    fn drop(&mut self) {
+        let mut state = lock(&self.runtime.state);
+        state.reserved[3] = state.reserved[3].saturating_sub(self.bytes);
+        state.natives = state.natives.saturating_sub(1);
+        drop(state);
+        self.runtime.changed.notify_all();
     }
 }
 

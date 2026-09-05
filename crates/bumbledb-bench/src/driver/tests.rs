@@ -78,7 +78,7 @@ fn bench_refuses_without_a_stamp() {
         samples: Some(8),
         trace: false,
         alloc: false,
-        ephemeral: false,
+
         proxy_per_rep: false,
         out: Some(dir.join("out")),
         i_am_lying: false,
@@ -97,7 +97,7 @@ fn alloc_without_obs_names_the_cargo_invocation() {
         samples: None,
         trace: false,
         alloc: true,
-        ephemeral: false,
+
         proxy_per_rep: false,
         out: None,
         i_am_lying: false,
@@ -118,7 +118,7 @@ fn trace_without_obs_refuses_on_every_traced_command() {
         samples: None,
         trace: true,
         alloc: false,
-        ephemeral: false,
+
         proxy_per_rep: false,
         out: None,
         i_am_lying: false,
@@ -191,7 +191,7 @@ fn the_full_sequence_runs_at_s() {
         samples: Some(8),
         trace: false,
         alloc: false,
-        ephemeral: false,
+
         proxy_per_rep: false,
         out: Some(out.clone()),
         i_am_lying: false,

@@ -12,7 +12,6 @@ fn wide_schema(fields: usize) -> Schema {
                 .map(|f| FieldDescriptor {
                     name: format!("f{f}").into(),
                     value_type: bumbledb_theory::schema::ValueType::U64,
-                    generation: Generation::None,
                 })
                 .collect(),
         }],
@@ -22,24 +21,14 @@ fn wide_schema(fields: usize) -> Schema {
     .expect("valid fixture")
 }
 
-fn wide_views_of(
-    dir: &TempDir,
-    schema: &Schema,
-    rows: &[Vec<u64>],
-) -> Vec<Arc<crate::image::RelationImage>> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for row in rows {
-        let values: Vec<ValueRef> = row.iter().map(|w| ValueRef::U64(*w)).collect();
-        let mut bytes = Vec::new();
-        encode_fact(&values, schema.relation(RelationId(0)).layout(), &mut bytes);
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    vec![crate::image::build(&txn.catalog(), schema, RelationId(0)).expect("build")]
+fn wide_views_of(schema: &Schema, rows: &[Vec<u64>]) -> Vec<Arc<crate::image::RelationImage>> {
+    let facts: Vec<Vec<crate::ir::Value>> = rows
+        .iter()
+        .map(|row| row.iter().map(|w| crate::ir::Value::U64(*w)).collect())
+        .collect();
+    let source = TestSource::new(schema, &[(RelationId(0), facts)]);
+    let (_cache, image) = source.image_with_cache(RelationId(0));
+    vec![image]
 }
 
 fn wide_plan(fields: u16) -> (NormalizedQuery, Vec<(u16, u16)>) {
@@ -81,14 +70,13 @@ fn batch_rows_of(
 
 #[test]
 fn projection_past_eight_words_over_hoisted_runs() {
-    let dir = TempDir::new("run-scan-wide");
     let fields = 10u16;
     let schema = wide_schema(usize::from(fields));
     let rows: Vec<Vec<u64>> = (0..20u64)
         .map(|i| (0..u64::from(fields)).map(|c| i * 100 + c).collect())
         .collect();
     assert!(rows.len() >= SCAN_HOIST_THRESHOLD, "the run must hoist");
-    let views = wide_views_of(&dir, &schema, &rows);
+    let views = wide_views_of(&schema, &rows);
     let (normalized, _) = wide_plan(fields);
     let plan = planned_with_sinks(&normalized, &schema, &[0], &all_vars(&normalized));
     let slots: Vec<usize> = (0..fields).map(|k| plan.slot_of(VarId(k))).collect();
@@ -99,7 +87,6 @@ fn projection_past_eight_words_over_hoisted_runs() {
 
 #[test]
 fn hoisted_and_per_position_arms_agree() {
-    let dir = TempDir::new("run-scan-arms");
     let fields = 10u16;
     let schema = wide_schema(usize::from(fields));
 
@@ -110,7 +97,7 @@ fn hoisted_and_per_position_arms_agree() {
                 .collect()
         })
         .collect();
-    let views = wide_views_of(&dir, &schema, &rows);
+    let views = wide_views_of(&schema, &rows);
     let (normalized, _) = wide_plan(fields);
     let plan = planned_with_sinks(&normalized, &schema, &[0], &all_vars(&normalized));
     let slots: Vec<usize> = (1..fields).map(|k| plan.slot_of(VarId(k))).collect();
@@ -150,12 +137,11 @@ fn hoisted_and_per_position_arms_agree() {
 
 #[test]
 fn leaf_scan_residuals_past_eight() {
-    let dir = TempDir::new("run-scan-residuals");
     let schema = schema(2);
 
     let r0: Vec<(u64, u64)> = (0..6).map(|i| (i % 2 + 1, i % 3)).collect();
     let r1: Vec<(u64, u64)> = (0..36).map(|i| (i % 3, i / 3)).collect();
-    let views = views_of(&dir, &schema, &[r0.clone(), r1.clone()]);
+    let views = views_of(&schema, &[r0.clone(), r1.clone()]);
 
     let residuals: Vec<FilterPredicate> = (0..9)
         .map(|k| FilterPredicate::FieldsCompare {
@@ -194,11 +180,10 @@ fn scan_and_batch_paths_agree_across_fixtures() {
         ("small-runs-residuals", 3, 2),
         ("hoisted-runs-residuals", 12, 2),
     ] {
-        let dir = TempDir::new(&format!("run-scan-equality-{name}"));
         let schema = schema(2);
         let r0: Vec<(u64, u64)> = (0..6).map(|i| (i % 2, i % 3)).collect();
         let r1: Vec<(u64, u64)> = (0..3 * fanout).map(|i| (i % 3, i / 3)).collect();
-        let views = views_of(&dir, &schema, &[r0, r1]);
+        let views = views_of(&schema, &[r0, r1]);
         let residuals: Vec<FilterPredicate> = (0..residuals)
             .map(|k| FilterPredicate::FieldsCompare {
                 op: if k % 2 == 0 { WordCmp::Ne } else { WordCmp::Ge },

@@ -11,9 +11,13 @@ alloc-counter = []
 
 ground-off = []
 
+# Bench-only forced-fingerprint store constructors (HASH-02 collision probes).
+collision-probe = []
+
 [dependencies]
 blake3 = "1"
 bumbledb-macros = { path = "../bumbledb-macros" }
+bumbledb-query-macros = { path = "../bumbledb-query-macros" }
 
 bumbledb-theory = { path = "../bumbledb-theory" }
 heed = { version = "0.22", default-features = false } 

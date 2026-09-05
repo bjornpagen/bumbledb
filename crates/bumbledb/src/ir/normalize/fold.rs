@@ -117,7 +117,7 @@ fn eq_outside_range(word: u64, summary: &RangeSummary) -> bool {
 fn set_refutes_eq(words: &[u64], eq: Option<u64>) -> bool {
     let mut live = words
         .iter()
-        .filter(|word| **word != crate::storage::dict::SENTINEL_ID);
+        .filter(|word| **word != crate::image::intern::SENTINEL_WORD);
     match eq {
         Some(eq) => !live.any(|word| *word == eq),
         None => live.next().is_none(),
@@ -268,20 +268,26 @@ fn interval_contradictions(
             FilterPredicate::PointIn {
                 field,
                 point: ViewWordSource::Word(point),
+                dense,
             } => {
+                let point = crate::image::view::element_probe_word(*dense, *point);
                 if let Some(pin) = interval_pins.get(&field.field())
-                    && point_outside(*pin, *point)
+                    && point_outside(*pin, point)
                 {
-                    return Some(point_in_picture(relation, field.field(), *pin, *point));
+                    return Some(point_in_picture(relation, field.field(), *pin, point));
                 }
             }
 
             FilterPredicate::FieldWithin {
                 field,
                 outer: IntervalConst::Interval { start, end },
+                dense,
             } => {
                 if let Some(Const::Word(point)) = eqs.get(&field.field())
-                    && point_outside((*start, *end), *point)
+                    && point_outside(
+                        (*start, *end),
+                        crate::image::view::element_probe_word(*dense, *point),
+                    )
                 {
                     return Some(field_within_picture(
                         relation,
@@ -387,12 +393,21 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
             element: IntervalElement::I64,
         }
         | ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: bumbledb_theory::schema::FixedIntervalElement::I64,
             ..
         } => Value::IntervalI64(
             bumbledb_theory::Interval::<i64>::new(
                 decode_i64(pair.0.to_be_bytes()),
                 decode_i64(pair.1.to_be_bytes()),
+            )
+            .expect("validated interval constant"),
+        ),
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        } => Value::IntervalF64(
+            bumbledb_theory::Interval::new(
+                bumbledb_theory::F64::from_order_key(pair.0).expect("validated interval constant"),
+                bumbledb_theory::F64::from_order_key(pair.1).expect("validated interval constant"),
             )
             .expect("validated interval constant"),
         ),
@@ -567,9 +582,12 @@ fn point_in_picture(relation: &Relation, field: FieldId, pin: (u64, u64), point:
             element: IntervalElement::I64,
         }
         | ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: bumbledb_theory::schema::FixedIntervalElement::I64,
             ..
         } => ValueType::I64,
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        } => ValueType::F64,
         _ => ValueType::U64,
     };
     let mut out = format!("{}: {} == ", relation.name(), descriptor.name);
@@ -592,6 +610,7 @@ fn field_within_picture(
     let outer_type = ValueType::Interval {
         element: match descriptor.value_type {
             ValueType::I64 => IntervalElement::I64,
+            ValueType::F64 => IntervalElement::F64,
             _ => IntervalElement::U64,
         },
     };

@@ -14,14 +14,20 @@ pub mod power {
         pub PowerWorld;
 
         relation Pool {
-            id: u64 as PoolId, fresh,
+            id: u64 as PoolId,
             supply: u64,
         }
         relation Device {
-            id: u64 as DeviceId, fresh,
+            id: u64 as DeviceId,
             pool: u64 as PoolId,
             watts: u64,
         }
+
+        // Declared id keys first (E-NO-RESERVE): the retired fresh
+        // auto-keys are ordinary declared statements now, at the head so
+        // the later declared statement ids keep their historical slots.
+        Pool(id)   -> Pool;
+        Device(id) -> Device;
 
         Device(pool) <= Pool(id);
         Pool(id) <=[watts]{0..supply} Device(pool);
@@ -33,14 +39,17 @@ pub mod power_baseline {
         pub UnbudgetedWorld;
 
         relation Pool {
-            id: u64 as PoolId, fresh,
+            id: u64 as PoolId,
             supply: u64,
         }
         relation Device {
-            id: u64 as DeviceId, fresh,
+            id: u64 as DeviceId,
             pool: u64 as PoolId,
             watts: u64,
         }
+
+        Pool(id)   -> Pool;
+        Device(id) -> Device;
     }
 }
 
@@ -49,19 +58,29 @@ pub mod calendar {
         pub CalendarCapacityWorld;
 
         relation Room {
-            id: u64 as RoomId, fresh,
+            id: u64 as RoomId,
             span: interval<u64>,
         }
         relation Booking {
-            id: u64 as BookingId, fresh,
+            id: u64 as BookingId,
             room: u64 as RoomId,
             booked: interval<u64>,
         }
+
+        Room(id)    -> Room;
+        Booking(id) -> Booking;
 
         Booking(room) <= Room(id);
         Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room);
     }
 }
+
+/// The application-owned child-id mint base for the measured commit
+/// families (E-NO-RESERVE): the corpus is dense from 0 (at most
+/// `parents x children_per_parent` rows), so cursors seeded here can
+/// never collide with a loaded row; each family owns one cursor that
+/// persists across its timed window and any traced re-run.
+pub const MINT_BASE: u64 = 1 << 32;
 
 pub mod ids {
     use bumbledb::RelationId;
@@ -167,16 +186,16 @@ pub fn load<S>(
 pub fn commit_capacity_sum(
     db: &Db<power::PowerWorld>,
     proto: Protocol,
+    mint: &mut u64,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0CA9_0001);
     harness::measure(proto, || {
         let pool = power::PoolId(rng.range(PARENTS));
-        db.write(|tx| {
-            let id: power::DeviceId = tx.reserve(1)?.start().expect("nonempty");
-            tx.insert([&power::Device { id, pool, watts: 1 }])
-        })
-        .map(|_| 1)
-        .map_err(|e| format!("commit_capacity_sum: {e:?}"))
+        let id = power::DeviceId(*mint);
+        *mint += 1;
+        db.write(|tx| tx.insert([&power::Device { id, pool, watts: 1 }]))
+            .map(|_| 1)
+            .map_err(|e| format!("commit_capacity_sum: {e:?}"))
     })
 }
 
@@ -185,16 +204,16 @@ pub fn commit_capacity_sum(
 pub fn commit_capacity_baseline(
     db: &Db<power_baseline::UnbudgetedWorld>,
     proto: Protocol,
+    mint: &mut u64,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0CA9_0001);
     harness::measure(proto, || {
         let pool = power_baseline::PoolId(rng.range(PARENTS));
-        db.write(|tx| {
-            let id: power_baseline::DeviceId = tx.reserve(1)?.start().expect("nonempty");
-            tx.insert([&power_baseline::Device { id, pool, watts: 1 }])
-        })
-        .map(|_| 1)
-        .map_err(|e| format!("commit_capacity_baseline: {e:?}"))
+        let id = power_baseline::DeviceId(*mint);
+        *mint += 1;
+        db.write(|tx| tx.insert([&power_baseline::Device { id, pool, watts: 1 }]))
+            .map(|_| 1)
+            .map_err(|e| format!("commit_capacity_baseline: {e:?}"))
     })
 }
 
@@ -203,6 +222,7 @@ pub fn commit_capacity_baseline(
 pub fn commit_capacity_duration(
     db: &Db<calendar::CalendarCapacityWorld>,
     proto: Protocol,
+    mint: &mut u64,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0CA9_0002);
     let mut sample = 0u64;
@@ -211,8 +231,9 @@ pub fn commit_capacity_duration(
 
         let start = SPAN / 2 + sample;
         sample += 1;
+        let id = calendar::BookingId(*mint);
+        *mint += 1;
         db.write(|tx| {
-            let id: calendar::BookingId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&calendar::Booking {
                 id,
                 room,
@@ -305,14 +326,20 @@ pub fn write_families(
     };
 
     // shadow must not carry the judged rows' fsyncs).
+    // One persistent mint per (family, store): the cursor survives the
+    // traced re-run so a re-invocation keeps inserting NEW rows instead of
+    // degrading into no-op duplicate commits.
+    let mut baseline_mint = MINT_BASE;
+    let mut sum_mint = MINT_BASE;
+    let mut duration_mint = MINT_BASE;
     push("commit_capacity_baseline", &mut |proto| {
-        commit_capacity_baseline(&unbudgeted, proto)
+        commit_capacity_baseline(&unbudgeted, proto, &mut baseline_mint)
     })?;
     push("commit_capacity_sum", &mut |proto| {
-        commit_capacity_sum(&budgeted, proto)
+        commit_capacity_sum(&budgeted, proto, &mut sum_mint)
     })?;
     push("commit_capacity_duration", &mut |proto| {
-        commit_capacity_duration(&rooms, proto)
+        commit_capacity_duration(&rooms, proto, &mut duration_mint)
     })?;
     Ok(out)
 }

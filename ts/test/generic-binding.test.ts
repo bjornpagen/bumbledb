@@ -10,18 +10,19 @@ import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import type { Schema, SchemaRelations } from "#schema.ts"
 import { schema } from "#schema.ts"
-import { contained } from "#statements.ts"
+import { contained, key } from "#statements.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 
 type Expect<T extends true> = T extends true ? true : never
 
 const Kind = closed("Kind", ["Checking", "Savings"])
-const Holder = relation("Holder", { id: u64.fresh, name: str, rank: u64 })
-const Account = relation("Account", { id: u64.fresh, holder: u64, kind: Kind.id, balance: i64 })
+const Holder = relation("Holder", { id: u64, name: str, rank: u64 })
+const Account = relation("Account", { id: u64, holder: u64, kind: Kind.id, balance: i64 })
 const Parent = relation("Parent", { child: u64, parent: u64 })
 
 const Ledger = schema("Ledger", { Kind, Holder, Account, Parent }, [
+	key(Holder, ["id"]),
 	contained(on(Account, "holder"), on(Holder, "id")),
 	contained(on(Account, "kind"), on(Kind, "id")),
 	contained(on(Parent, "child"), on(Holder, "id")),

@@ -1,12 +1,25 @@
 use super::{Bindings, EitherSink};
 
 use crate::exec::run::Sink;
-use crate::exec::sink::FindSpec;
+use crate::exec::sink::{FindSpec, SinkBudget};
 
 impl EitherSink {
+    /// Install this execution's distinct-state allowance (main sinks only;
+    /// derived stage sinks stay RAM-bounded under the derived budget).
+    pub(super) fn begin_execution(&mut self, budget: Option<SinkBudget>) {
+        match self {
+            Self::Computed(sink) => sink.inner.begin_execution(budget),
+            Self::Projection(sink) => sink.begin(budget),
+            Self::Aggregate(sink) => sink.begin(budget),
+        }
+    }
+
     pub(super) fn reset(&mut self) {
         match self {
-            Self::Computed(sink) => { sink.error = None; sink.inner.reset(); },
+            Self::Computed(sink) => {
+                sink.error = None;
+                sink.inner.reset();
+            }
             Self::Projection(sink) => sink.reset(),
             Self::Aggregate(sink) => sink.reset(),
         }

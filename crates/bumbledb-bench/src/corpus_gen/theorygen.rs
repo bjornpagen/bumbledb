@@ -1,7 +1,7 @@
 use bumbledb::Value;
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 
 use super::Rng;
@@ -78,15 +78,14 @@ fn random_field(rng: &mut Rng, idx: usize) -> FieldDescriptor {
         FIELD_NAMES[idx % FIELD_NAMES.len()]
     };
 
-    let generation = if rng.chance(1, 5) {
-        Generation::Fresh
-    } else {
-        Generation::None
-    };
+    // The successor has no generated-field attribute: the retired fresh
+    // draw is gone WITH its mechanism (E-NO-RESERVE), so the descriptor
+    // grammar this generator samples is exactly the declared one.
+    // Checked-in corpora regenerate in F3 (deferred command recorded in
+    // implementation/packets/P11.md).
     FieldDescriptor {
         name: name.into(),
         value_type: random_type(rng),
-        generation,
     }
 }
 
@@ -168,9 +167,14 @@ fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
             };
             Value::FixedBytes(vec![0xA5; width].into())
         }
-        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
-            interval_value(rng, *element)
+        ValueType::Id128 => {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&rng.u64().to_be_bytes());
+            bytes[8..].copy_from_slice(&rng.u64().to_be_bytes());
+            Value::Id128(bumbledb::Id128::from_bytes(bytes))
         }
+        ValueType::Interval { element } => interval_value(rng, *element),
+        ValueType::FixedInterval { element, .. } => interval_value(rng, element.element()),
     }
 }
 
@@ -197,6 +201,20 @@ fn interval_value(rng: &mut Rng, element: IntervalElement) -> Value {
             };
             Value::IntervalI64(
                 bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+            )
+        }
+        IntervalElement::F64 => {
+            // `signed` draws stay in [-8, 8): every endpoint is exact.
+            let start = i32::try_from(signed(rng)).expect("small draw fits i32");
+            let end = if rng.chance(1, 8) {
+                bumbledb::F64::INFINITY
+            } else {
+                let width = i32::try_from(signed(rng).abs()).expect("small draw fits i32");
+                bumbledb::F64::from(f64::from(start + 1 + width))
+            };
+            Value::IntervalF64(
+                bumbledb::Interval::new(bumbledb::F64::from(f64::from(start)), end)
+                    .expect("start < end by construction"),
             )
         }
     }

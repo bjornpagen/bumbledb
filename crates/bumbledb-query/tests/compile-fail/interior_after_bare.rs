@@ -16,4 +16,5 @@ pub fn q() -> bumbledb::Query {
         (c) | Parent(child: c, parent: p);
         interior mid(c) | Parent(child: c, parent: p);
     })
+    .into_query()
 }

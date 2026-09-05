@@ -2,7 +2,7 @@
 //! drawing one of these cases through a fresh [`Rng`] cursor.
 use bumbledb::Value;
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
 
@@ -239,7 +239,6 @@ fn relation(name: &str, types: &[ValueType]) -> RelationDescriptor {
         .map(|(index, value_type)| FieldDescriptor {
             name: format!("key_{index}").into(),
             value_type: *value_type,
-            generation: Generation::None,
         })
         .collect();
     fields.extend([
@@ -248,7 +247,6 @@ fn relation(name: &str, types: &[ValueType]) -> RelationDescriptor {
         FieldDescriptor {
             name: "payload".into(),
             value_type: ValueType::U64,
-            generation: Generation::None,
         },
     ]);
     RelationDescriptor {
@@ -262,7 +260,6 @@ fn bool_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::Bool,
-        generation: Generation::None,
     }
 }
 
@@ -313,6 +310,12 @@ fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
         ValueType::FixedBytes { len } => {
             Value::FixedBytes(vec![salt.to_le_bytes()[0]; usize::from(*len)].into())
         }
+        ValueType::Id128 => {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&salt.to_be_bytes());
+            bytes[8..].copy_from_slice(&salt.wrapping_mul(31).to_be_bytes());
+            Value::Id128(bumbledb::Id128::from_bytes(bytes))
+        }
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
             unreachable!("the arity mix is scalar")
         }
@@ -343,8 +346,8 @@ fn type_counts(types: &[ValueType]) -> [usize; 6] {
             ValueType::String => 3,
             ValueType::FixedBytes { .. } => 4,
             ValueType::F64 => 5,
-            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
-                unreachable!("the arity mix is scalar")
+            ValueType::Id128 | ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+                unreachable!("the arity mix draws no identity or interval columns")
             }
         };
         counts[index] += 1;

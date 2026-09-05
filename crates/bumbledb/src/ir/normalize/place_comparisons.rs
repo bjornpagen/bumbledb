@@ -148,15 +148,23 @@ pub(super) fn place_comparisons(
                     });
             }
 
-            ClassifiedComparison::PointInVarVar { interval, point } => {
-                match same_atom(occurrences, *interval, *point) {
-                    Some((occurrence, interval_field, point_field)) => occurrences[occurrence]
+            ClassifiedComparison::PointInVarVar {
+                interval,
+                point,
+                dense,
+            } => {
+                if let Some((occurrence, interval_field, point_field)) =
+                    same_atom(occurrences, *interval, *point)
+                {
+                    occurrences[occurrence]
                         .filters
                         .push(FilterPredicate::FieldsPointIn {
                             interval: interval_field,
                             point: point_field,
-                        }),
-                    None => word_residuals.extend([
+                            dense: *dense,
+                        });
+                } else {
+                    word_residuals.extend([
                         FilterPredicate::FieldsCompare {
                             op: crate::ir::WordCmp::Le,
                             left: OperandAddr::var_word(*interval, IntervalWord::Start.offset()),
@@ -167,11 +175,31 @@ pub(super) fn place_comparisons(
                             left: OperandAddr::var_word(*point, IntervalWord::Start.offset()),
                             right: OperandAddr::var_word(*interval, IntervalWord::End.offset()),
                         },
-                    ]),
+                    ]);
+                    if *dense {
+                        // The finite-probe guard for the word-residual
+                        // lowering: only `-Infinity`'s key (and holes
+                        // below it) can wrongly satisfy the two word
+                        // comparisons — `+Infinity`/`NaN` keys already
+                        // exceed every legal dense end word. Pin the
+                        // point var's own binding above that key.
+                        let (occurrence, point_field) = field_of(occurrences, *point);
+                        occurrences[occurrence]
+                            .filters
+                            .push(FilterPredicate::Compare {
+                                field: point_field,
+                                op: crate::ir::WordCmp::Gt,
+                                value: Const::Word(crate::image::view::DENSE_NEG_INF_KEY),
+                            });
+                    }
                 }
             }
 
-            ClassifiedComparison::PointInVarPoint { interval, point } => {
+            ClassifiedComparison::PointInVarPoint {
+                interval,
+                point,
+                dense,
+            } => {
                 let (occurrence, field) = field_of(occurrences, *interval);
                 let point = match point {
                     SealedConst::Param(param) => ViewWordSource::Param(*param),
@@ -179,16 +207,21 @@ pub(super) fn place_comparisons(
                 };
                 occurrences[occurrence]
                     .filters
-                    .push(FilterPredicate::PointIn { field, point });
+                    .push(FilterPredicate::PointIn {
+                        field,
+                        point,
+                        dense: *dense,
+                    });
             }
 
-            ClassifiedComparison::VarWithin { var, outer } => {
+            ClassifiedComparison::VarWithin { var, outer, dense } => {
                 let (occurrence, field) = field_of(occurrences, *var);
                 occurrences[occurrence]
                     .filters
                     .push(FilterPredicate::FieldWithin {
                         field,
                         outer: sealed_interval(outer),
+                        dense: *dense,
                     });
             }
         }

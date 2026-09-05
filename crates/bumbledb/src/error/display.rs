@@ -171,11 +171,6 @@ impl fmt::Display for DynIdError {
             Self::UnknownField { relation, field } => {
                 write!(f, "relation {} has no field {}", relation.0, field.0)
             }
-            Self::NotAFreshField { relation, field } => write!(
-                f,
-                "relation {}, field {}: not a fresh field",
-                relation.0, field.0
-            ),
             Self::NotAKeyStatement {
                 relation,
                 statement,
@@ -421,21 +416,11 @@ impl fmt::Display for CorruptionError {
 }
 
 impl fmt::Display for SchemaError {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateRelationName { name } => write!(f, "duplicate relation name `{name}`"),
             Self::DuplicateFieldName { relation: r, name } => {
                 write!(f, "relation {}: duplicate field name `{name}`", r.0)
-            }
-            Self::FreshOnNonU64 {
-                relation: r,
-                field: fd,
-            } => {
-                write!(f, "relation {}, field {}: fresh requires u64", r.0, fd.0)
             }
             Self::FixedBytesWidthOutOfRange {
                 relation: r,
@@ -517,14 +502,6 @@ impl fmt::Display for SchemaError {
             } => write!(
                 f,
                 "relation {}, field {}: str on a closed relation — the handle is the label",
-                r.0, fd.0
-            ),
-            Self::FreshOnClosedRelation {
-                relation: r,
-                field: fd,
-            } => write!(
-                f,
-                "relation {}, field {}: fresh on a closed relation — identity is the handle",
                 r.0, fd.0
             ),
             Self::Statement { statement, kind } => {
@@ -691,18 +668,6 @@ impl fmt::Display for StatementErrorKind {
                 "the window {lo}..{hi} is inverted — no measure satisfies \
                  hi < lo; the canonical bounds are lo < hi ({{lo..hi}}), an exact measure \
                  lo = hi (the {{n}} spelling)"
-            ),
-            Self::CapacityVacuousWindow => write!(
-                f,
-                "the 0..* window admits every measure — it provably says \
-                 nothing (lean/Bumbledb/Capacity.lean: capacity_zero_star); delete \
-                 the statement"
-            ),
-            Self::CapacityContainmentWindow => write!(
-                f,
-                "the unit 1..* window says only what the bare containment says — \
-                 drop the annotation and declare `target <= source` (a WEIGHTED \
-                 {{1..*}} — a positive total — is a different law and stays legal)"
             ),
             Self::CapacityIntervalPosition {
                 relation: r,
@@ -1049,11 +1014,6 @@ impl fmt::Display for Error {
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
             Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
-            Self::FreshExhausted { relation, field } => write!(
-                f,
-                "fresh sequence exhausted (relation {}, field {})",
-                relation.0, field.0
-            ),
             Self::ClosedRelationWrite { relation } => write!(
                 f,
                 "relation {}: closed — its rows are ground axioms; changing them is a new theory",
@@ -1144,6 +1104,7 @@ impl fmt::Display for Error {
                 )
             }
             Self::Corruption(err) => write!(f, "corruption: {err}"),
+            Self::Store(err) => err.fmt(f),
         }
     }
 }

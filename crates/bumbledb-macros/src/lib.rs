@@ -7,20 +7,25 @@
 //! schema! {
 //!     pub Ledger;
 //!
-//!     relation Holder  { id: u64 as HolderId, fresh, name: str }
+//!     relation Holder  { id: id128 as HolderId, name: str }
 //!     relation Account {
-//!         id:     u64 as AccountId, fresh,
-//!         holder: u64 as HolderId,
+//!         id:     id128 as AccountId,
+//!         holder: id128 as HolderId,
 //!         kind:   u64 as KindId,
 //!         active: interval<i64> as ActiveDuring,
 //!     }
-//!     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
+//!     relation SavingsTerms { account: id128 as AccountId, rate_bps: i64 }
 //!
+//!     Holder(id) -> Holder;
+//!     Account(id) -> Account;
 //!     Account(holder) <= Holder(id);
 //!     Account(id | kind == Savings) == SavingsTerms(account);
 //!     SavingsTerms(account) -> SavingsTerms;
 //! }
 //! ```
+//! Keys are DECLARED statements (`R(X) -> R;`); there is no `fresh`
+//! modifier and the database issues no identity — `id128` fields carry
+//! ordinary application-owned values.
 //! The header `pub Ledger;` is the invocation's first item and names the
 //! schema: it expands to `pub struct Ledger;` implementing
 //! `bumbledb::Theory`, the value `Db::create(path, Ledger)` takes and
@@ -48,10 +53,10 @@ use bumbledb_theory::schema::spec::{
     WeightSpec,
 };
 use bumbledb_theory::schema::{
-    Generation, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
+    FixedIntervalElement, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
     StatementDescriptor, ValueType, Weight,
 };
-use bumbledb_theory::{Interval, Value};
+use bumbledb_theory::{F64, Id128, Interval, Value};
 use proc_macro::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -61,6 +66,7 @@ fn element_rust(element: IntervalElement) -> &'static str {
     match element {
         IntervalElement::U64 => "u64",
         IntervalElement::I64 => "i64",
+        IntervalElement::F64 => "::bumbledb::F64",
     }
 }
 
@@ -68,6 +74,14 @@ fn element_suffix(element: IntervalElement) -> &'static str {
     match element {
         IntervalElement::U64 => "U64",
         IntervalElement::I64 => "I64",
+        IntervalElement::F64 => "F64",
+    }
+}
+
+fn fixed_element_suffix(element: FixedIntervalElement) -> &'static str {
+    match element {
+        FixedIntervalElement::U64 => "U64",
+        FixedIntervalElement::I64 => "I64",
     }
 }
 
@@ -83,15 +97,16 @@ enum FieldTy {
     FixedBytes(u64),
 
     Interval(IntervalElement),
-    FixedInterval(IntervalElement, u64),
+    FixedInterval(FixedIntervalElement, u64),
 }
 
+/// One declared field. There is no `fresh` attribute anywhere: the
+/// database issues no identity, and key laws are declared statements.
 #[derive(Debug, Clone)]
 struct Field {
     name: String,
     ty: FieldTy,
     newtype: Option<String>,
-    fresh: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +150,13 @@ enum Literal {
     Interval {
         start: (bool, String),
         end: (bool, String),
+    },
+
+    /// `0.5..1.5` — a dense float interval literal with finite canonical
+    /// binary64 endpoints (both spelled as floats).
+    FloatInterval {
+        start: bumbledb_theory::F64,
+        end: bumbledb_theory::F64,
     },
 }
 
@@ -296,14 +318,29 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         }
         "interval" => {
             expect_punct(tokens, '<');
-            let element = match expect_ident(tokens, "an interval element (i64/u64)").as_str() {
+            let element = match expect_ident(tokens, "an interval element (i64/u64/f64)").as_str() {
                 "u64" => IntervalElement::U64,
                 "i64" => IntervalElement::I64,
-                other => panic!("schema!: interval element must be i64 or u64, found `{other}`"),
+                "f64" => IntervalElement::F64,
+                other => {
+                    panic!("schema!: interval element must be i64, u64 or f64, found `{other}`")
+                }
             };
             let ty = match parse_interval_width(&name, tokens) {
                 None => FieldTy::Interval(element),
-                Some(width) => FieldTy::FixedInterval(element, width),
+                Some(width) => match element {
+                    IntervalElement::U64 => {
+                        FieldTy::FixedInterval(FixedIntervalElement::U64, width)
+                    }
+                    IntervalElement::I64 => {
+                        FieldTy::FixedInterval(FixedIntervalElement::I64, width)
+                    }
+                    IntervalElement::F64 => panic!(
+                        "schema!: field `{name}`: `interval<f64, w>` is unrepresentable — \
+                         a fixed width is not an exact length on the dense line; write \
+                         `interval<f64>` and supply two checked bounds"
+                    ),
+                },
             };
             expect_punct(tokens, '>');
             ty
@@ -314,7 +351,6 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         name,
         ty,
         newtype: None,
-        fresh: false,
     };
     if peek_ident(tokens).as_deref() == Some("as") {
         tokens.next();
@@ -344,27 +380,13 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 matches!(lookahead.peek(), Some(TokenTree::Punct(p)) if p.as_char() == ':');
             if !is_field_name {
                 reject_deleted_word(&word);
-                assert_eq!(
+                assert_ne!(
                     word, "fresh",
-                    "schema!: unknown field modifier `{word}` (the only modifier is `fresh`)"
+                    "schema!: the `fresh` modifier is deleted — the database issues \
+                     no identity; use an application-owned `id128` field and declare \
+                     the key: `R(id) -> R;`"
                 );
-
-                assert!(
-                    matches!(field.ty, FieldTy::U64),
-                    "schema!: fresh field `{}` must be u64 — fresh is the mint \
-                     mark, and minted generations are u64",
-                    field.name
-                );
-                assert!(
-                    field.newtype.is_some(),
-                    "schema!: fresh field `{}` needs `as NewType` — without it \
-                     there is no typed alloc path (use the descriptor API for a \
-                     raw-u64 fresh field)",
-                    field.name
-                );
-                field.fresh = true;
-                tokens.next();
-                tokens.next();
+                panic!("schema!: unknown field modifier `{word}` (field modifiers do not exist)");
             }
         }
     }
@@ -442,7 +464,6 @@ fn parse_closed_relation(tokens: &mut Tokens) -> Relation {
             name: "id".to_owned(),
             ty: FieldTy::U64,
             newtype: Some(newtype),
-            fresh: false,
         },
     );
     relation
@@ -576,6 +597,37 @@ fn finish_int(tokens: &mut Tokens, negative: bool, text: String) -> Literal {
     }
 }
 
+/// After a float literal: `start..end` makes a dense float interval —
+/// both endpoints spelled as (finite) floats.
+fn finish_float(tokens: &mut Tokens, start: Literal) -> Literal {
+    if !peek_punct(tokens, '.') {
+        return start;
+    }
+    let Literal::Float(start_value) = start else {
+        unreachable!("finish_float is called on float literals only");
+    };
+    tokens.next();
+    expect_punct(tokens, '.');
+    let negative = peek_punct(tokens, '-');
+    if negative {
+        tokens.next();
+    }
+    let Some(TokenTree::Literal(lit)) = tokens.next() else {
+        panic!("schema!: expected the float interval literal's end bound");
+    };
+    let text = lit.to_string();
+    let Some(Literal::Float(end_value)) = float_literal(negative, &text) else {
+        panic!(
+            "schema!: a float interval spells both endpoints as floats — \
+             `{text}` is not a float literal (write `0.0..{text}.0`-style bounds)"
+        );
+    };
+    Literal::FloatInterval {
+        start: start_value,
+        end: end_value,
+    }
+}
+
 fn parse_literal(tokens: &mut Tokens) -> Literal {
     match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -592,10 +644,12 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
                 panic!("schema!: expected a numeric literal after `-`");
             };
             let text = lit.to_string();
-            float_literal(true, &text).unwrap_or_else(|| {
+            if let Some(value) = float_literal(true, &text) {
+                finish_float(tokens, value)
+            } else {
                 assert!(is_int_text(&text), "schema!: unsupported literal `{text}`");
                 finish_int(tokens, true, text)
-            })
+            }
         }
         Some(TokenTree::Literal(_)) => {
             let Some(TokenTree::Literal(lit)) = tokens.next() else {
@@ -607,7 +661,7 @@ fn parse_literal(tokens: &mut Tokens) -> Literal {
             } else if text.starts_with("b\"") {
                 Literal::Bytes(text)
             } else if let Some(value) = float_literal(false, &text) {
-                value
+                finish_float(tokens, value)
             } else {
                 assert!(is_int_text(&text), "schema!: unsupported literal `{text}`");
                 finish_int(tokens, false, text)
@@ -1019,16 +1073,11 @@ pub fn schema(input: TokenStream) -> TokenStream {
     emit_newtypes(&mut out, &schema.relations);
     emit_closed(&mut out, &schema.relations, &descriptor);
 
-    let mut fresh_ordinal = 0usize;
     for (index, relation) in schema.relations.iter().enumerate() {
-        let fresh_count = relation.fields.iter().filter(|field| field.fresh).count();
-
         if relation.closed.is_some() {
-            fresh_ordinal += fresh_count;
             continue;
         }
-        emit_fact_struct(&mut out, &schema.name, index, relation, fresh_ordinal);
-        fresh_ordinal += fresh_count;
+        emit_fact_struct(&mut out, &schema.name, index, relation);
     }
     emit_key_structs(&mut out, &schema);
     out.parse().expect("schema!: generated code parses")
@@ -1098,10 +1147,17 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
         (FieldTy::F64, Literal::Float(value)) => Value::F64(*value),
         (FieldTy::Id128, Literal::Bytes(text)) => {
             let bytes = unescape_bytes(text);
-            if bytes.len() != 16 {
-                literal_mismatch(relation, field);
-            }
-            Value::FixedBytes(bytes.into())
+            let Ok(array) = <[u8; 16]>::try_from(bytes.as_slice()) else {
+                literal_mismatch(relation, field)
+            };
+            Value::Id128(Id128::from_bytes(array))
+        }
+        (FieldTy::Id128, Literal::Str(text)) => {
+            let hex = unescape_str(text);
+            let Ok(id) = Id128::from_hex(&hex) else {
+                literal_mismatch(relation, field)
+            };
+            Value::Id128(id)
         }
         (FieldTy::Str, Literal::Str(text)) => Value::String(unescape_str(text)),
 
@@ -1124,8 +1180,12 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
             let interval = nonempty_interval(relation, field, Interval::<u64>::new(start, end));
             Value::IntervalU64(interval)
         }
+        (FieldTy::Interval(IntervalElement::F64), Literal::FloatInterval { start, end }) => {
+            let interval = nonempty_interval(relation, field, Interval::<F64>::new(*start, *end));
+            Value::IntervalF64(interval)
+        }
         (
-            FieldTy::FixedInterval(IntervalElement::U64, w),
+            FieldTy::FixedInterval(FixedIntervalElement::U64, w),
             Literal::Interval {
                 start: (false, start),
                 end: (false, end),
@@ -1147,7 +1207,10 @@ fn typed_literal(relation: &str, field: &str, ty: &FieldTy, literal: &Literal) -
             let interval = nonempty_interval(relation, field, Interval::<i64>::new(start, end));
             Value::IntervalI64(interval)
         }
-        (FieldTy::FixedInterval(IntervalElement::I64, w), Literal::Interval { start, end }) => {
+        (
+            FieldTy::FixedInterval(FixedIntervalElement::I64, w),
+            Literal::Interval { start, end },
+        ) => {
             let start =
                 i64_text(start.0, &start.1).unwrap_or_else(|| literal_mismatch(relation, field));
             let end = i64_text(end.0, &end.1).unwrap_or_else(|| literal_mismatch(relation, field));
@@ -1277,7 +1340,7 @@ fn field_value_type(relation: &str, field: &Field) -> ValueType {
         FieldTy::U64 => ValueType::U64,
         FieldTy::I64 => ValueType::I64,
         FieldTy::F64 => ValueType::F64,
-        FieldTy::Id128 => ValueType::FixedBytes { len: 16 },
+        FieldTy::Id128 => ValueType::Id128,
         FieldTy::Str => ValueType::String,
         FieldTy::FixedBytes(len) => ValueType::FixedBytes {
             len: u16::try_from(*len).unwrap_or_else(|_| {
@@ -1372,7 +1435,6 @@ fn lower_relations(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<RelationSpe
                     name: field.name.as_str().into(),
                     value_type: field_value_type(&relation.name, field),
                     newtype: field.newtype.as_deref().map(Into::into),
-                    fresh: field.fresh,
                 })
                 .collect(),
             closed,
@@ -1716,12 +1778,7 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
             second_relation, ..
         } => one(spans.newtypes.get(second_relation)),
         SpecIssue::CapacityInverted { statement, .. }
-        | SpecIssue::CapacityExactRespelled { statement, .. }
-        | SpecIssue::CapacityExclusionRespelled { statement }
-        | SpecIssue::CapacityVacuous { statement }
-        | SpecIssue::CapacityContainmentRespelled { statement }
         | SpecIssue::CapacityDependentFloor { statement }
-        | SpecIssue::CapacityUnitFloor { statement }
         | SpecIssue::BoundPathRefused { statement, .. } => one(spans.capacities.get(statement)),
         SpecIssue::WeightPathRefused { statement, .. } => one(spans.weights.get(statement)),
         SpecIssue::DegenerateLiteralSet {
@@ -1813,36 +1870,10 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
             "schema!: the window `{{{lo}..{hi}}}` is inverted — no measure satisfies it; \
              bounds are `{{lo..hi}}` with lo < hi (an exact measure is `{{n}}`)"
         ),
-        SpecIssue::CapacityExactRespelled { count, .. } => {
-            format!("schema!: `{{{count}..{count}}}` — an exact measure is written `{{{count}}}`")
-        }
-        SpecIssue::CapacityExclusionRespelled { .. } => {
-            "schema!: `{0..0}` — the exclusion is written `{0}`".to_owned()
-        }
-        SpecIssue::CapacityVacuous { .. } => "schema!: the `{0..*}` window is vacuous — it \
-             provably says nothing (`lean/Bumbledb/Capacity.lean: capacity_zero_star`); \
-             delete the statement"
-            .to_owned(),
-        SpecIssue::CapacityContainmentRespelled { statement } => {
-            let StatementSpec::Capacity { target, source, .. } = &spec.statements[*statement]
-            else {
-                unreachable!("the containment-respelled window rides a capacity statement");
-            };
-            format!(
-                "schema!: `{{1..*}}` says only what the bare containment says — drop the \
-                 annotation and write `{}(…) <= {}(…)`",
-                target.relation, source.relation
-            )
-        }
         SpecIssue::CapacityDependentFloor { .. } => {
             "schema!: a dependent bound in the floor slot — dependent bounds are hi-slot \
              only (ruled 2026-07-24, C6): a dependent floor has no use case; write a \
              literal floor"
-                .to_owned()
-        }
-        SpecIssue::CapacityUnitFloor { .. } => {
-            "schema!: `{N..*}` on the unit instance — a bare count floor is refused; \
-             weigh the source (`<=[w]{N..*}` stays legal) or drop the bound"
                 .to_owned()
         }
         SpecIssue::WeightPathRefused { path, .. } => format!(
@@ -1937,6 +1968,7 @@ fn value_type_tokens(value_type: &ValueType) -> String {
         ValueType::U64 => format!("{path}::U64"),
         ValueType::I64 => format!("{path}::I64"),
         ValueType::F64 => format!("{path}::F64"),
+        ValueType::Id128 => format!("{path}::Id128"),
         ValueType::String => format!("{path}::String"),
         ValueType::FixedBytes { len } => format!("{path}::FixedBytes {{ len: {len} }}"),
         ValueType::Interval { element } => {
@@ -1947,9 +1979,9 @@ fn value_type_tokens(value_type: &ValueType) -> String {
         }
         ValueType::FixedInterval { element, width } => {
             format!(
-                "{path}::FixedInterval {{ element: ::bumbledb::schema::IntervalElement::{}, \
+                "{path}::FixedInterval {{ element: ::bumbledb::schema::FixedIntervalElement::{}, \
                  width: {width} }}",
-                element_suffix(*element)
+                fixed_element_suffix(*element)
             )
         }
     }
@@ -1978,6 +2010,10 @@ fn value_tokens(value: &Value) -> String {
             "{path}::FixedBytes(::std::boxed::Box::from(&b\"{}\"[..]))",
             bytes.escape_ascii()
         ),
+        Value::Id128(id) => format!(
+            "{path}::Id128(::bumbledb::Id128::from_bytes(*b\"{}\"))",
+            id.as_bytes().escape_ascii()
+        ),
         Value::IntervalU64(interval) => {
             let (start, end) = interval.bounds();
             format!(
@@ -1990,6 +2026,16 @@ fn value_tokens(value: &Value) -> String {
             format!(
                 "{path}::IntervalI64(::bumbledb::Interval::<i64>::new({start}, {end})\
                  .expect(\"schema! interval literals are nonempty\"))"
+            )
+        }
+        Value::IntervalF64(interval) => {
+            let (start, end) = interval.bounds();
+            format!(
+                "{path}::IntervalF64(::bumbledb::Interval::<::bumbledb::F64>::new(\
+                 ::bumbledb::F64::from_bits({}u64), ::bumbledb::F64::from_bits({}u64))\
+                 .expect(\"schema! float interval literals are nonempty\"))",
+                start.to_bits(),
+                end.to_bits()
             )
         }
     }
@@ -2115,14 +2161,9 @@ fn descriptor_tokens(descriptor: &SchemaDescriptor) -> String {
                 fields,
                 "::bumbledb::schema::FieldDescriptor {{ \
                      name: ::std::boxed::Box::from(\"{}\"), \
-                     value_type: {}, \
-                     generation: ::bumbledb::schema::Generation::{} }},",
+                     value_type: {} }},",
                 field.name,
                 value_type_tokens(&field.value_type),
-                match field.generation {
-                    Generation::Fresh => "Fresh",
-                    Generation::None => "None",
-                },
             );
         }
         let extension = match &relation.extension {
@@ -2274,11 +2315,11 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
                     true,
                 ),
                 FieldTy::FixedInterval(element, w) => (
-                    format!("interval<{}, {w}>", element_rust(element)),
-                    format!("::bumbledb::Interval<{}>", element_rust(element)),
+                    format!("interval<{}, {w}>", element_rust(element.element())),
+                    format!("::bumbledb::Interval<{}>", element_rust(element.element())),
                     true,
                 ),
-                _ => unreachable!("parser restricts `as` to u64/i64/bytes<N>/interval"),
+                _ => unreachable!("parser restricts `as` to u64/i64/f64/id128/bytes<N>/interval"),
             };
             if let Some((existing, ..)) = newtypes.get(name) {
                 assert!(
@@ -2416,12 +2457,10 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
         Value::String(text) => {
             format!("\"{}\"", text.escape_default())
         }
-        Value::FixedBytes(bytes) if matches!(field.ty, FieldTy::Id128) => {
-            format!(
-                "::bumbledb::Id128::from_bytes(*b\"{}\")",
-                bytes.escape_ascii()
-            )
-        }
+        Value::Id128(id) => format!(
+            "::bumbledb::Id128::from_bytes(*b\"{}\")",
+            id.as_bytes().escape_ascii()
+        ),
         Value::FixedBytes(bytes) => format!("*b\"{}\"", bytes.escape_ascii()),
         Value::IntervalU64(interval) => {
             let (start, end) = interval.bounds();
@@ -2437,6 +2476,11 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
                  .expect(\"nonempty interval ground axiom\")"
             )
         }
+        Value::IntervalF64(_) => panic!(
+            "schema!: a closed ground axiom cannot carry a dense float interval \
+             column — const accessors need const construction, and the dense \
+             line has none; store two f64 columns instead"
+        ),
     };
     match &field.newtype {
         Some(newtype) => format!("{newtype}({raw})"),
@@ -2464,8 +2508,11 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::Id128 => "::bumbledb::Id128".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
-        FieldTy::Interval(element) | FieldTy::FixedInterval(element, _) => {
+        FieldTy::Interval(element) => {
             format!("::bumbledb::Interval<{}>", element_rust(*element))
+        }
+        FieldTy::FixedInterval(element, _) => {
+            format!("::bumbledb::Interval<{}>", element_rust(element.element()))
         }
     }
 }
@@ -2474,104 +2521,86 @@ struct EncodeCx<'s> {
     relation: &'s str,
 }
 
-fn value_type_expr(field: &Field) -> String {
-    match &field.ty {
-        FieldTy::Bool => "::bumbledb::schema::ValueType::Bool".to_owned(),
-        FieldTy::U64 => "::bumbledb::schema::ValueType::U64".to_owned(),
-        FieldTy::I64 => "::bumbledb::schema::ValueType::I64".to_owned(),
-        FieldTy::F64 => "::bumbledb::schema::ValueType::F64".to_owned(),
-        FieldTy::Id128 => "::bumbledb::schema::ValueType::FixedBytes { len: 16 }".to_owned(),
-        FieldTy::Str => "::bumbledb::schema::ValueType::String".to_owned(),
-        FieldTy::FixedBytes(len) => {
-            format!("::bumbledb::schema::ValueType::FixedBytes {{ len: {len} }}")
-        }
-        FieldTy::Interval(element) => format!(
-            "::bumbledb::schema::ValueType::Interval {{ element: ::bumbledb::schema::IntervalElement::{} }}",
-            element_suffix(*element)
-        ),
-        FieldTy::FixedInterval(element, width) => format!(
-            "::bumbledb::schema::ValueType::FixedInterval {{ element: ::bumbledb::schema::IntervalElement::{}, width: {width} }}",
-            element_suffix(*element)
-        ),
-    }
-}
-
-fn encode_value(field: &Field, idx: usize, cx: &EncodeCx<'_>, insert: bool) -> String {
+/// One field's append statement for the generated `append_values` /
+/// `append_key_values` bodies: pushes the field's canonical
+/// [`Value`] onto `out` in sealed order. Fixed-width intervals route
+/// through the `__private::fixed_interval_*` plumbing (the typed width
+/// check); everything else wraps the host value directly — there is no
+/// dictionary and no intern id.
+fn append_value_stmt(field: &Field, idx: usize, cx: &EncodeCx<'_>) -> String {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
     } else {
         format!("self.{}", field.name)
     };
-    match &field.ty {
-        FieldTy::Bool => format!("::bumbledb::__private::ValueRef::Bool({access})"),
-        FieldTy::U64 => format!("::bumbledb::__private::ValueRef::U64({access})"),
-        FieldTy::I64 => format!("::bumbledb::__private::ValueRef::I64({access})"),
-        FieldTy::F64 => format!("::bumbledb::__private::ValueRef::F64({access})"),
-        FieldTy::Id128 => format!("::bumbledb::__private::ValueRef::bytes({access}.as_bytes())"),
+    let value = match &field.ty {
+        FieldTy::Bool => format!("::bumbledb::Value::Bool({access})"),
+        FieldTy::U64 => format!("::bumbledb::Value::U64({access})"),
+        FieldTy::I64 => format!("::bumbledb::Value::I64({access})"),
+        FieldTy::F64 => format!("::bumbledb::Value::F64({access})"),
+        FieldTy::Id128 => format!("::bumbledb::Value::Id128({access})"),
+        FieldTy::Str => format!("::bumbledb::Value::String(::std::boxed::Box::from({access}))"),
+        FieldTy::FixedBytes(_) => {
+            format!("::bumbledb::Value::FixedBytes(::std::boxed::Box::from(&{access}[..]))")
+        }
         FieldTy::Interval(element) => format!(
-            "::bumbledb::__private::ValueRef::Interval{}({access})",
+            "::bumbledb::Value::Interval{}({access})",
             element_suffix(*element)
         ),
         FieldTy::FixedInterval(element, width) => format!(
             "::bumbledb::__private::fixed_interval_{}(\
              {relation}, \
              ::bumbledb::schema::FieldId({idx}), {access}, {width}u64)?",
-            element_rust(*element),
+            element_rust(element.element()),
             relation = cx.relation,
         ),
-        FieldTy::FixedBytes(_) => {
-            format!("::bumbledb::__private::ValueRef::bytes(&{access})")
-        }
-        FieldTy::Str if insert => format!(
-            "::bumbledb::__private::ValueRef::String(context.intern_str(self.{})?)",
-            field.name
-        ),
-        FieldTy::Str => format!(
-            "match context.lookup_str(self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::String(id), None => return Ok(::bumbledb::Probe::ProvablyAbsent) }}",
-            field.name
-        ),
-    }
+    };
+    format!("out.push({value});")
 }
 
-fn decode_arm(field: &Field, idx: usize) -> String {
-    let wrap = |expr: &str| -> String {
+/// One field's decode statement for the generated `Fact::decode` body:
+/// a `let` binding named after the field, reading the [`RowReader`]
+/// strictly in sealed order (exactly the order `append_values` wrote).
+fn decode_stmt(field: &Field) -> String {
+    let wrap = |expr: String| -> String {
         match &field.newtype {
             Some(newtype) => format!("{newtype}({expr})"),
-            None => expr.to_owned(),
+            None => expr,
         }
     };
-    let decode = |method: &str| {
-        format!("context.{method}(<Self as ::bumbledb::Fact<'a>>::RELATION, fact, {idx})?")
-    };
     let expr = match &field.ty {
-        FieldTy::Bool => decode("decode_bool_field"),
-        FieldTy::U64 => wrap(&decode("decode_u64_field")),
-        FieldTy::I64 => wrap(&decode("decode_i64_field")),
-        FieldTy::F64 => wrap(&decode("decode_f64_field")),
-        FieldTy::Id128 => wrap(&format!(
-            "{{ let raw = {}; let mut arr = [0u8; 16]; arr.copy_from_slice(raw); ::bumbledb::Id128::from_bytes(arr) }}",
-            decode("decode_fixed_bytes_field")
+        FieldTy::Bool => "row.next_bool()?".to_owned(),
+        FieldTy::U64 => wrap("row.next_u64()?".to_owned()),
+        FieldTy::I64 => wrap("row.next_i64()?".to_owned()),
+        FieldTy::F64 => wrap("row.next_f64()?".to_owned()),
+        FieldTy::Id128 => wrap("row.next_id128()?".to_owned()),
+        FieldTy::Str => "row.next_str()?".to_owned(),
+        FieldTy::Interval(element) => wrap(format!(
+            "row.next_interval_{}()?",
+            match element {
+                IntervalElement::U64 => "u64",
+                IntervalElement::I64 => "i64",
+                IntervalElement::F64 => "f64",
+            }
         )),
-        FieldTy::Interval(element) | FieldTy::FixedInterval(element, _) => wrap(&decode(&format!(
-            "decode_interval_{}_field",
-            element_rust(*element)
-        ))),
-        FieldTy::Str => decode("decode_str_field"),
-        FieldTy::FixedBytes(len) => wrap(&format!(
-            "{{ let raw = {}; let mut arr = [0u8; {len}]; arr.copy_from_slice(raw); arr }}",
-            decode("decode_fixed_bytes_field")
+        FieldTy::FixedInterval(element, _) => wrap(format!(
+            "row.next_interval_{}()?",
+            element_rust(element.element())
+        )),
+        FieldTy::FixedBytes(len) => wrap(format!(
+            "match <[u8; {len}]>::try_from(row.next_bytes()?) {{ \
+                 ::std::result::Result::Ok(array) => array, \
+                 ::std::result::Result::Err(_) => return ::std::result::Result::Err(\
+                     ::bumbledb::Error::Corruption(\
+                         ::bumbledb::error::CorruptionError::MalformedValue(\
+                             \"canonical fixed-bytes width\"))), \
+             }}"
         )),
     };
-    format!("{}: {expr},", field.name)
+    format!("let {} = {expr};", field.name)
 }
 
-fn emit_fact_struct(
-    out: &mut String,
-    schema_name: &str,
-    index: usize,
-    relation: &Relation,
-    fresh_base: usize,
-) {
+fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation: &Relation) {
     let name = &relation.name;
 
     let borrowed = relation.fields.iter().any(is_borrowed);
@@ -2590,17 +2619,22 @@ fn emit_fact_struct(
         );
     }
 
-    let mut insert_values = String::new();
-    let mut probe_values = String::new();
-    let mut decode_fields = String::new();
+    let mut append_stmts = String::new();
+    let mut decode_stmts = String::new();
+    let mut decode_names = String::new();
     let cx = EncodeCx {
         relation: "<Self as ::bumbledb::Fact<'a>>::RELATION",
     };
     for (idx, field) in relation.fields.iter().enumerate() {
-        let _ = write!(insert_values, "{},", encode_value(field, idx, &cx, true));
-        let _ = write!(probe_values, "{},", encode_value(field, idx, &cx, false));
-        let _ = write!(decode_fields, "{}", decode_arm(field, idx));
+        let _ = write!(append_stmts, "{}", append_value_stmt(field, idx, &cx));
+        let _ = write!(decode_stmts, "{}", decode_stmt(field));
+        let _ = write!(decode_names, "{},", field.name);
     }
+    let out_binding = if relation.fields.is_empty() {
+        "_out"
+    } else {
+        "out"
+    };
 
     let _ = write!(
         out,
@@ -2609,60 +2643,22 @@ fn emit_fact_struct(
          impl<'a> ::bumbledb::Fact<'a> for {self_ty} {{\n\
              type Schema = {schema_name};\n\
              const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
-             fn encode_insert<C>(&self, context: &mut C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<()>\n\
-             where\n\
-                 C: ::bumbledb::CodecWrite<{schema_name}>,\n\
+             fn append_values(&self, {out_binding}: &mut ::std::vec::Vec<::bumbledb::Value>) -> ::bumbledb::Result<()>\n\
              {{\n\
-                 let values = [{insert_values}];\n\
-                 ::bumbledb::__private::encode_fact_for(context, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
-                 Ok(())\n\
+                 {append_stmts}\n\
+                 ::std::result::Result::Ok(())\n\
              }}\n\
-             fn encode_probe<C>(&self, context: &C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<::bumbledb::Probe>\n\
-             where\n\
-                 C: ::bumbledb::CodecRead<{schema_name}>,\n\
+             fn decode(mut row: ::bumbledb::RowReader<'a>) -> ::bumbledb::Result<Self>\n\
              {{\n\
-                 let values = [{probe_values}];\n\
-                 ::bumbledb::__private::encode_fact_for(context, <Self as ::bumbledb::Fact<'a>>::RELATION, &values, out);\n\
-                 Ok(::bumbledb::Probe::Encoded)\n\
-             }}\n\
-             fn decode<C>(context: &'a C, fact: &[u8]) -> ::bumbledb::Result<Self>\n\
-             where\n\
-                 C: ::bumbledb::CodecRead<{schema_name}>,\n\
-             {{\n\
-                 Ok(Self {{ {decode_fields} }})\n\
+                 {decode_stmts}\n\
+                 row.finish()?;\n\
+                 ::std::result::Result::Ok(Self {{ {decode_names} }})\n\
              }}\n\
          }}\n",
     );
 
-    let mut auto_key_id = fresh_base;
-    for (field_idx, field) in relation.fields.iter().enumerate() {
-        let (true, Some(newtype)) = (field.fresh, &field.newtype) else {
-            continue;
-        };
-        let _ = write!(
-            out,
-            "impl ::bumbledb::Fresh for {newtype} {{\n\
-                 type Schema = {schema_name};\n\
-                 const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
-                 const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
-                 fn from_fresh(raw: u64) -> Self {{ Self(raw) }}\n\
-                 fn fresh(self) -> u64 {{ self.0 }}\n\
-             }}\n\
-             impl<'a> ::bumbledb::Key<'a> for {newtype} {{\n\
-                 type Schema = {schema_name};\n\
-                 type Fact = {self_ty};\n\
-                 const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({auto_key_id});\n\
-                 fn encode_determinant<C>(&self, _context: &C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<::bumbledb::Probe>\n\
-                 where\n\
-                     C: ::bumbledb::CodecRead<{schema_name}>,\n\
-                 {{\n\
-                     ::bumbledb::__private::append_field(::bumbledb::__private::ValueRef::U64(self.0), ::bumbledb::schema::ValueType::U64, out);\n\
-                     Ok(::bumbledb::Probe::Encoded)\n\
-                 }}\n\
-             }}\n",
-        );
-        auto_key_id += 1;
-    }
+    // No fresh key/mint emission: the database issues no identity. Typed
+    // key structs come only from DECLARED key statements (emit_key_structs).
 }
 
 fn pascal(name: &str) -> String {
@@ -2678,14 +2674,14 @@ fn pascal(name: &str) -> String {
 }
 
 fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
+    // Materialized statement ids: closed relations' auto-handle keys FIRST
+    // (relation-declaration order), then declared statements — the theory's
+    // StatementId law. There are no fresh-implied keys.
     let implied_total: usize = schema
         .relations
         .iter()
-        .map(|relation| {
-            relation.fields.iter().filter(|field| field.fresh).count()
-                + usize::from(relation.closed.is_some())
-        })
-        .sum();
+        .filter(|relation| relation.closed.is_some())
+        .count();
     let mut offset = 0usize;
     for statement in &schema.statements {
         let width = match statement {
@@ -2771,23 +2767,11 @@ fn emit_key_struct(
     let cx = EncodeCx {
         relation: &relation_expr,
     };
-    let ctx_binding = if fields
-        .iter()
-        .any(|(_, field)| matches!(field.ty, FieldTy::Str))
-    {
-        "context"
-    } else {
-        "_context"
-    };
     let mut body = String::new();
     for (idx, field) in &fields {
-        let expr = encode_value(field, *idx, &cx, false);
-        let ty = value_type_expr(field);
-        let _ = write!(
-            body,
-            "::bumbledb::__private::append_field({expr}, {ty}, out);"
-        );
+        let _ = write!(body, "{}", append_value_stmt(field, *idx, &cx));
     }
+    let out_binding = if fields.is_empty() { "_out" } else { "out" };
     let spelling = format!(
         "{rel_name}({}) -> {rel_name}",
         projection
@@ -2806,12 +2790,10 @@ fn emit_key_struct(
              type Schema = {schema_name};\n\
              type Fact = {fact_ty};\n\
              const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({statement_id});\n\
-             fn encode_determinant<C>(&self, {ctx_binding}: &C, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<::bumbledb::Probe>\n\
-             where\n\
-                 C: ::bumbledb::CodecRead<{schema_name}>,\n\
+             fn append_key_values(&self, {out_binding}: &mut ::std::vec::Vec<::bumbledb::Value>) -> ::bumbledb::Result<()>\n\
              {{\n\
                  {body}\n\
-                 Ok(::bumbledb::Probe::Encoded)\n\
+                 ::std::result::Result::Ok(())\n\
              }}\n\
          }}\n",
     );

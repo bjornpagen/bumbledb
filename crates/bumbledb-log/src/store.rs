@@ -1,8 +1,18 @@
-//! The object-store capability: the protocol's demand, not a vendor's
-//! offer. Five verbs, all outcomes sums; `Err` carries infrastructure
-//! failure (network, 5xx, auth, io) and nothing else. The verbs are
-//! synchronous: an impl that drives an async runtime refuses a call
-//! from an async context instead of `block_on`-panicking.
+//! The backend seam (C07): typed object identity, the one object-key
+//! namespace, and verified immutable object I/O over the conditional-store
+//! verbs declared in [`crate::writer::verbs`].
+//!
+//! P05 owns this composition: the concrete adapters ([`mem`], [`fs`], [`s3`]),
+//! their durability ordering and fault taxonomy, the object-key grammar, and
+//! the verification rule every reader applies before interpreting bytes. The
+//! publication machine (P04) consumes only the verb trait and its three-way
+//! conditional grammar.
+//!
+//! Deleted mechanisms from the 0.x store: the generic five-verb `ObjectStore`
+//! framework, numeric token/etag CAS leases, fresh-id lease counters, expiring
+//! mutation leases and age-based temp sweeping. Local exclusion is a
+//! kernel-held lock ([`fence`]); object mutation and directory ownership are
+//! distinct scopes even though both use the same kernel mechanism.
 
 pub mod fence;
 pub mod fs;
@@ -11,506 +21,392 @@ pub mod mem;
 pub mod s3;
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
 
-/// A segment wearing this suffix is not a key. Old lockfile names stay
-/// unaddressable; the mutation lock is a fenced CAS lease, not a path.
-const LOCK_SUFFIX: &str = ".lock";
+use crate::history::{DecisionDigest, FrameError};
+pub use crate::writer::verbs::{
+    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
+};
 
-/// Reserved first-segment names no [`StoreKey`] can spell. Temps and
-/// leases live here, disjoint from every honest key.
-pub const TEMP_NAMESPACE: &str = "~tmp";
+/// Reserved first path segments no object key may spell. Ownership locks and
+/// staging temps live here, disjoint from every honest object name.
 pub const LEASE_NAMESPACE: &str = "~lease";
+pub const TEMP_NAMESPACE: &str = "~tmp";
 
-/// A slash-path object key, parsed once. Empty segments, dot segments,
-/// a leading or trailing slash, a segment that starts with `~`, any
-/// control, format, or separator code point (Cc, Cf, Zl, Zp, Zs), and
-/// a `.lock` suffix are unrepresentable — the verbs take the proof and
-/// never re-check.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StoreKey(String);
+/// The head object's name under a database prefix. Never deleted or reused
+/// during an incarnation's operational life; `Deleted` is a tombstone state.
+pub const HEAD_NAME: &str = "HEAD";
 
-/// A key spelling the parse refused.
-#[derive(Debug)]
-pub struct KeyError {
-    pub key: String,
+/// The kinds of immutable protocol objects. The kind is part of the storage
+/// name and of the digest domain: the same bytes under another kind are a
+/// different object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ObjectKind {
+    /// One immutable terminal decision (P04 frames its bytes).
+    Decision,
+    /// One fixed-target checkpoint stream chunk.
+    Chunk,
+    /// One streamed checkpoint manifest / snapshot certificate.
+    Checkpoint,
+    /// One immutable GC mark manifest.
+    Mark,
 }
 
-impl fmt::Display for KeyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "store key is not a slash path: {}", self.key)
-    }
-}
-
-impl std::error::Error for KeyError {}
-
-impl StoreKey {
-    /// Parse at the boundary. Every later verb takes the proof.
-    ///
-    /// # Errors
-    pub fn parse(raw: &str) -> std::result::Result<Self, KeyError> {
-        let well_formed = !raw.is_empty()
-            && !raw.starts_with('/')
-            && !raw.ends_with('/')
-            && raw.split('/').all(segment_ok);
-        if well_formed {
-            Ok(Self(raw.to_string()))
-        } else {
-            Err(KeyError {
-                key: raw.to_string(),
-            })
+impl ObjectKind {
+    /// The path segment spelling of this kind. Lower-case ASCII, protocol
+    /// generated — never a user label.
+    #[must_use]
+    pub const fn segment(self) -> &'static str {
+        match self {
+            Self::Decision => "decision",
+            Self::Chunk => "chunk",
+            Self::Checkpoint => "ckpt",
+            Self::Mark => "mark",
         }
     }
 
-    /// Protocol and fixture assembly: a well-formed key is a
-    /// programming error to get wrong, not a runtime outcome.
-    ///
-    /// # Panics
+    /// The digest domain separating this kind's content addresses.
     #[must_use]
-    pub fn of(raw: &str) -> Self {
-        Self::parse(raw).unwrap_or_else(|err| panic!("{err}"))
+    pub const fn digest_domain(self) -> &'static str {
+        match self {
+            // Exactly the domain the history machine stamps decisions with.
+            Self::Decision => "bumbledb.decision.v1/decision-digest",
+            Self::Chunk => "bumbledb.object.v1/chunk",
+            Self::Checkpoint => "bumbledb.object.v1/ckpt",
+            Self::Mark => "bumbledb.object.v1/mark",
+        }
     }
 
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub fn parse_segment(segment: &str) -> Option<Self> {
+        match segment {
+            "decision" => Some(Self::Decision),
+            "chunk" => Some(Self::Chunk),
+            "ckpt" => Some(Self::Checkpoint),
+            "mark" => Some(Self::Mark),
+            _ => None,
+        }
     }
 }
 
-/// One path segment of a key or a tenant id: the same grammar. A
-/// control, format, or separator code point (Cc, Cf, Zl, Zp, Zs)
-/// refuses outright: `is_control` is Cc, [`is_cf`] is Cf, and
-/// `char::is_whitespace` outside Cc is exactly Zl ∪ Zp ∪ Zs.
+/// Typed, verified immutable object identity: epoch, kind, full 32-byte
+/// content digest and expected length. The digest alone is not a storage key;
+/// the same digest at another epoch is a distinct storage name. Readers
+/// verify length and domain-separated digest before interpretation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectRef {
+    pub epoch: u64,
+    pub kind: ObjectKind,
+    pub digest: [u8; 32],
+    pub length: u64,
+}
+
+impl ObjectRef {
+    /// The reference for exactly these bytes staged under `epoch`.
+    #[must_use]
+    pub fn of(epoch: u64, kind: ObjectKind, bytes: &[u8]) -> Self {
+        Self {
+            epoch,
+            kind,
+            digest: object_digest(kind, bytes),
+            length: bytes.len() as u64,
+        }
+    }
+
+    /// The storage key of this object under a database prefix.
+    #[must_use]
+    pub fn key(&self, prefix: &str) -> String {
+        object_key(prefix, self.epoch, self.kind, &self.digest)
+    }
+}
+
+/// The domain-separated content digest for one object kind.
 #[must_use]
-pub fn segment_ok(seg: &str) -> bool {
-    if seg.is_empty() || seg.contains('/') || seg == "." || seg == ".." {
-        return false;
-    }
-    if seg
-        .chars()
-        .any(|c| c.is_control() || is_cf(c) || c.is_whitespace())
-    {
-        return false;
-    }
-    !seg.starts_with('~') && !seg.ends_with(LOCK_SUFFIX)
+pub fn object_digest(kind: ObjectKind, bytes: &[u8]) -> [u8; 32] {
+    blake3::derive_key(kind.digest_domain(), bytes)
 }
 
-/// Unicode category Cf. A format character refuses the segment
-/// outright, so it can hide neither `.lock` nor a reserved prefix.
-fn is_cf(c: char) -> bool {
-    matches!(
-        c as u32,
-        0x00AD
-            | 0x0600..=0x0605
-            | 0x061C
-            | 0x06DD
-            | 0x070F
-            | 0x0890..=0x0891
-            | 0x08E2
-            | 0x180E
-            | 0x200B..=0x200F
-            | 0x202A..=0x202E
-            | 0x2060..=0x2064
-            | 0x2066..=0x206F
-            | 0xFEFF
-            | 0xFFF9..=0xFFFB
-            | 0x110BD
-            | 0x110CD
-            | 0x13430..=0x13440
-            | 0x1BCA0..=0x1BCA3
-            | 0x1D173..=0x1D17A
-            | 0xE0001
-            | 0xE0020..=0xE007F
+/// `<prefix>/HEAD` — the one mutable object of a database incarnation.
+#[must_use]
+pub fn head_key(prefix: &str) -> String {
+    format!("{prefix}/{HEAD_NAME}")
+}
+
+/// `<prefix>/objects/<epoch>/<kind>/<digest-hex>` — canonical lower-case
+/// ASCII encoding of binary identities, never a user tenant name.
+#[must_use]
+pub fn object_key(prefix: &str, epoch: u64, kind: ObjectKind, digest: &[u8; 32]) -> String {
+    format!(
+        "{prefix}/objects/{epoch}/{}/{}",
+        kind.segment(),
+        hex32(digest)
     )
 }
 
-/// A store prefix: empty, or a [`StoreKey`] spelling (the same segment
-/// grammar, no leading or trailing slash).
-///
-/// # Errors
-pub fn parse_prefix(raw: &str) -> std::result::Result<String, KeyError> {
-    if raw.is_empty() {
-        return Ok(String::new());
-    }
-    let trimmed = raw.trim_matches('/');
-    StoreKey::parse(trimmed).map(|key| key.0)
-}
-
-impl AsRef<str> for StoreKey {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for StoreKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Process- or writer-scoped identity carried on a [`Lease`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WriterId(pub u64);
-
-/// A fenced CAS lease: identity is the token, not a path. Acquired and
-/// broken only through exclusive create of the next token; a contender
-/// takes the next token iff the current lease is expired.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Lease {
-    pub holder: WriterId,
-    pub token: u64,
-    pub expires: u64,
-}
-
-impl Lease {
-    /// Expiry of the lease's own bytes. The lock is not a probe.
-    #[must_use]
-    pub fn breakable(&self, now_ms: u64) -> bool {
-        self.expires <= now_ms
-    }
-
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
-        format!(
-            "LEASE/1\n{}\n{}\n{}\n",
-            self.holder.0, self.token, self.expires
-        )
-        .into_bytes()
-    }
-
-    /// Strict-canonical: the accepted set is exactly [`Self::encode`]'s
-    /// image, so parse∘encode is the identity and every accepted body
-    /// is its own re-render. A body missing its final newline,
-    /// CRLF-terminated, or spelling a non-canonical decimal is not a
-    /// lease and never breakable.
-    #[must_use]
-    pub fn parse(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        let mut lines = text.lines();
-        if lines.next()? != "LEASE/1" {
-            return None;
-        }
-        let holder = WriterId(lines.next()?.parse().ok()?);
-        let token: u64 = lines.next()?.parse().ok()?;
-        let expires: u64 = lines.next()?.parse().ok()?;
-        if lines.next().is_some() {
-            return None;
-        }
-        let lease = Self {
-            holder,
-            token,
-            expires,
-        };
-        (lease.encode() == bytes).then_some(lease)
-    }
-}
-
-/// Unix epoch milliseconds, the lease clock.
+/// The listing prefix under which every immutable object of a database lives.
 #[must_use]
-pub fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+pub fn objects_prefix(prefix: &str) -> String {
+    format!("{prefix}/objects/")
 }
 
-/// An object version tag as the store reports it. `FsStore` renders the
-/// blake3 of the object bytes as lowercase hex; HTTP stores carry the
-/// vendor's `ETag` header value verbatim.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Etag(pub String);
+/// Parse an `objects/` key back into its identity. Returns `None` for keys
+/// outside the recognized namespace — sweep never deletes what it cannot
+/// parse.
+#[must_use]
+pub fn parse_object_key(prefix: &str, key: &str) -> Option<(u64, ObjectKind, [u8; 32])> {
+    let rest = key.strip_prefix(prefix)?.strip_prefix('/')?;
+    let rest = rest.strip_prefix("objects/")?;
+    let mut parts = rest.split('/');
+    let epoch_text = parts.next()?;
+    // Canonical decimal only: no signs, no leading zeros beyond "0" itself.
+    if epoch_text.is_empty()
+        || (epoch_text.len() > 1 && epoch_text.starts_with('0'))
+        || !epoch_text.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let epoch: u64 = epoch_text.parse().ok()?;
+    let kind = ObjectKind::parse_segment(parts.next()?)?;
+    let hex = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let digest = parse_hex32(hex)?;
+    Some((epoch, kind, digest))
+}
 
-impl fmt::Display for Etag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+/// Lower-case hex of a 32-byte digest.
+#[must_use]
+pub fn hex32(digest: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        use fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+#[must_use]
+fn parse_hex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 {
+        return None;
+    }
+    let mut digest = [0u8; 32];
+    for (index, chunk) in text.as_bytes().chunks(2).enumerate() {
+        let high = hex_nibble(chunk[0])?;
+        let low = hex_nibble(chunk[1])?;
+        digest[index] = (high << 4) | low;
+    }
+    Some(digest)
+}
+
+const fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        // Lower-case only: the canonical encoding, not a case-folding alias.
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 
-/// A fetched object: its bytes and the version tag they arrived under.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fetched {
-    pub bytes: Vec<u8>,
-    pub etag: Etag,
+/// The decision object key spelled exactly like the publication machine's.
+#[must_use]
+pub fn decision_key(prefix: &str, epoch: u64, digest: &DecisionDigest) -> String {
+    object_key(prefix, epoch, ObjectKind::Decision, digest.as_bytes())
 }
 
-/// Outcome of a conditional GET.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Poll {
-    Unchanged,
-    Changed(Fetched),
-}
-
-/// Outcome of a create-only PUT. `Ambiguous` is an unproved transport
-/// result (S3 409, a retried PUT); the GET-verify law resolves it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Create {
-    Created(Etag),
-    Exists,
-    Ambiguous,
-}
-
-/// Outcome of a compare-and-swap PUT. `Ambiguous` is an unproved
-/// transport result; the GET-verify law resolves it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Swap {
-    Swapped(Etag),
-    Moved,
-    Ambiguous,
-}
-
-/// An infrastructure failure from the store: the transport or the
-/// filesystem, never a protocol outcome. Every store failure path,
-/// including a body-stream read, wraps this.
+/// The one shared object-layer failure taxonomy over any backend. `Backend`
+/// wraps the adapter's own infrastructure failure and never claims a definite
+/// protocol outcome; every other arm is a definite verified refusal.
 #[derive(Debug)]
-pub struct StoreError {
-    pub op: &'static str,
-    pub key: String,
-    pub source: std::io::Error,
+pub enum ObjectError {
+    /// Transport/auth/IO with no definite observation.
+    Backend(Box<dyn std::error::Error + Send + Sync>),
+    /// A referenced object is definitely absent.
+    Missing { key: String },
+    /// The fetched bytes disagree with the reference's expected length.
+    WrongLength {
+        key: String,
+        expected: u64,
+        got: u64,
+    },
+    /// The fetched bytes disagree with the reference's content digest.
+    WrongDigest { key: String },
+    /// An immutable name already holds conflicting bytes; creation refused.
+    ImmutableConflict { key: String },
+    /// A frame-level grammar refusal from a nested record.
+    Frame(FrameError),
+    /// A stored object could not be proven durable within the retry budget.
+    Unverified { key: String },
 }
 
-impl fmt::Display for StoreError {
+impl fmt::Display for ObjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "object store {} on `{}`: {}",
-            self.op, self.key, self.source
-        )
-    }
-}
-
-impl std::error::Error for StoreError {}
-
-/// The store outcome shell every verb returns.
-pub type Result<T> = std::result::Result<T, StoreError>;
-
-/// A write body that carries the fencing token the CAS can lose to (20).
-/// The token is an argument of the write: a stored higher token is
-/// `Moved`, not a field discarded before the call. Unfenced callers
-/// (`From<&[u8]>`) ride token 0 — they lose to any later higher token
-/// on that key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Fenced<'a> {
-    pub bytes: &'a [u8],
-    pub token: u64,
-}
-
-impl<'a> Fenced<'a> {
-    #[must_use]
-    pub const fn new(bytes: &'a [u8], token: u64) -> Self {
-        Self { bytes, token }
-    }
-}
-
-impl<'a> From<&'a [u8]> for Fenced<'a> {
-    fn from(bytes: &'a [u8]) -> Self {
-        Self { bytes, token: 0 }
-    }
-}
-
-impl<'a, const N: usize> From<&'a [u8; N]> for Fenced<'a> {
-    fn from(bytes: &'a [u8; N]) -> Self {
-        Self { bytes, token: 0 }
-    }
-}
-
-impl<'a> From<&'a Vec<u8>> for Fenced<'a> {
-    fn from(bytes: &'a Vec<u8>) -> Self {
-        Self {
-            bytes: bytes.as_slice(),
-            token: 0,
+        match self {
+            Self::Backend(error) => write!(f, "object backend: {error}"),
+            Self::Missing { key } => write!(f, "object missing: {key}"),
+            Self::WrongLength { key, expected, got } => {
+                write!(f, "object {key} length {got}, expected {expected}")
+            }
+            Self::WrongDigest { key } => write!(f, "object digest mismatch: {key}"),
+            Self::ImmutableConflict { key } => {
+                write!(f, "immutable object holds conflicting bytes: {key}")
+            }
+            Self::Frame(error) => write!(f, "object frame: {error:?}"),
+            Self::Unverified { key } => write!(f, "object not proven durable: {key}"),
         }
     }
 }
 
-/// The five operations the protocol needs; nothing a vendor offers beyond
-/// them appears. Consumers monomorphize over `S: ObjectStore`. Every
-/// method is synchronous. An impl must not `block_on` from an async
-/// context — it returns `Err` instead.
-pub trait ObjectStore: Send + Sync {
-    /// GET. `Ok(None)` on 404.
-    ///
-    /// # Errors
-    fn get(&self, key: &StoreKey) -> Result<Option<Fetched>>;
+impl std::error::Error for ObjectError {}
 
-    /// GET with `If-None-Match: <etag>`. `Ok(Unchanged)` on 304 — the
-    /// cheap manifest poll.
-    ///
-    /// # Errors
-    fn get_if_changed(&self, key: &StoreKey, etag: &Etag) -> Result<Poll>;
-
-    /// PUT with `If-None-Match: "*"`. `Ok(Created(etag))` or `Ok(Exists)`
-    /// on a proved occupation; `Ok(Ambiguous)` when the transport cannot
-    /// prove the result. The write is [`Fenced`]: create records the
-    /// token as the generation a later swap can lose to.
-    ///
-    /// # Errors
-    fn put_create<'a>(&self, key: &StoreKey, body: impl Into<Fenced<'a>>) -> Result<Create>;
-
-    /// PUT with `If-Match: <etag>`. `Ok(Swapped(etag))` or `Ok(Moved)` on
-    /// a proved etag mismatch or a stale fencing token; `Ok(Ambiguous)`
-    /// when the transport cannot prove the result. The write is
-    /// [`Fenced`]: `body.token <` the stored generation is `Moved` — a
-    /// stale holder is the token the CAS does not win (20).
-    ///
-    /// # Errors
-    fn put_swap<'a>(
-        &self,
-        key: &StoreKey,
-        body: impl Into<Fenced<'a>>,
-        etag: &Etag,
-    ) -> Result<Swap>;
-
-    /// DELETE (unconditional). The gc verb's tool. Success means the
-    /// parent directory is durable.
-    ///
-    /// # Errors
-    fn delete(&self, key: &StoreKey) -> Result<()>;
+impl From<FrameError> for ObjectError {
+    fn from(error: FrameError) -> Self {
+        Self::Frame(error)
+    }
 }
 
-/// What a follow-up GET proved about an ambiguous `put_create`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CreateProbe {
-    /// The key holds exactly the bytes we tried to write: our create
-    /// landed, and this is its tag.
-    Landed(Etag),
-    /// The key holds someone else's bytes: we lost the slot; the loser
-    /// algebra takes the winner's object from here.
-    Lost(Fetched),
-    /// The key does not exist: the ambiguous request never landed and the
-    /// create may be reissued.
-    Absent,
+/// Adapter-error bound all P05 drivers use. The C07 trait leaves `Error`
+/// open; the composition requires a real error value it can retain as cause.
+pub trait BackendError: std::error::Error + Send + Sync + 'static {}
+impl<T: std::error::Error + Send + Sync + 'static> BackendError for T {}
+
+pub(crate) fn backend<E: BackendError>(error: E) -> ObjectError {
+    ObjectError::Backend(Box::new(error))
 }
 
-/// What a follow-up GET proved about an ambiguous `put_swap`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SwapProbe {
-    /// The key holds exactly the bytes we tried to write: our swap landed,
-    /// and this is the tag it produced.
-    Landed(Etag),
-    /// The key holds other bytes: our swap did not take effect (or was
-    /// itself swapped over); re-read and re-decide from this state.
-    Lost(Fetched),
-    /// The key does not exist.
-    Absent,
-}
-
-/// Collapse an `Ambiguous` create through the GET-verify law.
+/// Store one immutable content-addressed object and prove it durable.
+///
+/// Immutable objects may use verified content equality as publication
+/// evidence: an ambiguous PUT (or a re-PUT of identical bytes) is resolved by
+/// reading the key back and comparing content. Conflicting existing bytes at
+/// the same name refuse — creation never overwrites a colliding payload.
 ///
 /// # Errors
-pub fn prove_create<S: ObjectStore>(
-    store: &S,
-    key: &StoreKey,
-    attempted: &[u8],
-    outcome: Create,
-) -> Result<Create> {
-    match outcome {
-        Create::Created(_) | Create::Exists => Ok(outcome),
-        Create::Ambiguous => match resolve_ambiguous_create(store, key, attempted)? {
-            CreateProbe::Landed(etag) => Ok(Create::Created(etag)),
-            CreateProbe::Lost(_) => Ok(Create::Exists),
-            CreateProbe::Absent => Ok(Create::Ambiguous),
+/// Backend failure with no definite outcome, an immutable conflict, or an
+/// unresolved ambiguous store.
+pub fn put_verified<B: ConditionalStore>(
+    backend_store: &B,
+    prefix: &str,
+    epoch: u64,
+    kind: ObjectKind,
+    bytes: &[u8],
+) -> Result<ObjectRef, ObjectError>
+where
+    B::Error: BackendError,
+{
+    let reference = ObjectRef::of(epoch, kind, bytes);
+    let key = reference.key(prefix);
+    match backend_store.put_object(&key, bytes).map_err(backend)? {
+        PutOutcome::Stored => {}
+        PutOutcome::Indeterminate => match backend_store.get_object(&key).map_err(backend)? {
+            ObjectRead::Present { body } if *body == *bytes => {}
+            ObjectRead::Present { .. } => {
+                return Err(ObjectError::ImmutableConflict { key });
+            }
+            ObjectRead::Absent => return Err(ObjectError::Unverified { key }),
         },
     }
+    Ok(reference)
 }
 
-/// Collapse an `Ambiguous` swap through the GET-verify law.
+/// Fetch one referenced object and verify its length and domain-separated
+/// digest before returning the bytes. A checksum is not authorization; the
+/// caller still validates grammar and nested references before use.
 ///
 /// # Errors
-pub fn prove_swap<S: ObjectStore>(
-    store: &S,
-    key: &StoreKey,
-    attempted: &[u8],
-    outcome: Swap,
-) -> Result<Swap> {
-    match outcome {
-        Swap::Swapped(_) | Swap::Moved => Ok(outcome),
-        Swap::Ambiguous => match resolve_ambiguous_swap(store, key, attempted)? {
-            SwapProbe::Landed(etag) => Ok(Swap::Swapped(etag)),
-            SwapProbe::Lost(_) | SwapProbe::Absent => Ok(Swap::Moved),
-        },
+/// Backend failure, definite absence, or verification refusal.
+pub fn get_verified<B: ConditionalStore>(
+    backend_store: &B,
+    prefix: &str,
+    reference: &ObjectRef,
+) -> Result<Vec<u8>, ObjectError>
+where
+    B::Error: BackendError,
+{
+    let key = reference.key(prefix);
+    let body = match backend_store.get_object(&key).map_err(backend)? {
+        ObjectRead::Present { body } => body,
+        ObjectRead::Absent => return Err(ObjectError::Missing { key }),
+    };
+    if body.len() as u64 != reference.length {
+        return Err(ObjectError::WrongLength {
+            key,
+            expected: reference.length,
+            got: body.len() as u64,
+        });
     }
-}
-
-/// The retry law for `put_create`: a conditional write is never blindly
-/// retried after an ambiguous outcome (a timeout after the request may
-/// have landed). The follow-up is a GET of the target key comparing
-/// content — byte-equal means the operation succeeded.
-///
-/// # Errors
-pub fn resolve_ambiguous_create<S: ObjectStore>(
-    store: &S,
-    key: &StoreKey,
-    attempted: &[u8],
-) -> Result<CreateProbe> {
-    match retry_read(|| store.get(key))? {
-        None => Ok(CreateProbe::Absent),
-        Some(fetched) if fetched.bytes == attempted => Ok(CreateProbe::Landed(fetched.etag)),
-        Some(fetched) => Ok(CreateProbe::Lost(fetched)),
+    if object_digest(reference.kind, &body) != reference.digest {
+        return Err(ObjectError::WrongDigest { key });
     }
+    Ok(body.into_vec())
 }
 
-/// The retry law for `put_swap`: never a blind retry — the follow-up is a
-/// GET of the target key re-reading its etag. Bytes equal to the attempted
-/// body prove the swap landed under that fresh tag; anything else is the
-/// state to re-decide from.
+/// Fetch one decision object by digest, probing the bounded epoch window
+/// `[floor, ceiling]` newest-first. Decisions are staged under the object
+/// epoch open at their publication; later epochs never re-home them, so a
+/// recovery root records the oldest epoch its tail can live under.
 ///
 /// # Errors
-pub fn resolve_ambiguous_swap<S: ObjectStore>(
-    store: &S,
-    key: &StoreKey,
-    attempted: &[u8],
-) -> Result<SwapProbe> {
-    match retry_read(|| store.get(key))? {
-        None => Ok(SwapProbe::Absent),
-        Some(fetched) if fetched.bytes == attempted => Ok(SwapProbe::Landed(fetched.etag)),
-        Some(fetched) => Ok(SwapProbe::Lost(fetched)),
-    }
-}
-
-/// Read attempts, jittered exponential backoff base 50 ms cap 2 s, six
-/// attempts total, then the last failure surfaces as `Err`.
-///
-/// # Errors
-pub fn retry_read<T, F: FnMut() -> Result<T>>(mut op: F) -> Result<T> {
-    const ATTEMPTS: u32 = 6;
-    const BASE_MS: u64 = 50;
-    const CAP_MS: u64 = 2_000;
-    let mut attempt: u32 = 0;
+/// Backend failure or absence across the whole window.
+pub fn fetch_decision<B: ConditionalStore>(
+    backend_store: &B,
+    prefix: &str,
+    epoch_floor: u64,
+    epoch_ceiling: u64,
+    digest: &DecisionDigest,
+) -> Result<(u64, Vec<u8>), ObjectError>
+where
+    B::Error: BackendError,
+{
+    let mut epoch = epoch_ceiling;
     loop {
-        match op() {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                attempt += 1;
-                if attempt == ATTEMPTS {
-                    return Err(err);
+        let key = decision_key(prefix, epoch, digest);
+        match backend_store.get_object(&key).map_err(backend)? {
+            ObjectRead::Present { body } => {
+                // Decisions are content addressed under their own digest
+                // domain; verify before interpretation.
+                if object_digest(ObjectKind::Decision, &body) != *digest.as_bytes() {
+                    return Err(ObjectError::WrongDigest { key });
                 }
-                let ceiling_ms = CAP_MS.min(BASE_MS << (attempt - 1));
-                std::thread::sleep(jittered(Duration::from_millis(ceiling_ms)));
+                return Ok((epoch, body.into_vec()));
+            }
+            ObjectRead::Absent => {
+                if epoch == epoch_floor {
+                    return Err(ObjectError::Missing { key });
+                }
+                epoch -= 1;
             }
         }
     }
 }
 
-/// Full jitter: a uniform-ish duration in `[0, ceiling]`, from a process
-/// xorshift stream seeded off the clock and pid. Decorrelation across
-/// retriers is the whole requirement; distribution quality is not.
-pub(crate) fn jittered(ceiling: Duration) -> Duration {
-    static STATE: AtomicU64 = AtomicU64::new(0);
-    let mut x = STATE.load(Ordering::Relaxed);
-    if x == 0 {
-        let nanos = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(1, |d| {
-                u64::try_from(d.as_nanos() & u128::from(u64::MAX)).unwrap_or(1)
-            });
-        x = nanos ^ (u64::from(std::process::id()) << 32) | 1;
-    }
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    STATE.store(x, Ordering::Relaxed);
-    let ceiling_nanos = u64::try_from(ceiling.as_nanos()).unwrap_or(u64::MAX);
-    Duration::from_nanos(x % ceiling_nanos.saturating_add(1))
+/// One object-key path segment’s validity: nonempty, no separators/controls,
+/// no dot traversal, no reserved `~` prefix, no `.lock` suffix. Adapters
+/// refuse keys whose segments fail this before touching storage.
+#[must_use]
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "the object-key grammar is byte-exact; `.lock` is a reserved \
+              literal suffix in that grammar, not a filename extension"
+)]
+pub fn segment_ok(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && !segment.starts_with('~')
+        && !segment.ends_with(".lock")
+        && !segment
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == '/' || c == '\\')
+}
+
+/// A whole slash-path object key's validity.
+#[must_use]
+pub fn key_ok(key: &str) -> bool {
+    !key.is_empty()
+        && !key.starts_with('/')
+        && !key.ends_with('/')
+        && key.split('/').all(segment_ok)
 }
 
 #[cfg(test)]
@@ -518,59 +414,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reserved_and_control_segments_are_not_keys() {
-        for key in [
+    fn object_keys_roundtrip_and_reserved_or_hostile_spellings_refuse() {
+        let digest = [0xabu8; 32];
+        let key = object_key("log/t1", 7, ObjectKind::Chunk, &digest);
+        assert_eq!(
+            parse_object_key("log/t1", &key),
+            Some((7, ObjectKind::Chunk, digest))
+        );
+        // Foreign prefix, unknown kind, bad hex, non-canonical epoch.
+        assert_eq!(parse_object_key("log/t2", &key), None);
+        assert_eq!(
+            parse_object_key("log/t1", "log/t1/objects/7/braid/aa"),
+            None
+        );
+        assert_eq!(
+            parse_object_key(
+                "log/t1",
+                &format!("log/t1/objects/07/chunk/{}", hex32(&digest))
+            ),
+            None,
+            "leading-zero epochs are not canonical names"
+        );
+        assert_eq!(
+            parse_object_key(
+                "log/t1",
+                &format!("log/t1/objects/7/chunk/{}", hex32(&digest).to_uppercase())
+            ),
+            None,
+            "upper-case hex is not the canonical encoding"
+        );
+        assert!(key_ok(&key));
+        for bad in [
             "~tmp/x",
-            "~lease/manifest",
-            "a/~tmp",
-            "log/\u{0001}/1",
-            "manifest.lock",
+            "a/~lease/b",
+            "a//b",
+            "a/./b",
+            "x.lock",
+            "a b",
+            "/a",
+            "a/",
         ] {
-            assert!(StoreKey::parse(key).is_err(), "{key}");
+            assert!(!key_ok(bad), "{bad}");
         }
-        assert!(StoreKey::parse("log/c00000000/1").is_ok());
-        assert!(segment_ok("_shared"));
-        assert!(!segment_ok("~tmp"));
-        assert!(!segment_ok("a/b"));
-        assert!(
-            StoreKey::parse("x~").is_ok(),
-            "a tilde elsewhere in a segment is ordinary text"
-        );
-        assert!(
-            StoreKey::parse("manifest.lock\u{200B}").is_err(),
-            "a format character refuses the segment"
-        );
-        assert!(
-            StoreKey::parse("log/\u{2028}/1").is_err(),
-            "line separator is not a segment"
-        );
-        assert!(StoreKey::parse("log/\u{2029}/1").is_err());
-        assert!(StoreKey::parse("\u{200B}~tmp/x").is_err());
-        assert!(StoreKey::parse("a b").is_err(), "Zs refuses");
-        assert!(
-            StoreKey::parse("a\u{00A0}b").is_err(),
-            "no-break space is Zs"
-        );
     }
 
     #[test]
-    fn lease_round_trips_and_expiry_is_the_only_break() {
-        let lease = Lease {
-            holder: WriterId(7),
-            token: 3,
-            expires: 100,
-        };
-        let parsed = Lease::parse(&lease.encode()).expect("parse");
-        assert_eq!(parsed, lease);
-        assert!(lease.breakable(100));
-        assert!(!lease.breakable(99));
+    fn digests_are_domain_separated_by_kind() {
+        let bytes = b"same bytes";
+        assert_ne!(
+            object_digest(ObjectKind::Chunk, bytes),
+            object_digest(ObjectKind::Checkpoint, bytes)
+        );
+        let reference = ObjectRef::of(3, ObjectKind::Mark, bytes);
+        assert_eq!(reference.length, bytes.len() as u64);
+        assert_eq!(reference.digest, object_digest(ObjectKind::Mark, bytes));
     }
 
     #[test]
-    fn prefix_grammar_matches_the_key_grammar() {
-        assert_eq!(parse_prefix("").expect("empty"), "");
-        assert_eq!(parse_prefix("/smoke/run/").expect("trim"), "smoke/run");
-        assert!(parse_prefix("~tmp").is_err());
-        assert!(parse_prefix("a//b").is_err());
+    fn same_digest_at_another_epoch_is_a_distinct_storage_name() {
+        let digest = [1u8; 32];
+        assert_ne!(
+            object_key("p", 1, ObjectKind::Chunk, &digest),
+            object_key("p", 2, ObjectKind::Chunk, &digest)
+        );
     }
 }

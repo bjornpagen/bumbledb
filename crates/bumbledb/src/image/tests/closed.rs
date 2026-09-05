@@ -14,7 +14,6 @@ fn theory() -> Schema {
                 fields: vec![FieldDescriptor {
                     name: "account".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 }],
             },
             RelationDescriptor {
@@ -74,17 +73,14 @@ fn theory() -> Schema {
                         value_type: ValueType::Interval {
                             element: IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "sunny".into(),
                         value_type: ValueType::Bool,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "rank".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },

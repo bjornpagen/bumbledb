@@ -7,7 +7,11 @@
 //! history, not another log-owned value vocabulary.
 use crate::schema::{FieldDescriptor, ValueType, value_matches};
 use crate::work::{ByteKind, ByteReservation};
-use crate::{F64, Interval, Value, WorkContext, WorkError};
+use crate::{F64, Id128, Interval, Value, WorkContext, WorkError};
+
+/// The canonical bounded named-scalar record — the core codec the log's
+/// declared `CommandResult` slot frames verbatim (C01; chapter 30).
+pub mod result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowError {
@@ -50,6 +54,10 @@ impl CanonicalRow {
     /// Checks and owns caller values before they can enter a draft.
     /// # Errors
     /// Rejects wrong shape or insufficient input/working allowance.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the per-type encode arms are one linear wire table"
+    )]
     pub fn encode(
         fields: &[FieldDescriptor],
         values: &[Value],
@@ -65,6 +73,7 @@ impl CanonicalRow {
             let payload = match value {
                 Value::Bool(_) => 1,
                 Value::U64(_) | Value::I64(_) | Value::F64(_) => 8,
+                Value::Id128(_) => 16,
                 Value::String(text) => text.len().checked_add(8).ok_or(RowError::LengthOverflow)?,
                 Value::FixedBytes(bytes) => {
                     bytes.len().checked_add(8).ok_or(RowError::LengthOverflow)?
@@ -77,6 +86,12 @@ impl CanonicalRow {
                 }
                 Value::IntervalI64(v) => {
                     if v.start() >= v.end() {
+                        return Err(RowError::InvalidInterval { field });
+                    }
+                    16
+                }
+                Value::IntervalF64(v) => {
+                    if v.start().is_nan() || v.end().is_nan() || v.start() >= v.end() {
                         return Err(RowError::InvalidInterval { field });
                     }
                     16
@@ -130,6 +145,17 @@ impl CanonicalRow {
                 }
                 Value::IntervalI64(v) => {
                     bytes.push(7);
+                    bytes.extend_from_slice(&v.start().to_be_bytes());
+                    bytes.extend_from_slice(&v.end().to_be_bytes());
+                }
+                Value::Id128(v) => {
+                    bytes.push(8);
+                    bytes.extend_from_slice(v.as_bytes());
+                }
+                Value::IntervalF64(v) => {
+                    // Wire endpoints are the canonical binary64 payload bits,
+                    // big endian — never the index order keys.
+                    bytes.push(9);
                     bytes.extend_from_slice(&v.start().to_be_bytes());
                     bytes.extend_from_slice(&v.end().to_be_bytes());
                 }
@@ -218,12 +244,17 @@ pub(crate) fn validate(
     walk(fields, bytes, work, None)
 }
 
-pub(crate) struct DecodedRow {
+/// Bridge-facing decoded row. Not embedding API.
+#[doc(hidden)]
+pub struct DecodedRow {
     pub values: Vec<Value>,
     _reservation: ByteReservation,
 }
 
-pub(crate) fn decode(
+/// Bridge-facing strict canonical decode (the ONE row decoder).
+/// Not embedding API.
+#[doc(hidden)]
+pub fn decode(
     fields: &[FieldDescriptor],
     bytes: &[u8],
     work: &WorkContext,
@@ -314,6 +345,20 @@ fn walk(
                 )
                 .ok_or(RowError::InvalidInterval { field })?,
             ),
+            8 => Value::Id128(Id128::from_bytes(reader.word()?)),
+            9 => {
+                // Each endpoint must be an already canonical payload — the
+                // parser rejects alternative NaN/zero encodings rather than
+                // normalizing wire input — and the checked constructor then
+                // refuses NaN endpoints and empty/inverted bounds.
+                let start = F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?;
+                let end = F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?;
+                Value::IntervalF64(
+                    Interval::new(start, end).ok_or(RowError::InvalidInterval { field })?,
+                )
+            }
             _ => return Err(RowError::InvalidTag { field }),
         };
         value_matches(&value, &descriptor.value_type).map_err(|_| RowError::Type { field })?;

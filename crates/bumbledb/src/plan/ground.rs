@@ -229,7 +229,7 @@ fn var_is_dead(
         idx == b_idx
             || occ.role.discharged()
             || (!occ.vars.iter().any(|(_, v)| *v == var)
-                && !occ.point_vars.iter().any(|(_, v)| *v == var))
+                && !occ.point_vars.iter().any(|(_, v, _)| *v == var))
     })
 }
 

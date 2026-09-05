@@ -2,11 +2,10 @@ use super::*;
 
 #[test]
 fn skewed_maps_size_by_the_formula_and_iterate_densely() {
-    let dir = TempDir::new("colt-dense-skew");
     let schema = schema();
 
     let rows: Vec<(u64, u64)> = (0..100_000).map(|i| (i % 500, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
     colt.ensure_forced(root, 0);
@@ -35,10 +34,9 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
 
 #[test]
 fn near_distinct_maps_grow_to_the_pinned_capacity() {
-    let dir = TempDir::new("colt-dense-grow");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i, i * 2)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
     colt.ensure_forced(root, 0);
@@ -62,10 +60,9 @@ fn near_distinct_maps_grow_to_the_pinned_capacity() {
 
 #[test]
 fn dense_tokens_resume_across_interleaved_probes() {
-    let dir = TempDir::new("colt-dense-token");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..300).map(|i| (i % 40, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
     let single_shot = drain(&mut colt, root, 0);
@@ -93,11 +90,10 @@ fn dense_tokens_resume_across_interleaved_probes() {
 
 #[test]
 fn chunked_lists_round_trip_far_beyond_one_chunk() {
-    let dir = TempDir::new("colt-chunks");
     let schema = schema();
 
     let rows: Vec<(u64, u64)> = (0..300).map(|i| (42, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let child = colt.get(Colt::root(), 0, &[42]).expect("hit");
     assert!(matches!(colt.key_count(child), KeyCount::Estimate(300)));
@@ -114,11 +110,10 @@ fn chunked_lists_round_trip_far_beyond_one_chunk() {
 /// after the force drains the full, correct key set.
 #[test]
 fn a_token_that_outlives_a_force_is_refused() {
-    let dir = TempDir::new("colt-stale-token");
     let schema = schema();
 
     let rows: Vec<(u64, u64)> = (0..200).map(|i| (7, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
     let mut keys = vec![0u64; 8];
@@ -155,10 +150,9 @@ fn a_token_that_outlives_a_force_is_refused() {
 /// (Chunks/dense arms) against the re-minted pools.
 #[test]
 fn a_token_that_outlives_a_reset_is_refused() {
-    let dir = TempDir::new("colt-reset-token");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..200).map(|i| (7, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
     let mut keys = vec![0u64; 8];
@@ -190,9 +184,8 @@ fn a_token_that_outlives_a_reset_is_refused() {
 
 #[test]
 fn row_cursor_iteration_honors_max() {
-    let dir = TempDir::new("colt-row-max");
     let schema = schema();
-    let view = view_of(&dir, &schema, &[(1, 5)]);
+    let view = view_of(&schema, &[(1, 5)]);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let child = colt.get(Colt::root(), 0, &[1]).expect("key 1 exists");
     assert!(matches!(child, Cursor::Row(_)), "singleton pins a row");

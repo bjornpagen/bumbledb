@@ -11,10 +11,13 @@ pub enum Owned {
     U64(u64),
     I64(i64),
     F64(u64),
+    Id128([u8; 16]),
     Str(String),
     Bytes(Vec<u8>),
     IntervalU64(u64, u64),
     IntervalI64(i64, i64),
+    /// Canonical binary64 endpoint payloads — bit-exact, like [`Owned::F64`].
+    IntervalF64(u64, u64),
 }
 
 pub type Answer = Vec<Owned>;
@@ -30,10 +33,14 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
                     AnswerValue::U64(v) => Owned::U64(v),
                     AnswerValue::I64(v) => Owned::I64(v),
                     AnswerValue::F64(v) => Owned::F64(v.to_bits()),
+                    AnswerValue::Id128(v) => Owned::Id128(*v.as_bytes()),
                     AnswerValue::String(v) => Owned::Str(v.to_owned()),
                     AnswerValue::FixedBytes(v) => Owned::Bytes(v.to_vec()),
                     AnswerValue::IntervalU64(iv) => Owned::IntervalU64(iv.start(), iv.end()),
                     AnswerValue::IntervalI64(iv) => Owned::IntervalI64(iv.start(), iv.end()),
+                    AnswerValue::IntervalF64(iv) => {
+                        Owned::IntervalF64(iv.start().to_bits(), iv.end().to_bits())
+                    }
                 })
                 .collect()
         })
@@ -46,10 +53,14 @@ fn owned_value(value: &Value) -> Owned {
         Value::U64(v) => Owned::U64(*v),
         Value::I64(v) => Owned::I64(*v),
         Value::F64(v) => Owned::F64(v.to_bits()),
+        Value::Id128(id) => Owned::Id128(*id.as_bytes()),
         Value::String(text) => Owned::Str(text.to_string()),
         Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
         Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
+        Value::IntervalF64(interval) => {
+            Owned::IntervalF64(interval.start().to_bits(), interval.end().to_bits())
+        }
     }
 }
 

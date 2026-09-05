@@ -7,4 +7,4 @@
 pub(crate) mod overlap;
 pub(crate) mod sweep;
 
-pub use bumbledb_theory::Interval;
+pub use bumbledb_theory::{Discrete, Element, FloatMeasureError, Interval};

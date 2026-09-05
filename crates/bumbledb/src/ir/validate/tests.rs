@@ -4,7 +4,7 @@ use crate::ir::{ConditionTree, FindTerm, ParamId, Query, Rule, Term};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor,
 };
 
 mod accept;
@@ -18,12 +18,10 @@ fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     let fresh = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Fresh,
     };
     let interval_u64 = ValueType::Interval {
         element: IntervalElement::U64,

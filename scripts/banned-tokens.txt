@@ -7,67 +7,67 @@
 
 pid_alive	crates/bumbledb-log/src	fixed	pid_alive
 pid_alive	ts-log/src	fixed	pid_alive
-pid_alive	examples/lambda/src	fixed	pid_alive
+pid_alive	examples/notes/src	fixed	pid_alive
 pidAlive	crates/bumbledb-log/src	fixed	pidAlive
 pidAlive	ts-log/src	fixed	pidAlive
-pidAlive	examples/lambda/src	fixed	pidAlive
+pidAlive	examples/notes/src	fixed	pidAlive
 applied_pending	crates/bumbledb-log/src	fixed	applied_pending
 applied_pending	ts-log/src	fixed	applied_pending
-applied_pending	examples/lambda/src	fixed	applied_pending
+applied_pending	examples/notes/src	fixed	applied_pending
 kill(0)	crates/bumbledb-log/src	fixed	kill(0)
 kill(0)	ts-log/src	fixed	kill(0)
-kill(0)	examples/lambda/src	fixed	kill(0)
+kill(0)	examples/notes/src	fixed	kill(0)
 kill -0	crates/bumbledb-log/src	fixed	kill -0
 kill -0	ts-log/src	fixed	kill -0
-kill -0	examples/lambda/src	fixed	kill -0
+kill -0	examples/notes/src	fixed	kill -0
 refresh_braid	crates/bumbledb-log/src	fixed	refresh_braid
 refresh_braid	ts-log/src	fixed	refresh_braid
-refresh_braid	examples/lambda/src	fixed	refresh_braid
+refresh_braid	examples/notes/src	fixed	refresh_braid
 upsert	crates/bumbledb-log/src	regex	\bupsert\b
 upsert	ts-log/src	regex	\bupsert\b
-upsert	examples/lambda/src	regex	\bupsert\b
+upsert	examples/notes/src	regex	\bupsert\b
 Ok(status.success())	crates/bumbledb-log/src	fixed	Ok(status.success())
 Ok(status.success())	ts-log/src	fixed	Ok(status.success())
-Ok(status.success())	examples/lambda/src	fixed	Ok(status.success())
+Ok(status.success())	examples/notes/src	fixed	Ok(status.success())
 ESRCH	crates/bumbledb-log/src	regex	\bESRCH\b
 ESRCH	ts-log/src	regex	\bESRCH\b
-ESRCH	examples/lambda/src	regex	\bESRCH\b
+ESRCH	examples/notes/src	regex	\bESRCH\b
 gc fodder	crates/bumbledb-log/src	fixed	gc fodder
 gc fodder	ts-log/src	fixed	gc fodder
-gc fodder	examples/lambda/src	fixed	gc fodder
+gc fodder	examples/notes/src	fixed	gc fodder
 serde_json	crates/bumbledb-log/src	fixed	serde_json
 serde_json	ts-log/src	fixed	serde_json
-serde_json	examples/lambda/src	fixed	serde_json
+serde_json	examples/notes/src	fixed	serde_json
 document.ts	crates/bumbledb-log/src	fixed	document.ts
 document.ts	ts-log/src	fixed	document.ts
-document.ts	examples/lambda/src	fixed	document.ts
+document.ts	examples/notes/src	fixed	document.ts
 base64 pending	crates/bumbledb-log/src	regex	base64|Base64|\batob\b|\bbtoa\b
 base64 pending	ts-log/src	regex	base64|Base64|\batob\b|\bbtoa\b
-base64 pending	examples/lambda/src	regex	base64|Base64|\batob\b|\bbtoa\b
+base64 pending	examples/notes/src	regex	base64|Base64|\batob\b|\bbtoa\b
 JSON-number u64	crates/bumbledb-log/src	regex	Json::U64|serde_json::Number|\bas_u64\b	schema_file.rs
 JSON-number u64	ts-log/src	regex	Json::U64|serde_json::Number|\bas_u64\b	schema_file.rs
-JSON-number u64	examples/lambda/src	regex	Json::U64|serde_json::Number|\bas_u64\b	schema_file.rs
+JSON-number u64	examples/notes/src	regex	Json::U64|serde_json::Number|\bas_u64\b	schema_file.rs
 manifest.json	crates/bumbledb-log/src	fixed	manifest.json
 manifest.json	ts-log/src	fixed	manifest.json
-manifest.json	examples/lambda/src	fixed	manifest.json
+manifest.json	examples/notes/src	fixed	manifest.json
 chain.json	crates/bumbledb-log/src	fixed	chain.json
 chain.json	ts-log/src	fixed	chain.json
-chain.json	examples/lambda/src	fixed	chain.json
+chain.json	examples/notes/src	fixed	chain.json
 .json store keys	crates/bumbledb-log/src	regex	\.json["']	theory.json,conformance/
 .json store keys	ts-log/src	regex	\.json["']	theory.json,conformance/
-.json store keys	examples/lambda/src	regex	\.json["']	theory.json
+.json store keys	examples/notes/src	regex	\.json["']	theory.json,tenants.json,runtime-contract.json
 BOM/whitespace/leading-zero/duplicate-key arms	crates/bumbledb-log/src	regex	skip_bom|strip_bom|SkipBom|leading_zero|LeadingZero|duplicate_key|DuplicateKey|duplicateKey|skip_ws|skipWs	schema_file.rs
 BOM/whitespace/leading-zero/duplicate-key arms	ts-log/src	regex	skip_bom|strip_bom|SkipBom|leading_zero|LeadingZero|duplicate_key|DuplicateKey|duplicateKey|skip_ws|skipWs	schema_file.rs
-BOM/whitespace/leading-zero/duplicate-key arms	examples/lambda/src	regex	skip_bom|strip_bom|SkipBom|leading_zero|LeadingZero|duplicate_key|DuplicateKey|duplicateKey|skip_ws|skipWs	schema_file.rs
+BOM/whitespace/leading-zero/duplicate-key arms	examples/notes/src	regex	skip_bom|strip_bom|SkipBom|leading_zero|LeadingZero|duplicate_key|DuplicateKey|duplicateKey|skip_ws|skipWs	schema_file.rs
 quoted-decimal u64	crates/bumbledb-log/src	regex	quoted_decimal|quoted-decimal|quoted_u64|quotedU64|quoted_bigint|quoted-bigint
 quoted-decimal u64	ts-log/src	regex	quoted_decimal|quoted-decimal|quoted_u64|quotedU64|quoted_bigint|quoted-bigint
-quoted-decimal u64	examples/lambda/src	regex	quoted_decimal|quoted-decimal|quoted_u64|quotedU64|quoted_bigint|quoted-bigint
+quoted-decimal u64	examples/notes/src	regex	quoted_decimal|quoted-decimal|quoted_u64|quotedU64|quoted_bigint|quoted-bigint
 hex32/digest32FromHex on protocol parse/encode paths	crates/bumbledb-log/src	hex	hex32|digest32FromHex|digest32_from_hex
 hex32/digest32FromHex on protocol parse/encode paths	ts-log/src	hex	hex32|digest32FromHex|digest32_from_hex
-hex32/digest32FromHex on protocol parse/encode paths	examples/lambda/src	hex	hex32|digest32FromHex|digest32_from_hex
+hex32/digest32FromHex on protocol parse/encode paths	examples/notes/src	hex	hex32|digest32FromHex|digest32_from_hex
 _json in identifiers	crates/bumbledb-log/src	ident	_json
 _json in identifiers	ts-log/src	ident	_json
-_json in identifiers	examples/lambda/src	ident	_json
+_json in identifiers	examples/notes/src	ident	_json
 raw regex in TS surfaces	crates/bumbledb-log/src	tsre	-
 raw regex in TS surfaces	ts-log/src	tsre	-
-raw regex in TS surfaces	examples/lambda/src	tsre	-
+raw regex in TS surfaces	examples/notes/src	tsre	-

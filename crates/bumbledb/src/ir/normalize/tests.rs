@@ -1,6 +1,6 @@
 use super::lower_literal::lower_literal;
 use super::*;
-use crate::encoding::{ValueRef, encode_fact, encode_i64};
+use crate::encoding::encode_i64;
 use crate::image::view::{
     Const, FilterPredicate, IntervalConst, OperandAddr, SetConst, ViewWordSource,
 };
@@ -10,20 +10,15 @@ use crate::ir::{
 };
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::testutil::TempDir;
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
+    FieldDescriptor, IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
 fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     let interval_i64 = ValueType::Interval {
         element: IntervalElement::I64,
@@ -37,7 +32,6 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     field("a", ValueType::I64),
                     field("b", ValueType::I64),
@@ -131,24 +125,19 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     assert!(norm.anti_probes.is_empty());
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::ONE);
 
-    let dir = TempDir::new("normalize-execute");
     let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for (id, a, b) in [(1u64, 5i64, 5i64), (2, 5, 6), (3, -1, -1)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(id), ValueRef::I64(a), ValueRef::I64(b)],
-            schema.relation(R).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, R, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let image = crate::image::build(&txn.catalog(), &schema, R).expect("build");
+    let facts: Vec<Vec<crate::ir::Value>> = [(1u64, 5i64, 5i64), (2, 5, 6), (3, -1, -1)]
+        .into_iter()
+        .map(|(id, a, b)| {
+            vec![
+                crate::ir::Value::U64(id),
+                crate::ir::Value::I64(a),
+                crate::ir::Value::I64(b),
+            ]
+        })
+        .collect();
+    let source = crate::image::testsupport::TestSource::new(&schema, &[(R, facts)]);
+    let (_cache, image) = source.image_with_cache(R);
     let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
 
     let ids: Vec<u64> = filtered
@@ -448,6 +437,7 @@ fn constant_point_membership_lowers_to_point_in() {
         vec![FilterPredicate::PointIn {
             field: P_DURING.into(),
             point: ViewWordSource::Word(w(5)),
+            dense: false,
         }]
     );
 
@@ -471,6 +461,7 @@ fn constant_point_membership_lowers_to_point_in() {
         vec![FilterPredicate::PointIn {
             field: P_DURING.into(),
             point: ViewWordSource::Param(ParamId(0)),
+            dense: false,
         }]
     );
 }
@@ -568,6 +559,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         vec![FilterPredicate::FieldsPointIn {
             interval: P_DURING.into(),
             point: P_AT.into(),
+            dense: false,
         }]
     );
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::ONE);
@@ -750,6 +742,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
         vec![FilterPredicate::AnyPointIn {
             field: P_DURING.into(),
             set: SetConst::ParamSet(ParamId(0)),
+            dense: false,
         }]
     );
 }
@@ -772,6 +765,7 @@ fn same_atom_membership_variable_lowers_to_the_field_composition() {
         vec![FilterPredicate::FieldsPointIn {
             interval: P_DURING.into(),
             point: P_AT.into(),
+            dense: false,
         }]
     );
 }
@@ -795,7 +789,10 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
     });
     let norm = normalized(&query);
     assert_eq!(norm.occurrences[0].vars, vec![(P_EMP, VarId(1))]);
-    assert_eq!(norm.occurrences[0].point_vars, vec![(P_DURING, VarId(0))]);
+    assert_eq!(
+        norm.occurrences[0].point_vars,
+        vec![(P_DURING, VarId(0), false)]
+    );
     assert!(norm.occurrences[0].filters.is_empty());
     assert_eq!(norm.occurrences[1].vars, vec![(E_AT, VarId(0))]);
 }
@@ -1006,6 +1003,7 @@ fn sweep_contains_param_placements() {
         vec![FilterPredicate::PointIn {
             field: P_DURING.into(),
             point: ViewWordSource::Param(ParamId(0)),
+            dense: false,
         }]
     );
 
@@ -1026,6 +1024,7 @@ fn sweep_contains_param_placements() {
         vec![FilterPredicate::FieldWithin {
             field: E_AT.into(),
             outer: IntervalConst::Param(ParamId(0)),
+            dense: false,
         }]
     );
 }

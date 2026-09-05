@@ -18,4 +18,5 @@ pub fn q() -> bumbledb::Query {
         (c) | Parent(child: c, parent: p),
               p == 5u32;
     })
+    .into_query()
 }

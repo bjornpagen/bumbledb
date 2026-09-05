@@ -1,14 +1,11 @@
 use super::*;
-use crate::encoding::{ValueRef, encode_fact};
+use crate::image::testsupport::TestSource;
 use crate::image::view::apply;
+use crate::ir::Value;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
+    FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,12 +19,10 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "k".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "v".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -39,27 +34,14 @@ fn schema() -> Schema {
 
 const R: RelationId = RelationId(0);
 
-fn view_of(
-    dir: &TempDir,
-    schema: &Schema,
-    rows: &[(u64, u64)],
-) -> Arc<crate::image::RelationImage> {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (k, v) in rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(*k), ValueRef::U64(*v)],
-            schema.relation(R).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, R, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    crate::image::build(&txn.catalog(), schema, R).expect("build")
+fn view_of(schema: &Schema, rows: &[(u64, u64)]) -> Arc<crate::image::RelationImage> {
+    let facts: Vec<Vec<Value>> = rows
+        .iter()
+        .map(|(k, v)| vec![Value::U64(*k), Value::U64(*v)])
+        .collect();
+    let source = TestSource::new(schema, &[(R, facts)]);
+    let (_cache, image) = source.image_with_cache(R);
+    image
 }
 
 fn all(image: &Arc<crate::image::RelationImage>) -> View {

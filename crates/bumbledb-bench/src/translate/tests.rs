@@ -2,11 +2,13 @@ use bumbledb::schema::ValidateDescriptor as _;
 use std::sync::OnceLock;
 
 use super::*;
-use crate::fixture::{field, fresh, var};
+use crate::fixture::{field, var};
 use bumbledb::AllenMask;
 use bumbledb::FoldOp;
 use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term};
-use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
+use bumbledb::schema::{
+    FieldDescriptor, IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType,
+};
 use bumbledb::{FieldId, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule, RecStep, VarId};
 
 mod ids {
@@ -73,76 +75,84 @@ mod ids {
     }
 }
 
+fn relation(name: &str, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
+    RelationDescriptor {
+        extension: None,
+        name: name.into(),
+        fields,
+    }
+}
+
 fn schema() -> &'static Schema {
     static SCHEMA: OnceLock<Schema> = OnceLock::new();
     SCHEMA.get_or_init(|| {
         SchemaDescriptor {
             relations: vec![
-                RelationDescriptor {
-                    extension: None,
-                    name: "Holder".into(),
-                    fields: vec![fresh("id"), field("name", ValueType::String)],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Account".into(),
-                    fields: vec![
-                        fresh("id"),
+                relation(
+                    "Holder",
+                    vec![
+                        field("id", ValueType::U64),
+                        field("name", ValueType::String),
+                    ],
+                ),
+                relation(
+                    "Account",
+                    vec![
+                        field("id", ValueType::U64),
                         field("holder", ValueType::U64),
                         field("currency", ValueType::U64),
                     ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Instrument".into(),
-                    fields: vec![fresh("id"), field("symbol", ValueType::String)],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "JournalEntry".into(),
-                    fields: vec![
-                        fresh("id"),
+                ),
+                relation(
+                    "Instrument",
+                    vec![
+                        field("id", ValueType::U64),
+                        field("symbol", ValueType::String),
+                    ],
+                ),
+                relation(
+                    "JournalEntry",
+                    vec![
+                        field("id", ValueType::U64),
                         field("source", ValueType::U64),
                         field("created_at", ValueType::I64),
                     ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Posting".into(),
-                    fields: vec![
-                        fresh("id"),
+                ),
+                relation(
+                    "Posting",
+                    vec![
+                        field("id", ValueType::U64),
                         field("entry", ValueType::U64),
                         field("account", ValueType::U64),
                         field("instrument", ValueType::U64),
                         field("amount", ValueType::I64),
                         field("at", ValueType::I64),
                     ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "PostingTag".into(),
-                    fields: vec![
+                ),
+                relation(
+                    "PostingTag",
+                    vec![
                         field("posting", ValueType::U64),
                         field("tag", ValueType::U64),
                     ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Org".into(),
-                    fields: vec![fresh("id"), field("name", ValueType::String)],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "OrgParent".into(),
-                    fields: vec![
+                ),
+                relation(
+                    "Org",
+                    vec![
+                        field("id", ValueType::U64),
+                        field("name", ValueType::String),
+                    ],
+                ),
+                relation(
+                    "OrgParent",
+                    vec![
                         field("child", ValueType::U64),
                         field("parent", ValueType::U64),
                     ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Mandate".into(),
-                    fields: vec![
+                ),
+                relation(
+                    "Mandate",
+                    vec![
                         field("account", ValueType::U64),
                         field("org", ValueType::U64),
                         field(
@@ -152,15 +162,14 @@ fn schema() -> &'static Schema {
                             },
                         ),
                     ],
-                },
-                RelationDescriptor {
-                    extension: None,
-                    name: "Transfer".into(),
-                    fields: vec![
-                        fresh("id"),
+                ),
+                relation(
+                    "Transfer",
+                    vec![
+                        field("id", ValueType::U64),
                         field("extref", ValueType::FixedBytes { len: 32 }),
                     ],
-                },
+                ),
             ],
             statements: vec![],
         }

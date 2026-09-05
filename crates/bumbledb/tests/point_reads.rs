@@ -6,10 +6,12 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: str,
         balance: i64,
     }
+
+    Account(id) -> Account;
 }
 
 /// The read-your-writes matrix: insert → found; delete → gone; delete +
@@ -25,7 +27,7 @@ fn point_reads_observe_the_final_state_before_commit() {
 
     let id = db
         .write(|tx| {
-            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            let id = AccountId(1);
             let acct = Account {
                 id,
                 holder: "ada",
@@ -34,11 +36,11 @@ fn point_reads_observe_the_final_state_before_commit() {
 
             assert_eq!(tx.insert([&acct])?.changed(), 1);
             assert!(tx.contains(&acct)?);
-            assert_eq!(tx.get(id)?, Some(acct));
+            assert_eq!(tx.get(AccountById { id })?, Some(acct));
 
             assert_eq!(tx.delete([&acct])?.changed(), 1);
             assert!(!tx.contains(&acct)?);
-            assert_eq!(tx.get(id)?, None);
+            assert_eq!(tx.get(AccountById { id })?, None);
 
             let modified = Account {
                 balance: 42,
@@ -47,7 +49,7 @@ fn point_reads_observe_the_final_state_before_commit() {
             assert_eq!(tx.insert([&modified])?.changed(), 1);
             assert!(tx.contains(&modified)?);
             assert!(!tx.contains(&acct)?);
-            assert_eq!(tx.get(id)?, Some(modified));
+            assert_eq!(tx.get(AccountById { id })?, Some(modified));
             Ok(id)
         })
         .expect("write")
@@ -65,7 +67,7 @@ fn point_reads_observe_the_final_state_before_commit() {
             balance: 10,
             ..survivor
         })?);
-        assert_eq!(tx.get(id)?, Some(survivor));
+        assert_eq!(tx.get(AccountById { id })?, Some(survivor));
         Ok(())
     })
     .expect("post-commit point reads")
@@ -87,7 +89,7 @@ fn point_reads_fall_through_to_committed_state() {
         .expect("accepted");
     let id = db
         .write(|tx| {
-            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            let id = AccountId(1);
             tx.insert([&Account {
                 id,
                 holder: "seed",
@@ -100,7 +102,7 @@ fn point_reads_fall_through_to_committed_state() {
         .value;
 
     db.write(|tx| {
-        let other = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+        let other = AccountId(2);
         tx.insert([&Account {
             id: other,
             holder: "other",
@@ -112,7 +114,7 @@ fn point_reads_fall_through_to_committed_state() {
             balance: 7,
         };
         assert!(tx.contains(&seeded)?);
-        assert_eq!(tx.get(id)?, Some(seeded));
+        assert_eq!(tx.get(AccountById { id })?, Some(seeded));
 
         assert!(!tx.contains(&Account {
             id: AccountId(999),
@@ -120,7 +122,7 @@ fn point_reads_fall_through_to_committed_state() {
             balance: 0,
         })?);
 
-        assert_eq!(tx.get(AccountId(999))?, None);
+        assert_eq!(tx.get(AccountById { id: AccountId(999) })?, None);
         Ok(())
     })
     .expect("fallthrough reads")
@@ -141,7 +143,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
         .expect("accepted");
     let id = db
         .write(|tx| {
-            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            let id = AccountId(1);
             tx.insert([&Account {
                 id,
                 holder: "ada",
@@ -179,7 +181,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
             balance: 10,
         };
         assert!(tx.contains(&committed)?);
-        assert_eq!(tx.get(id)?, Some(committed));
+        assert_eq!(tx.get(AccountById { id })?, Some(committed));
         let row = tx.get_dyn(
             bumbledb::schema::RelationId(0),
             bumbledb::schema::StatementId(0),
@@ -224,24 +226,34 @@ bumbledb::schema! {
     pub Registry;
 
     relation Pair {
-        left: u64 as LeftId, fresh,
-        right: u64 as RightId, fresh,
+        left: u64 as LeftId,
+        right: u64 as RightId,
     }
     relation Tag {
-        id: u64 as TagId, fresh,
+        id: u64 as TagId,
         label: str,
     }
+
+    Pair(left) -> Pair;
+    Pair(right) -> Pair;
+    Tag(id) -> Tag;
 }
 
 #[test]
-fn every_fresh_field_is_its_own_typed_key() {
+fn every_declared_key_is_its_own_typed_key() {
     use bumbledb::Key;
-    assert_eq!(<LeftId as Key>::STATEMENT, bumbledb::schema::StatementId(0));
     assert_eq!(
-        <RightId as Key>::STATEMENT,
+        <PairByLeft as Key>::STATEMENT,
+        bumbledb::schema::StatementId(0)
+    );
+    assert_eq!(
+        <PairByRight as Key>::STATEMENT,
         bumbledb::schema::StatementId(1)
     );
-    assert_eq!(<TagId as Key>::STATEMENT, bumbledb::schema::StatementId(2));
+    assert_eq!(
+        <TagById as Key>::STATEMENT,
+        bumbledb::schema::StatementId(2)
+    );
 
     let dir = common::TempDir::new("points-multi-fresh-keys");
     let db = Db::create(dir.path(), Registry)
@@ -249,34 +261,39 @@ fn every_fresh_field_is_its_own_typed_key() {
         .expect("accepted");
     let (left, right) = db
         .write(|tx| {
-            let left = tx.reserve::<LeftId>(1)?.start().expect("nonempty");
-            let right = tx.reserve::<RightId>(1)?.start().expect("nonempty");
+            let left = LeftId(1);
+            let right = RightId(1);
             tx.insert([&Pair { left, right }])?;
-            assert_eq!(tx.get(left)?, Some(Pair { left, right }));
-            assert_eq!(tx.get(right)?, Some(Pair { left, right }));
+            assert_eq!(tx.get(PairByLeft { left })?, Some(Pair { left, right }));
+            assert_eq!(tx.get(PairByRight { right })?, Some(Pair { left, right }));
             Ok((left, right))
         })
         .expect("seed")
         .unwrap()
         .value;
     db.read(|snap| {
-        assert_eq!(snap.get(left)?, Some(Pair { left, right }));
-        assert_eq!(snap.get(right)?, Some(Pair { left, right }));
-        assert_eq!(snap.get(RightId(999))?, None);
+        assert_eq!(snap.get(PairByLeft { left })?, Some(Pair { left, right }));
+        assert_eq!(snap.get(PairByRight { right })?, Some(Pair { left, right }));
+        assert_eq!(
+            snap.get(PairByRight {
+                right: RightId(999)
+            })?,
+            None
+        );
         Ok(())
     })
     .expect("read");
 }
 
 #[test]
-fn snapshot_get_reads_committed_state_through_the_fresh_key() {
+fn snapshot_get_reads_committed_state_through_the_declared_key() {
     let dir = common::TempDir::new("points-snapshot-get");
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
         .expect("accepted");
     let id = db
         .write(|tx| {
-            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            let id = AccountId(1);
             tx.insert([&Account {
                 id,
                 holder: "ada",
@@ -290,14 +307,14 @@ fn snapshot_get_reads_committed_state_through_the_fresh_key() {
 
     db.read(|snap| {
         assert_eq!(
-            snap.get(id)?,
+            snap.get(AccountById { id })?,
             Some(Account {
                 id,
                 holder: "ada",
                 balance: 7,
             })
         );
-        assert_eq!(snap.get(AccountId(999))?, None);
+        assert_eq!(snap.get(AccountById { id: AccountId(999) })?, None);
         Ok(())
     })
     .expect("read");
@@ -308,7 +325,9 @@ fn snapshot_get_reads_committed_state_through_the_fresh_key() {
 /// transaction again.
 fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     db.write(|tx| {
-        let old = tx.get(id)?.map(|old| (old.holder.to_owned(), old.balance));
+        let old = tx
+            .get(AccountById { id })?
+            .map(|old| (old.holder.to_owned(), old.balance));
         match old {
             Some((holder, balance)) => {
                 tx.delete([&Account {
@@ -371,7 +390,7 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
         .expect("accepted");
     let id = db
         .write(|tx| {
-            let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
+            let id = AccountId(1);
             tx.insert([&Account {
                 id,
                 holder: "ada",
@@ -412,20 +431,20 @@ fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
         .expect("accepted");
-    let before = db.generation().expect("generation");
-    assert_eq!(db.read(|snap| snap.generation()).expect("read"), before);
-    db.write(|tx| {
-        let id = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
-        tx.insert([&Account {
-            id,
-            holder: "ada",
-            balance: 1,
-        }])?;
-        Ok(())
-    })
-    .expect("write")
-    .unwrap();
+    let before = db.read(|snap| snap.generation()).expect("read");
+    let committed = db
+        .write(|tx| {
+            let id = AccountId(1);
+            tx.insert([&Account {
+                id,
+                holder: "ada",
+                balance: 1,
+            }])?;
+            Ok(())
+        })
+        .expect("write")
+        .unwrap();
     let after = db.read(|snap| snap.generation()).expect("read");
-    assert_eq!(after, db.generation().expect("generation"));
+    assert_eq!(after, committed.generation);
     assert_ne!(before, after);
 }

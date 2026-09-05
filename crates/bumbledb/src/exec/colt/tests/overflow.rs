@@ -11,14 +11,13 @@ fn overflowing_home_buckets_chain_to_the_next_and_round_trip() {
         }
         candidate += 1;
     }
-    let dir = TempDir::new("colt-bucket-overflow");
     let schema = schema();
     let rows: Vec<(u64, u64)> = keys
         .iter()
         .enumerate()
         .map(|(i, k)| (*k, i as u64))
         .collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
     colt.ensure_forced(root, 0);

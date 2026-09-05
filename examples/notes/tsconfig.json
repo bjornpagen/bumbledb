@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"target": "es2024",
+		"lib": ["dom", "dom.iterable", "es2024"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"allowImportingTsExtensions": true,
+		"rewriteRelativeImportExtensions": true,
+		"strict": true,
+		"exactOptionalPropertyTypes": true,
+		"noUncheckedIndexedAccess": true,
+		"noEmit": true,
+		"esModuleInterop": true,
+		"isolatedModules": true,
+		"skipLibCheck": false,
+		"jsx": "preserve",
+		"incremental": true,
+		"types": ["node"],
+		"plugins": [{ "name": "next" }]
+	},
+	"include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+	"exclude": ["node_modules", ".next", "bumbledb/migrations/index.ts"]
+}

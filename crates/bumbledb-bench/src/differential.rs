@@ -50,6 +50,10 @@ pub enum Answers {
     Ok(BTreeSet<Tuple>),
     Overflow,
 
+    /// A computed head refused (type mismatch, integer overflow, division
+    /// by zero, inexact cast) — the whole answer is withheld, chapter 12.
+    Scalar,
+
     DerivedBudget,
 }
 
@@ -103,6 +107,7 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                 let model = match naive.query(query, params) {
                     Ok(answers) => Answers::Ok(answers),
                     Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                    Err(QueryError::Scalar { .. }) => Answers::Scalar,
                 };
                 if engine != model {
                     return Err(Divergence::Query {
@@ -281,9 +286,11 @@ fn owned_value(value: AnswerValue<'_>) -> Value {
         AnswerValue::U64(v) => Value::U64(v),
         AnswerValue::I64(v) => Value::I64(v),
         AnswerValue::F64(v) => Value::F64(v),
+        AnswerValue::Id128(v) => Value::Id128(v),
         AnswerValue::String(v) => Value::String(v.into()),
         AnswerValue::FixedBytes(v) => Value::FixedBytes(Box::from(v)),
         AnswerValue::IntervalU64(iv) => Value::IntervalU64(iv),
         AnswerValue::IntervalI64(iv) => Value::IntervalI64(iv),
+        AnswerValue::IntervalF64(iv) => Value::IntervalF64(iv),
     }
 }

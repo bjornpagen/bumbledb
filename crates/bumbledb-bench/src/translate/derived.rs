@@ -1,5 +1,5 @@
 //! No CTE after the rec —
-use bumbledb::ir::{FindTerm, ProjectionRule, Rec, RecRule, RecStep};
+use bumbledb::ir::{FindTerm, Rec, RecRule, RecStep};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
 
 use super::query::{QueryShape, SharedParams, arm_body, rule_core};
@@ -34,11 +34,7 @@ pub fn translate_query(
 pub(super) fn refuse_float_arithmetic(query: &Query, schema: &Schema) -> Result<(), String> {
     let mut float_columns: Vec<Vec<bool>> = Vec::new();
     for interior in &query.interiors {
-        float_columns.push(float_head(
-            &interior.rules[0].to_rule(),
-            schema,
-            &float_columns,
-        ));
+        float_columns.push(float_head(&interior.rules[0], schema, &float_columns));
     }
     if let Some(rec) = &query.rec {
         float_columns.push(float_head(&rec.base[0].to_rule(), schema, &float_columns));
@@ -156,8 +152,7 @@ fn cte_from_interior(
     sets: &[(ParamId, Vec<Value>)],
     params: &mut SharedParams,
 ) -> Result<String, String> {
-    let rules: Vec<Rule> = interior.rules.iter().map(ProjectionRule::to_rule).collect();
-    let arms = rule_arms(&rules, schema, sets, params)?;
+    let arms = rule_arms(&interior.rules, schema, sets, params)?;
     let columns: Vec<String> = (0..interior.head().len())
         .map(|column| format!("c{column}"))
         .collect();
@@ -220,6 +215,9 @@ fn rule_arms(
                     }
                     None => return Err(format!("find variable {} unbound", var.0)),
                 },
+                FindTerm::Compute(_) => {
+                    return Err("computed heads are not translated to SQL".into());
+                }
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                     return Err("folds on interiors/rec arms are refused".into());
                 }
@@ -275,8 +273,12 @@ fn refuse_interior_intervals(
 ) -> Result<Vec<Vec<bool>>, String> {
     let mut flags: Vec<Vec<bool>> = Vec::new();
     for interior in interiors {
-        let rules: Vec<Rule> = interior.rules.iter().map(ProjectionRule::to_rule).collect();
-        flags.push(head_intervals(&interior.head(), &rules, schema, &flags));
+        flags.push(head_intervals(
+            &interior.head(),
+            &interior.rules,
+            schema,
+            &flags,
+        ));
         if flags.last().is_some_and(|row| row.iter().any(|b| *b)) {
             return Err(
                 "interval-typed derived column (the recursive lane is scalar-shaped)".into(),

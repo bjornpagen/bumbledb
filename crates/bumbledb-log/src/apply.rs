@@ -1,265 +1,192 @@
-//! Apply: the one place a fetched log object becomes engine state. The
-//! home of the refusal battery — decode (full parse before any apply)
-//! and the chain discipline with its three proved causes — and of the
-//! first-applied-slot-must-change-state instrument. Apply is idempotent
-//! by set semantics (L10): re-applying a batch whose effects are present
-//! net-disposes every op, the engine takes its no-op arm, and the
-//! generation does not advance, which is why the crash window between an
-//! engine commit and its sidecar bump needs no detection state at all.
+//! Apply: the one place a published decision becomes local engine state.
+//!
+//! Materialization is historical replay, not a call to current command
+//! submission. It verifies identity/sequence/parent, decodes the embedded
+//! canonical command with the core's one strict decoder, re-judges the delta
+//! at the exact predecessor, and checks the recomputed outcome/decision digest
+//! against the recorded decision. It ignores current admission guards
+//! (freezing/retirement/deletion are maintenance, not decision-chain facts)
+//! and never runs a host callback.
+//!
+//! Set idempotence (chapter 02) means re-applying a decision whose effects are
+//! already present nets no fact change, so the crash window between a remote
+//! publication and the local commit needs no extra detection state: replay is
+//! safe to repeat.
 
-use bumbledb::{Admission, Db, Violations};
+use bumbledb::{Db, WorkContext};
 
-use crate::braids::BraidId;
-use crate::codec::{Codec, DecodeError, OpKind};
-use crate::sidecar::{Chain, ChainEntry};
+use crate::history::authority::HeadAuthority;
+use crate::history::command::{Command, Limits, UnverifiedOutcome};
+use crate::history::decision::{self, ChainError};
+use crate::history::{DecisionStamp, TerminalOutcome};
 
-/// Classification of a pending batch against the occupant and the
-/// generation the store shows. One fold: publisher, fallback, and
-/// open-recovery match the same arms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingFold {
-    /// Occupant bytes are the pending bytes — the slot is ours.
-    Ours,
-    /// Occupant is someone else; the store sits at the vector sum.
-    TheirsUnapplied,
-    /// Occupant is someone else; the store already counts the pending.
-    TheirsApplied,
-    /// No occupant; the store sits at the vector sum.
-    AbsentUnapplied,
-    /// No occupant; the store already counts the pending.
-    AbsentApplied,
-    /// The slot sits at or below the published floor.
-    BelowFloor,
-    /// The store generation is neither the vector sum nor sum+1.
-    Phantom,
+use crate::writer::LogError;
+use crate::writer::decide::{self, Judged, Plan, RealPrepared};
+
+/// Why a materialization refused. Every arm is corruption-class: the object,
+/// the chain it claims, or the outcome it records disagrees with an honest
+/// re-judgment, and no retry mends the bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplyError {
+    /// The decision frame or its embedded command frame was malformed.
+    Frame(crate::history::FrameError),
+    /// The decision does not extend exactly this local parent.
+    Chain(ChainError),
+    /// The embedded command decoded but disagreed with the local schema.
+    Command(LogError),
+    /// The recorded outcome (or resulting digest) disagrees with re-judgment.
+    OutcomeMismatch,
+    /// A core storage/work failure while replaying.
+    Local(LogError),
 }
 
-/// Re-judges a pending batch against the winner-current occupant and
-/// the generation the store shows. Remaining work is data: the arm
-/// names what is left to publish, clear, or discard.
-#[must_use]
-pub fn fold_pending(
-    sum: u64,
-    generation: u64,
-    occupant: Option<&[u8]>,
-    pending_bytes: &[u8],
-    below_floor: bool,
-) -> PendingFold {
-    if below_floor {
-        return PendingFold::BelowFloor;
-    }
-    match occupant {
-        Some(bytes) if bytes == pending_bytes => PendingFold::Ours,
-        Some(_) if generation == sum => PendingFold::TheirsUnapplied,
-        Some(_) => PendingFold::TheirsApplied,
-        None if generation == sum => PendingFold::AbsentUnapplied,
-        None if generation == sum.saturating_add(1) => PendingFold::AbsentApplied,
-        None => PendingFold::Phantom,
+impl From<crate::history::FrameError> for ApplyError {
+    fn from(error: crate::history::FrameError) -> Self {
+        Self::Frame(error)
     }
 }
 
-/// The three proved causes of `ChainMismatch` — one identity, each arm
-/// carrying the two values whose disagreement convicts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChainCause {
-    /// The header's slot identity disagrees with the key the object was
-    /// fetched from (braid or slot).
-    Slot {
-        header_braid: BraidId,
-        header_slot: u64,
-    },
-    /// The header's backlink disagrees with the chain's head hash.
-    Prev {
-        header_prev: [u8; 32],
-        chain_prev: [u8; 32],
-    },
-    /// The header's timestamp undercuts the chain's head timestamp.
-    Timestamp { header_ts: u64, chain_ts: u64 },
+impl From<ChainError> for ApplyError {
+    fn from(error: ChainError) -> Self {
+        Self::Chain(error)
+    }
 }
 
-/// The apply-time refusal battery. Every arm is corruption-class: the
-/// object itself, or the chain it claims, is wrong, and no retry mends
-/// bytes. Arms carrying `writer` name the misbehaving publisher from the
-/// header it signed into the batch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ApplyRefusal {
-    /// The full parse refused: version, flags, fingerprint, layout, op
-    /// relation outside the braid, trailing bytes.
-    Decode(DecodeError),
-    ChainMismatch {
-        cause: ChainCause,
-        braid: BraidId,
-        slot: u64,
-        writer: u64,
-    },
-    /// A first-applied slot that changed nothing while the store sat
-    /// below the identity — a publish-law violation in the log.
-    PublishLawViolation {
-        braid: BraidId,
-        slot: u64,
-        writer: u64,
-        generation: u64,
-        identity: u64,
-    },
-}
-
-/// What one apply did. `Advanced` and `Absorbed` both advance the chain
-/// to `(slot, blake3(bytes), header.ts)`; the caller persists the
-/// sidecar. `Rejected` is the engine's verdict as data — the replica
-/// maps it to a discard (open phase) or `ReplayDiverged` (a store that
-/// has proven itself whole).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Applied {
-    /// The engine commit advanced the generation — the ordinary arm.
-    Advanced {
-        generation: u64,
-    },
-    /// The engine took its no-op arm and the identity landed exact: the
-    /// legitimate crash-window re-absorption.
-    Absorbed {
-        generation: u64,
-    },
-    Rejected(Violations),
-    Refused(ApplyRefusal),
-}
-
-/// Applies the log object at `(braid, slot)` to the store: full decode,
-/// chain discipline, one `db.write` with ops in listed order, then the
-/// state-change instrument. The identity is the vector sum with this
-/// braid's count replaced by `slot`. `Pending` already counts one in
-/// `generation(chain)` — that extra is the store the engine shows, not
-/// a second addend here. On `Advanced`/`Absorbed` the in-memory chain
-/// has advanced;
-/// persisting it is the caller's step two.
+/// Materialize one published decision onto the local store, extending exactly
+/// `authority_before`. Returns the new local authority on success.
 ///
 /// # Errors
-pub fn apply<T>(
-    db: &Db<T>,
-    chain: &mut Chain,
-    codec: &Codec,
-    braid: BraidId,
-    slot: u64,
-    bytes: &[u8],
-) -> bumbledb::Result<Applied> {
-    let batch = match codec.decode(bytes) {
-        Ok(batch) => batch,
-        Err(error) => return Ok(Applied::Refused(ApplyRefusal::Decode(error))),
-    };
-    let header = batch.header;
-    let refuse = |cause: ChainCause| {
-        Applied::Refused(ApplyRefusal::ChainMismatch {
-            cause,
-            braid,
-            slot,
-            writer: header.writer,
-        })
-    };
-    if header.braid != braid || header.braid_gen != slot {
-        return Ok(refuse(ChainCause::Slot {
-            header_braid: header.braid,
-            header_slot: header.braid_gen,
-        }));
-    }
-    let position = chain.position(braid);
-    if header.prev != position.prev {
-        return Ok(refuse(ChainCause::Prev {
-            header_prev: header.prev,
-            chain_prev: position.prev,
-        }));
-    }
-    if header.timestamp < position.ts {
-        return Ok(refuse(ChainCause::Timestamp {
-            header_ts: header.timestamp,
-            chain_ts: position.ts,
-        }));
+/// Refuses malformed frames, wrong parents, foreign commands, replay
+/// divergence and local storage failures — never committing on any of them.
+pub fn materialize<S>(
+    db: &Db<S>,
+    authority_before: &HeadAuthority,
+    decision_bytes: &[u8],
+    limits: Limits,
+    work: &WorkContext,
+) -> Result<HeadAuthority, ApplyError> {
+    work.checkpoint().map_err(|e| ApplyError::Local(e.into()))?;
+    let envelope = decision::decode_decision(decision_bytes, limits)?;
+    let live = authority_before
+        .live()
+        .map_err(|e| ApplyError::Local(e.into()))?;
+    decision::verify_step(live.decision, &envelope)?;
+    if envelope.identity != authority_before.identity {
+        return Err(ApplyError::Command(LogError::Identity));
     }
 
-    let before = db.generation()?.value();
-    let committed = match db.write(|tx| {
-        for op in &batch.ops {
-            match op.kind {
-                OpKind::Insert => {
-                    tx.insert_dyn(op.relation, op.rows.iter())?;
+    // Re-decode the embedded command through the core's strict decoder. This
+    // re-derives and checks its digest against the decision's recorded command.
+    let command = Command::parse(db.schema(), envelope.canonical_command, limits, work)
+        .map_err(|e| ApplyError::Command(e.into()))?;
+    if command.command_ref() != envelope.command {
+        return Err(ApplyError::OutcomeMismatch);
+    }
+
+    let plan = plan_for(&envelope.outcome);
+    let mut session = db
+        .integration_writer(work)
+        .map_err(|e| ApplyError::Local(e.into()))?;
+    let schema = db.schema();
+    let candidate = match plan {
+        Plan::PreconditionFailed { expected, observed } => {
+            let prepared =
+                decide::prepare_empty(&mut session, schema, work).map_err(ApplyError::Local)?;
+            decide::seal_candidate(
+                prepared,
+                authority_before,
+                &command,
+                Judged::PreconditionFailed { expected, observed },
+                limits,
+            )
+            .map_err(ApplyError::Local)?
+        }
+        Plan::Evaluate => {
+            match decide::prepare_real(&mut session, schema, &command, limits, work)
+                .map_err(ApplyError::Local)?
+            {
+                RealPrepared::Admitted { prepared, judged } => {
+                    decide::seal_candidate(prepared, authority_before, &command, judged, limits)
+                        .map_err(ApplyError::Local)?
                 }
-                OpKind::Delete => {
-                    tx.delete_dyn(op.relation, op.rows.iter())?;
+                RealPrepared::Rejected { evidence } => {
+                    let prepared = decide::prepare_empty(&mut session, schema, work)
+                        .map_err(ApplyError::Local)?;
+                    decide::seal_candidate(
+                        prepared,
+                        authority_before,
+                        &command,
+                        Judged::InvariantRejected { evidence },
+                        limits,
+                    )
+                    .map_err(ApplyError::Local)?
                 }
             }
         }
-        Ok(())
-    })? {
-        Admission::Accepted(committed) => committed,
-        Admission::Rejected(violations) => return Ok(Applied::Rejected(violations)),
     };
-    let generation = committed.generation.value();
 
-    let identity = chain.sum() - position.g + slot;
-    if generation < identity {
-        return Ok(Applied::Refused(ApplyRefusal::PublishLawViolation {
-            braid,
-            slot,
-            writer: header.writer,
-            generation,
-            identity,
-        }));
+    // The re-judged outcome and resulting decision digest must equal the
+    // recorded decision exactly; otherwise this is a divergent replay.
+    if !outcomes_agree(&candidate.receipt.outcome, &envelope.outcome)
+        || candidate.receipt.decision_at != envelope.stamp()
+    {
+        // Dropping the candidate (SealedWrite) aborts the private transaction.
+        return Err(ApplyError::OutcomeMismatch);
     }
+    let new_authority = candidate.new_authority;
+    candidate
+        .sealed
+        .commit()
+        .map_err(|e| ApplyError::Local(e.into()))?;
+    Ok(new_authority)
+}
 
-    chain.entries_mut().insert(
-        braid,
-        ChainEntry {
-            g: slot,
-            prev: *blake3::hash(bytes).as_bytes(),
-            ts: header.timestamp,
+fn plan_for(outcome: &UnverifiedOutcome<'_>) -> Plan {
+    match outcome {
+        UnverifiedOutcome::PreconditionFailed { expected, observed } => Plan::PreconditionFailed {
+            expected: *expected,
+            observed: *observed,
         },
-    );
-    if generation == before {
-        Ok(Applied::Absorbed { generation })
-    } else {
-        Ok(Applied::Advanced { generation })
+        // Committed / NoChange / InvariantRejected all re-judge the delta.
+        _ => Plan::Evaluate,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{PendingFold, fold_pending};
-
-    #[test]
-    fn fold_consults_floor_first() {
-        assert_eq!(
-            fold_pending(0, 0, None, b"ours", true),
-            PendingFold::BelowFloor
-        );
-        assert_eq!(
-            fold_pending(0, 0, Some(b"theirs"), b"ours", true),
-            PendingFold::BelowFloor
-        );
+fn outcomes_agree(judged: &TerminalOutcome, recorded: &UnverifiedOutcome<'_>) -> bool {
+    match (judged, recorded) {
+        (
+            TerminalOutcome::Committed { changed, result },
+            UnverifiedOutcome::Committed {
+                changed: recorded_changed,
+                result: recorded_result,
+            },
+        ) => changed == recorded_changed && result.as_bytes() == *recorded_result,
+        (
+            TerminalOutcome::NoChange { result },
+            UnverifiedOutcome::NoChange {
+                result: recorded_result,
+            },
+        ) => result.as_bytes() == *recorded_result,
+        (
+            TerminalOutcome::PreconditionFailed { expected, observed },
+            UnverifiedOutcome::PreconditionFailed {
+                expected: recorded_expected,
+                observed: recorded_observed,
+            },
+        ) => expected == recorded_expected && observed == recorded_observed,
+        (
+            TerminalOutcome::InvariantRejected { evidence },
+            UnverifiedOutcome::InvariantRejected {
+                core_evidence: recorded_evidence,
+            },
+        ) => evidence.as_bytes() == *recorded_evidence,
+        _ => false,
     }
+}
 
-    #[test]
-    fn fold_names_occupant_and_generation() {
-        assert_eq!(
-            fold_pending(3, 3, Some(b"ours"), b"ours", false),
-            PendingFold::Ours
-        );
-        assert_eq!(
-            fold_pending(3, 3, Some(b"theirs"), b"ours", false),
-            PendingFold::TheirsUnapplied
-        );
-        assert_eq!(
-            fold_pending(3, 4, Some(b"theirs"), b"ours", false),
-            PendingFold::TheirsApplied
-        );
-        assert_eq!(
-            fold_pending(3, 3, None, b"ours", false),
-            PendingFold::AbsentUnapplied
-        );
-        assert_eq!(
-            fold_pending(3, 4, None, b"ours", false),
-            PendingFold::AbsentApplied
-        );
-        assert_eq!(
-            fold_pending(3, 6, None, b"ours", false),
-            PendingFold::Phantom
-        );
-    }
+/// The stamp a caller compares to recognize whether a decision has already
+/// been materialized locally.
+#[must_use]
+pub fn already_at(authority: &HeadAuthority, stamp: DecisionStamp) -> bool {
+    authority.live().is_ok_and(|live| live.decision == stamp)
 }

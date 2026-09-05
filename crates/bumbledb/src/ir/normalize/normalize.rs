@@ -174,6 +174,13 @@ fn lower_atom(
     let mut point_vars = Vec::new();
     for (field, term) in &atom.bindings {
         let field_type = field_type(*field);
+        // Dense (F64) point membership carries the finite-probe guard
+        // through the predicate (chapter 10 §2: nonfinite probes are
+        // ordinary nonmatches, never word-order accidents).
+        let dense = matches!(
+            field_type.interval_element(),
+            Some(bumbledb_theory::schema::IntervalElement::F64)
+        );
         match term {
             Term::Var(var) => {
                 if is_membership(field_type, witness.var_type(*var)) {
@@ -181,8 +188,9 @@ fn lower_atom(
                         Some((point_field, _)) => filters.push(FilterPredicate::FieldsPointIn {
                             interval: (*field).into(),
                             point: (*point_field).into(),
+                            dense,
                         }),
-                        None => point_vars.push((*field, *var)),
+                        None => point_vars.push((*field, *var, dense)),
                     }
                 } else {
                     let (first_field, _) = vars
@@ -203,6 +211,7 @@ fn lower_atom(
                     filters.push(FilterPredicate::PointIn {
                         field: (*field).into(),
                         point: ViewWordSource::Param(*param),
+                        dense,
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {
@@ -217,6 +226,7 @@ fn lower_atom(
                     filters.push(FilterPredicate::AnyPointIn {
                         field: (*field).into(),
                         set: SetConst::ParamSet(*param),
+                        dense,
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {
@@ -228,11 +238,15 @@ fn lower_atom(
             }
             Term::Literal(value) => {
                 let membership = field_type.is_interval()
-                    && !matches!(value, Value::IntervalU64(..) | Value::IntervalI64(..));
+                    && !matches!(
+                        value,
+                        Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..)
+                    );
                 if membership {
                     filters.push(FilterPredicate::PointIn {
                         field: (*field).into(),
                         point: ViewWordSource::Word(point_word(value)),
+                        dense,
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {

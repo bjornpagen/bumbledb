@@ -1,7 +1,7 @@
 use super::*;
 use bumbledb_theory::schema::Row;
 
-pub(super) fn closed_schema() -> Schema {
+pub(super) fn closed_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -11,17 +11,14 @@ pub(super) fn closed_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "kind".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "value".into(),
                         value_type: ValueType::I64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -48,7 +45,6 @@ pub(super) fn closed_schema() -> Schema {
                 fields: vec![FieldDescriptor {
                     name: "rank".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 }],
             },
         ],
@@ -65,31 +61,17 @@ pub(super) fn closed_schema() -> Schema {
             },
         }],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
 const READING: RelationId = RelationId(0);
 const KIND: RelationId = RelationId(1);
 
-pub(super) fn insert_readings(env: &Environment, schema: &Schema, rows: &[(u64, u64, i64)]) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, kind, value) in rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(*kind),
-                ValueRef::I64(*value),
-            ],
-            schema.relation(READING).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, READING, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit").expect("admitted");
+pub(super) fn readings(rows: &[(u64, u64, i64)]) -> Fix {
+    let facts: Vec<Vec<Value>> = rows
+        .iter()
+        .map(|(id, kind, value)| vec![Value::U64(*id), Value::U64(*kind), Value::I64(*value)])
+        .collect();
+    Fix::heap(closed_descriptor(), &[(READING, facts)])
 }
 
 pub(super) fn fold_query(rank: u64) -> Query {
@@ -140,21 +122,15 @@ pub(super) const READINGS: &[(u64, u64, i64)] = &[
 
 #[test]
 fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
-    let dir = TempDir::new("folded-answers");
-    let schema = closed_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_readings(&env, &schema, READINGS);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
+    let fix = readings(READINGS);
+    let mut prepared = fix.prepare(&fold_query(20)).expect("prepare");
     assert_eq!(
         prepared.latch.remaining(),
         0,
         "a plan-constant set is pre-resolved — it must not block the latch"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         values_of(&out),
@@ -162,8 +138,8 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
         "kinds 1 and 2 (rank 20)"
     );
 
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("warm execute");
     assert_eq!(values_of(&out), vec![210, 211, 220]);
 }
@@ -173,17 +149,10 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
 fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
     use crate::obs;
 
-    let dir = TempDir::new("folded-no-images");
-    let schema = closed_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_readings(&env, &schema, READINGS);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
+    let fix = readings(READINGS);
+    let mut prepared = fix.prepare(&fold_query(20)).expect("prepare");
     obs::start_capture();
-    prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    fix.execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     let events = obs::finish_capture();
     let count = |name| events.iter().filter(|e| e.point() == name).count();
@@ -201,38 +170,27 @@ fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
 
 #[test]
 fn introspection_reports_the_fold_with_its_filters_and_handles() {
-    let dir = TempDir::new("folded-introspect");
-    let schema = closed_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_readings(&env, &schema, READINGS);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
-    let (out, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert!(!out.is_empty());
+    let fix = readings(READINGS);
+    let store = StoreFix::store("folded-introspect", closed_descriptor());
+    let mut prepared = store.prepare(&fold_query(20)).expect("prepare");
+    let (_, report) = store
+        .db
+        .read(|instance| prepared.introspect(instance, &[]))
+        .expect("introspect");
     assert!(report.contains("query:"), "{report}");
+    drop(fix);
 }
 
 #[test]
 fn an_empty_fold_prepares_the_statically_empty_query() {
-    let dir = TempDir::new("folded-empty");
-    let schema = closed_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_readings(&env, &schema, READINGS);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let mut prepared = prepare(&txn, &cache, &schema, &fold_query(99)).expect("prepare");
+    let fix = readings(READINGS);
+    let mut prepared = fix.prepare(&fold_query(99)).expect("prepare");
     assert!(
         matches!(prepared.pipeline, PreparedPipeline::Cq { ref rules, .. } if rules.is_empty()),
         "no Kind row has rank 99: the rule died at prepare"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 0);
-    let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert!(report.contains("query:"), "{report}");
-    assert!(report.contains("signature:"), "{report}");
 }

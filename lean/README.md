@@ -29,7 +29,14 @@ project needs no build programmability.
 - **Level 0 — denotations**: what every construct means
   (`Values`, `Schema`, `Capacity`, `Dependencies`,
   `Subsumption`, `Query/Syntax`, `Query/Denotation`,
-  `Query/Membership`, `Query/Aggregates`).
+  `Query/Membership`, `Query/Aggregates`), plus the successor float
+  domain: canonical binary64 identity and total order (`Float64`,
+  `Float64/Order`), the exact sum/mean accumulator with its merge
+  algebra, 34-limb bound and once-rounding (`Float64/Sum`), dense
+  numeric float intervals over exact rational endpoint order
+  (`FloatInterval`), and the staged nonrecursive composition model
+  with aggregate/computed outputs and the frozen-finite-domain
+  recursion induction (`Query/Stages`).
 - **Level 1 — abstract algorithms**: each semantics-bearing algorithm
   as a small pure Lean function, PROVED equal to its denotation
   (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, `Exec/Plan` — the
@@ -56,8 +63,14 @@ project needs no build programmability.
   `Countermodels`.
 - **Level 2 — the lifecycle**: transactions, final-state judgment,
   generation witnesses, ETL — a state machine with its invariance
-  theorems (`Txn`), plus the fresh-mint allocation model
-  (`Txn/Fresh`).
+  theorems (`Txn`), the delta-restricted incremental judgment
+  (`Txn/DeltaRestriction`), and the successor mutable-consulted
+  support and one-command normalization laws (`Txn/Support`). The
+  fresh-mint allocation model and the braid component-locality
+  theorems are DELETED with their mechanisms: entity identity is
+  application-owned and sealed before submission, and tenant history
+  is ordered by the log's single authority — no retired theorem is
+  relabeled as successor proof.
 - **Level 3 — verified Rust: REFUSED, permanently.** The Rust↔Lean
   link is empirical: the differential and exhaustive estates,
   plus the executable-denotation conformance lane.

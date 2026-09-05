@@ -3,11 +3,11 @@
 //! `prepare` runs the whole pipeline once: validate → normalize →
 //! filtered-view statistics → plan → classify. **Plans pin the statistics
 //! read at prepare time and are never invalidated by writes**; stale plans
-//! are accepted at this scale and re-preparation is explicit. Execution
-//! resolves `PendingIntern` constants per execution by read-only dictionary
-//! lookup — a miss means the query is empty on this snapshot, never an
-//! error, and a value interned by a later write is picked up on the next
-//! execution.
+//! are accepted at this scale and re-preparation is explicit. Text
+//! literals and params latch to tokens of the prepared query's own
+//! append-only interner (`image/intern.rs`) — a latch is final, and a
+//! text absent from every image is an ordinary unequal word, never an
+//! error.
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -24,19 +24,24 @@ use bumbledb_theory::schema::ValueType;
 mod answers;
 mod bind;
 mod build;
+pub(crate) mod computed;
 mod either_sink;
 mod execute;
+mod fallback;
 mod finalize;
 mod introspect;
 pub(crate) mod reach;
 mod resolve_memo;
+pub(crate) mod result;
 mod run_join;
+pub(crate) mod source;
 mod view_memo;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::build::{prepare, prepare_on};
+pub(crate) use self::build::{prepare_on, prepare_owned};
+pub use self::result::{CompleteResult, ResultCursor, ResultIdentity, ResultPage};
 
 /// One bound scalar payload: the bind surface's value vocabulary. Variable-width
 /// payloads are **borrowed** — the engine only hashes and probes them
@@ -56,10 +61,15 @@ pub enum BindValue<'a> {
     /// other length is a bind-time type mismatch — the length is the
     /// type). Only hashed into column words at bind; never interned.
     FixedBytes(&'a [u8]),
+    /// An application-owned 128-bit identity: sixteen exact bytes.
+    Id128(bumbledb_theory::Id128),
     /// A half-open `[start, end)`.
     IntervalU64(u64, u64),
     /// A half-open `[start, end)`.
     IntervalI64(i64, i64),
+    /// A checked dense-line interval: canonical endpoints, `start < end`
+    /// by numeric order (the checked host type carries the proof).
+    IntervalF64(bumbledb_theory::Interval<bumbledb_theory::F64>),
 }
 
 /// One positional execution argument
@@ -79,14 +89,15 @@ pub enum ParamArg<'a> {
 /// The one execute bind surface: scalar slices and mixed [`ParamArg`]
 /// slices are the same entry, not twin methods.
 pub trait BindArgs<'a> {
-    /// Bind this argument list onto `prepared` for `txn`.
+    /// Bind this argument list onto `prepared` (text params latch through
+    /// the prepared query's interner under `work`).
     /// # Errors
     /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time, plus the
     /// per-position set/scalar errors on mixed arguments.
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()>;
 }
 
@@ -94,9 +105,9 @@ impl<'a> BindArgs<'a> for &'a [BindValue<'a>] {
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
-        prepared.bind_params(&txn.catalog(), self)
+        prepared.bind_params(work, self)
     }
 }
 
@@ -104,9 +115,9 @@ impl<'a, const N: usize> BindArgs<'a> for &'a [BindValue<'a>; N] {
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
-        prepared.bind_params(&txn.catalog(), self)
+        prepared.bind_params(work, self)
     }
 }
 
@@ -114,9 +125,9 @@ impl<'a> BindArgs<'a> for &'a [ParamArg<'a>] {
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
-        prepared.bind_param_args(&txn.catalog(), self)
+        prepared.bind_param_args(work, self)
     }
 }
 
@@ -124,9 +135,9 @@ impl<'a, const N: usize> BindArgs<'a> for &'a [ParamArg<'a>; N] {
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
-        prepared.bind_param_args(&txn.catalog(), self)
+        prepared.bind_param_args(work, self)
     }
 }
 
@@ -134,9 +145,9 @@ impl<'a> BindArgs<'a> for &'a Vec<BindValue<'a>> {
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
-        prepared.bind_params(&txn.catalog(), self)
+        prepared.bind_params(work, self)
     }
 }
 
@@ -144,9 +155,9 @@ impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
     fn bind<S>(
         self,
         prepared: &mut PreparedQuery<S>,
-        txn: &crate::storage::env::ReadTxn<'_>,
+        work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
-        prepared.bind_param_args(&txn.catalog(), self)
+        prepared.bind_param_args(work, self)
     }
 }
 
@@ -160,11 +171,16 @@ pub enum AnswerValue<'a> {
     String(&'a str),
     /// A `bytes<N>` find: the value's N raw bytes.
     FixedBytes(&'a [u8]),
+    /// An application-owned 128-bit identity find: sixteen exact bytes.
+    Id128(bumbledb_theory::Id128),
     /// An interval find, rematerialized through the checked host type
     /// (the stored `start < end` invariant makes the re-parse
     /// infallible — the comment lives at the materialization site).
     IntervalU64(bumbledb_theory::Interval<u64>),
     IntervalI64(bumbledb_theory::Interval<i64>),
+    /// A dense-line interval find: canonical F64 endpoints decoded from
+    /// their order-key words (stored canonical or refused at decode).
+    IntervalF64(bumbledb_theory::Interval<bumbledb_theory::F64>),
 }
 
 /// One stored cell: fixed-width values inline, String and `bytes<N>`
@@ -177,10 +193,12 @@ enum Cell {
     U64(u64),
     I64(i64),
     F64(bumbledb_theory::F64),
+    Id128(bumbledb_theory::Id128),
     String { start: usize, len: usize },
     FixedBytes { start: usize, len: usize },
     IntervalU64(bumbledb_theory::Interval<u64>),
     IntervalI64(bumbledb_theory::Interval<i64>),
+    IntervalF64(bumbledb_theory::Interval<bumbledb_theory::F64>),
 }
 
 /// The caller-owned, reusable answer set: columns are the find terms in
@@ -279,7 +297,7 @@ impl Latch {
 /// scratch); executes from one thread at a time; owns its scratch.
 /// Carries the preparing database's schema typestate `S`, so it executes
 /// only against same-schema snapshots (the same-environment check stays
-/// a runtime identity check — [`crate::storage::env::CatalogIdentity`]).
+/// a runtime identity check — [`source::PinnedSource`]).
 /// Not shareable across threads:
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
@@ -287,11 +305,27 @@ impl Latch {
 /// ```
 pub struct PreparedQuery<S> {
     schema: Arc<Schema>,
-    /// The preparing environment's process-distinct identity: plan,
-    /// statistics, and view memo all belong to it, so execution against
-    /// any other environment's snapshot is `Error::ForeignPreparedQuery`
-    /// — checked first at every execution entry.
-    identity: crate::storage::env::CatalogIdentity,
+    /// The preparing source's identity: plan, statistics, view memo and
+    /// interner tokens all belong to it, so execution against any other
+    /// environment's snapshot is `Error::ForeignPreparedQuery` — checked
+    /// first at every execution entry. Heap-prepared queries pin `Heap`
+    /// and rebuild their images per execution (no durable identity).
+    pinned: source::PinnedSource,
+    /// The prepared query's relation-image cache plus the one text
+    /// interner its images, binds, latches and answers share. Arc-shared
+    /// so an execution can bind images while `&mut self` runs the rules.
+    cache: Arc<crate::image::cache::ImageCache>,
+    /// Heap executions count up; each tick is a fresh `ViewEpoch::Heap`,
+    /// so no image or view memo can outlive the instance it was read from.
+    heap_tick: u64,
+    /// Route every Free Join rule through the cursor fallback: set by the
+    /// test/diagnostic affordance, or for one bounded restart after the
+    /// resident path's reservation refusal (chapter 12 §6 — never an
+    /// endless replan loop).
+    forced_fallback: bool,
+    /// The main sink's RAM allowance before distinct state continues in
+    /// the scratch map (`exec::scratch::DEFAULT_RAM_BYTES` by default).
+    sink_ram: usize,
     /// Interiors then rec then main, as one pipeline sum: interiors
     /// live inside each arm, never as a sidecar. Dead main is
     /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
@@ -360,8 +394,16 @@ pub struct PreparedQuery<S> {
     answer_scratch: Vec<u64>,
     /// The per-finalize intern-resolution memo .
     resolve_memo: ResolveMemo,
-    /// KeyProbe-key byte scratch.
-    determinant_key: Vec<u8>,
+    /// `KeyProbe` resolved-key word scratch.
+    key_scratch: Vec<u64>,
+    /// `Some(first computed find)` when any rule carries a computed
+    /// scalar output: execution enters ONE [`NumericalGuard`] for the
+    /// whole engine operation (chapter 11 §3 — never per tuple). The
+    /// find index names the diagnostic position for an unsupported
+    /// numerical platform.
+    ///
+    /// [`NumericalGuard`]: crate::exec::kernel::numeric::NumericalGuard
+    numeric_outputs: Option<crate::error::FindIndex>,
     /// The query in the rule notation ([`crate::ir::render`]), rendered
     /// once at prepare — the introspection report's header and the
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
@@ -373,14 +415,22 @@ pub struct PreparedQuery<S> {
     marker: std::marker::PhantomData<PreparedMarker<S>>,
 }
 
-/// One named interior's prepared artifact: its rule loop and projection
-/// sink. Evaluated once, in declaration order, before rec and main. A
-/// dead interior is the empty table.
+/// One named interior's prepared artifact: its rule loop and stage sink
+/// — projection, aggregate, or computed, exactly like main (chapter 12's
+/// uniform nonrecursive composition). Evaluated once, in declaration
+/// order, before rec and main; aggregate/computed stages FINALIZE before
+/// sealing their table, so a required producer error fails the whole
+/// query even if a consumer would discard the group (the stage error
+/// boundary). A dead interior is the empty table.
 pub(crate) struct PreparedInterior {
     pub(super) rules: Vec<PreparedRule>,
-    pub(super) sink: ProjectionSink,
+    pub(super) sink: EitherSink,
     pub(super) field_types: Vec<bumbledb_theory::schema::ValueType>,
     pub(super) units: usize,
+    /// Flat finalized-row scratch for aggregate/computed stages
+    /// (`reach::stash_finished` refills the transient image from it);
+    /// empty and unread for projection stages.
+    pub(super) row_scratch: Vec<u64>,
 }
 
 /// One prepared pipeline. Interiors are data in Cq and Reach (the CQ
@@ -489,6 +539,10 @@ pub(crate) struct RecArm {
 pub(crate) struct FreeJoinRule {
     plan: ValidatedPlan,
     executor: Executor,
+    /// The sealed cursor-fallback program (chapter 12 §3): the same rule
+    /// over source cursors instead of images — used when forced (Q-FALLBACK)
+    /// or after a resident reservation refusal (one bounded restart).
+    fallback: fallback::FallbackRule,
     /// The rule's head projection: per head position, the output spec
     /// over this rule's binding-slot layout (result types live on the
     /// query — they are the head's, identical across rules).
@@ -623,6 +677,31 @@ impl<S> PreparedQuery<S> {
                 visit(arm);
             }
         }
+    }
+
+    /// Memory-pressure trim (Q-LIFETIME): drop every cached relation
+    /// image, parked view binding and active COLT this prepared query
+    /// retains. The next execution rebuilds what it touches — a trim can
+    /// make the next query allocate or use disk; it never changes answers.
+    /// Interner tokens stay (token stability is the cache's invariant;
+    /// dropping the whole prepared query is the text trim unit).
+    pub fn trim(&mut self) {
+        self.cache.trim();
+        self.derived = reach::DerivedImages::default();
+        self.visit_rules_mut(|rule| {
+            if let PreparedRule::FreeJoin(fj) = rule {
+                fj.memo.trim();
+            }
+        });
+        self.visit_rec_arms_mut(|arm| arm.rule.memo.trim());
+    }
+
+    /// Retained bytes across this prepared query's caches (images plus
+    /// interner text) — a host budgeting figure, not an allocator
+    /// measurement.
+    #[must_use]
+    pub fn retained_cache_bytes(&self) -> usize {
+        self.cache.retained_bytes()
     }
 
     fn visit_free_join(&self, mut visit: impl FnMut(&FreeJoinRule)) {
@@ -764,7 +843,9 @@ struct ViewMemo {
 }
 
 /// The two sink shapes behind one monomorphized dispatch (an enum, not
-/// `dyn` — the variant is fixed per prepared query).
+/// `dyn` — the variant is fixed per prepared query). `pub(super)` because
+/// [`PreparedInterior::sink`] is reachable at that visibility; the type
+/// never crosses the `api` boundary.
 #[expect(
     clippy::large_enum_variant,
     reason = "boxing the hot sink would add indirection to every emit"
@@ -772,7 +853,7 @@ struct ViewMemo {
 // the hot variant (per-item emit paths reach through it), one prepared
 // query holds exactly one sink, and the pipeline scratch answers
 // that tripped the lint are the working set itself.
-enum EitherSink {
+pub(super) enum EitherSink {
     Computed(Box<computed::ComputedSink>),
     Projection(ProjectionSink),
     /// Boxed: the batch-fold scratch grew the sink past the

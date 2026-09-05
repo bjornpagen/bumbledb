@@ -1,7 +1,7 @@
 use super::{Answer, AnswerValue, Answers, Cell, ResolveMemo, ValueType};
 
 use crate::error::Result;
-use crate::storage::catalog::CatalogRead;
+use crate::image::intern::InternerHandle;
 use bumbledb_theory::Interval;
 use bumbledb_theory::schema::IntervalElement;
 
@@ -51,6 +51,7 @@ impl Answers {
             Cell::U64(v) => AnswerValue::U64(v),
             Cell::I64(v) => AnswerValue::I64(v),
             Cell::F64(v) => AnswerValue::F64(v),
+            Cell::Id128(v) => AnswerValue::Id128(v),
 
             Cell::String { start, len } => AnswerValue::String(&self.text[start..start + len]),
             Cell::FixedBytes { start, len } => {
@@ -58,6 +59,7 @@ impl Answers {
             }
             Cell::IntervalU64(interval) => AnswerValue::IntervalU64(interval),
             Cell::IntervalI64(interval) => AnswerValue::IntervalI64(interval),
+            Cell::IntervalF64(interval) => AnswerValue::IntervalF64(interval),
         }
     }
 
@@ -66,6 +68,38 @@ impl Answers {
             buffer: self,
             answer,
         })
+    }
+
+    /// Append one decoded cell (the sealed-result copy path): text and
+    /// byte payloads land in this buffer's own heaps.
+    pub(crate) fn push_value(&mut self, value: &AnswerValue<'_>) {
+        let cell = match value {
+            AnswerValue::Bool(v) => Cell::Bool(*v),
+            AnswerValue::U64(v) => Cell::U64(*v),
+            AnswerValue::I64(v) => Cell::I64(*v),
+            AnswerValue::F64(v) => Cell::F64(*v),
+            AnswerValue::Id128(v) => Cell::Id128(*v),
+            AnswerValue::String(text) => {
+                let start = self.text.len();
+                self.text.push_str(text);
+                Cell::String {
+                    start,
+                    len: text.len(),
+                }
+            }
+            AnswerValue::FixedBytes(raw) => {
+                let start = self.blob.len();
+                self.blob.extend_from_slice(raw);
+                Cell::FixedBytes {
+                    start,
+                    len: raw.len(),
+                }
+            }
+            AnswerValue::IntervalU64(interval) => Cell::IntervalU64(*interval),
+            AnswerValue::IntervalI64(interval) => Cell::IntervalI64(*interval),
+            AnswerValue::IntervalF64(interval) => Cell::IntervalF64(*interval),
+        };
+        self.cells.push(cell);
     }
 
     /// invariant. The point fast lane's per-cell decode; the finalize
@@ -81,10 +115,22 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
+            ValueType::Id128 => {
+                unreachable!("id128 finds take the two-word path (id128_cell)")
+            }
             ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")
             }
         })
+    }
+
+    /// An application-owned identity from its two big-endian column words
+    /// (verbatim bytes: byte order IS the value's one total order).
+    pub(super) fn id128_cell(hi: u64, lo: u64) -> Cell {
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&hi.to_be_bytes());
+        bytes[8..].copy_from_slice(&lo.to_be_bytes());
+        Cell::Id128(bumbledb_theory::Id128::from_bytes(bytes))
     }
 
     pub(super) fn fixed_bytes_cell(&mut self, len: u16, words: &[u64]) -> Cell {
@@ -117,12 +163,25 @@ impl Answers {
                         .expect("stored invariant: start < end"),
                 )
             }
+            IntervalElement::F64 => {
+                // Dense-line words are F64 order keys; stored canonical
+                // endpoints decode infallibly, and a corrupt hole was
+                // already refused at image decode (`Decode::IntervalF64`).
+                let decode = |word: u64| {
+                    bumbledb_theory::F64::from_order_key(word)
+                        .expect("stored invariant: canonical F64 endpoint")
+                };
+                Cell::IntervalF64(
+                    Interval::new(decode(start), decode(end))
+                        .expect("stored invariant: start < end"),
+                )
+            }
         }
     }
 
-    pub(super) fn push_word<C: CatalogRead>(
+    pub(super) fn push_word(
         &mut self,
-        catalog: &C,
+        interner: &InternerHandle<'_>,
         ty: &ValueType,
         word: u64,
         memo: &mut ResolveMemo,
@@ -133,11 +192,14 @@ impl Answers {
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::F64 => Cell::F64(crate::encoding::decode_f64(word.to_be_bytes())?),
             ValueType::String => {
-                let (start, len) = memo.resolve(catalog, word, self)?;
+                let (start, len) = memo.resolve(interner, word, self)?;
                 Cell::String { start, len }
             }
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
+            }
+            ValueType::Id128 => {
+                unreachable!("id128 finds take the two-word path (id128_cell)")
             }
             ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                 unreachable!("interval finds take the two-word path (interval_cell)")

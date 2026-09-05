@@ -243,16 +243,73 @@ impl crate::image::view::Operands for SealedRow<'_> {
         &self,
         at: crate::image::view::OperandAddr,
     ) -> Result<crate::image::view::Loaded, Self::Error> {
-        use crate::exec::dispatch::{FactOperand, fact_operand};
-        Ok(
-            match fact_operand(self.fact, at.field()).expect("sealed rows are valid") {
-                FactOperand::Word(w) => crate::image::view::Loaded::Word(w),
-                FactOperand::Pair(s, e) => crate::image::view::Loaded::Pair(s, e),
-                FactOperand::Block { words, count } => {
-                    crate::image::view::Loaded::Block { words, count }
+        Ok(match sealed_operand(self.fact, at.field()) {
+            crate::exec::dispatch::FactOperand::Word(w) => crate::image::view::Loaded::Word(w),
+            crate::exec::dispatch::FactOperand::Pair(s, e) => {
+                crate::image::view::Loaded::Pair(s, e)
+            }
+            crate::exec::dispatch::FactOperand::Block { words, count } => {
+                crate::image::view::Loaded::Block { words, count }
+            }
+        })
+    }
+}
+
+/// One sealed row field as column words, sliced straight out of the dense
+/// [`crate::encoding::FactLayout`] encoding the extension was sealed with
+/// at validate. The stored bytes already carry the physical word
+/// conventions (U64 big-endian, I64 sign-flipped, F64 total-order key,
+/// Id128 two big-endian words, intervals two order words — a fixed-width
+/// slot stores the start word and the layout width recovers the end), so
+/// each word is a direct big-endian load; the span widths mirror
+/// [`crate::image::column_spans`].
+fn sealed_operand(
+    fact: crate::encoding::FactView<'_, '_>,
+    field: FieldId,
+) -> crate::exec::dispatch::FactOperand {
+    use crate::encoding::{field_bytes, interval_words};
+    use crate::exec::dispatch::FactOperand;
+    use bumbledb_theory::schema::ValueType;
+
+    let idx = usize::from(field.0);
+    let ty = fact.layout().field_type(idx);
+    let bytes = field_bytes(fact, idx);
+    match ty {
+        ValueType::Bool => FactOperand::Word(u64::from(bytes[0])),
+        ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => FactOperand::Word(
+            u64::from_be_bytes(bytes.try_into().expect("word field: layout-derived width")),
+        ),
+        ValueType::Id128 => {
+            let mut words = [0u64; 8];
+            words[0] = u64::from_be_bytes(bytes[..8].try_into().expect("id128 is sixteen bytes"));
+            words[1] = u64::from_be_bytes(bytes[8..].try_into().expect("id128 is sixteen bytes"));
+            FactOperand::Block { words, count: 2 }
+        }
+        ValueType::FixedBytes { .. } => {
+            let count = bytes.len() / 8;
+            debug_assert_eq!(bytes.len() % 8, 0, "padded bytes<N> is whole words");
+            if count == 1 {
+                FactOperand::Word(u64::from_be_bytes(
+                    bytes.try_into().expect("one padded word"),
+                ))
+            } else {
+                let mut words = [0u64; 8];
+                let (chunks, rest) = bytes.as_chunks::<8>();
+                debug_assert!(rest.is_empty(), "padded bytes<N> is whole words");
+                for (word, chunk) in words.iter_mut().zip(chunks) {
+                    *word = u64::from_be_bytes(*chunk);
                 }
-            },
-        )
+                FactOperand::Block {
+                    words,
+                    count: u8::try_from(count).expect("bytes width is at most 8 words"),
+                }
+            }
+        }
+        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+            let (start, end) =
+                interval_words(ty, bytes).expect("sealed rows are validated interval encodings");
+            FactOperand::Pair(start, end)
+        }
     }
 }
 

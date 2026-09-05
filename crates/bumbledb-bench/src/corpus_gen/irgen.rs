@@ -160,7 +160,9 @@ fn random_projection(rng: &mut Rng) -> ProjectionRule {
 
 fn random_interior(rng: &mut Rng) -> Interior {
     Interior {
-        rules: (0..rng.range(3)).map(|_| random_projection(rng)).collect(),
+        rules: (0..rng.range(3))
+            .map(|_| random_projection(rng).to_rule())
+            .collect(),
     }
 }
 

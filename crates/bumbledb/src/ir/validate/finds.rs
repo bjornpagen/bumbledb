@@ -17,7 +17,9 @@ impl Signature {
             .map(|term| match term {
                 FindTerm::Var(var) => SignatureColumn::Project { ty: var_type(var) },
                 FindTerm::Compute(expr) => SignatureColumn::Project {
-                    ty: expr.result_type(|var| typing.var_types.get(&var).copied()).expect("validated output expression"),
+                    ty: expr
+                        .result_type(|var| typing.var_types.get(&var).copied())
+                        .expect("validated output expression"),
                 },
                 FindTerm::Count => SignatureColumn::Fold {
                     ty: ValueType::U64,
@@ -62,13 +64,22 @@ impl Context {
             let find = FindIndex(find_idx);
             match term {
                 FindTerm::Compute(expr) => {
-                    let ty = expr.result_type(|var| self.var_types.get(&var).copied())
+                    let ty = expr
+                        .result_type(|var| self.var_types.get(&var).copied())
                         .map_err(|source| ValidationError::ScalarExpression { find, source })?;
-                    if !matches!(ty, ValueType::I64 | ValueType::U64 | ValueType::F64 | ValueType::Bool) {
-                        return Err(ValidationError::ScalarExpression { find, source: crate::ScalarError::NotNumeric });
+                    if !matches!(
+                        ty,
+                        ValueType::I64 | ValueType::U64 | ValueType::F64 | ValueType::Bool
+                    ) {
+                        return Err(ValidationError::ScalarExpression {
+                            find,
+                            source: crate::ScalarError::NotNumeric,
+                        });
                     }
                     for var in expr.variables() {
-                        if !self.atom_vars.contains(&var) { return Err(ValidationError::UnboundFindVariable { var }); }
+                        if !self.atom_vars.contains(&var) {
+                            return Err(ValidationError::UnboundFindVariable { var });
+                        }
                     }
                 }
                 FindTerm::Var(var) => {

@@ -1,5 +1,7 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
-use super::{FactLayout, I64_SIGN_BIT, ValueRef, ValueType};
+#[cfg(test)]
+use super::FactLayout;
+use super::{I64_SIGN_BIT, ValueRef, ValueType};
 use bumbledb_theory::{Interval, Value};
 
 /// Encodes a Bool as its canonical single byte.
@@ -48,6 +50,23 @@ pub fn encode_interval_i64(interval: Interval<i64>) -> [u8; 16] {
     concat_halves(encode_i64(start), encode_i64(end))
 }
 
+/// Encodes a dense F64 interval as `start ‖ end`, each half the total-order
+/// key bytes ([`encode_f64`]) — order-preserving physical words, exactly the
+/// integer-interval contract. Wire payload bits are `canonical.rs`'s job.
+/// NaN endpoints are unconstructible in the checked input type.
+#[must_use]
+pub fn encode_interval_f64(interval: Interval<bumbledb_theory::F64>) -> [u8; 16] {
+    let (start, end) = interval.bounds();
+    concat_halves(encode_f64(start), encode_f64(end))
+}
+
+/// Encodes an application-owned Id128 as its sixteen exact bytes: byte
+/// order is its one total order, and no reinterpretation exists.
+#[must_use]
+pub const fn encode_id128(value: bumbledb_theory::Id128) -> [u8; 16] {
+    value.to_bytes()
+}
+
 fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
     let mut out = [0; 16];
     out[..8].copy_from_slice(&start);
@@ -68,9 +87,11 @@ pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
         Value::U64(v) => ValueRef::U64(*v),
         Value::I64(v) => ValueRef::I64(*v),
         Value::F64(v) => ValueRef::F64(*v),
+        Value::Id128(v) => ValueRef::Id128(*v),
         Value::FixedBytes(raw) => ValueRef::bytes(raw),
         Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
         Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
+        Value::IntervalF64(interval) => ValueRef::IntervalF64(*interval),
         Value::String(_) => {
             unreachable!("interned literals resolve at their consumer's boundary")
         }
@@ -116,17 +137,27 @@ pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
         ValueRef::Bytes(_) => {
             panic!("bytes<N> field: append_field writes at the layout type")
         }
+        ValueRef::Id128(value) => {
+            out.extend_from_slice(&encode_id128(value));
+        }
         ValueRef::IntervalU64(interval) => {
             out.extend_from_slice(&encode_interval_u64(interval));
         }
         ValueRef::IntervalI64(interval) => {
             out.extend_from_slice(&encode_interval_i64(interval));
         }
+        ValueRef::IntervalF64(interval) => {
+            out.extend_from_slice(&encode_interval_f64(interval));
+        }
     }
 }
 
+/// Test-only reference encoder: one whole fact, every field written
 /// through [`append_field`] at the layout's type, so a general interval
 /// value at a fixed-width slot cannot silently write 16 bytes into 8.
+/// Production paths encode per field (`encode_literal`); the codec tests
+/// keep this as the executable spec of whole-fact composition.
+#[cfg(test)]
 pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) {
     debug_assert_eq!(values.len(), layout.field_count());
     out.reserve(layout.fact_width());

@@ -70,30 +70,50 @@ pub(crate) fn reduce(values: impl Iterator<Item = F64>, mean: bool) -> F64 {
         count = count.checked_add(1).expect("oracle fixture cardinality");
         let bits = value.to_bits();
         let magnitude = bits & !(1 << 63);
-        if magnitude > 0x7ff0_0000_0000_0000 {
-            nan = true;
-        } else if magnitude == 0x7ff0_0000_0000_0000 {
-            if bits >> 63 == 0 { plus_inf = true; } else { minus_inf = true; }
-        } else {
-            let destination = if bits >> 63 == 0 { &mut positive } else { &mut negative };
-            add(destination, &scaled(magnitude, 1));
+        match magnitude.cmp(&0x7ff0_0000_0000_0000) {
+            Ordering::Greater => nan = true,
+            Ordering::Equal => {
+                if bits >> 63 == 0 {
+                    plus_inf = true;
+                } else {
+                    minus_inf = true;
+                }
+            }
+            Ordering::Less => {
+                let destination = if bits >> 63 == 0 {
+                    &mut positive
+                } else {
+                    &mut negative
+                };
+                add(destination, &scaled(magnitude, 1));
+            }
         }
     }
     assert_ne!(count, 0, "no aggregate output for an empty group");
-    if nan || (plus_inf && minus_inf) { return F64::NAN; }
-    if plus_inf { return F64::INFINITY; }
-    if minus_inf { return F64::NEG_INFINITY; }
+    if nan || (plus_inf && minus_inf) {
+        return F64::NAN;
+    }
+    if plus_inf {
+        return F64::INFINITY;
+    }
+    if minus_inf {
+        return F64::NEG_INFINITY;
+    }
     let negative_result = compare(&positive, &negative) == Ordering::Less;
-    let (mut total, smaller) = if negative_result { (negative, positive) } else { (positive, negative) };
+    let (mut total, smaller) = if negative_result {
+        (negative, positive)
+    } else {
+        (positive, negative)
+    };
     subtract(&mut total, &smaller);
     let divisor = if mean { count } else { 1 };
     let (mut low, mut high) = (0u64, 0x7ff0_0000_0000_0000u64);
     while low + 1 < high {
         let middle = low + (high - low) / 2;
-        if compare(&scaled(middle, divisor), &total) != Ordering::Greater {
-            low = middle;
-        } else {
+        if compare(&scaled(middle, divisor), &total) == Ordering::Greater {
             high = middle;
+        } else {
+            low = middle;
         }
     }
     let mut midpoint = scaled(low, divisor);
@@ -117,11 +137,21 @@ mod tests {
         let mut checked = 0;
         for line in include_str!("../../../bumbledb/tests/fixtures/f64_reference.txt").lines() {
             let words: Vec<_> = line.split_whitespace().collect();
-            if words.first() != Some(&"reduce") { continue; }
+            if words.first() != Some(&"reduce") {
+                continue;
+            }
             let bits = |word: &str| u64::from_str_radix(word, 16).unwrap();
             let values = || words[3..].iter().map(|word| F64::from_bits(bits(word)));
-            assert_eq!(reduce(values(), false).to_bits(), bits(words[1]), "sum: {line}");
-            assert_eq!(reduce(values(), true).to_bits(), bits(words[2]), "mean: {line}");
+            assert_eq!(
+                reduce(values(), false).to_bits(),
+                bits(words[1]),
+                "sum: {line}"
+            );
+            assert_eq!(
+                reduce(values(), true).to_bits(),
+                bits(words[2]),
+                "mean: {line}"
+            );
             checked += 1;
         }
         assert_eq!(checked, 317);

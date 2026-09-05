@@ -17,8 +17,8 @@ use std::time::Instant;
 use bumbledb::schema::ValueType;
 use bumbledb::{
     AllenMask, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    FoldOp, HeadOp, HeadTerm, Interior, InteriorId, ParamId, ProjectionRule, Query, Rec, RecRule,
-    RecStep, RelationId, Rule, Term, Value, VarId,
+    FoldOp, HeadOp, HeadTerm, Interior, InteriorId, ParamId, Query, Rec, RecRule, RecStep,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -49,6 +49,14 @@ pub struct Report {
     pub excluded_slow: u64,
 
     pub excluded_wide: u64,
+
+    /// Cases with a computed head: the Lean case grammar has no compute
+    /// kind, so such a query is inexpressible there — excluded, counted.
+    pub excluded_compute: u64,
+
+    /// Cases touching an `Id128` or dense-interval value the Lean value
+    /// grammar cannot spell yet — excluded, counted.
+    pub excluded_value: u64,
 }
 
 impl Report {
@@ -56,13 +64,16 @@ impl Report {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance coverage: {}/{} expressible (excluded: {} unresolved-literal, \
-             {} engine-error, {} slow, {} wide)",
+             {} engine-error, {} slow, {} wide, {} computed-head, \
+             {} unrepresentable-value)",
             self.written,
             self.attempted,
             self.excluded_unresolved,
             self.excluded_engine_error,
             self.excluded_slow,
             self.excluded_wide,
+            self.excluded_compute,
+            self.excluded_value,
         )
     }
 }
@@ -70,6 +81,13 @@ impl Report {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Exclusion {
     UnresolvedLiteral,
+
+    /// A computed head — inexpressible in the Lean case grammar.
+    ComputedHead,
+
+    /// An `Id128` or dense `Interval<F64>` value — the Lean value grammar
+    /// has no tag for either yet.
+    UnrepresentableValue,
 }
 
 pub struct World {
@@ -321,6 +339,9 @@ fn push_value(
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
+        Value::Id128(_) | Value::IntervalF64(_) => {
+            return Err(Exclusion::UnrepresentableValue);
+        }
     }
     Ok(())
 }
@@ -423,11 +444,12 @@ fn push_condition(
     }
 }
 
-fn push_find(out: &mut String, find: &FindTerm) {
+fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
     match find {
         FindTerm::Var(v) => {
             let _ = write!(out, "{{\"var\":{}}}", v.0);
         }
+        FindTerm::Compute(_) => return Err(Exclusion::ComputedHead),
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
@@ -442,6 +464,7 @@ fn push_find(out: &mut String, find: &FindTerm) {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"{name}\",\"over\":{}}}}}", over.0);
         }
     }
+    Ok(())
 }
 
 fn field_is_interval(atom: &Atom, field: FieldId) -> bool {
@@ -490,6 +513,11 @@ fn count_vars(rule: &Rule) -> u16 {
         match find {
             FindTerm::Var(var) => see(&mut count, *var),
             FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => see(&mut count, *over),
+            FindTerm::Compute(expr) => {
+                for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
             FindTerm::Count => {}
         }
     }
@@ -605,12 +633,17 @@ fn type_name(value_type: &ValueType) -> String {
             element: bumbledb::schema::IntervalElement::I64,
         } => "interval_i64".into(),
 
+        ValueType::Interval {
+            element: bumbledb::schema::IntervalElement::F64,
+        } => "interval_f64".into(),
+        ValueType::Id128 => "id128".into(),
+
         ValueType::FixedInterval {
-            element: bumbledb::schema::IntervalElement::U64,
+            element: bumbledb::schema::FixedIntervalElement::U64,
             width: w,
         } => format!("interval_u64_fixed<{w}>"),
         ValueType::FixedInterval {
-            element: bumbledb::schema::IntervalElement::I64,
+            element: bumbledb::schema::FixedIntervalElement::I64,
             width: w,
         } => format!("interval_i64_fixed<{w}>"),
     }
@@ -846,7 +879,7 @@ fn render_cq_doc(
     let _ = write!(out, "{{\"cq\":{{\"interiors\":[");
     push_interiors(world, used, &mut out, interiors)?;
     out.push_str("],\"head\":");
-    push_head(&mut out, head);
+    push_head(&mut out, head)?;
     out.push_str(",\"rules\":");
     out.push_str(rules_json);
     out.push_str("}}");
@@ -867,7 +900,7 @@ fn render_reach_doc(
     out.push_str("],\"rec\":");
     push_reach_rec(world, used, &mut out, interiors.len(), rec)?;
     out.push_str(",\"head\":");
-    push_head(&mut out, head);
+    push_head(&mut out, head)?;
     out.push_str(",\"rules\":");
     out.push_str(rules_json);
     out.push_str("}}");
@@ -885,16 +918,15 @@ fn push_interiors(
             out.push(',');
         }
         out.push_str("{\"head\":");
-        push_head(out, &interior.head());
+        push_head(out, &interior.head())?;
         out.push_str(",\"rules\":");
-        let rules: Vec<Rule> = interior.rules.iter().map(ProjectionRule::to_rule).collect();
-        push_reach_rules(world, used, out, &rules)?;
+        push_reach_rules(world, used, out, &interior.rules)?;
         out.push('}');
     }
     Ok(())
 }
 
-fn push_head(out: &mut String, head: &[HeadTerm]) {
+fn push_head(out: &mut String, head: &[HeadTerm]) -> Result<(), Exclusion> {
     out.push('[');
     for (index, term) in head.iter().enumerate() {
         if index > 0 {
@@ -902,6 +934,7 @@ fn push_head(out: &mut String, head: &[HeadTerm]) {
         }
         match term {
             HeadTerm::Var => out.push_str("{\"kind\":\"var\"}"),
+            HeadTerm::Compute => return Err(Exclusion::ComputedHead),
             HeadTerm::Aggregate(op) => {
                 let name = match op {
                     HeadOp::Sum => "sum",
@@ -916,6 +949,7 @@ fn push_head(out: &mut String, head: &[HeadTerm]) {
         }
     }
     out.push(']');
+    Ok(())
 }
 
 fn push_lowered_rules(
@@ -934,7 +968,7 @@ fn push_lowered_rules(
             if position > 0 {
                 out.push(',');
             }
-            push_find(out, find);
+            push_find(out, find)?;
         }
         out.push_str("],\"atoms\":[");
         for (position, atom) in rule.atoms.iter().enumerate() {
@@ -971,7 +1005,7 @@ fn push_reach_rec(
     rec: &Rec,
 ) -> Result<(), Exclusion> {
     out.push_str("{\"head\":");
-    push_head(out, &rec.head());
+    push_head(out, &rec.head())?;
     out.push_str(",\"base\":");
     let base: Vec<Rule> = rec.base.iter().map(RecRule::to_rule).collect();
     push_reach_rules(world, used, out, &base)?;
@@ -1117,6 +1151,14 @@ fn one_case(
             report.excluded_unresolved += 1;
             None
         }
+        Err(Exclusion::ComputedHead) => {
+            report.excluded_compute += 1;
+            None
+        }
+        Err(Exclusion::UnrepresentableValue) => {
+            report.excluded_value += 1;
+            None
+        }
     }
 }
 
@@ -1131,6 +1173,7 @@ fn execute_case(
     let model = match world.naive.query(query, params) {
         Ok(rows) => Answers::Ok(rows),
         Err(crate::naive::query::QueryError::Overflow { .. }) => Answers::Overflow,
+        Err(crate::naive::query::QueryError::Scalar { .. }) => Answers::Scalar,
     };
     let naive_ms = started.elapsed().as_millis();
     let engine = differential::engine_query(&world.db, query, params);
@@ -1141,7 +1184,7 @@ fn execute_case(
     );
     match engine {
         Answers::Ok(answers) => (Some(answers), naive_ms),
-        Answers::Overflow | Answers::DerivedBudget => (None, naive_ms),
+        Answers::Overflow | Answers::Scalar | Answers::DerivedBudget => (None, naive_ms),
     }
 }
 

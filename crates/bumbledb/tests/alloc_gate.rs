@@ -7,8 +7,8 @@ use bumbledb::ir::{
     Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
     Answers, BindValue, ConditionTree, Db, NonEmpty, ParamArg, PreparedQuery, ProjectionRule,
@@ -31,22 +31,18 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "account".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "amount".into(),
                         value_type: ValueType::I64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "memo".into(),
                         value_type: ValueType::String,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -57,12 +53,10 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "holder".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -73,19 +67,16 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "person".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "slot".into(),
                         value_type: ValueType::Interval {
                             element: bumbledb::schema::IntervalElement::U64,
                         },
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -96,17 +87,14 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "doc".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "pos".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "note".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -117,12 +105,10 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "digest".into(),
                         value_type: ValueType::FixedBytes { len: 16 },
-                        generation: Generation::None,
                     },
                 ],
             },

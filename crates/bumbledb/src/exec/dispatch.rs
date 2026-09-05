@@ -17,8 +17,8 @@ mod tests;
 
 pub use classify::classify;
 pub use execute_key_probe::execute_key_probe;
-pub(crate) use fact_word::{FactOperand, fact_operand, fact_word};
-pub(crate) use key_probe_fact::key_probe_fact;
+pub(crate) use fact_word::FactOperand;
+pub(crate) use key_probe_fact::key_probe_row;
 
 /// One variable a key-probe plan decodes from the fetched fact: the field it
 /// reads and its binding-slot span (the `SlotWidth` layout — an interval

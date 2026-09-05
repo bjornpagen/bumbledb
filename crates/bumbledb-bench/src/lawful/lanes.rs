@@ -93,13 +93,6 @@ pub fn psi_statement() -> StatementId {
     StatementId(u16::try_from(index).expect("the map is tiny"))
 }
 
-/// The in-closure refusal sentinel (the `posting_swap` precedent): returning
-/// this from a write closure drops the delta whole, so a refused sample commits
-/// nothing.
-fn refuse(what: &str) -> bumbledb::Error {
-    bumbledb::Error::from(std::io::Error::other(what.to_owned()))
-}
-
 /// The protocol's total closure invocations — every stream's required length.
 fn invocations(proto: Protocol) -> usize {
     usize::try_from(proto.warmups + proto.samples).expect("protocol counts are small")
@@ -127,13 +120,9 @@ fn mint_attempt(
     op: AttemptOp,
     cursor: &mut LawCursor,
 ) -> bumbledb::Result<LawAttemptId> {
-    let id: LawAttemptId = tx.reserve(1)?.start().expect("nonempty");
-    if id.0 != cursor.attempt {
-        return Err(refuse(&format!(
-            "the Attempt mint drifted from the shared cursor: minted {}, expected {}",
-            id.0, cursor.attempt
-        )));
-    }
+    // Application-owned identity: the shared cursor IS the id authority —
+    // the successor has no database generator to consult or drift from.
+    let id = LawAttemptId(cursor.attempt);
     tx.insert([&Attempt {
         id,
         task: LawTaskId(op.task),
@@ -148,13 +137,8 @@ fn mint_steer(
     task: u64,
     cursor: &mut LawCursor,
 ) -> bumbledb::Result<LawSteerId> {
-    let id: LawSteerId = tx.reserve(1)?.start().expect("nonempty");
-    if id.0 != cursor.steer {
-        return Err(refuse(&format!(
-            "the Steer mint drifted from the shared cursor: minted {}, expected {}",
-            id.0, cursor.steer
-        )));
-    }
+    // Application-owned identity from the shared cursor, as above.
+    let id = LawSteerId(cursor.steer);
     tx.insert([&Steer {
         id,
         kind: SteerKinds::Repartition.id(),

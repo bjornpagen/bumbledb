@@ -1,7 +1,6 @@
 use super::*;
 use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValidateDescriptor,
-    ValueType,
+    FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValidateDescriptor, ValueType,
 };
 use crate::work::{ExecutionPolicy, Resource};
 use std::time::Duration;
@@ -13,7 +12,6 @@ fn schema() -> Schema {
             fields: vec![FieldDescriptor {
                 name: "value".into(),
                 value_type: ValueType::U64,
-                generation: Generation::None,
             }],
             extension: None,
         }],

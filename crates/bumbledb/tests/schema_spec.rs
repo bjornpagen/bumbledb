@@ -4,7 +4,9 @@ use bumbledb::schema::spec::{
     LiteralSpec, RelationSpec, RowSpec, SideSpec, SpecIssue, StatementSide, StatementSpec,
     WeightSpec,
 };
-use bumbledb::schema::{IntervalElement, ValueType, fingerprint::fingerprint};
+use bumbledb::schema::{
+    FixedIntervalElement, IntervalElement, ValueType, fingerprint::fingerprint,
+};
 use bumbledb::{Interval, SchemaSpec, Theory, Value};
 
 bumbledb::schema! {
@@ -20,10 +22,10 @@ bumbledb::schema! {
         Failed     { mastered: false, span: 3..5 },
     };
 
-    relation Holder { id: u64 as HolderId, fresh, name: str, digest: bytes<16>, cap: u64 }
+    relation Holder { id: u64 as HolderId, name: str, digest: bytes<16>, cap: u64 }
 
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         kind: u64 as KindId,
         status: u64 as StatusId,
@@ -55,7 +57,6 @@ fn field(name: &str, value_type: ValueType) -> FieldSpec {
         name: name.into(),
         value_type,
         newtype: None,
-        fresh: false,
     }
 }
 
@@ -141,7 +142,6 @@ fn everything_spec() -> SchemaSpec {
                         name: "id".into(),
                         value_type: ValueType::U64,
                         newtype: Some("HolderId".into()),
-                        fresh: true,
                     },
                     field("name", ValueType::String),
                     field("digest", ValueType::FixedBytes { len: 16 }),
@@ -156,7 +156,6 @@ fn everything_spec() -> SchemaSpec {
                         name: "id".into(),
                         value_type: ValueType::U64,
                         newtype: Some("AccountId".into()),
-                        fresh: true,
                     },
                     FieldSpec {
                         newtype: Some("HolderId".into()),
@@ -184,7 +183,7 @@ fn everything_spec() -> SchemaSpec {
                         ..field(
                             "lease",
                             ValueType::FixedInterval {
-                                element: IntervalElement::U64,
+                                element: FixedIntervalElement::U64,
                                 width: 7,
                             },
                         )
@@ -323,7 +322,7 @@ bumbledb::schema! {
     };
 
     relation Item {
-        id: u64 as ItemId, fresh,
+        id: u64 as ItemId,
         flag: bool,
         count: u64,
         delta: i64,
@@ -422,7 +421,6 @@ fn seam_spec() -> SchemaSpec {
                         name: "id".into(),
                         value_type: ValueType::U64,
                         newtype: Some("ItemId".into()),
-                        fresh: true,
                     },
                     field("flag", ValueType::Bool),
                     field("count", ValueType::U64),
@@ -446,7 +444,7 @@ fn seam_spec() -> SchemaSpec {
                         ..field(
                             "lease",
                             ValueType::FixedInterval {
-                                element: IntervalElement::I64,
+                                element: FixedIntervalElement::I64,
                                 width: 3,
                             },
                         )
@@ -846,52 +844,44 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     );
 }
 
+/// The old spelling ban table is deleted: alternate window spellings
+/// lower canonically through the spec normalization. Only genuinely
+/// different semantics still refuse — inverted literal bounds here
+/// (dependent floors and path weights keep their own tests below).
 #[test]
-fn the_capacity_ban_table_rejects_at_spec_construction_naming_the_canonical_form() {
-    let banned: [(CapacityWindowSpec, SpecIssue, &str); 5] = [
-        (
-            CapacityWindowSpec::Range {
-                lo: BoundSpec::Lit(4),
-                hi: BoundSpec::Lit(2),
-            },
-            SpecIssue::CapacityInverted {
-                statement: 14,
-                lo: 4,
-                hi: 2,
-            },
-            "an exact measure is `{n}`",
-        ),
-        (
-            CapacityWindowSpec::Range {
-                lo: BoundSpec::Lit(2),
-                hi: BoundSpec::Lit(2),
-            },
-            SpecIssue::CapacityExactRespelled {
-                statement: 14,
-                count: 2,
-            },
-            "an exact measure is written `{2}`",
-        ),
-        (
-            CapacityWindowSpec::Range {
-                lo: BoundSpec::Lit(0),
-                hi: BoundSpec::Lit(0),
-            },
-            SpecIssue::CapacityExclusionRespelled { statement: 14 },
-            "the exclusion is written `{0}`",
-        ),
-        (
-            CapacityWindowSpec::Floor(BoundSpec::Lit(0)),
-            SpecIssue::CapacityVacuous { statement: 14 },
-            "delete the statement",
-        ),
-        (
-            CapacityWindowSpec::Floor(BoundSpec::Lit(1)),
-            SpecIssue::CapacityContainmentRespelled { statement: 14 },
-            "drop the annotation and write the containment",
-        ),
-    ];
-    for (window, expected, canonical) in banned {
+fn inverted_bounds_refuse_and_the_old_ban_table_spellings_lower_canonically() {
+    let mut spec = everything_spec();
+    spec.statements.push(StatementSpec::Capacity {
+        target: side("Holder", &["id"]),
+        weight: WeightSpec::Unit,
+        window: CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(4),
+            hi: BoundSpec::Lit(2),
+        },
+        source: side("Account", &["holder"]),
+    });
+    let error = spec.descriptor().expect_err("inverted literal bounds");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::CapacityInverted {
+            statement: 14,
+            lo: 4,
+            hi: 2,
+        }],
+    );
+
+    for window in [
+        CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(2),
+            hi: BoundSpec::Lit(2),
+        },
+        CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(0),
+            hi: BoundSpec::Lit(0),
+        },
+        CapacityWindowSpec::Floor(BoundSpec::Lit(0)),
+        CapacityWindowSpec::Floor(BoundSpec::Lit(1)),
+    ] {
         let mut spec = everything_spec();
         spec.statements.push(StatementSpec::Capacity {
             target: side("Holder", &["id"]),
@@ -899,17 +889,9 @@ fn the_capacity_ban_table_rejects_at_spec_construction_naming_the_canonical_form
             window: window.clone(),
             source: side("Account", &["holder"]),
         });
-        let error = spec.descriptor().expect_err("a banned spelling");
-        assert_eq!(
-            error.issues(),
-            std::slice::from_ref(&expected),
-            "for {window:?}"
-        );
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains(canonical),
-            "{window:?} names its canonical form: {rendered}"
-        );
+        if let Err(error) = spec.descriptor() {
+            panic!("{window:?} lowers canonically, no ban table: {error}");
+        }
     }
 }
 

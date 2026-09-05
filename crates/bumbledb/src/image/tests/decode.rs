@@ -1,37 +1,29 @@
-use super::{R, fact, populated, schema};
-use crate::encoding::{encode_i64, field_word_bytes};
-use crate::image::{LINE, SET_STRIDE, build};
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::storage::read;
-use crate::testutil::TempDir;
+//! The canonical-scan build path: exact distinct counts, column words that
+//! match a per-field decode of the same rows, dense positions, order-word
+//! conventions and slab accounting.
+use super::{R, default_rows, fact, schema, source_of};
+use crate::encoding::encode_i64;
+use crate::image::{LINE, SET_STRIDE};
+use crate::ir::Value;
 
 #[test]
 fn distinct_counts_are_exact() {
-    let dir = TempDir::new("image-distincts");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = source_of(&schema, default_rows());
+    let (_cache, image) = source.image_with_cache(R);
 
-    assert_eq!(image.distinct_count(0), 10, "fresh ids all distinct");
+    assert_eq!(image.distinct_count(0), 10, "ids all distinct");
     assert_eq!(image.distinct_count(1), 2, "bools");
     assert_eq!(image.distinct_count(2), 2, "kind bools");
     assert_eq!(image.distinct_count(3), 10, "amounts all distinct");
 
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
+    let mut rows = default_rows();
     for i in 10..110u64 {
         let amount = i64::try_from(i % 5).expect("small");
-        delta
-            .insert(&view, R, &fact(&schema, i, true, false, amount))
-            .expect("insert");
+        rows.push(fact(i, true, false, amount));
     }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = source_of(&schema, rows);
+    let (_cache, image) = source.image_with_cache(R);
     assert_eq!(image.row_count(), 110);
     assert_eq!(image.distinct_count(0), 110);
 
@@ -39,56 +31,44 @@ fn distinct_counts_are_exact() {
 }
 
 #[test]
-fn columns_equal_per_field_decode_of_the_scan() {
-    let dir = TempDir::new("image-columns");
+fn columns_equal_per_field_values_of_the_rows() {
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let rows = default_rows();
+    let source = source_of(&schema, rows.clone());
+    let (_cache, image) = source.image_with_cache(R);
     assert_eq!(image.row_count(), 10);
 
-    for (position, entry) in read::scan(&txn, &schema, R).expect("scan").enumerate() {
-        let (_, fact_bytes) = entry.expect("ok");
-
-        let id_word = u64::from_be_bytes(field_word_bytes(fact_bytes, 0));
-        assert_eq!(image.column_words(0)[position], id_word);
-        let amount_word = u64::from_be_bytes(field_word_bytes(fact_bytes, 3));
-        assert_eq!(image.column_words(3)[position], amount_word);
-
-        assert_eq!(image.column_bytes(1)[position], fact_bytes.bytes()[8]);
-        assert_eq!(image.column_bytes(2)[position], fact_bytes.bytes()[9]);
-    }
-}
-
-#[test]
-fn positions_stay_dense_under_row_id_holes() {
-    let dir = TempDir::new("image-holes");
-    let schema = schema();
-    let env = populated(&dir, &schema);
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for i in [2u64, 5, 7] {
-        let amount = i64::try_from(i).expect("small") * 7 - 30;
-        delta
-            .delete(&view, R, &fact(&schema, i, i % 2 == 0, i % 3 == 0, amount))
-            .expect("delete");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
-    assert_eq!(image.row_count(), 7);
-
-    let scanned: Vec<u64> = read::scan(&txn, &schema, R)
-        .expect("scan")
-        .map(|e| {
-            let (_, bytes) = e.expect("ok");
-            u64::from_be_bytes(field_word_bytes(bytes, 0))
+    // Canonical rows sort by their full bytes; the image scan follows the
+    // source order. Compare as sets of decoded per-row words.
+    let mut expected: Vec<(u64, u64, u8, u8)> = rows
+        .iter()
+        .map(|row| {
+            let (Value::U64(id), Value::Bool(flag), Value::Bool(kind), Value::I64(amount)) =
+                (&row[0], &row[1], &row[2], &row[3])
+            else {
+                panic!("fixture shape");
+            };
+            (
+                *id,
+                u64::from_be_bytes(encode_i64(*amount)),
+                u8::from(*flag),
+                u8::from(*kind),
+            )
         })
         .collect();
-    assert_eq!(image.column_words(0), &scanned[..]);
+    expected.sort_unstable();
+    let mut got: Vec<(u64, u64, u8, u8)> = (0..image.row_count())
+        .map(|position| {
+            (
+                image.column_words(0)[position],
+                image.column_words(3)[position],
+                image.column_bytes(1)[position],
+                image.column_bytes(2)[position],
+            )
+        })
+        .collect();
+    got.sort_unstable();
+    assert_eq!(got, expected, "one word per column, exact conventions");
 }
 
 #[test]
@@ -116,11 +96,9 @@ fn i64_word_order_matches_logical_order() {
 
 #[test]
 fn zero_row_relation_builds_an_empty_image() {
-    let dir = TempDir::new("image-empty");
     let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = source_of(&schema, vec![]);
+    let (_cache, image) = source.image_with_cache(R);
     assert_eq!(image.row_count(), 0);
     assert!(image.column_words(0).is_empty());
     assert!(image.column_bytes(1).is_empty());
@@ -128,11 +106,9 @@ fn zero_row_relation_builds_an_empty_image() {
 
 #[test]
 fn byte_size_covers_rows_and_slab_slack() {
-    let dir = TempDir::new("image-byte-size");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = source_of(&schema, default_rows());
+    let (_cache, image) = source.image_with_cache(R);
 
     let payload = 10 * (2 * 8 + 2);
     assert!(image.byte_size() >= payload, "{}", image.byte_size());
@@ -141,5 +117,56 @@ fn byte_size_covers_rows_and_slab_slack() {
         image.byte_size() <= payload + slack,
         "{}",
         image.byte_size()
+    );
+}
+
+#[test]
+fn text_columns_hold_interner_tokens_with_exact_identity() {
+    // Two relations sharing text meet at one token; distinct texts never
+    // alias (the interner is the one text→word authority).
+    let schema =
+        crate::schema::ValidateDescriptor::validate(bumbledb_theory::schema::SchemaDescriptor {
+            relations: vec![bumbledb_theory::schema::RelationDescriptor {
+                extension: None,
+                name: "Doc".into(),
+                fields: vec![
+                    bumbledb_theory::schema::FieldDescriptor {
+                        name: "name".into(),
+                        value_type: bumbledb_theory::schema::ValueType::String,
+                    },
+                    bumbledb_theory::schema::FieldDescriptor {
+                        name: "copy".into(),
+                        value_type: bumbledb_theory::schema::ValueType::String,
+                    },
+                ],
+            }],
+            statements: vec![],
+        })
+        .expect("valid fixture");
+    let rows = vec![
+        vec![Value::String("alpha".into()), Value::String("alpha".into())],
+        vec![Value::String("beta".into()), Value::String("alpha".into())],
+    ];
+    let source = crate::image::testsupport::TestSource::new(&schema, &[(super::R, rows)]);
+    let (_cache, image) = source.image_with_cache(super::R);
+    let names = image.column_words(0);
+    let copies = image.column_words(1);
+    // Row order is canonical-byte order; identify rows via token equality
+    // structure rather than positions.
+    let mut equal_pairs = 0;
+    for position in 0..image.row_count() {
+        if names[position] == copies[position] {
+            equal_pairs += 1;
+        }
+    }
+    assert_eq!(equal_pairs, 1, "only the (alpha, alpha) row self-matches");
+    assert_eq!(
+        names
+            .iter()
+            .chain(copies)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        2,
+        "two distinct texts, two tokens, shared across columns"
     );
 }

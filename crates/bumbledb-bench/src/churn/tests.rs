@@ -2,7 +2,7 @@
 use crate::corpus_gen::{GenConfig, Scale, Sizes};
 use crate::storemode::StoreMode;
 
-use super::engines::{self, OursLane, SqliteSync};
+use super::engines::{self, OursLane};
 use super::lanes;
 use super::ops::{self, ChurnConfig, Mix};
 use super::report::Counters;
@@ -19,8 +19,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 fn drive(
     cfg: &ChurnConfig,
     mix: &Mix,
-    mode: StoreMode,
-    syncs: &[SqliteSync],
+    mirror_labels: &[&'static str],
     tag: &str,
 ) -> (
     OursLane,
@@ -30,13 +29,14 @@ fn drive(
 ) {
     ops::validate(cfg, mix).expect("a smoke config validates");
     let dir = scratch(tag);
-    let mut lane = engines::create_ours(&dir.join("ours"), cfg.r#gen, mode).expect("ours lane");
-    let mirrors: Vec<(&'static str, rusqlite::Connection)> = syncs
+    let mut lane =
+        engines::create_ours(&dir.join("ours"), cfg.r#gen, StoreMode::Durable).expect("ours lane");
+    let mirrors: Vec<(&'static str, rusqlite::Connection)> = mirror_labels
         .iter()
-        .map(|sync| {
-            let path = dir.join(format!("mirror-{}.sqlite", sync.label()));
-            let conn = engines::create_sqlite(&path, cfg.r#gen, *sync).expect("mirror");
-            (sync.label(), conn)
+        .map(|label| {
+            let path = dir.join(format!("mirror-{label}.sqlite"));
+            let conn = engines::create_sqlite(&path, cfg.r#gen).expect("mirror");
+            (*label, conn)
         })
         .collect();
     let mut live = ops::LiveSet::from_corpus(cfg.r#gen);
@@ -69,14 +69,11 @@ fn tiny_postings() -> usize {
 
 #[test]
 fn churn_smoke_end_states_agree_three_ways() {
+    // Two independently-loaded FULL-sync mirrors: replication and the
+    // end-state gate are mirror-instance independent (the OFF mirror went
+    // with the retired nosync lane — ENG-008).
     let cfg = ChurnConfig::smoke(1);
-    let (lane, mirrors, live, dir) = drive(
-        &cfg,
-        &ops::STEADY,
-        StoreMode::Durable,
-        &[SqliteSync::Full, SqliteSync::Nosync],
-        "smoke",
-    );
+    let (lane, mirrors, live, dir) = drive(&cfg, &ops::STEADY, &["a", "b"], "smoke");
     assert_agreement(&lane, &mirrors, &live);
     assert_eq!(
         live.len(),
@@ -99,13 +96,7 @@ fn churn_growth_mode_grows_the_working_set() {
         updates: 4,
         growth: 2,
     };
-    let (lane, mirrors, live, dir) = drive(
-        &cfg,
-        &mix,
-        StoreMode::Durable,
-        &[SqliteSync::Full],
-        "growth",
-    );
+    let (lane, mirrors, live, dir) = drive(&cfg, &mix, &["full"], "growth");
     assert_agreement(&lane, &mirrors, &live);
     assert_eq!(live.len(), tiny_postings() + 8, "4 cycles x growth 2");
     drop((lane, mirrors));
@@ -119,13 +110,7 @@ fn churn_delete_heavy_end_state_agrees() {
         sample_every: 2,
         ..ChurnConfig::smoke(3)
     };
-    let (lane, mirrors, live, dir) = drive(
-        &cfg,
-        &ops::DELETE_HEAVY,
-        StoreMode::Durable,
-        &[SqliteSync::Full],
-        "delete-heavy",
-    );
+    let (lane, mirrors, live, dir) = drive(&cfg, &ops::DELETE_HEAVY, &["full"], "delete-heavy");
     assert_agreement(&lane, &mirrors, &live);
     assert_eq!(live.len(), tiny_postings(), "delete-heavy stays steady");
     drop((lane, mirrors));
@@ -135,8 +120,8 @@ fn churn_delete_heavy_end_state_agrees() {
 #[test]
 fn churn_replay_is_deterministic() {
     let cfg = ChurnConfig::smoke(4);
-    let (first, _, _, dir_a) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "replay-a");
-    let (second, _, _, dir_b) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "replay-b");
+    let (first, _, _, dir_a) = drive(&cfg, &ops::STEADY, &[], "replay-a");
+    let (second, _, _, dir_b) = drive(&cfg, &ops::STEADY, &[], "replay-b");
     let ours_a = verify_end::posting_multiset_ours(&first.db).expect("first multiset");
     let ours_b = verify_end::posting_multiset_ours(&second.db).expect("second multiset");
     crate::compare::multisets(ours_a, ours_b).expect("replayed multisets are equal");
@@ -145,23 +130,6 @@ fn churn_replay_is_deterministic() {
         "the id burn replays exactly"
     );
     drop((first, second));
-    let _ = std::fs::remove_dir_all(&dir_a);
-    let _ = std::fs::remove_dir_all(&dir_b);
-}
-
-#[test]
-fn churn_ephemeral_minter_matches_durable() {
-    let cfg = ChurnConfig::smoke(5);
-    let (durable, _, _, dir_a) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "kind-d");
-    let (ephemeral, _, _, dir_b) = drive(&cfg, &ops::STEADY, StoreMode::Nosync, &[], "kind-e");
-    let ours_d = verify_end::posting_multiset_ours(&durable.db).expect("durable multiset");
-    let ours_e = verify_end::posting_multiset_ours(&ephemeral.db).expect("ephemeral multiset");
-    crate::compare::multisets(ours_d, ours_e).expect("store kinds agree");
-    assert_eq!(
-        durable.last_minted, ephemeral.last_minted,
-        "both kinds burn the id space identically"
-    );
-    drop((durable, ephemeral));
     let _ = std::fs::remove_dir_all(&dir_a);
     let _ = std::fs::remove_dir_all(&dir_b);
 }
@@ -224,26 +192,21 @@ fn churn_cycle_plan_is_pure_and_distinct() {
     );
 }
 
+/// ENG-008: every churn mirror is FULL sync — no weakened pragma set is
+/// reachable from the registry or the constructor.
 #[test]
-fn churn_nosync_pragma_engages() {
-    let dir = scratch("nosync");
+fn churn_mirrors_are_full_sync_always() {
+    let dir = scratch("full-sync");
     let r#gen = GenConfig {
         seed: 8,
         scale: Scale::Tiny,
     };
-    let nosync = engines::create_sqlite(&dir.join("nosync.sqlite"), r#gen, SqliteSync::Nosync)
-        .expect("nosync mirror");
-    let sync: i64 = nosync
-        .query_row("PRAGMA synchronous", [], |row| row.get(0))
-        .expect("pragma");
-    assert_eq!(sync, 0, "OFF");
-    let full = engines::create_sqlite(&dir.join("full.sqlite"), r#gen, SqliteSync::Full)
-        .expect("full mirror");
+    let full = engines::create_sqlite(&dir.join("full.sqlite"), r#gen).expect("full mirror");
     let sync: i64 = full
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .expect("pragma");
     assert_eq!(sync, 2, "FULL");
-    drop((nosync, full));
+    drop(full);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -353,7 +316,10 @@ fn churn_run_steady_smoke_produces_the_full_series() {
         else {
             panic!("the ours lane carries ours counters");
         };
-        assert!(id_high_water > 1023, "fresh mints moved the high-water");
+        assert!(
+            id_high_water > 1023,
+            "application-owned mints moved the high-water"
+        );
         assert!(generation > 0, "committed cycles moved the generation");
         assert_eq!(sample.maintenance_ns, 0, "ours never maintains");
     }
@@ -384,19 +350,6 @@ fn churn_run_steady_smoke_produces_the_full_series() {
 }
 
 #[test]
-fn churn_run_nosync_smoke_agrees() {
-    let cfg = ChurnConfig::smoke(2);
-    let dir = scratch("run-nosync");
-    let spec = &lanes::all()[1];
-    assert_eq!(spec.name, "nosync");
-    let series = run::run_spec(spec, &cfg, &dir).expect("the nosync twins agree end to end");
-    let labels: Vec<&str> = series.lanes.iter().map(|lane| lane.lane.as_str()).collect();
-    assert_eq!(labels, ["ours-ephemeral", "sqlite-nosync"]);
-    assert_series_shape(&series, &[3, 6]);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn churn_run_delete_heavy_smoke_agrees() {
     let cfg = ChurnConfig {
         cycles: 4,
@@ -404,7 +357,7 @@ fn churn_run_delete_heavy_smoke_agrees() {
         ..ChurnConfig::smoke(3)
     };
     let dir = scratch("run-delete-heavy");
-    let spec = &lanes::all()[2];
+    let spec = &lanes::all()[1];
     assert_eq!(spec.name, "delete-heavy");
     let series = run::run_spec(spec, &cfg, &dir).expect("the delete-heavy run drives");
     assert_eq!(series.lanes.len(), 2, "one minter, one twin");
@@ -424,7 +377,12 @@ fn churn_run_delete_heavy_smoke_agrees() {
 #[test]
 fn churn_registry_covers_the_mandated_lanes() {
     let specs = lanes::all();
-    assert_eq!(specs.len(), 3, "three rows cover the five mandated lanes");
+    assert_eq!(
+        specs.len(),
+        2,
+        "two rows cover the three surviving lanes (the ephemeral/nosync \
+         pair retired with ENG-008)"
+    );
     let mut labels = std::collections::BTreeSet::new();
     let mut names = std::collections::BTreeSet::new();
     for spec in specs {
@@ -434,14 +392,9 @@ fn churn_registry_covers_the_mandated_lanes() {
             labels.insert(kind.label());
         }
     }
-    let mandated: std::collections::BTreeSet<&str> = [
-        "ours-durable",
-        "ours-ephemeral",
-        "sqlite-bare",
-        "sqlite-maint",
-        "sqlite-nosync",
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(labels, mandated, "the five mandated lanes, exactly");
+    let mandated: std::collections::BTreeSet<&str> =
+        ["ours-durable", "sqlite-bare", "sqlite-maint"]
+            .into_iter()
+            .collect();
+    assert_eq!(labels, mandated, "the three surviving lanes, exactly");
 }

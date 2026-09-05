@@ -9,7 +9,6 @@ use bumbledb::{
     AtomSource, CmpOp, ConditionTree, Direction, ErrorFamily, FindTerm, HeadOp, HeadTerm, Query,
     StatementKind, Term, Value,
 };
-use bumbledb_log::codec::{EncodeError, OpKind};
 
 use crate::marshal::OwnedParam;
 
@@ -88,10 +87,12 @@ wire_tags! {
         U64: Value::U64(_) => "u64",
         I64: Value::I64(_) => "i64",
         F64: Value::F64(_) => "f64",
+        ID128: Value::Id128(_) => "id128",
         STRING: Value::String(_) => "string",
         FIXED_BYTES: Value::FixedBytes(_) => "fixedBytes",
         INTERVAL_U64: Value::IntervalU64(_) => "intervalU64",
         INTERVAL_I64: Value::IntervalI64(_) => "intervalI64",
+        INTERVAL_F64: Value::IntervalF64(_) => "intervalF64",
     }
 }
 
@@ -104,6 +105,7 @@ wire_tags! {
         U64: ValueType::U64 => "u64",
         I64: ValueType::I64 => "i64",
         F64: ValueType::F64 => "f64",
+        ID128: ValueType::Id128 => "id128",
         STRING: ValueType::String => "string",
         FIXED_BYTES: ValueType::FixedBytes { .. } => "fixedBytes",
         INTERVAL: ValueType::Interval { .. } | ValueType::FixedInterval { .. } => "interval",
@@ -117,6 +119,7 @@ wire_tags! {
     mod interval_element for unit IntervalElement {
         U64: IntervalElement::U64 => "u64",
         I64: IntervalElement::I64 => "i64",
+        F64: IntervalElement::F64 => "f64",
     }
 }
 
@@ -216,17 +219,51 @@ wire_tags! {
     /// `bumbledb::HeadTerm` (`head_term_in`).
     mod head_term for HeadTerm {
         VAR: HeadTerm::Var => "var",
+        COMPUTE: HeadTerm::Compute => "compute",
         AGGREGATE: HeadTerm::Aggregate(_) => "aggregate",
     }
 }
 
 wire_tags! {
-    /// `bumbledb::FindTerm` (`find_term_in`).
+    /// `bumbledb::FindTerm` (`find_term_in`). The `compute` arm carries the
+    /// core `ScalarExpr` payload (`scalar_expr_in` in marshal.rs) — the P03R
+    /// C05 roster (`FindTerm::Compute(ScalarExpr)`) is exhaustive here.
     mod find_term for FindTerm {
         VAR: FindTerm::Var(_) => "var",
+        COMPUTE: FindTerm::Compute(_) => "compute",
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
         PACK: FindTerm::Pack { .. } => "pack",
+    }
+}
+
+wire_tags! {
+    /// `bumbledb::ScalarExpr` — the computed-find expression lane
+    /// (`scalar_expr_in`), spelled exactly as the plan JSON grammar spells
+    /// the same roster (C01/C11: one spelling, no second evaluator).
+    mod scalar_expr for bumbledb::ScalarExpr {
+        VAR: bumbledb::ScalarExpr::Var(_) => "var",
+        LITERAL: bumbledb::ScalarExpr::Literal(_) => "literal",
+        NEGATE: bumbledb::ScalarExpr::Negate(_) => "negate",
+        ADD: bumbledb::ScalarExpr::Add(_, _) => "add",
+        SUBTRACT: bumbledb::ScalarExpr::Subtract(_, _) => "subtract",
+        MULTIPLY: bumbledb::ScalarExpr::Multiply(_, _) => "multiply",
+        DIVIDE: bumbledb::ScalarExpr::Divide(_, _) => "divide",
+        CAST: bumbledb::ScalarExpr::Cast { .. } => "cast",
+        IS_NAN: bumbledb::ScalarExpr::IsNaN(_) => "isNaN",
+        IS_FINITE: bumbledb::ScalarExpr::IsFinite(_) => "isFinite",
+    }
+}
+
+wire_tags! {
+    /// `bumbledb::NumericCast` — the explicit-cast vocabulary nested in the
+    /// scalar-expression lane (the same four spellings as the migration
+    /// plan grammar).
+    mod numeric_cast for unit bumbledb::NumericCast {
+        TO_F64: bumbledb::NumericCast::ToF64 => "toF64",
+        TO_F64_EXACT: bumbledb::NumericCast::ToF64Exact => "toF64Exact",
+        TO_I64_EXACT: bumbledb::NumericCast::ToI64Exact => "toI64Exact",
+        TO_U64_EXACT: bumbledb::NumericCast::ToU64Exact => "toU64Exact",
     }
 }
 
@@ -305,7 +342,6 @@ wire_tags! {
         SCHEMA: ErrorFamily::Schema => "schema",
         VALIDATION: ErrorFamily::Validation => "validation",
         FACT_SHAPE: ErrorFamily::FactShape => "factShape",
-        FRESH_EXHAUSTED: ErrorFamily::FreshExhausted => "freshExhausted",
         CLOSED_RELATION_WRITE: ErrorFamily::ClosedRelationWrite => "closedRelationWrite",
         COMMIT_SYNC: ErrorFamily::CommitSync => "commitSync",
         TRANSACTION_POISONED: ErrorFamily::TransactionPoisoned => "transactionPoisoned",
@@ -315,41 +351,17 @@ wire_tags! {
         CAPACITY_RAY_MEASURE: ErrorFamily::CapacityRayMeasure => "capacityRayMeasure",
         DERIVED_BUDGET_EXCEEDED: ErrorFamily::DerivedBudgetExceeded => "derivedBudgetExceeded",
         OVERFLOW: ErrorFamily::Overflow => "overflow",
+        SCALAR: ErrorFamily::Scalar => "scalar",
         RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",
         CORRUPTION: ErrorFamily::Corruption => "corruption",
+        STORE: ErrorFamily::Store => "store",
     }
 }
 
-wire_tags! {
-    /// `bumbledb_log::codec::OpKind` — the batch op verb, both directions
-    /// (`log_op_in` parses it, the decode wire renders it). The spelling is
-    /// the conformance corpus's (`conformance/v3/batch/*.json`).
-    mod log_op for unit OpKind {
-        INSERT: OpKind::Insert => "insert",
-        DELETE: OpKind::Delete => "delete",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb_log::codec::EncodeError` — the encode-refusal identity
-    /// kinds. The log core is the one speller
-    /// (`EncodeError::identity`); this table is an assertee, pinned
-    /// variant-for-variant to the core's spelling by the
-    /// `encode_tags_are_the_core_identities` test — and exhaustive, so
-    /// a new core variant fails compile HERE. The roster is a row
-    /// family of the `log-identities.json` mint table.
-    mod log_encode_refusal for EncodeError {
-        FINGERPRINT_MISMATCH: EncodeError::FingerprintMismatch => "FingerprintMismatch",
-        UNKNOWN_BRAID: EncodeError::UnknownBraid { .. } => "UnknownBraid",
-        UNKNOWN_RELATION: EncodeError::UnknownRelation { .. } => "UnknownRelation",
-        CLOSED_RELATION: EncodeError::ClosedRelation { .. } => "ClosedRelation",
-        OP_RELATION_OUTSIDE_BRAID: EncodeError::OpRelationOutsideBraid { .. } => "OpRelationOutsideBraid",
-        ARITY: EncodeError::Arity { .. } => "Arity",
-        VALUE: EncodeError::Value { .. } => "Value",
-        TOO_MANY_OPS: EncodeError::TooManyOps => "TooManyOps",
-        TOO_MANY_ROWS: EncodeError::TooManyRows { .. } => "TooManyRows",
-    }
-}
+// The 0.x braided log codec tag tables (`log_op`, `log_encode_refusal`)
+// are deleted with the braids/codec/manifest/sidecar protocol. Successor
+// history refusal identities are spelled by `bumbledb_log::identities`
+// (one speller) and cross through `log.rs` lanes directly.
 
 pub(crate) mod admission_tag {
     pub(crate) const ACCEPTED: &str = "accepted";
@@ -371,8 +383,17 @@ pub(crate) mod open_kind {
     pub(crate) const SCHEMA_ERROR: &str = "schemaError";
     pub(crate) const NEWTYPE_MISMATCH: &str = "newtypeMismatch";
     pub(crate) const FINGERPRINT_MISMATCH: &str = "fingerprintMismatch";
+    /// The managed create/publish refusal for an already-populated child
+    /// path — adopted into the one table (P06R seam resolution: `OpenKind`
+    /// in ts/src/native.ts carries it; the bridge speaks the same roster).
+    pub(crate) const DESTINATION_EXISTS: &str = "destinationExists";
     #[allow(dead_code)]
-    pub(crate) const TAGS: &[&str] = &[SCHEMA_ERROR, NEWTYPE_MISMATCH, FINGERPRINT_MISMATCH];
+    pub(crate) const TAGS: &[&str] = &[
+        SCHEMA_ERROR,
+        NEWTYPE_MISMATCH,
+        FINGERPRINT_MISMATCH,
+        DESTINATION_EXISTS,
+    ];
 }
 
 pub(crate) mod prepare_kind {
@@ -406,6 +427,8 @@ mod golden {
             ("statement", super::statement::TAGS.to_vec()),
             ("statementKind", super::statement_kind::TAGS.to_vec()),
             ("term", super::term::TAGS.to_vec()),
+            ("scalarExpr", super::scalar_expr::TAGS.to_vec()),
+            ("numericCast", super::numeric_cast::TAGS.to_vec()),
             ("aggregateOp", super::head_op::TAGS.to_vec()),
             ("headTerm", super::head_term::TAGS.to_vec()),
             ("findTerm", super::find_term::TAGS.to_vec()),

@@ -1,8 +1,8 @@
 use bumbledb::error::ValidationError;
 use bumbledb::ir::{Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
+    StatementDescriptor, ValueType,
 };
 use bumbledb::{AnswerValue, Answers, BindValue, Db, Error, Fact, ParamArg, Value};
 
@@ -12,27 +12,27 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Alpha {
-        id: u64 as AlphaId, fresh,
+        id: u64 as AlphaId,
         beta: u64 as BetaId,
     }
     relation Beta {
-        id: u64 as BetaId, fresh,
+        id: u64 as BetaId,
         alpha: u64 as AlphaId,
     }
     relation Node {
-        id: u64 as NodeId, fresh,
+        id: u64 as NodeId,
         parent: u64 as NodeId,
     }
     relation Gate {
         tag: str,
     }
     relation Blob {
-        id: u64 as BlobId, fresh,
+        id: u64 as BlobId,
         payload: bytes<16>,
         name: str,
     }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         account: u64,
         amount: i64,
         memo: str,
@@ -101,8 +101,11 @@ fn empty_strings_and_bytes_round_trip() {
     .expect("scan");
 }
 
+// The reserve-exhaustion half of the old `explicit_max_fresh_exhausts_the
+// _generator` test retired with the fresh machinery (E-NO-RESERVE); the
+// legality of the extreme explicit id survives.
 #[test]
-fn explicit_max_fresh_exhausts_the_generator() {
+fn explicit_max_id_is_a_legal_value() {
     let dir = common::TempDir::new("edge-fresh-max");
     let db = Db::create(dir.path(), Ledger)
         .expect("create")
@@ -115,13 +118,6 @@ fn explicit_max_fresh_exhausts_the_generator() {
     })
     .expect("explicit MAX is a legal value")
     .unwrap();
-    let err = db
-        .write(|tx| {
-            let _: NodeId = tx.reserve(1)?.start().expect("nonempty");
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(matches!(err, Error::FreshExhausted { .. }));
 }
 
 #[test]
@@ -146,7 +142,6 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
                 fields: vec![FieldDescriptor {
                     name: "v".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 }],
             },
         ],
@@ -201,12 +196,10 @@ fn one_byte_compound_determinants() {
                     FieldDescriptor {
                         name: "state".into(),
                         value_type: status,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "armed".into(),
                         value_type: ValueType::Bool,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -217,17 +210,14 @@ fn one_byte_compound_determinants() {
                     FieldDescriptor {
                         name: "state".into(),
                         value_type: status,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "armed".into(),
                         value_type: ValueType::Bool,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "note".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -364,14 +354,17 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let ids = db
         .write(|tx| {
             let mut ids = Vec::new();
-            for (account, amount, memo) in [
+            for (next, (account, amount, memo)) in [
                 (10u64, 5i64, "rent"),
                 (11, 5, "rent"),
                 (12, 5, "rent"),
                 (10, 6, "rent"),
                 (11, 5, "food"),
-            ] {
-                let id: PostingId = tx.reserve(1)?.start().expect("nonempty");
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = PostingId(next as u64);
                 tx.insert([&Posting {
                     id,
                     account,

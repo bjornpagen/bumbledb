@@ -1,21 +1,21 @@
-//! The build path: one sequential scan decodes every column of a relation
-//! into structure-of-arrays slabs —
-//! and the synthesis path, which fills the same slabs from a closed
-//! relation's sealed extension with no catalog anywhere.
-use std::ops::Bound;
+//! The build path: one sequential canonical-row scan decodes every column
+//! of a relation into structure-of-arrays slabs — and the synthesis path,
+//! which fills the same slabs from a closed relation's sealed extension
+//! with no storage anywhere.
 use std::sync::Arc;
 
-use crate::error::{CorruptionError, Error, Exceeded, Result};
+use crate::api::prepared::source::QuerySource;
+use crate::error::{CorruptionError, Error, Result};
+use crate::image::canon::{TextWords, row_words};
+use crate::image::intern::TextInterner;
 use crate::schema::{Relation, Schema};
-use crate::storage::catalog::{Bounds, CatalogMap, CatalogRead, FactCursor, ReadCursor};
-use crate::storage::keys;
+use crate::work::ByteKind;
 use bumbledb_theory::schema::RelationId;
 use bumbledb_theory::schema::ValueType;
 
-use super::decode::{decode_fact, decode_plan, fill_one};
+use super::decode::{decode_fact, decode_plan};
 use super::{
-    Column, ColumnSpan, ColumnView, ColumnWidth, LINE, RelationImage, SET_STRIDE, StridePadder,
-    column_spans,
+    Column, ColumnSpan, ColumnWidth, LINE, RelationImage, SET_STRIDE, StridePadder, column_spans,
 };
 
 /// The `S` value is data: overflow in any size computation is typed Corruption
@@ -143,93 +143,23 @@ pub(super) fn image_with_tolerance(
     seal(row_count, frame, distincts)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the split borrows and execution context are clearer unpacked"
-)]
-fn fill_scan<C: CatalogRead>(
-    catalog: &C,
-    rel: RelationId,
-    plan: &[super::decode::Decode],
-    fact_width: usize,
-    from: usize,
-    row_count: usize,
-    words: &mut [u64],
-    bytes: &mut [u8],
-) -> Result<usize> {
-    let mut facts = catalog.scan_facts(rel)?;
-    let mut position = from;
-    while let Some(entry) = FactCursor::next(&mut facts)? {
-        position = fill_one(
-            rel,
-            plan,
-            fact_width,
-            entry.bytes,
-            position,
-            row_count,
-            words,
-            bytes,
-        )?;
-    }
-    Ok(position)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the split borrows and execution context are clearer unpacked"
-)]
-fn fill_from<C: CatalogRead>(
-    catalog: &C,
-    rel: RelationId,
-    from_row_id: u64,
-    plan: &[super::decode::Decode],
-    fact_width: usize,
-    from: usize,
-    row_count: usize,
-    words: &mut [u64],
-    bytes: &mut [u8],
-) -> Result<usize> {
-    let lo = keys::fact_key(rel, from_row_id);
-    let hi = keys::fact_key(rel, u64::MAX);
-    let mut range = catalog.range(
-        CatalogMap::Data,
-        Bounds {
-            start: Bound::Included(lo.as_slice()),
-            end: Bound::Included(hi.as_slice()),
-        },
-    )?;
-    let mut position = from;
-    while let Some(entry) = ReadCursor::next(&mut range)? {
-        keys::parse_fact_key(entry.key).ok_or(Error::Corruption(
-            CorruptionError::MalformedValue("F key length"),
-        ))?;
-        position = fill_one(
-            rel,
-            plan,
-            fact_width,
-            entry.value,
-            position,
-            row_count,
-            words,
-            bytes,
-        )?;
-    }
-    Ok(position)
-}
-
+/// Build one relation's full image from a committed source: one sequential
+/// canonical-row scan, decoded through the one walker ([`row_words`]) with
+/// the cache's interner minting text tokens. Slab capacity is **charged
+/// before growth** (`ByteKind::Working` reservation held across the build);
+/// the retained image's bytes are reported through the cache's stats.
 /// # Errors
-/// Any scan corruption (wrong fact width) aborts the build; a scan yielding a
-/// different number of rows than the stored `S` count is corruption too, and a
-/// stored count exceeding the `_data` entry-count witness is
-/// [`CorruptionError::CounterDesync`] before any size-derived allocation.
+/// A scan yielding a different number of rows than the source's committed
+/// count is corruption; malformed stored bytes refuse; stopped work and
+/// allocation refusal are typed resource failures.
 /// # Panics
-/// Only on programmer-invariant violations (backing-store capacity computed
-/// from the same counters the fill loop trusts; `rel` names a closed relation —
-/// closed images synthesize from the theory, and the cache branches before this
-/// path).
-pub(crate) fn build<C: CatalogRead>(
-    catalog: &C,
+/// Only on programmer-invariant violations (`rel` names a closed relation —
+/// closed images synthesize from the theory, and the cache branches before
+/// this path).
+pub(crate) fn build_from_source(
+    source: &QuerySource<'_>,
     schema: &Schema,
+    interner: &std::sync::Mutex<TextInterner>,
     rel: RelationId,
 ) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
@@ -237,164 +167,78 @@ pub(crate) fn build<C: CatalogRead>(
         relation.body().closed_rows().is_none(),
         "closed relations synthesize from the theory, never from a scan"
     );
-    let layout = relation.layout();
-    let claimed = catalog.row_count(rel)?;
-
-    // The reopen-trust ceiling: the stored `S` count is data, and a
-
-    let witness = catalog.len(CatalogMap::Data)?;
-    if claimed > witness {
-        return Err(Error::Corruption(CorruptionError::CounterDesync {
-            relation: rel,
-            exceeded: Exceeded {
-                observed: claimed,
-                ceiling: witness,
-            },
-        }));
-    }
+    let claimed = source.row_count(rel)?;
     let row_count = usize::try_from(claimed).expect("64-bit usize");
 
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
-    let mut frame = allocate(&field_types, row_count)?;
+    let fields = relation.fields();
 
-    let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
+    // Charge the slabs before allocating them (Q-BUDGET: growth is
+    // reserved, never discovered). The reservation is transient build
+    // accounting; the sealed image's retained size is the cache's figure.
+    let spans = column_spans(&field_types);
+    let byte_cols = spans
+        .iter()
+        .filter(|s| s.width == ColumnWidth::Byte)
+        .count();
+    let column_count = spans
+        .last()
+        .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
+    let word_cols = column_count - byte_cols;
+    let (word_len, byte_len) = slab_lengths(row_count, word_cols, byte_cols)?;
+    let work = source.work();
+    let _slab_charge = work
+        .reserve(ByteKind::Working, (word_len as u64) * 8 + byte_len as u64)
+        .map_err(crate::api::prepared::source::work_error)?;
+
+    let mut frame = allocate(&field_types, row_count)?;
     let decode_span = crate::obs::span_args(
         crate::obs::names::DECODE_BATCH,
-        crate::obs::TraceArgs::Pair(row_count as u64, layout.fact_width() as u64),
+        crate::obs::TraceArgs::Pair(row_count as u64, column_count as u64),
     );
-    let position = fill_scan(
-        catalog,
-        rel,
-        &plan,
-        layout.fact_width(),
-        0,
-        row_count,
-        &mut frame.words,
-        &mut frame.bytes,
-    )?;
+    let mut interner = interner.lock().expect("interner mutex");
+    let mut text = TextWords::Intern {
+        interner: &mut interner,
+        work,
+    };
+    let mut scratch: Vec<u64> = Vec::with_capacity(column_count);
+    let mut position = 0usize;
+    {
+        let columns = &frame.columns;
+        let words = &mut frame.words;
+        let bytes = &mut frame.bytes;
+        source.scan(rel, &mut |row| {
+            if position >= row_count {
+                return Err(Error::Corruption(CorruptionError::RowCountMismatch {
+                    relation: rel,
+                    stored: claimed,
+                }));
+            }
+            scratch.clear();
+            row_words(fields, row, &mut text, &mut scratch)?;
+            debug_assert_eq!(scratch.len(), columns.len(), "one word per column");
+            for (column, &word) in columns.iter().zip(&scratch) {
+                match *column {
+                    Column::Words { start } => words[start + position] = word,
+                    Column::Bytes { start } => {
+                        bytes[start + position] = u8::try_from(word).expect("bool word");
+                    }
+                }
+            }
+            position += 1;
+            Ok(())
+        })?;
+    }
+    drop(interner);
     decode_span.end();
     if position != row_count {
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
-            stored: row_count as u64,
+            stored: claimed,
         }));
     }
 
     let distincts = count_frame(row_count, &frame);
-    Ok(seal(row_count, frame, distincts))
-}
-
-/// Sound because a delete-free, tail-only lineage makes the base a **logical
-/// prefix** of the new image — every row committed after the base has id at or
-/// above the base's boundary (the one id allocator, R16: `ImageCache::advance`
-/// evicts a base whose relation took a below-boundary insert, so tail-only is
-/// ENFORCED, never assumed from counter shape), same ordinals, same column
-/// words (fact bytes are immutable). The caller (the cache's append arm) owns
-/// the lineage claim; this function still trusts nothing it can check: the
-/// stored row count is ceiling-bounded by the `_data` entry witness before any
-/// allocation (as [`build`]), a count below the base's rows is typed corruption
-/// (only corruption shrinks a delete-free relation), and the tail scan is
-/// cross-checked against the claimed count — hard error, never a skip.
-/// # Errors
-/// # Panics
-/// Only on programmer-invariant violations: `rel` names a closed relation, or
-/// `base` was built for a different relation shape (the column layouts
-/// disagree).
-pub(crate) fn append<C: CatalogRead>(
-    catalog: &C,
-    schema: &Schema,
-    rel: RelationId,
-    base: &RelationImage,
-    from_row_id: u64,
-) -> Result<Arc<RelationImage>> {
-    let relation = schema.relation(rel);
-    debug_assert!(
-        relation.body().closed_rows().is_none(),
-        "closed relations synthesize from the theory, never from a scan"
-    );
-    let layout = relation.layout();
-    let claimed = catalog.row_count(rel)?;
-
-    // The same reopen-trust ceiling as `build`: the stored count is data
-    // and must not size an allocation unchecked.
-    let witness = catalog.len(CatalogMap::Data)?;
-    if claimed > witness {
-        return Err(Error::Corruption(CorruptionError::CounterDesync {
-            relation: rel,
-            exceeded: Exceeded {
-                observed: claimed,
-                ceiling: witness,
-            },
-        }));
-    }
-    let row_count = usize::try_from(claimed).expect("64-bit usize");
-    let base_rows = base.row_count();
-
-    if row_count < base_rows {
-        return Err(Error::Corruption(CorruptionError::RowCountMismatch {
-            relation: rel,
-            stored: claimed,
-        }));
-    }
-
-    let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
-    let mut frame = allocate(&field_types, row_count)?;
-    assert_eq!(
-        frame.columns.len(),
-        base.columns.len(),
-        "the base image was built from this relation's field→column map"
-    );
-
-    for (index, column) in frame.columns.iter().enumerate() {
-        match (*column, base.column(index)) {
-            (Column::Words { start }, ColumnView::Words(prefix)) => {
-                frame.words[start..start + base_rows].copy_from_slice(prefix);
-            }
-            (Column::Bytes { start }, ColumnView::Bytes(prefix)) => {
-                frame.bytes[start..start + base_rows].copy_from_slice(prefix);
-            }
-            _ => unreachable!("one field→column map drives both layouts"),
-        }
-    }
-
-    let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
-    let decode_span = crate::obs::span_args(
-        crate::obs::names::DECODE_BATCH,
-        crate::obs::TraceArgs::Pair((row_count - base_rows) as u64, layout.fact_width() as u64),
-    );
-    let position = fill_from(
-        catalog,
-        rel,
-        from_row_id,
-        &plan,
-        layout.fact_width(),
-        base_rows,
-        row_count,
-        &mut frame.words,
-        &mut frame.bytes,
-    )?;
-    decode_span.end();
-    if position != row_count {
-        return Err(Error::Corruption(CorruptionError::RowCountMismatch {
-            relation: rel,
-            stored: claimed,
-        }));
-    }
-
-    let span = crate::obs::span_args(
-        crate::obs::names::IMAGE_DISTINCTS,
-        crate::obs::TraceArgs::Pair(frame.columns.len() as u64, (row_count - base_rows) as u64),
-    );
-    let mut distincts = base.distincts.clone();
-    super::distinct::extend_columns(
-        &mut distincts,
-        &frame.columns,
-        base_rows,
-        row_count,
-        &frame.words,
-        &frame.bytes,
-    );
-    span.end();
     Ok(seal(row_count, frame, distincts))
 }
 
@@ -428,47 +272,94 @@ impl Default for TransientImage {
 impl TransientImage {
     /// # Panics
     /// Only on programmer-invariant violations: a row narrower than the
+    /// layout, or more rows than promised.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "infallible test twin of `refill_drained`")
+    )]
     pub fn refill<'r>(
         &mut self,
         field_types: &[ValueType],
         row_count: usize,
-        rows: impl Iterator<Item = &'r [u64]>,
+        mut rows: impl Iterator<Item = &'r [u64]>,
     ) -> Arc<RelationImage> {
-        self.fill(field_types, 0, row_count, |_| rows, CapacityPolicy::Exact)
+        self.fill_drained(
+            None,
+            field_types,
+            0,
+            row_count,
+            CapacityPolicy::Exact,
+            |_, write| {
+                for row in rows.by_ref() {
+                    write(row);
+                }
+                Ok(())
+            },
+        )
+        .expect("uncharged RAM drains are infallible")
     }
 
+    /// Refill from a fallible drain (the spill-aware seen-set path):
+    /// `drain(base, write)` must feed rows `base..row_count` in order. A
+    /// `Some` work context reserves the slab bytes BEFORE any allocation
+    /// (Q-BUDGET: growth is admitted, never discovered) — a transient
+    /// admission charge, matching `build_from_source`.
+    /// # Errors
+    /// The drain's failure (scratch read, stopped work), or the slab
+    /// reservation's typed refusal.
     /// # Panics
     /// As [`Self::refill`]: programmer-invariant violations only.
-    pub fn append<'r, I>(
+    pub fn refill_drained(
         &mut self,
+        work: Option<&crate::work::WorkContext>,
         field_types: &[ValueType],
-        filled: usize,
         row_count: usize,
-        rows_since: impl FnOnce(usize) -> I,
-    ) -> Arc<RelationImage>
-    where
-        I: Iterator<Item = &'r [u64]>,
-    {
-        self.fill(
+        drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
+    ) -> crate::error::Result<Arc<RelationImage>> {
+        self.fill_drained(
+            work,
             field_types,
-            filled,
+            0,
             row_count,
-            rows_since,
-            CapacityPolicy::Doubling,
+            CapacityPolicy::Exact,
+            drain,
         )
     }
 
-    fn fill<'r, I>(
+    /// Append rows `filled..row_count` under a doubling capacity policy,
+    /// from a fallible drain with an optional slab admission charge (see
+    /// [`Self::refill_drained`]).
+    /// # Errors
+    /// As [`Self::refill_drained`].
+    /// # Panics
+    /// As [`Self::refill`]: programmer-invariant violations only.
+    pub fn append_drained(
         &mut self,
+        work: Option<&crate::work::WorkContext>,
         field_types: &[ValueType],
         filled: usize,
         row_count: usize,
-        rows_since: impl FnOnce(usize) -> I,
+        drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
+    ) -> crate::error::Result<Arc<RelationImage>> {
+        self.fill_drained(
+            work,
+            field_types,
+            filled,
+            row_count,
+            CapacityPolicy::Doubling,
+            drain,
+        )
+    }
+
+    fn fill_drained(
+        &mut self,
+        work: Option<&crate::work::WorkContext>,
+        field_types: &[ValueType],
+        filled: usize,
+        row_count: usize,
         policy: CapacityPolicy,
-    ) -> Arc<RelationImage>
-    where
-        I: Iterator<Item = &'r [u64]>,
-    {
+        drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
+    ) -> crate::error::Result<Arc<RelationImage>> {
         debug_assert!(filled <= row_count, "seen-sets never shrink");
         let framed = match self {
             Self::Empty { capacity } | Self::Occupied { capacity, .. } => *capacity,
@@ -485,6 +376,28 @@ impl TransientImage {
                 CapacityPolicy::Exact => row_count,
                 CapacityPolicy::Doubling => framed.max(row_count.saturating_mul(2)),
             };
+            // Charge the fresh slabs before allocating them — a transient
+            // admission reservation, like `build_from_source`'s (the
+            // retained figure is the owner's to report).
+            let _slab_charge = match work {
+                Some(work) => {
+                    let spans = column_spans(field_types);
+                    let byte_cols = spans
+                        .iter()
+                        .filter(|s| s.width == ColumnWidth::Byte)
+                        .count();
+                    let column_count = spans
+                        .last()
+                        .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
+                    let (word_len, byte_len) =
+                        slab_lengths(capacity, column_count - byte_cols, byte_cols)?;
+                    Some(
+                        work.reserve(ByteKind::Working, (word_len as u64) * 8 + byte_len as u64)
+                            .map_err(crate::api::prepared::source::work_error)?,
+                    )
+                }
+                None => None,
+            };
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
 
@@ -500,9 +413,9 @@ impl TransientImage {
         let image_mut =
             Arc::get_mut(image).expect("a non-reusable slot was just replaced by a unique Arc");
         image_mut.row_count = row_count;
-        let filled_to = fill_encoded_rows(image_mut, base, rows_since(base));
+        let filled_to = drain_encoded_rows(image_mut, base, drain)?;
         debug_assert_eq!(filled_to, row_count, "the caller counted its rows");
-        Arc::clone(image)
+        Ok(Arc::clone(image))
     }
 }
 
@@ -512,20 +425,19 @@ enum CapacityPolicy {
     Doubling,
 }
 
-fn fill_encoded_rows<'r>(
+fn drain_encoded_rows(
     image: &mut RelationImage,
     base: usize,
-    rows: impl Iterator<Item = &'r [u64]>,
-) -> usize {
+    drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
+) -> crate::error::Result<usize> {
     let RelationImage {
         columns,
         words,
         bytes,
         ..
     } = image;
-    let mut filled = base;
-    for (offset, row) in rows.enumerate() {
-        let position = base + offset;
+    let mut position = base;
+    drain(base, &mut |row| {
         debug_assert_eq!(
             row.len(),
             columns.len(),
@@ -537,9 +449,9 @@ fn fill_encoded_rows<'r>(
                 Column::Bytes { start } => bytes[start + position] = u8::from(word != 0),
             }
         }
-        filled = position + 1;
-    }
-    filled
+        position += 1;
+    })?;
+    Ok(position)
 }
 
 /// Synthesizes a closed relation's image from its sealed extension — the

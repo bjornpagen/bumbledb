@@ -367,10 +367,12 @@ impl Executor {
             }
             for spec in &self.precompute[node_idx].point_probes {
                 scratch.point_sources.clear();
-                for (start_col, end_col, var, slot) in &spec.parts {
+                for (start_col, end_col, var, slot, dense) in &spec.parts {
                     let src = super::word_base(cover_vars, *var, |v| self.width_of(v))
                         .map_or(Source::Slot(*slot), Source::Batch);
-                    scratch.point_sources.push((*start_col, *end_col, src));
+                    scratch
+                        .point_sources
+                        .push((*start_col, *end_col, src, *dense));
                 }
                 let cursor_src = if spec.occ == cover_occ {
                     super::CursorSrc::Cover
@@ -389,10 +391,17 @@ impl Executor {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
                     scratch.point_checks.clear();
-                    for &(start_col, end_col, src) in &scratch.point_sources {
+                    for &(start_col, end_col, src, dense) in &scratch.point_sources {
                         let point = match src {
                             Source::Batch(base) => scratch.entry_keys[entry * arity + base],
                             Source::Slot(slot) => bindings.get(slot),
+                        };
+                        // The dense finite-probe guard: nonfinite F64
+                        // probe words are ordinary nonmatches.
+                        let point = if dense {
+                            crate::image::view::dense_probe_word(point)
+                        } else {
+                            point
                         };
                         scratch.point_checks.push((start_col, end_col, point));
                     }

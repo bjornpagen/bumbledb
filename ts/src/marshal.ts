@@ -29,17 +29,17 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  */
 
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
-import { isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
+import { isFloatIntervalValue, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { FactValue } from "#native.ts"
-import type { AnyRelation, Fact, FreshKeys, RelationData } from "#relation.ts"
+import type { AnyRelation, Fact, RelationData } from "#relation.ts"
 
-function isFreshField(field: AnyField): boolean {
-	return "fresh" in field && field.fresh === true
-}
-
-type KeyFact<R extends AnyRelation> = [FreshKeys<R>] extends [never]
-	? Partial<Fact<R>>
-	: { [K in FreshKeys<R>]: Fact<R>[K] }
+/**
+ * A key object for `get`: any subset of the fact's fields covering the
+ * primary key projection. The historical fresh-key special case is gone
+ * with the whole fresh/reserve issuance authority — the successor identity
+ * vocabulary is application-owned Id128 (P06/P07 cutover).
+ */
+type KeyFact<R extends AnyRelation> = Partial<Fact<R>>
 
 function recordOf(fact: object): Readonly<Record<string, unknown>> {
 	if (!isStringIndexed(fact)) {
@@ -116,6 +116,15 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 			}
 			return value
 		}
+		case "id128": {
+			// The canonical Id128 host value: exactly 32 lowercase hex
+			// characters. The engine re-checks; the marshal refuses the
+			// obvious wrong shape pointedly, before the bridge.
+			if (typeof value !== "string" || !/^[0-9a-f]{32}$/.test(value)) {
+				throw literalShapeError(context, "an Id128 (32 lowercase hex characters)", value)
+			}
+			return value
+		}
 		case "f64": {
 			if (typeof value !== "number") {
 				throw literalShapeError(context, "number", value)
@@ -129,6 +138,12 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 			return value
 		}
 		case "interval": {
+			if (field.element === "f64") {
+				if (!isFloatIntervalValue(value)) {
+					throw literalShapeError(context, "float interval ({ start, end } numbers)", value)
+				}
+				return { start: value.start, end: value.end }
+			}
 			if (!isIntervalValue(value)) {
 				throw literalShapeError(context, "interval ({ start, end } bigints)", value)
 			}
@@ -207,4 +222,4 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 }
 
 export type { KeyFact }
-export { cellOf, factOf, handleOf, isFreshField, keyRowOf, recordOf, rowOf }
+export { cellOf, factOf, handleOf, keyRowOf, recordOf, rowOf }

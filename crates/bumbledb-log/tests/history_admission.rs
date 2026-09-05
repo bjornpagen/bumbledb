@@ -3,8 +3,8 @@
 use bumbledb::Id128;
 use bumbledb_log::history::admission::{AdmissionView, Refusal, Resolution, Submission};
 use bumbledb_log::history::{
-    AccessMode, CommandDigest, CommandId, CommandRef, Condition, CounterExhausted, DatabaseId,
-    DatabaseIdentity, DecisionDigest, DecisionStamp, EmptyResult, HeadRevision, HistoryPosition,
+    AccessMode, CommandDigest, CommandId, CommandRef, CommandResult, Condition, CounterExhausted,
+    DatabaseId, DatabaseIdentity, DecisionDigest, DecisionStamp, HeadRevision, HistoryPosition,
     IncarnationId, PolicyError, ReceiptEpoch, ReceiptPolicy, RequestId, SchemaId, StateStamp,
     TerminalOutcome, TerminalReceipt,
 };
@@ -47,7 +47,7 @@ fn receipt() -> TerminalReceipt {
         decision_at: view().decision,
         state_at: view().state,
         outcome: TerminalOutcome::NoChange {
-            result: EmptyResult,
+            result: CommandResult::empty(),
         },
     }
 }

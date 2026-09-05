@@ -244,6 +244,8 @@ test("incomplete finalization remains a structured defect alongside a known resu
 							active: 1n,
 							queued: 0n,
 							retained: 1n,
+							owners: 0n,
+							databases: 0n,
 							inputBytes: 1n,
 							workingBytes: 1n,
 							scratchBytes: 0n,

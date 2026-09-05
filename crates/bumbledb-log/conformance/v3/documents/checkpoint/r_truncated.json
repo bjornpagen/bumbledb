@@ -1,7 +1,0 @@
-{
-  "kind": "checkpoint",
-  "expect": "refusal",
-  "schema": "kitchen",
-  "refusal": "Malformed",
-  "hex": "03"
-}

@@ -1,9 +1,8 @@
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
-    RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementView,
-    ValueType,
+    FieldDescriptor, FieldId, IntervalElement, LiteralSet, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, StatementView, ValueType,
 };
 use bumbledb::{Db, Fact, Interval, Value};
 
@@ -22,9 +21,9 @@ bumbledb::schema! {
 
     closed relation Kind as KindId = { Checking, Savings };
 
-    relation Holder  { id: u64 as HolderId, fresh, name: str }
+    relation Holder  { id: u64 as HolderId, name: str }
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         kind: u64 as KindId,
         active: interval<i64>,
@@ -41,7 +40,6 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
     }
 }
 
@@ -49,7 +47,6 @@ fn fresh_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }
 }
 
@@ -166,7 +163,7 @@ fn macro_output_is_exactly_sugar() {
 #[test]
 fn statements_land_in_source_order_with_equality_lowered() {
     let schema = declared();
-    let descriptors: Vec<StatementDescriptor> = (0..8)
+    let descriptors: Vec<StatementDescriptor> = (0..6)
         .map(|id| match schema.statement(StatementId(id)) {
             StatementView::Key(_, statement) => StatementDescriptor::Functionality {
                 relation: statement.relation,
@@ -182,30 +179,18 @@ fn statements_land_in_source_order_with_equality_lowered() {
         })
         .collect();
 
-    assert_eq!(descriptors.len(), 8);
+    // The closed relation's auto-handle key first, then the declared
+    // statements in source order (there are no fresh-implied keys).
+    assert_eq!(descriptors.len(), 6);
     assert_eq!(
         descriptors[0],
-        StatementDescriptor::Functionality {
-            relation: RelationId(1),
-            projection: Box::new([FieldId(0)]),
-        }
-    );
-    assert_eq!(
-        descriptors[1],
-        StatementDescriptor::Functionality {
-            relation: RelationId(2),
-            projection: Box::new([FieldId(0)]),
-        }
-    );
-    assert_eq!(
-        descriptors[2],
         StatementDescriptor::Functionality {
             relation: RelationId(0),
             projection: Box::new([FieldId(0)]),
         }
     );
     assert_eq!(
-        descriptors[3],
+        descriptors[1],
         StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(2),
@@ -220,7 +205,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
         }
     );
     assert_eq!(
-        descriptors[4],
+        descriptors[2],
         StatementDescriptor::Containment {
             source: Side {
                 relation: RelationId(2),
@@ -235,21 +220,21 @@ fn statements_land_in_source_order_with_equality_lowered() {
         }
     );
     assert_eq!(
-        descriptors[5],
+        descriptors[3],
         StatementDescriptor::Containment {
             source: savings_accounts(),
             target: savings_terms_side(),
         }
     );
     assert_eq!(
-        descriptors[6],
+        descriptors[4],
         StatementDescriptor::Containment {
             source: savings_terms_side(),
             target: savings_accounts(),
         }
     );
     assert_eq!(
-        descriptors[7],
+        descriptors[5],
         StatementDescriptor::Functionality {
             relation: RelationId(3),
             projection: Box::new([FieldId(0)]),
@@ -260,7 +245,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
 #[test]
 fn the_equality_pair_seals_mirror_links() {
     let schema = declared();
-    let mirrors: Vec<Option<StatementId>> = (0..8)
+    let mirrors: Vec<Option<StatementId>> = (0..6)
         .map(|id| match schema.statement(StatementId(id)) {
             StatementView::Key(_, _) | StatementView::Capacity(..) => None,
             StatementView::Containment(_, statement) => statement.mirror_id(&schema),
@@ -272,10 +257,8 @@ fn the_equality_pair_seals_mirror_links() {
             None,
             None,
             None,
-            None,
-            None,
-            Some(StatementId(6)),
-            Some(StatementId(5)),
+            Some(StatementId(4)),
+            Some(StatementId(3)),
             None
         ]
     );
@@ -351,23 +334,20 @@ fn typed_round_trip_through_fact_bytes() {
     .unwrap();
 
     db.read(|snap| {
-        let mut bytes = Vec::new();
-        assert!(matches!(
-            original.encode_probe(snap, &mut bytes).expect("encode"),
-            bumbledb::Probe::Encoded
-        ));
-        let decoded = Account::decode(snap, &bytes).expect("decode");
-        assert_eq!(decoded, original);
+        // The stored canonical row decodes back to the exact value: the
+        // generated `Fact::decode` walks the real stored bytes (text
+        // borrows the snapshot's pages — no dictionary, no copy).
+        let decoded: Vec<Account> = snap.scan_facts()?.collect::<Result<_, _>>()?;
+        assert_eq!(decoded, vec![original]);
 
+        // A fact never written is absent through the same typed encode
+        // path (the Probe/intern-lookup surface is deleted with the
+        // dictionary: absence is a set answer, not a codec verdict).
         let ghost = Holder {
             id: HolderId(9),
             name: "nobody",
         };
-        let mut bytes = Vec::new();
-        assert!(matches!(
-            ghost.encode_probe(snap, &mut bytes).expect("encode"),
-            bumbledb::Probe::ProvablyAbsent
-        ));
+        assert!(!snap.contains(&ghost)?);
         Ok(())
     })
     .expect("read");
@@ -468,7 +448,7 @@ mod selection_literals {
         pub Telemetry;
 
         relation Sensor {
-            id: u64 as SensorId, fresh,
+            id: u64 as SensorId,
             span: interval<i64>,
             offset: i64,
             live: bool,
@@ -542,13 +522,13 @@ mod selection_literals {
 
 mod fixed_bytes_host_type {
 
-    use bumbledb::{Db, Fact as _};
+    use bumbledb::Db;
 
     bumbledb::schema! {
         pub Content;
 
         relation Object {
-            id: u64 as ObjectId, fresh,
+            id: u64 as ObjectId,
             hash: bytes<32> as ContentHash,
             head: bytes<9>,
         }
@@ -592,13 +572,15 @@ mod fixed_bytes_host_type {
         }));
 
         db.read(|snap| {
-            let mut bytes = Vec::new();
-            assert!(matches!(
-                original.encode_probe(snap, &mut bytes).expect("encode"),
-                bumbledb::Probe::Encoded
-            ));
-            let decoded = Object::decode(snap, &bytes).expect("decode");
-            assert_eq!(decoded, original);
+            // The committed fixed-bytes row is reachable through the typed
+            // encode path (append_values → canonical row), not just the
+            // scan above: membership re-encodes the exact value.
+            assert!(snap.contains(&original)?);
+            assert!(!snap.contains(&Object {
+                id: ObjectId(1),
+                hash: ContentHash([0u8; 32]),
+                head: [7u8; 9],
+            })?);
             Ok(())
         })
         .expect("read");
@@ -611,11 +593,11 @@ mod two_schemas_per_module {
 
     bumbledb::schema! {
         pub LedgerA;
-        relation Alpha { id: u64 as AlphaId, fresh, note: str }
+        relation Alpha { id: u64 as AlphaId, note: str }
     }
     bumbledb::schema! {
         pub LedgerB;
-        relation Beta { id: u64 as BetaId, fresh }
+        relation Beta { id: u64 as BetaId }
     }
 
     #[test]
@@ -629,17 +611,17 @@ mod two_schemas_per_module {
             .expect("create B")
             .expect("accepted");
         db_a.write(|tx| {
-            let id = tx.reserve::<AlphaId>(1)?.start().expect("nonempty");
-            tx.insert([&Alpha { id, note: "a" }]).map(|_| ())
+            tx.insert([&Alpha {
+                id: AlphaId(1),
+                note: "a",
+            }])
+            .map(|_| ())
         })
         .expect("write A")
         .unwrap();
-        db_b.write(|tx| {
-            let id = tx.reserve::<BetaId>(1)?.start().expect("nonempty");
-            tx.insert([&Beta { id }]).map(|_| ())
-        })
-        .expect("write B")
-        .unwrap();
+        db_b.write(|tx| tx.insert([&Beta { id: BetaId(1) }]).map(|_| ()))
+            .expect("write B")
+            .unwrap();
     }
 }
 
@@ -661,7 +643,7 @@ mod closed_relations {
         };
 
         relation Submission {
-            id: u64 as SubmissionId, fresh,
+            id: u64 as SubmissionId,
             status: u64 as StatusId,
             kind: u64 as KindId,
         }
@@ -839,7 +821,7 @@ mod discriminated_union {
 
         closed relation GK as GKId = { Det, Custom };
 
-        relation Parent { id: u64 as ParentId, fresh, kind: u64 as GKId }
+        relation Parent { id: u64 as ParentId, kind: u64 as GKId }
         relation DetArm { parent: u64 as ParentId }
 
         DetArm(parent) -> DetArm;
@@ -855,7 +837,7 @@ mod discriminated_union {
             .expect("accepted");
 
         db.write(|tx| {
-            let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
+            let id = ParentId(1);
             tx.insert([&Parent {
                 id,
                 kind: GK::Det.id(),
@@ -867,18 +849,16 @@ mod discriminated_union {
         .unwrap();
 
         let _ = crate::common::expect_rejected(db.write(|tx| {
-            let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Parent {
-                id,
+                id: ParentId(2),
                 kind: GK::Det.id(),
             }])?;
             Ok(())
         }));
 
         db.write(|tx| {
-            let id: ParentId = tx.reserve(1)?.start().expect("nonempty");
             tx.insert([&Parent {
-                id,
+                id: ParentId(3),
                 kind: GK::Custom.id(),
             }])?;
             Ok(())
@@ -895,7 +875,7 @@ mod invalid_declaration {
 
     bumbledb::schema! {
         pub Duplicated;
-        relation Parent { id: u64 as ParentId, fresh }
+        relation Parent { id: u64 as ParentId }
         relation Child { parent: u64 as ParentId }
         Child(parent) <= Parent(id);
         Child(parent) <= Parent(id);
@@ -1142,7 +1122,7 @@ mod extension_forms {
             High { weight: 20 },
         };
 
-        relation Parent { id: u64 as ParentId, fresh }
+        relation Parent { id: u64 as ParentId }
         relation Task {
             parent: u64 as ParentId,
             pos:    u64,
@@ -1222,11 +1202,11 @@ mod capacity_forms {
         pub Grid;
 
         relation Pool {
-            id: u64 as PoolId, fresh,
+            id: u64 as PoolId,
             supply: u64,
         }
         relation Device {
-            id: u64 as DeviceId, fresh,
+            id: u64 as DeviceId,
             pool: u64 as PoolId,
             watts: u64,
             booked: interval<u64>,
@@ -1323,11 +1303,11 @@ mod duration_named_field {
         pub Quota;
 
         relation Bucket {
-            id: u64 as BucketId, fresh,
+            id: u64 as BucketId,
             Duration: u64,
         }
         relation Item {
-            id: u64 as ItemId, fresh,
+            id: u64 as ItemId,
             bucket: u64 as BucketId,
             Duration: u64,
         }
@@ -1351,7 +1331,7 @@ mod duration_named_field {
 mod radix_literals {
     //! Integer literals are rustc's (ruled 2026-07-23, R8): the
     use bumbledb::schema::ValidateDescriptor as _;
-    use bumbledb::schema::{Bound, IntervalElement, LiteralSet, ValueType};
+    use bumbledb::schema::{Bound, FixedIntervalElement, LiteralSet, ValueType};
     use bumbledb::{Theory as _, Value};
 
     bumbledb::schema! {
@@ -1361,7 +1341,7 @@ mod radix_literals {
             digest: bytes<0x20>,
             span:   interval<u64, 1_0>,
         }
-        relation Parent { id: u64 as ParentId, fresh }
+        relation Parent { id: u64 as ParentId }
         relation Task { parent: u64 as ParentId, state: u64 }
 
         Parent(id) <={0x2..0b100} Task(parent | state == 0o17);
@@ -1377,7 +1357,7 @@ mod radix_literals {
         assert_eq!(
             descriptor.relations[0].fields[1].value_type,
             ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: FixedIntervalElement::U64,
                 width: 10
             }
         );
@@ -1420,7 +1400,7 @@ mod fixed_width_intervals {
         assert_eq!(
             descriptor.relations[0].fields[1].value_type,
             ValueType::FixedInterval {
-                element: bumbledb::schema::IntervalElement::U64,
+                element: bumbledb::schema::FixedIntervalElement::U64,
                 width: 5
             }
         );
@@ -1682,7 +1662,7 @@ mod element_domain_typing {
         pub Playlists;
 
         relation Playlist {
-            id: u64 as PlaylistId, fresh,
+            id: u64 as PlaylistId,
             span: interval<u64>,
         }
 
@@ -1703,7 +1683,7 @@ mod element_domain_typing {
 
     fn tile(db: &Db<Playlists>) -> PlaylistId {
         db.write(|tx| {
-            let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
+            let id = PlaylistId(1);
             tx.insert([&Playlist {
                 id,
                 span: Interval::<u64>::new(0, 3).expect("nonempty"),
@@ -1745,7 +1725,7 @@ mod element_domain_typing {
             .expect("create")
             .expect("accepted");
         let violations = crate::common::expect_rejected(db.write(|tx| {
-            let id = tx.reserve::<PlaylistId>(1)?.start().expect("nonempty");
+            let id = PlaylistId(1);
             tx.insert([&Playlist {
                 id,
                 span: Interval::<u64>::new(0, 3).expect("nonempty"),

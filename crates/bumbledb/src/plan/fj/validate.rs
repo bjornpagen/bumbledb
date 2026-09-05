@@ -9,7 +9,7 @@ use crate::schema::Schema;
 use bumbledb_theory::schema::FieldId;
 use std::collections::BTreeSet;
 
-fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
+fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId, bool)> {
     occurrence.point_vars.clone()
 }
 
@@ -233,7 +233,7 @@ pub fn validate_with_signatures(
             .probe_bindings
             .iter()
             .map(|(_, v)| *v)
-            .chain(point_filters_of(occurrence).iter().map(|(_, v)| *v))
+            .chain(point_filters_of(occurrence).iter().map(|(_, v, _)| *v))
             .collect();
         let Some(node) = earliest_bound_node(&bound, &vars) else {
             return Err(PlanError::UnplacedAntiProbe {
@@ -251,7 +251,7 @@ pub fn validate_with_signatures(
         if filters.is_empty() {
             continue;
         }
-        let vars: Vec<VarId> = filters.iter().map(|(_, v)| *v).collect();
+        let vars: Vec<VarId> = filters.iter().map(|(_, v, _)| *v).collect();
         let Some(var_node) = earliest_bound_node(&bound, &vars) else {
             return Err(PlanError::UnplacedPointProbe {
                 occ: occurrence.occ_id,

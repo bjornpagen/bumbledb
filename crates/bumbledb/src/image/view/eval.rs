@@ -3,12 +3,11 @@
 //! bytes, or binding slots — and call [`holds`]. Measure-of-ray is
 //! `None`; every other outcome is `Some`. There is no second walk.
 //! Static dispatch, never `dyn`.
+use crate::image::intern::InternerHandle;
 use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::WordCmp;
 use crate::obs;
 use crate::schema::Relation;
-use crate::storage::catalog::CatalogRead;
-use crate::storage::dict;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 use super::{Const, FilterPredicate, IntervalConst, MaskConst, SetConst, ViewWordSource};
@@ -199,6 +198,34 @@ pub(crate) const fn point_in(start: u64, end: u64, point: u64) -> bool {
     start <= point && point < end
 }
 
+/// The dense line's `-Infinity` order key: the smallest canonical F64 key.
+pub(crate) const DENSE_NEG_INF_KEY: u64 = bumbledb_theory::F64::NEG_INFINITY.to_order_key();
+
+/// The finite-probe guard for dense (F64) point membership: a nonfinite
+/// probe is an ordinary NONMATCH (chapter 10 §2). Word order alone already
+/// refuses `+Infinity`/`NaN` probes (their keys are at or above every
+/// legal dense end word), so the one wrong admission is `-Infinity` into a
+/// left ray whose start word equals its key. Remap that key (and any
+/// non-canonical hole below it) to a key above every legal dense end word,
+/// so the plain word comparison itself refuses. Integer elements never
+/// take this path (`dense: false`) — their whole word domain is points.
+pub(crate) const fn dense_probe_word(point: u64) -> u64 {
+    if point <= DENSE_NEG_INF_KEY {
+        u64::MAX
+    } else {
+        point
+    }
+}
+
+/// The guarded point-membership word for a possibly-dense element.
+pub(crate) const fn element_probe_word(dense: bool, point: u64) -> u64 {
+    if dense {
+        dense_probe_word(point)
+    } else {
+        point
+    }
+}
+
 pub(crate) fn mask_of(mask: MaskConst, _params: &[Const]) -> bumbledb_theory::allen::AllenMask {
     mask
 }
@@ -284,14 +311,28 @@ pub(crate) fn holds<O: Operands>(
         FilterPredicate::FieldsCompare { left, right, op } => {
             Some(fields_compare(ops.loaded(*left)?, ops.loaded(*right)?, *op))
         }
-        FilterPredicate::PointIn { field, point } => {
+        FilterPredicate::PointIn {
+            field,
+            point,
+            dense,
+        } => {
             let (start, end) = ops.pair(*field)?;
-            Some(point_in(start, end, resolve_word(point, params)))
+            Some(point_in(
+                start,
+                end,
+                element_probe_word(*dense, resolve_word(point, params)),
+            ))
         }
-        FilterPredicate::AnyPointIn { field, set } => {
+        FilterPredicate::AnyPointIn { field, set, dense } => {
             let (start, end) = ops.pair(*field)?;
             let points = word_set(set, params);
-            let idx = points.partition_point(|&p| p < start);
+            let mut idx = points.partition_point(|&p| p < start);
+            // Dense guard: the sorted set's only wrongly-matching probe
+            // word is a leading `-Infinity`/hole key (see
+            // `dense_probe_word`); it can only sit at the range's front.
+            if *dense && idx < points.len() && points[idx] <= DENSE_NEG_INF_KEY {
+                idx += 1;
+            }
             Some(idx < points.len() && points[idx] < end)
         }
         FilterPredicate::FieldsAllen { left, right, mask } => {
@@ -312,14 +353,26 @@ pub(crate) fn holds<O: Operands>(
                 )),
             )
         }
-        FilterPredicate::FieldsPointIn { interval, point } => {
+        FilterPredicate::FieldsPointIn {
+            interval,
+            point,
+            dense,
+        } => {
             let (start, end) = ops.pair(*interval)?;
-            Some(point_in(start, end, ops.word(*point)?))
+            Some(point_in(
+                start,
+                end,
+                element_probe_word(*dense, ops.word(*point)?),
+            ))
         }
-        FilterPredicate::FieldWithin { field, outer } => {
+        FilterPredicate::FieldWithin {
+            field,
+            outer,
+            dense,
+        } => {
             let (start, end) = const_interval(outer, params);
             Some(match ops.loaded(*field)? {
-                Loaded::Word(word) => point_in(start, end, word),
+                Loaded::Word(word) => point_in(start, end, element_probe_word(*dense, word)),
                 Loaded::Byte(_) | Loaded::Pair(..) | Loaded::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
@@ -459,29 +512,52 @@ pub(crate) fn kernel_scan(
 ) -> bool {
     match predicate {
         FilterPredicate::Compare { .. } => {}
-        FilterPredicate::PointIn { field, point } => {
+        FilterPredicate::PointIn {
+            field,
+            point,
+            dense,
+        } => {
             let (starts, ends) = interval_columns(image, *field);
             crate::exec::kernel::filter_point_in_u64(
                 starts,
                 ends,
-                resolve_word(point, params),
+                element_probe_word(*dense, resolve_word(point, params)),
                 out,
             );
             return true;
         }
-        FilterPredicate::AnyPointIn { field, set } => {
+        FilterPredicate::AnyPointIn { field, set, dense } => {
             let (starts, ends) = interval_columns(image, *field);
-            crate::exec::kernel::filter_any_point_in_u64(starts, ends, word_set(set, params), out);
+            let mut points = word_set(set, params);
+            if *dense {
+                // Skip leading nonfinite/hole keys (sorted, minimum-first).
+                while points.first().is_some_and(|p| *p <= DENSE_NEG_INF_KEY) {
+                    points = &points[1..];
+                }
+            }
+            crate::exec::kernel::filter_any_point_in_u64(starts, ends, points, out);
             return true;
         }
-        FilterPredicate::FieldWithin { field, outer } => {
+        FilterPredicate::FieldWithin {
+            field,
+            outer,
+            dense,
+        } => {
             let (start, end) = const_interval(outer, params);
             let span = image.span(field.field());
             debug_assert_eq!(span.width, ColumnWidth::Word);
             let ColumnView::Words(words) = image.column(usize::from(span.first_column)) else {
                 unreachable!("a word span covers a word column")
             };
-            crate::exec::kernel::filter_range_u64(words, start, end - 1, out);
+            // Dense guard: stored nonfinite F64 scalars never lie within
+            // any range; only the `-Infinity` key needs excluding (the
+            // `+Infinity`/`NaN` keys already exceed every legal end word).
+            let lo = if *dense {
+                start.max(DENSE_NEG_INF_KEY + 1)
+            } else {
+                start
+            };
+            crate::exec::kernel::filter_range_u64(words, lo, end - 1, out);
             return true;
         }
         FilterPredicate::FieldsAllen { left, right, mask } => {
@@ -588,8 +664,8 @@ pub(crate) fn kernel_scan(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )]
-pub(crate) fn resolve_filter_into<C: CatalogRead>(
-    catalog: &C,
+pub(crate) fn resolve_filter_into(
+    interner: &InternerHandle<'_>,
     template: &mut FilterPredicate,
     params: &[Const],
     missed: &[bool],
@@ -600,19 +676,13 @@ pub(crate) fn resolve_filter_into<C: CatalogRead>(
     match template {
         FilterPredicate::Compare { field, op, value } => {
             if let Const::PendingIntern { bytes } = value {
-                match catalog.dict_lookup(bytes)? {
-                    Some(id) => {
-                        let word = Const::Word(id.raw());
-                        *value = word;
-                        *latched += 1;
-                        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(id.raw()));
-                    }
-                    None if *op == WordCmp::Eq && !negated => return Ok(false),
-                    None => {
-                        write_compare(dst, *field, *op, Some(Const::Word(dict::SENTINEL_ID)));
-                        return Ok(true);
-                    }
-                }
+                // Interning is append-only and never misses: the literal
+                // latches to a final token on its first resolution. A text
+                // absent from every image is an ordinary unequal word.
+                let word = interner.latch(bytes)?;
+                *value = Const::Word(word);
+                *latched += 1;
+                obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
             }
             let resolved = match value {
                 Const::Word(_) | Const::Byte(_) | Const::Interval { .. } => value.clone(),
@@ -656,7 +726,11 @@ pub(crate) fn resolve_filter_into<C: CatalogRead>(
             };
             write_compare(dst, *field, *op, Some(resolved));
         }
-        FilterPredicate::PointIn { field, point } => {
+        FilterPredicate::PointIn {
+            field,
+            point,
+            dense,
+        } => {
             let word = match point {
                 ViewWordSource::Word(word) => *word,
                 ViewWordSource::Param(param) => match &params[usize::from(param.0)] {
@@ -667,9 +741,10 @@ pub(crate) fn resolve_filter_into<C: CatalogRead>(
             *dst = FilterPredicate::PointIn {
                 field: *field,
                 point: ViewWordSource::Word(word),
+                dense: *dense,
             };
         }
-        FilterPredicate::AnyPointIn { field, set } => {
+        FilterPredicate::AnyPointIn { field, set, dense } => {
             let SetConst::ParamSet(param) = set else {
                 unreachable!("templates carry ParamSet markers")
             };
@@ -679,19 +754,26 @@ pub(crate) fn resolve_filter_into<C: CatalogRead>(
             if let FilterPredicate::AnyPointIn {
                 field: dst_field,
                 set: SetConst::WordSet(dst_words),
+                dense: dst_dense,
             } = dst
             {
                 *dst_field = *field;
+                *dst_dense = *dense;
                 dst_words.clear();
                 dst_words.extend_from_slice(words);
             } else {
                 *dst = FilterPredicate::AnyPointIn {
                     field: *field,
                     set: SetConst::WordSet(words.clone()),
+                    dense: *dense,
                 };
             }
         }
-        FilterPredicate::FieldWithin { field, outer } => {
+        FilterPredicate::FieldWithin {
+            field,
+            outer,
+            dense,
+        } => {
             let resolved = match outer {
                 IntervalConst::Interval { .. } => outer.clone(),
                 IntervalConst::Param(param) => match &params[usize::from(param.0)] {
@@ -705,6 +787,7 @@ pub(crate) fn resolve_filter_into<C: CatalogRead>(
             *dst = FilterPredicate::FieldWithin {
                 field: *field,
                 outer: resolved,
+                dense: *dense,
             };
         }
         FilterPredicate::FieldsAllen { left, right, mask } => {
@@ -786,6 +869,10 @@ fn write_words_value(dst: &mut FilterPredicate, words: &[u64]) {
 
 /// One prepare-resolved filter's picture (unresolvable shapes never
 /// reach a folded occurrence's list).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the per-predicate rendering arms are one linear table"
+)]
 pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
     use crate::ir::normalize::{decoded_interval, render_const, render_scalar};
     use crate::ir::render::{literal, mask_names};
@@ -824,7 +911,7 @@ pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &Filt
             out.push_str(op_symbol(*op));
             out.push_str(name(right));
         }
-        FilterPredicate::PointIn { field, point } => {
+        FilterPredicate::PointIn { field, point, .. } => {
             let ViewWordSource::Word(point) = point else {
                 render_unparsed_filter(out, filter);
                 return;
@@ -837,12 +924,14 @@ pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &Filt
             out.push_str(" in ");
             out.push_str(name(field));
         }
-        FilterPredicate::FieldsPointIn { interval, point } => {
+        FilterPredicate::FieldsPointIn {
+            interval, point, ..
+        } => {
             out.push_str(name(point));
             out.push_str(" in ");
             out.push_str(name(interval));
         }
-        FilterPredicate::FieldWithin { field, outer } => {
+        FilterPredicate::FieldWithin { field, outer, .. } => {
             let IntervalConst::Interval { start, end } = outer else {
                 render_unparsed_filter(out, filter);
                 return;
@@ -852,6 +941,7 @@ pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &Filt
             let outer_type = ValueType::Interval {
                 element: match relation.field(field.field()).value_type {
                     ValueType::I64 => IntervalElement::I64,
+                    ValueType::F64 => IntervalElement::F64,
                     _ => IntervalElement::U64,
                 },
             };
@@ -912,9 +1002,12 @@ fn element_type(value_type: &ValueType) -> ValueType {
             element: IntervalElement::I64,
         }
         | ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: bumbledb_theory::schema::FixedIntervalElement::I64,
             ..
         } => ValueType::I64,
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        } => ValueType::F64,
         _ => ValueType::U64,
     }
 }

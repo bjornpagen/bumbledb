@@ -9,16 +9,14 @@ pub(crate) fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
     }
 }
 
-pub(crate) fn fresh_field(name: &str) -> FieldDescriptor {
-    FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Fresh,
-    }
+/// An ordinary u64 identity column. The old fresh generation is deleted:
+/// identity is application-supplied and its uniqueness is a DECLARED key
+/// statement (`fd`), never an automatic materialized one.
+pub(crate) fn id_field(name: &str) -> FieldDescriptor {
+    field(name, ValueType::U64)
 }
 
 pub(crate) fn row(handle: &str, values: Vec<Value>) -> Row {
@@ -123,22 +121,27 @@ fn ledger_slice() -> SchemaDescriptor {
             RelationDescriptor {
                 extension: None,
                 name: "Holder".into(),
-                fields: vec![fresh_field("id"), field("name", ValueType::String)],
+                fields: vec![id_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
                 fields: vec![
-                    fresh_field("id"),
+                    id_field("id"),
                     field("holder", ValueType::U64),
                     field("status", ValueType::U64),
                 ],
             },
         ],
-        statements: vec![StatementDescriptor::Containment {
-            source: side(RelationId(1), &[FieldId(1)]),
-            target: side(RelationId(0), &[FieldId(0)]),
-        }],
+        statements: vec![
+            // Declared identity keys replace the old fresh auto-keys.
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(0)]),
+            StatementDescriptor::Containment {
+                source: side(RelationId(1), &[FieldId(1)]),
+                target: side(RelationId(0), &[FieldId(0)]),
+            },
+        ],
     }
 }
 

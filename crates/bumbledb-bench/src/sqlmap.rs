@@ -1,39 +1,67 @@
 use bumbledb::schema::{
-    FieldDescriptor, Generation, IntervalElement, Relation, StatementId, StatementView, ValueType,
+    FieldDescriptor, IntervalElement, Relation, StatementId, StatementView, ValueType,
 };
-use bumbledb::{Schema, Value};
+use bumbledb::{RelationId, Schema, Value};
 
 fn sql_type(ty: &ValueType) -> &'static str {
     match ty {
         ValueType::Bool
         | ValueType::U64
         | ValueType::I64
-        | ValueType::Interval { .. }
+        | ValueType::Interval {
+            element: IntervalElement::U64 | IntervalElement::I64,
+        }
         | ValueType::FixedInterval { .. } => "INTEGER",
         ValueType::String => "TEXT",
-        ValueType::FixedBytes { .. } | ValueType::F64 => "BLOB",
+        // Dense interval endpoints reuse the F64 ordered-BLOB encoding:
+        // SQLite REAL would NULL a NaN endpoint and reorder -0, so BLOBs
+        // stay lossless.
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        }
+        | ValueType::FixedBytes { .. }
+        | ValueType::F64
+        | ValueType::Id128 => "BLOB",
     }
 }
 
 pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
     match &field.value_type {
-        ValueType::Interval { .. } | ValueType::FixedInterval { .. } => vec![
-            (format!("{}_start", field.name), "INTEGER"),
-            (format!("{}_end", field.name), "INTEGER"),
-        ],
+        ty @ (ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {
+            let column = sql_type(ty);
+            vec![
+                (format!("{}_start", field.name), column),
+                (format!("{}_end", field.name), column),
+            ]
+        }
         scalar => vec![(field.name.to_string(), sql_type(scalar))],
     }
 }
 
-fn rowid_alias(relation: &Relation) -> Option<&str> {
+/// The SQLite rowid alias for a relation: closed relations alias their
+/// auto-handle column; ordinary relations alias the field of their FIRST
+/// declared single-column u64 key, in statement order (the successor's
+/// declared-key reality — chapter 10: keys are declared statements only;
+/// the retired fresh auto-keys are gone, so an id column is a PRIMARY KEY
+/// alias exactly when the schema DECLARES it a key).
+fn rowid_alias<'a>(
+    schema: &'a Schema,
+    relation_id: RelationId,
+    relation: &'a Relation,
+) -> Option<&'a str> {
     if relation.body().closed_rows().is_some() {
         return relation.fields().first().map(|field| &*field.name);
     }
-    relation
-        .fields()
-        .iter()
-        .find(|field| field.generation == Generation::Fresh)
-        .map(|field| &*field.name)
+    schema.keys().iter().find_map(|statement| {
+        if statement.relation != relation_id
+            || statement.projection.len() != 1
+            || statement.form().is_pointwise()
+        {
+            return None;
+        }
+        let field = &relation.fields()[usize::from(statement.projection[0].0)];
+        matches!(field.value_type, ValueType::U64).then_some(&*field.name)
+    })
 }
 
 struct IndexSpec {
@@ -55,7 +83,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                 let rel = schema.relation(statement.relation);
 
                 let covered_by_rowid = statement.projection.len() == 1
-                    && rowid_alias(rel)
+                    && rowid_alias(schema, statement.relation, rel)
                         == Some(&*rel.fields()[usize::from(statement.projection[0].0)].name);
                 if covered_by_rowid {
                     continue;
@@ -120,17 +148,21 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
+/// # Panics
+/// On a schema wider than the SQLite mapping axioms allow (relation ids
+/// fit `u32`).
 #[must_use]
 pub fn table_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = Vec::new();
-    for relation in schema.relations() {
+    for (index, relation) in schema.relations().iter().enumerate() {
+        let relation_id = RelationId(u32::try_from(index).expect("relation count fits u32"));
         let mut columns: Vec<String> = Vec::new();
         for field in relation.fields() {
             for (name, sql_ty) in field_columns(field) {
                 columns.push(format!("\"{name}\" {sql_ty} NOT NULL"));
             }
         }
-        if let Some(alias) = rowid_alias(relation) {
+        if let Some(alias) = rowid_alias(schema, relation_id, relation) {
             statements.push(format!(
                 "CREATE TABLE \"{}\" ({}, PRIMARY KEY (\"{alias}\")) STRICT",
                 relation.name(),
@@ -188,7 +220,15 @@ fn sql_literal(value: &Value) -> String {
             });
             format!("X'{hex}'")
         }
-        Value::IntervalU64(..) | Value::IntervalI64(..) => {
+        Value::Id128(id) => {
+            let hex = id.as_bytes().iter().fold(String::new(), |mut acc, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(acc, "{byte:02X}");
+                acc
+            });
+            format!("X'{hex}'")
+        }
+        Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..) => {
             panic!("an interval maps to two columns — rows split before rendering")
         }
     }
@@ -219,11 +259,21 @@ pub fn extension_ddl(descriptor: &bumbledb::schema::SchemaDescriptor) -> Vec<Str
             let mut values = Vec::new();
             for value in &fact {
                 match value {
-                    Value::IntervalU64(..) | Value::IntervalI64(..) => {
+                    Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..) => {
                         let (start, end) = interval_halves(value);
                         let render = |half: rusqlite::types::Value| match half {
                             rusqlite::types::Value::Integer(v) => format!("{v}"),
-                            other => unreachable!("interval halves are INTEGER, got {other:?}"),
+                            rusqlite::types::Value::Blob(raw) => {
+                                let hex = raw.iter().fold(String::new(), |mut acc, byte| {
+                                    use std::fmt::Write as _;
+                                    let _ = write!(acc, "{byte:02X}");
+                                    acc
+                                });
+                                format!("X'{hex}'")
+                            }
+                            other => {
+                                unreachable!("interval halves are INTEGER or BLOB, got {other:?}")
+                            }
                         };
                         values.push(render(start));
                         values.push(render(end));
@@ -271,7 +321,8 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
         Value::F64(v) => Sql::Blob(crate::float::sql_bytes(*v).to_vec()),
         Value::String(text) => Sql::Text(text.to_string()),
         Value::FixedBytes(raw) => Sql::Blob(raw.to_vec()),
-        Value::IntervalU64(..) | Value::IntervalI64(..) => {
+        Value::Id128(id) => Sql::Blob(id.as_bytes().to_vec()),
+        Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..) => {
             panic!("an interval maps to two columns — split through interval_halves")
         }
     }
@@ -293,6 +344,10 @@ pub fn interval_halves(value: &Value) -> (rusqlite::types::Value, rusqlite::type
         Value::IntervalI64(interval) => {
             (Sql::Integer(interval.start()), Sql::Integer(interval.end()))
         }
+        Value::IntervalF64(interval) => (
+            Sql::Blob(crate::float::sql_bytes(interval.start()).to_vec()),
+            Sql::Blob(crate::float::sql_bytes(interval.end()).to_vec()),
+        ),
         scalar => panic!("interval_halves on a scalar {scalar:?}"),
     }
 }
@@ -302,7 +357,7 @@ pub fn to_sql_row(fact: &[Value]) -> Vec<rusqlite::types::Value> {
     let mut out = Vec::with_capacity(fact.len());
     for value in fact {
         match value {
-            Value::IntervalU64(..) | Value::IntervalI64(..) => {
+            Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..) => {
                 let (start, end) = interval_halves(value);
                 out.push(start);
                 out.push(end);
@@ -332,6 +387,13 @@ pub fn from_sql_value(
         (Sql::Blob(raw), ValueType::F64) => crate::float::from_sql_bytes(raw).map(Value::F64),
         (Sql::Text(text), ValueType::String) => Ok(Value::String(text.clone().into())),
         (Sql::Blob(raw), ValueType::FixedBytes { .. }) => Ok(Value::FixedBytes(raw.clone().into())),
+        (Sql::Blob(raw), ValueType::Id128) => {
+            let bytes: [u8; 16] = raw
+                .as_slice()
+                .try_into()
+                .map_err(|_| format!("id128 column holds {} bytes", raw.len()))?;
+            Ok(Value::Id128(bumbledb::Id128::from_bytes(bytes)))
+        }
         (_, ValueType::Interval { .. } | ValueType::FixedInterval { .. }) => {
             Err("an interval spans two columns — decode through interval_from_sql".to_owned())
         }
@@ -347,6 +409,16 @@ pub fn interval_from_sql(
     element: IntervalElement,
 ) -> Result<Value, String> {
     use rusqlite::types::Value as Sql;
+    if let IntervalElement::F64 = element {
+        let (Sql::Blob(start), Sql::Blob(end)) = (start, end) else {
+            return Err(format!("dense interval columns hold {start:?}, {end:?}"));
+        };
+        let start = crate::float::from_sql_bytes(start)?;
+        let end = crate::float::from_sql_bytes(end)?;
+        return bumbledb::Interval::new(start, end)
+            .map(Value::IntervalF64)
+            .ok_or_else(|| "dense interval columns hold an empty span".to_owned());
+    }
     let (Sql::Integer(start), Sql::Integer(end)) = (start, end) else {
         return Err(format!("interval columns hold {start:?}, {end:?}"));
     };
@@ -365,13 +437,14 @@ pub fn interval_from_sql(
         IntervalElement::I64 => bumbledb::Interval::<i64>::new(*start, *end)
             .map(Value::IntervalI64)
             .ok_or_else(|| format!("interval columns hold start {start} >= end {end}")),
+        IntervalElement::F64 => unreachable!("the dense arm returned above"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixture::{field, fresh};
+    use crate::fixture::field;
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor};
     use bumbledb::{FieldId, RelationId};
@@ -392,12 +465,15 @@ mod tests {
                 RelationDescriptor {
                     extension: None,
                     name: "Account".into(),
-                    fields: vec![fresh("id"), field("code", ValueType::String)],
+                    fields: vec![
+                        field("id", ValueType::U64),
+                        field("code", ValueType::String),
+                    ],
                 },
                 RelationDescriptor {
                     extension: None,
                     name: "Org".into(),
-                    fields: vec![fresh("id")],
+                    fields: vec![field("id", ValueType::U64)],
                 },
                 RelationDescriptor {
                     extension: None,
@@ -442,6 +518,21 @@ mod tests {
                 },
             ],
             statements: vec![
+                // Declared id keys first (the successor's declared-key
+                // reality — these were fresh auto-keys before; Span's id
+                // stays keyless on purpose, so a keyless id column gets no
+                // PRIMARY KEY alias): the rowid aliases derive from THESE
+                // statements, and putting them at the head keeps every
+                // later declared statement id at its historical position
+                // (closed autos now lead the materialized order).
+                StatementDescriptor::Functionality {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Functionality {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(0)]),
+                },
                 StatementDescriptor::Functionality {
                     relation: RelationId(0),
                     projection: Box::new([FieldId(1)]),
@@ -490,6 +581,12 @@ mod tests {
         }
     }
 
+    /// Statement numbering (successor materialized order): the Kind closed
+    /// auto-handle key leads (s0), then the declared list — the two
+    /// declared id keys (s1, s2 — rowid-covered so no index), the code key
+    /// (s3), the containments and the pointwise key (s4..s7). The ids
+    /// match the historical goldens because the id keys sit at the
+    /// declared head, exactly where the fresh autos used to count.
     #[test]
     fn ddl_is_golden() {
         let schema = mini_schema();

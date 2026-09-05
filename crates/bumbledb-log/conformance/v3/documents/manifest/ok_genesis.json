@@ -1,9 +1,0 @@
-{
-  "kind": "manifest",
-  "expect": "ok",
-  "value": {
-    "fingerprint": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
-    "checkpoint": null
-  },
-  "hex": "033c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c00"
-}

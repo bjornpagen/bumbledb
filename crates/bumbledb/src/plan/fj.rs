@@ -142,7 +142,9 @@ pub struct Selection {
 pub struct PointProbe {
     pub occ: OccId,
 
-    pub filters: Vec<(FieldId, VarId)>,
+    /// `(interval field, point var, dense)` — as
+    /// [`PlanOccurrence::point_filters`].
+    pub filters: Vec<(FieldId, VarId, bool)>,
 }
 
 /// One occurrence's execution-facing description — every role lives in
@@ -165,7 +167,9 @@ pub struct PlanOccurrence {
     /// before the subtraction, `split_filters`); every other one is
     pub filters: Vec<FilterPredicate>,
 
-    pub point_filters: Vec<(FieldId, VarId)>,
+    /// `(interval field, point var, dense)` — dense carries the F64
+    /// finite-probe guard into the executor's membership probes.
+    pub point_filters: Vec<(FieldId, VarId, bool)>,
 
     pub spans: Box<[ColumnSpan]>,
 

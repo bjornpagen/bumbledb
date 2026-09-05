@@ -1,16 +1,19 @@
-//! internal write representation, built once at the boundary, carrying
-//! its own shape proof, consumed by borrow until the bytes enter the
-//! delta.
-//! Construction IS the parse (King: a parser returns a type that carries
-//! the proof). [`CollectionBuilder`] performs the whole shape judgment —
-//! arity per row, type-kind per cell against the sealed roster (the one
-use crate::encoding::{InternId, ValueRef};
+//! The bridge crates' parse-once internal write representation, built once
+//! at the boundary, carrying its own shape proof, consumed by borrow until
+//! the rows enter a transaction.
+//!
+//! Construction IS the parse: [`CollectionBuilder`] performs the whole
+//! shape judgment — arity per row, type-kind per cell against the sealed
+//! roster — before any row is staged. `Send` by construction (owned arenas,
+//! no borrow of the feeding thread): built on the caller's thread,
+//! consumable on the transaction's.
+
 use crate::error::{FactShapeError, Mismatch, Result};
 use crate::ir::Value;
-use bumbledb_theory::Interval;
 use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, RelationId, ValueMismatch, ValueType, value_matches,
 };
+use bumbledb_theory::{F64, Id128, Interval};
 
 pub(super) fn shape_mismatch(
     rel: RelationId,
@@ -30,32 +33,19 @@ enum Cell {
     Bool(bool),
     U64(u64),
     I64(i64),
-    F64(bumbledb_theory::F64),
+    F64(F64),
+    Id128(Id128),
     IntervalU64(Interval<u64>),
     IntervalI64(Interval<i64>),
+    IntervalF64(Interval<F64>),
 
     FixedBytes { off: u32, len: u32 },
 
     Str { off: u32, len: u32 },
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum CellView<'c> {
-    Bool(bool),
-    U64(u64),
-    I64(i64),
-    F64(bumbledb_theory::F64),
-    IntervalU64(Interval<u64>),
-    IntervalI64(Interval<i64>),
-    FixedBytes(&'c [u8]),
-    Str(&'c str),
-}
-
-/// A shape-proved collection of dynamic rows for exactly one relation:
-/// in. `Send` by construction (owned arenas, no borrow of the feeding
-/// thread): built on the caller's thread, consumable on the
-/// transaction's.
-/// [`CollectionBuilder`] / [`AcceptedCollection::from_value_rows`].
+/// A shape-proved collection of dynamic rows for exactly one relation.
+/// Built by [`CollectionBuilder`] / [`AcceptedCollection::from_value_rows`].
 #[derive(Debug)]
 pub struct AcceptedCollection {
     relation: RelationId,
@@ -75,6 +65,7 @@ pub struct AcceptedCollection {
 
 impl AcceptedCollection {
     /// # Errors
+    /// Arity/type refusals, before any row is staged.
     pub fn from_value_rows(
         relation: RelationId,
         fields: &[FieldDescriptor],
@@ -124,24 +115,28 @@ impl AcceptedCollection {
         &self.roster
     }
 
-    pub(super) fn row_cells(&self, row: u64) -> impl Iterator<Item = CellView<'_>> {
+    /// Materialize one row's canonical values into `out` (cleared first).
+    /// # Panics
+    /// `row` out of range (callers iterate `0..rows()`).
+    pub(super) fn row_values_into(&self, row: u64, out: &mut Vec<Value>) {
+        out.clear();
         let arity = usize::from(self.arity);
         let start = usize::try_from(row).expect("row index fits usize") * arity;
-        self.cells[start..start + arity]
-            .iter()
-            .map(|cell| self.view(cell))
-    }
-
-    fn view(&self, cell: &Cell) -> CellView<'_> {
-        match *cell {
-            Cell::Bool(value) => CellView::Bool(value),
-            Cell::U64(value) => CellView::U64(value),
-            Cell::I64(value) => CellView::I64(value),
-            Cell::F64(value) => CellView::F64(value),
-            Cell::IntervalU64(interval) => CellView::IntervalU64(interval),
-            Cell::IntervalI64(interval) => CellView::IntervalI64(interval),
-            Cell::FixedBytes { off, len } => CellView::FixedBytes(&self.bytes[span(off, len)]),
-            Cell::Str { off, len } => CellView::Str(&self.strings[span(off, len)]),
+        for cell in &self.cells[start..start + arity] {
+            out.push(match *cell {
+                Cell::Bool(value) => Value::Bool(value),
+                Cell::U64(value) => Value::U64(value),
+                Cell::I64(value) => Value::I64(value),
+                Cell::F64(value) => Value::F64(value),
+                Cell::Id128(value) => Value::Id128(value),
+                Cell::IntervalU64(interval) => Value::IntervalU64(interval),
+                Cell::IntervalI64(interval) => Value::IntervalI64(interval),
+                Cell::IntervalF64(interval) => Value::IntervalF64(interval),
+                Cell::FixedBytes { off, len } => {
+                    Value::FixedBytes(Box::from(&self.bytes[span(off, len)]))
+                }
+                Cell::Str { off, len } => Value::String(Box::from(&self.strings[span(off, len)])),
+            });
         }
     }
 }
@@ -153,8 +148,8 @@ fn span(off: u32, len: u32) -> std::ops::Range<usize> {
 /// THE one dynamic-row parse implementation: feeds cells positionally,
 /// judges each against the sealed roster, and [`CollectionBuilder::seal`]s
 /// into the proof-carrying [`AcceptedCollection`]. Two feeding surfaces —
-/// [`CollectionBuilder::push_value`] for the engine dyn lane and the
-/// judgment, so the rules cannot fork.
+/// [`CollectionBuilder::push_value`] for the engine dyn lane and the typed
+/// pushes for the bridge — share one judgment, so the rules cannot fork.
 pub struct CollectionBuilder<'s> {
     relation: RelationId,
     fields: &'s [FieldDescriptor],
@@ -171,6 +166,7 @@ pub struct CollectionBuilder<'s> {
 
 impl<'s> CollectionBuilder<'s> {
     /// # Panics
+    /// A sealed schema bounds field counts at `u16::MAX`.
     #[must_use]
     pub fn new(relation: RelationId, fields: &'s [FieldDescriptor]) -> Self {
         Self {
@@ -208,6 +204,7 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_value_row(&mut self, row: &[Value]) -> Result<()> {
         if row.len() != self.fields.len() {
             return Err(FactShapeError::ArityMismatch {
@@ -220,8 +217,8 @@ impl<'s> CollectionBuilder<'s> {
             .into());
         }
         if row.is_empty() {
-            // zero-rows precondition holds by construction. The refusal
-
+            // Nullary rows go through `seal_nullary`; a pushed empty row
+            // cannot advance the fill and is refused.
             return Err(FactShapeError::ArityMismatch {
                 relation: self.relation,
                 mismatch: Mismatch {
@@ -238,6 +235,7 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_value(&mut self, value: &Value) -> Result<()> {
         let (field, expected) = self.expected()?;
         if let Err(mismatch) = value_matches(value, expected) {
@@ -248,10 +246,12 @@ impl<'s> CollectionBuilder<'s> {
             Value::U64(value) => Cell::U64(*value),
             Value::I64(value) => Cell::I64(*value),
             Value::F64(value) => Cell::F64(*value),
+            Value::Id128(value) => Cell::Id128(*value),
             Value::String(text) => self.land_str(text)?,
             Value::FixedBytes(raw) => self.land_bytes(raw)?,
             Value::IntervalU64(interval) => Cell::IntervalU64(*interval),
             Value::IntervalI64(interval) => Cell::IntervalI64(*interval),
+            Value::IntervalF64(interval) => Cell::IntervalF64(*interval),
         };
         self.cells.push(cell);
         self.advance();
@@ -259,33 +259,51 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_bool(&mut self, value: bool) -> Result<()> {
         self.push_scalar(&Value::Bool(value), Cell::Bool(value))
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_u64(&mut self, value: u64) -> Result<()> {
         self.push_scalar(&Value::U64(value), Cell::U64(value))
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_i64(&mut self, value: i64) -> Result<()> {
         self.push_scalar(&Value::I64(value), Cell::I64(value))
     }
 
     /// # Errors
-    pub fn push_f64(&mut self, value: bumbledb_theory::F64) -> Result<()> {
+    /// Arity/type refusals.
+    pub fn push_f64(&mut self, value: F64) -> Result<()> {
         self.push_scalar(&Value::F64(value), Cell::F64(value))
     }
 
     /// # Errors
+    /// Arity/type refusals.
+    pub fn push_id128(&mut self, value: Id128) -> Result<()> {
+        self.push_scalar(&Value::Id128(value), Cell::Id128(value))
+    }
+
+    /// # Errors
+    /// Arity/type refusals.
     pub fn push_interval_u64(&mut self, value: Interval<u64>) -> Result<()> {
         self.push_scalar(&Value::IntervalU64(value), Cell::IntervalU64(value))
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_interval_i64(&mut self, value: Interval<i64>) -> Result<()> {
         self.push_scalar(&Value::IntervalI64(value), Cell::IntervalI64(value))
+    }
+
+    /// # Errors
+    /// Arity/type refusals.
+    pub fn push_interval_f64(&mut self, value: Interval<F64>) -> Result<()> {
+        self.push_scalar(&Value::IntervalF64(value), Cell::IntervalF64(value))
     }
 
     fn push_scalar(&mut self, judge: &Value, cell: Cell) -> Result<()> {
@@ -299,6 +317,7 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_str(&mut self, value: &str) -> Result<()> {
         let (field, expected) = self.expected()?;
         if !matches!(expected, ValueType::String) {
@@ -311,6 +330,7 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
+    /// Arity/type refusals.
     pub fn push_bytes(&mut self, value: &[u8]) -> Result<()> {
         let (field, expected) = self.expected()?;
         if !matches!(expected, ValueType::FixedBytes { len } if value.len() == usize::from(*len)) {
@@ -336,8 +356,7 @@ impl<'s> CollectionBuilder<'s> {
         Ok(Cell::FixedBytes { off, len })
     }
 
-    /// the bound is a typed refusal, never a panic
-    /// UNTESTABLE as stated: witnessing the refusal takes a >4 GiB
+    /// The arena bound is a typed refusal, never a panic.
     fn arena_span(&self, len: usize) -> Result<u32> {
         u32::try_from(len).map_err(|_| {
             FactShapeError::PayloadBound {
@@ -348,7 +367,8 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
-    /// refusal of this seal: on a fieldless roster no push can have
+    /// A nonempty roster refuses this seal: on a fieldless roster no push
+    /// can have run, so the stated count IS the collection.
     pub fn seal_nullary(mut self, rows: u64) -> Result<AcceptedCollection> {
         if !self.fields.is_empty() {
             return Err(FactShapeError::ArityMismatch {
@@ -367,6 +387,7 @@ impl<'s> CollectionBuilder<'s> {
     }
 
     /// # Errors
+    /// A partially filled final row refuses the seal.
     pub fn seal(self) -> Result<AcceptedCollection> {
         if self.fill != 0 {
             return Err(FactShapeError::ArityMismatch {
@@ -392,46 +413,4 @@ impl<'s> CollectionBuilder<'s> {
             bytes: self.bytes,
         })
     }
-}
-
-pub(super) fn intern_accepted_row(
-    coll: &AcceptedCollection,
-    row: u64,
-    refs: &mut Vec<ValueRef>,
-    mut resolve_str: impl FnMut(&str) -> Result<Option<InternId>>,
-) -> Result<bool> {
-    refs.clear();
-    for cell in coll.row_cells(row) {
-        let value_ref = match cell {
-            CellView::Str(text) => {
-                let Some(id) = resolve_str(text)? else {
-                    return Ok(false);
-                };
-                ValueRef::String(id)
-            }
-            CellView::Bool(value) => ValueRef::Bool(value),
-            CellView::U64(value) => ValueRef::U64(value),
-            CellView::I64(value) => ValueRef::I64(value),
-            CellView::F64(value) => ValueRef::F64(value),
-            CellView::IntervalU64(interval) => ValueRef::IntervalU64(interval),
-            CellView::IntervalI64(interval) => ValueRef::IntervalI64(interval),
-            CellView::FixedBytes(raw) => ValueRef::bytes(raw),
-        };
-        refs.push(value_ref);
-    }
-    Ok(true)
-}
-
-/// The whole shape judgment lands before the first string resolves — exactly
-/// the collection lane's parse-all-first order, so a type-illegal cell refuses
-/// even when an earlier string would already miss.
-pub(super) fn intern_value_row(
-    rel: RelationId,
-    fields: &[FieldDescriptor],
-    values: &[Value],
-    refs: &mut Vec<ValueRef>,
-    resolve_str: impl FnMut(&str) -> Result<Option<InternId>>,
-) -> Result<bool> {
-    let row = AcceptedCollection::from_value_rows(rel, fields, std::iter::once(values))?;
-    intern_accepted_row(&row, 0, refs, resolve_str)
 }

@@ -6,7 +6,7 @@ use crate::duralane::{self, DurabilityLane};
 use crate::harness::Protocol;
 use crate::poststate;
 
-use super::lanes::{self, FreshCursor};
+use super::lanes::{self, MintCursor};
 use super::{CrudSizes, ids, ops};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
@@ -65,17 +65,16 @@ fn the_lane_parity_assertion_catches_a_mismatched_synchronous() {
     let dir = scratch("parity-mismatch");
     let conn = rusqlite::Connection::open(dir.join("durable.sqlite")).expect("open");
     DurabilityLane::Durable.configure(&conn).expect("configure");
-    let err = DurabilityLane::Nosync
+    DurabilityLane::Durable
         .assert_parity(&conn)
-        .expect_err("a durable mirror is not a nosync twin");
-    assert!(err.contains("synchronous"), "{err}");
-    drop(conn);
-
-    let conn = rusqlite::Connection::open(dir.join("nosync.sqlite")).expect("open");
-    DurabilityLane::Nosync.configure(&conn).expect("configure");
+        .expect("a configured durable mirror passes its own readback");
+    // Weaken the connection by hand (the retired nosync lane's pragma set):
+    // the durable parity readback must convict it before any timing.
+    conn.pragma_update(None, "synchronous", "OFF")
+        .expect("pragma");
     let err = DurabilityLane::Durable
         .assert_parity(&conn)
-        .expect_err("a nosync mirror is not a durable twin");
+        .expect_err("a weakened mirror is not a durable twin");
     assert!(err.contains("synchronous"), "{err}");
     drop(conn);
     let _ = std::fs::remove_dir_all(&dir);
@@ -127,8 +126,8 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     let (db, conn) =
         super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
 
-    let mut ours_cursor = FreshCursor::at_base(sizes);
-    let mut theirs_cursor = FreshCursor::at_base(sizes);
+    let mut ours_cursor = MintCursor::at_base(sizes);
+    let mut theirs_cursor = MintCursor::at_base(sizes);
 
     for per_commit in [1u64, 10, 100, 1_000] {
         let ours = lanes::insert_bumbledb(&db, TINY_PROTO, SEED, per_commit, &mut ours_cursor)
@@ -194,14 +193,18 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The family battery on a second independently-loaded durable twin pair:
+/// the lockstep-cursor protocol is store-instance independent (the old
+/// second durability lane is gone — ENG-008; this keeps the second-instance
+/// coverage the nosync twin used to provide).
 #[test]
-fn the_nosync_lane_runs_the_same_families_identically() {
+fn a_second_twin_pair_runs_the_same_families_identically() {
     let sizes = CrudSizes::of(Scale::Tiny);
-    let dir = scratch("families-nosync");
+    let dir = scratch("families-second");
     let (db, conn) =
-        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Nosync).expect("load");
-    let mut ours_cursor = FreshCursor::at_base(sizes);
-    let mut theirs_cursor = FreshCursor::at_base(sizes);
+        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let mut ours_cursor = MintCursor::at_base(sizes);
+    let mut theirs_cursor = MintCursor::at_base(sizes);
 
     lanes::insert_bumbledb(&db, TINY_PROTO, SEED, 1, &mut ours_cursor).expect("insert engine");
     lanes::insert_sqlite(&conn, TINY_PROTO, SEED, 1, &mut theirs_cursor).expect("insert sqlite");
@@ -401,7 +404,6 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
     let (md, json_text) =
         super::run_with(&dir, RUN_SEED, sizes, Some(2), None, None).expect("the full crud run");
     assert!(md.contains("## lane durable"), "{md}");
-    assert!(md.contains("## lane nosync"), "{md}");
     for family in super::families() {
         assert!(md.contains(family.name), "missing {} in\n{md}", family.name);
     }
@@ -410,7 +412,7 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
         .get("lanes")
         .and_then(crate::json::Value::as_arr)
         .expect("lanes array");
-    assert_eq!(lanes.len(), 2, "two durability lanes");
+    assert_eq!(lanes.len(), 1, "one durability lane (ENG-008)");
     for lane in lanes {
         let rows = lane
             .get("rows")

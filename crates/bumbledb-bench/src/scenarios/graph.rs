@@ -12,7 +12,7 @@ bumbledb::schema! {
     pub Graph;
 
     relation Node {
-        id: u64 as GNodeId, fresh,
+        id: u64 as GNodeId,
         kind: u64 as GNodeKindId,
         score: i64,
     }
@@ -23,6 +23,11 @@ bumbledb::schema! {
     }
 
     closed relation Kind as GNodeKindId = { User, Bot, Org, Page, Group };
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Node(id) -> Node;
 
     Node(kind) <= Kind(id);
     Edge(src) <= Node(id);

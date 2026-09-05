@@ -160,11 +160,8 @@ pub fn to_json(report: &RunReport) -> String {
 
     let _ = write!(
         out,
-        "],\"store\":{{\"db_bytes\":{},\"sqlite_bytes\":{},\"cache_images\":{},\"cache_bytes\":{}}}",
-        report.store.db_bytes,
-        report.store.sqlite_bytes,
-        report.store.cache_images,
-        report.store.cache_bytes
+        "],\"store\":{{\"db_bytes\":{},\"sqlite_bytes\":{}}}",
+        report.store.db_bytes, report.store.sqlite_bytes
     );
 
     out.push_str(",\"flames\":[");

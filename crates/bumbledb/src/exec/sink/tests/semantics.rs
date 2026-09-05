@@ -5,11 +5,10 @@ use crate::ir::FoldOp;
 
 #[test]
 fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
-    let dir = TempDir::new("sink-footgun");
     let schema = schema();
 
     let postings = vec![(1u64, 7u64, 100i64), (2, 7, 100)];
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
 
     let normalized_bound = normalized(
         &schema,
@@ -34,11 +33,10 @@ fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
 
 #[test]
 fn joining_a_three_tag_relation_triples_the_sum() {
-    let dir = TempDir::new("sink-tag-triple");
     let schema = schema();
     let postings = vec![(1u64, 7u64, 100i64)];
     let tags = vec![(1u64, 10u64), (1, 11), (1, 12)];
-    let views = views_of(&dir, &schema, &postings, &tags);
+    let views = views_of(&schema, &postings, &tags);
 
     let normalized = normalized(
         &schema,
@@ -56,10 +54,9 @@ fn joining_a_three_tag_relation_triples_the_sum() {
 
 #[test]
 fn witnessed_elision_matches_the_seen_set_path() {
-    let dir = TempDir::new("sink-elision");
     let schema = schema();
     let postings = vec![(1u64, 7u64, 10i64), (2, 7, 20), (3, 8, 30)];
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -108,9 +105,8 @@ fn witnessed_elision_matches_the_seen_set_path() {
 
 #[test]
 fn global_aggregate_over_empty_input_yields_zero_rows() {
-    let dir = TempDir::new("sink-empty-global");
     let schema = schema();
-    let views = views_of(&dir, &schema, &[], &[]);
+    let views = views_of(&schema, &[], &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (2, 1)])],
@@ -136,7 +132,7 @@ fn sum_is_order_independent_near_the_boundary() {
     });
     for order in [[0usize, 1, 2], [2, 1, 0], [1, 2, 0]] {
         let values = [i64::MAX, 1, -2];
-        let mut sink = AggregateSink::new(vec![sum_find], 1);
+        let mut sink = AggregateSink::new([sum_find.clone()], 1);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
@@ -148,7 +144,7 @@ fn sum_is_order_independent_near_the_boundary() {
     }
     for order in [[0usize, 1], [1, 0]] {
         let values = [i64::MAX, 1];
-        let mut sink = AggregateSink::new(vec![sum_find], 1);
+        let mut sink = AggregateSink::new([sum_find.clone()], 1);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {

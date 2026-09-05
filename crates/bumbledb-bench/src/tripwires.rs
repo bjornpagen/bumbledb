@@ -85,7 +85,7 @@ mod tests {
         assert!(!regime("stats"), "stats' dedup is semantics");
         assert!(
             regime("latest_posting_per_account"),
-            "the Arg family binds the posting fresh"
+            "the Arg family binds the posting's declared id key"
         );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

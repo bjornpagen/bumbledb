@@ -5,8 +5,7 @@ use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
 };
 use std::collections::BTreeMap;
 
@@ -34,11 +33,6 @@ fn schema(relations: usize, arity: usize) -> Schema {
                     .map(|f| FieldDescriptor {
                         name: format!("f{f}").into(),
                         value_type: ValueType::U64,
-                        generation: if f == 0 {
-                            Generation::Fresh
-                        } else {
-                            Generation::None
-                        },
                     })
                     .collect(),
             })

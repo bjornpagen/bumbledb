@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
+    Bound, FieldDescriptor, FieldId, LiteralSet, RelationDescriptor, RelationId, Row,
     SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{Db, Interval, Value};
@@ -39,7 +39,6 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
     }
 }
 
@@ -396,7 +395,7 @@ fn playlist_schema() -> SchemaDescriptor {
                     field(
                         "slot",
                         ValueType::FixedInterval {
-                            element: bumbledb::schema::IntervalElement::U64,
+                            element: bumbledb::schema::FixedIntervalElement::U64,
                             width: 1,
                         },
                     ),
@@ -447,7 +446,7 @@ fn lanes_schema() -> SchemaDescriptor {
                     field(
                         "lane",
                         ValueType::FixedInterval {
-                            element: bumbledb::schema::IntervalElement::U64,
+                            element: bumbledb::schema::FixedIntervalElement::U64,
                             width: 5,
                         },
                     ),
@@ -461,7 +460,7 @@ fn lanes_schema() -> SchemaDescriptor {
                     field(
                         "lane",
                         ValueType::FixedInterval {
-                            element: bumbledb::schema::IntervalElement::I64,
+                            element: bumbledb::schema::FixedIntervalElement::I64,
                             width: 5,
                         },
                     ),
@@ -564,13 +563,13 @@ fn closed_psi_schema() -> SchemaDescriptor {
     }
 }
 
-/// Two dossier rows live OUTSIDE this lane by its own fences: the closed-pair
+/// One dossier row lives OUTSIDE this lane by its own fence: the closed-pair
 /// sum refutation is a VALIDATION refusal
 /// (`rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound`,
-/// `schema/tests/reject.rs` — a refused schema never reaches a commit verdict),
-/// and the R16 fresh-keyed weight interplay needs the engine's mint
-/// (`storage/commit/tests/marks.rs` § R16 interplay — the naive twin spells no
-/// fresh generation).
+/// `schema/tests/reject.rs` — a refused schema never reaches a commit verdict).
+/// The retired R16 fresh-keyed weight interplay is gone WITH the mint: the
+/// successor has no fresh generation, so keyed-weight interplay is ordinary
+/// declared-key judgment already covered by the keyed fixtures here.
 #[expect(
     clippy::too_many_lines,
     reason = "one flat fixture roster, data not logic"
@@ -883,8 +882,11 @@ fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::String(_) => {
-            unreachable!("judgment fixtures carry no strings or masks")
+        Value::String(_) | Value::Id128(_) | Value::IntervalF64(_) => {
+            unreachable!(
+                "judgment fixtures carry no strings, identities or dense intervals — \
+                 the Lean judgment grammar spells none of them"
+            )
         }
     }
 }

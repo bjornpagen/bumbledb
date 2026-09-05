@@ -2,9 +2,15 @@ use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpe
 
 impl AggregateSink {
     pub(super) fn fold_scratch_row(&mut self) {
-        if self.cardinality_overflow || !self
-            .dedup
-            .consider(&self.binding_scratch, &mut self.union_scratch)
+        // The group-state pressure check runs BEFORE the row folds: past
+        // the allowance the RAM partition flushes into the scratch tier
+        // (merging per group), and this row starts a fresh partition.
+        self.maybe_spill_groups();
+        if self.error.is_some()
+            || self.cardinality_overflow
+            || !self
+                .dedup
+                .consider(&self.binding_scratch, &mut self.union_scratch)
         {
             return;
         }
@@ -13,7 +19,8 @@ impl AggregateSink {
             self.binding_scratch[slot]
         });
         let group_idx = self.probe_group();
-        if matches!(self.group_state, GroupState::Folds { .. }) && !self.advance_group(group_idx, 1) {
+        if matches!(self.group_state, GroupState::Folds { .. }) && !self.advance_group(group_idx, 1)
+        {
             return;
         }
 
@@ -21,6 +28,7 @@ impl AggregateSink {
             GroupState::Pack { slot, claims } => {
                 claims[group_idx]
                     .push([self.binding_scratch[*slot], self.binding_scratch[*slot + 1]]);
+                self.pack_bytes += 16;
             }
             GroupState::Folds { accs, n_aggs } => {
                 let n_aggs = *n_aggs;
@@ -37,8 +45,10 @@ impl AggregateSink {
                                 unreachable!("float accumulator handle")
                             };
                             if *primary {
-                                let value = bumbledb_theory::F64::from_order_key(self.binding_scratch[*slot])
-                                    .expect("validated canonical F64 binding");
+                                let value = bumbledb_theory::F64::from_order_key(
+                                    self.binding_scratch[*slot],
+                                )
+                                .expect("validated canonical F64 binding");
                                 if self.float_accs[*index].push(value).is_err() {
                                     self.cardinality_overflow = true;
                                     return;
@@ -49,7 +59,7 @@ impl AggregateSink {
                             let Acc::Count(n) = acc else {
                                 unreachable!("accumulators are seeded per op");
                             };
-                            *n += 1;
+                            *n = n.saturating_add(1);
                         }
                         AggSpec::Fold {
                             op, slot, signed, ..

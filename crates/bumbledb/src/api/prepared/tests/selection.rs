@@ -2,10 +2,6 @@ use super::*;
 
 #[test]
 fn selection_params_rotate_differentially() {
-    let dir = TempDir::new("prepared-select-diff");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-
     let mut state = 0xDEAD_BEEF_u64;
     let mut next = move || {
         state = state
@@ -24,15 +20,13 @@ fn selection_params_rotate_differentially() {
         .iter()
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
-    insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
+    let fix = postings(&borrowed);
+    let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
     for cycle in 0..3 {
         for m in 0..8 {
             let memo = format!("m{m}");
-            let out = prepared
-                .execute_collect(&txn, &cache, &memo_param(&memo))
+            let out = fix
+                .execute(&mut prepared, &memo_param(&memo))
                 .expect("execute");
             let mut expected: Vec<i64> = rows
                 .iter()
@@ -49,18 +43,14 @@ fn selection_params_rotate_differentially() {
         }
     }
 
-    let out = prepared
-        .execute_collect(&txn, &cache, &memo_param("never-stored"))
+    let out = fix
+        .execute(&mut prepared, &memo_param("never-stored"))
         .expect("execute");
     assert!(out.is_empty());
 }
 
 #[test]
 fn selection_work_is_o_selected() {
-    let dir = TempDir::new("prepared-select-counters");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-
     let rows: Vec<(u64, u64, String, i64)> = (0..20)
         .map(|id| {
             let memo = if id % 5 == 0 {
@@ -75,12 +65,10 @@ fn selection_work_is_o_selected() {
         .iter()
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
-    insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[ParamArg::Scalar(BindValue::Str("hot"))])
+    let fix = postings(&borrowed);
+    let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[ParamArg::Scalar(BindValue::Str("hot"))])
         .expect("execute");
     assert_eq!(out.len(), 4);
 }
@@ -90,12 +78,10 @@ fn selection_work_is_o_selected() {
 fn selection_params_rotate_without_view_rebuilds() {
     use crate::obs;
 
-    let dir = TempDir::new("prepared-select-trace");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(
-        &env,
-        &schema,
+    // Epoch memoization is a store behavior: heap ticks rebuild per
+    // execution by design, so this suite runs over one committed store.
+    let fix = posting_store(
+        "prepared-selection-memo",
         &[
             (1, 0, "m0", 10),
             (2, 0, "m1", 20),
@@ -103,18 +89,14 @@ fn selection_params_rotate_without_view_rebuilds() {
             (4, 0, "m0", 40),
         ],
     );
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
+    let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
 
     let mut view_builds = 0;
     let mut memo_hits = 0;
     for _cycle in 0..3 {
         for m in ["m0", "m1", "m2"] {
             obs::start_capture();
-            let out = prepared
-                .execute_collect(&txn, &cache, &memo_param(m))
-                .expect("execute");
+            let out = fix.execute(&mut prepared, &memo_param(m)).expect("execute");
             let events = obs::finish_capture();
             assert!(!out.is_empty());
             view_builds += events
@@ -135,14 +117,21 @@ fn selection_params_rotate_without_view_rebuilds() {
     assert_eq!(view_builds, 1, "one view build per generation");
     assert_eq!(memo_hits, 8, "every later execution memo-hits");
 
+    // A never-stored text now binds to a fresh interner token (interning
+    // never misses); the selection probe runs, misses, and the join never
+    // starts — the empty verdict is a probe miss, not a bind short-circuit.
     obs::start_capture();
-    let out = prepared
-        .execute_collect(&txn, &cache, &memo_param("never-stored"))
+    let out = fix
+        .execute(&mut prepared, &memo_param("never-stored"))
         .expect("execute");
     let events = obs::finish_capture();
     assert!(out.is_empty());
     let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
     assert!(!names.contains(&obs::names::VIEW_BUILD), "{names:?}");
-    assert!(!names.contains(&obs::names::SELECT_PROBE), "{names:?}");
+    let probe = events
+        .iter()
+        .find(|e| e.point() == obs::names::SELECT_PROBE)
+        .expect("the probe runs against the fresh token");
+    assert_eq!(probe.a1(), 0, "absent keys miss");
     assert!(!names.contains(&obs::names::JOIN), "{names:?}");
 }

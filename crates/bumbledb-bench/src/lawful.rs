@@ -17,12 +17,12 @@ bumbledb::schema! {
     pub LawfulWorld;
 
     relation Task {
-        id: u64 as LawTaskId, fresh,
+        id: u64 as LawTaskId,
         kind: u64 as LawTaskKindId,
         subject: u64,
     }
     relation Attempt {
-        id: u64 as LawAttemptId, fresh,
+        id: u64 as LawAttemptId,
         task: u64 as LawTaskId,
         n: u64,
     }
@@ -31,7 +31,7 @@ bumbledb::schema! {
         outcome: u64 as LawOutcomeId,
     }
     relation Steer {
-        id: u64 as LawSteerId, fresh,
+        id: u64 as LawSteerId,
         kind: u64 as LawSteerKindId,
         task: u64 as LawTaskId,
     }
@@ -49,6 +49,10 @@ bumbledb::schema! {
         Accepted { terminal: true },
         Rejected { terminal: true },
     };
+
+    Task(id) -> Task;
+    Attempt(id) -> Attempt;
+    Steer(id) -> Steer;
 
     Task(kind, subject) -> Task;
     Attempt(task, n) -> Attempt;
@@ -127,12 +131,13 @@ pub struct LawFamily {
     pub protocol: Protocol,
 }
 
-/// The ordering is load-bearing twice over: the legal lanes' shared fresh
+/// The ordering is load-bearing: the legal lanes' shared APPLICATION-OWNED id
 /// cursors must see the store the window setup left (task 0 saturated, both
-/// engines' counters in lockstep), and the rejection lanes burn the engine's
-/// escaped fresh high-water mark past [`lanes::REJECT_ID_BASE`] (the
-/// never-reissue law — an aborted explicit insert burns like a committed one),
-/// so no legal commit may ever mint after them.
+/// engines' counters in lockstep). Ids are ordinary supplied values — the
+/// successor has no fresh generator, reservation or burn semantics — and the
+/// rejection lanes deliberately choose ids at [`lanes::REJECT_ID_BASE`], far
+/// above every legal cursor, so a rejected attempt can never collide with a
+/// later legal insert.
 #[must_use]
 pub fn families() -> &'static [LawFamily] {
     &[

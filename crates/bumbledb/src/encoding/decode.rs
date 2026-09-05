@@ -4,7 +4,8 @@
 use super::FixedBytesValue;
 use super::{FactView, I64_SIGN_BIT, InternId, IntervalElement, ValueRef, ValueType};
 use crate::error::{CorruptionError, Error};
-use bumbledb_theory::Interval;
+use bumbledb_theory::schema::FixedIntervalElement;
+use bumbledb_theory::{F64, Id128, Interval};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldDecodeError {
@@ -81,6 +82,20 @@ pub(crate) fn interval_i64_from_words(bytes: [u8; 16]) -> Result<Interval<i64>, 
     let (start_bytes, end_bytes) = split_halves(bytes);
     Interval::new(decode_i64(start_bytes), decode_i64(end_bytes))
         .ok_or(FieldDecodeError::InvalidInterval(bytes))
+}
+
+/// Decodes a dense F64 interval's two physical order-key words. Each half
+/// must be a canonical order key (no negative-zero or alternative-NaN
+/// hole) and the checked constructor then refuses NaN endpoints and
+/// empty/inverted bounds — corrupt stored data refuses, never normalizes.
+/// # Errors
+pub(crate) fn interval_f64_from_words(bytes: [u8; 16]) -> Result<Interval<F64>, FieldDecodeError> {
+    let (start_bytes, end_bytes) = split_halves(bytes);
+    let start = F64::from_order_bytes(start_bytes)
+        .map_err(|_| FieldDecodeError::NonCanonicalF64(start_bytes))?;
+    let end = F64::from_order_bytes(end_bytes)
+        .map_err(|_| FieldDecodeError::NonCanonicalF64(end_bytes))?;
+    Interval::new(start, end).ok_or(FieldDecodeError::InvalidInterval(bytes))
 }
 
 /// Decodes a fixed-width interval's stored START word (either element
@@ -232,7 +247,7 @@ pub fn decode_interval_u64(
             interval_u64_from_words(bytes)
         }
         ValueType::FixedInterval {
-            element: IntervalElement::U64,
+            element: FixedIntervalElement::U64,
             width: w,
         } => {
             let (start_word, end_word) =
@@ -242,6 +257,49 @@ pub fn decode_interval_u64(
         }
         _ => panic!("interval<u64> field: the layout derives the type"),
     }
+}
+
+/// Typed `interval<f64>` field: the two order-key words through
+/// [`interval_f64_from_words`]. Never a [`ValueRef`]. There is no fixed
+/// float arm — `FixedInterval<F64>` is unrepresentable in the type system.
+/// # Errors
+/// [`FieldDecodeError::NonCanonicalF64`] or
+/// [`FieldDecodeError::InvalidInterval`].
+/// # Panics
+/// Only on a programmer-invariant violation: the addressed field is not
+/// an interval over F64.
+pub fn decode_interval_f64(
+    fact: FactView<'_, '_>,
+    field_idx: usize,
+) -> Result<Interval<F64>, FieldDecodeError> {
+    match fact.layout.field_type(field_idx) {
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        } => {
+            let bytes: [u8; 16] = field_bytes(fact, field_idx)
+                .try_into()
+                .expect("interval field: the layout derives the width");
+            interval_f64_from_words(bytes)
+        }
+        _ => panic!("interval<f64> field: the layout derives the type"),
+    }
+}
+
+/// Typed `id128` field: the sixteen exact bytes. Total — every byte
+/// pattern is a valid application-owned identity.
+/// # Panics
+/// Only on a programmer-invariant violation: the addressed field is not
+/// an `id128`.
+#[must_use]
+pub fn decode_id128(fact: FactView<'_, '_>, field_idx: usize) -> Id128 {
+    assert!(
+        matches!(fact.layout.field_type(field_idx), ValueType::Id128),
+        "id128 field: the layout derives the type"
+    );
+    let bytes: [u8; 16] = field_bytes(fact, field_idx)
+        .try_into()
+        .expect("id128 field: the layout derives the width");
+    Id128::from_bytes(bytes)
 }
 
 /// Typed `interval<i64>` field — general or fixed-width, as
@@ -265,7 +323,7 @@ pub fn decode_interval_i64(
             interval_i64_from_words(bytes)
         }
         ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: FixedIntervalElement::I64,
             width: w,
         } => {
             let (start_word, end_word) =
@@ -301,21 +359,25 @@ pub fn decode_field(
                 .map_err(|_| FieldDecodeError::NonCanonicalF64(bytes))
         }
         ValueType::String => Ok(ValueRef::String(InternId::from_raw(decode_u64(word())))),
+        ValueType::Id128 => Ok(ValueRef::Id128(decode_id128(fact, field_idx))),
         ValueType::FixedBytes { .. } => decode_fixed_bytes(fact, field_idx).map(ValueRef::bytes),
         ValueType::Interval {
             element: IntervalElement::U64,
         }
         | ValueType::FixedInterval {
-            element: IntervalElement::U64,
+            element: FixedIntervalElement::U64,
             ..
         } => decode_interval_u64(fact, field_idx).map(ValueRef::IntervalU64),
         ValueType::Interval {
             element: IntervalElement::I64,
         }
         | ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: FixedIntervalElement::I64,
             ..
         } => decode_interval_i64(fact, field_idx).map(ValueRef::IntervalI64),
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        } => decode_interval_f64(fact, field_idx).map(ValueRef::IntervalF64),
     }
 }
 
@@ -362,12 +424,14 @@ pub(crate) fn decode_values_keyed_into(
             ValueRef::U64(v) => Value::U64(v),
             ValueRef::I64(v) => Value::I64(v),
             ValueRef::F64(v) => Value::F64(v),
+            ValueRef::Id128(v) => Value::Id128(v),
             ValueRef::String(id) => Value::String(resolve_str(id.raw())?),
             ValueRef::Bytes(_) => {
                 panic!("bytes<N> decodes through decode_fixed_bytes")
             }
             ValueRef::IntervalU64(interval) => Value::IntervalU64(interval),
             ValueRef::IntervalI64(interval) => Value::IntervalI64(interval),
+            ValueRef::IntervalF64(interval) => Value::IntervalF64(interval),
         });
     }
     Ok(())

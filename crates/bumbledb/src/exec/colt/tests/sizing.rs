@@ -2,10 +2,9 @@ use super::*;
 
 #[test]
 fn construction_is_lazy_until_the_first_get() {
-    let dir = TempDir::new("colt-lazy");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i % 100, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let baseline = colt.watermark();
     assert_eq!(baseline, 1, "one root node, nothing else");
@@ -20,10 +19,9 @@ fn construction_is_lazy_until_the_first_get() {
 
 #[test]
 fn suffix_iteration_never_forces() {
-    let dir = TempDir::new("colt-suffix");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..500).map(|i| (i, i * 2)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
 
     let mut colt = Colt::new(all(&view), &[], vec![vec![0, 1]]);
     let before = colt.watermark();
@@ -37,10 +35,9 @@ fn suffix_iteration_never_forces() {
 
 #[test]
 fn singleton_keys_allocate_no_chunks() {
-    let dir = TempDir::new("colt-singleton");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..100).map(|i| (i, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let child = colt.get(Colt::root(), 0, &[5]).expect("hit");
 
@@ -50,11 +47,10 @@ fn singleton_keys_allocate_no_chunks() {
 
 #[test]
 fn small_fanouts_reserve_small_first_chunks() {
-    let dir = TempDir::new("colt-graded-chunks");
     let schema = schema();
 
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i / 2, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     colt.ensure_forced(Colt::root(), 0);
     assert_eq!(colt.chunks.len(), 500, "one small frame per fanout-2 key");
@@ -65,8 +61,7 @@ fn small_fanouts_reserve_small_first_chunks() {
     );
 
     let rows: Vec<(u64, u64)> = (0..100).map(|i| (0, i)).collect();
-    let dir2 = TempDir::new("colt-graded-chain");
-    let view = view_of(&dir2, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     colt.ensure_forced(Colt::root(), 0);
     assert_eq!(colt.chunks.len(), 3);
@@ -77,10 +72,9 @@ fn small_fanouts_reserve_small_first_chunks() {
 
 #[test]
 fn key_count_labels_are_honest_in_both_states() {
-    let dir = TempDir::new("colt-key-count");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..60).map(|i| (i % 3, i)).collect();
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
 
@@ -92,10 +86,9 @@ fn key_count_labels_are_honest_in_both_states() {
 
 #[test]
 fn zero_arity_levels_gate_on_nonemptiness() {
-    let dir = TempDir::new("colt-nullary");
     let schema = schema();
     let rows: Vec<(u64, u64)> = vec![(1, 2), (3, 4)];
-    let view = view_of(&dir, &schema, &rows);
+    let view = view_of(&schema, &rows);
 
     let mut colt = Colt::new(all(&view), &[], vec![vec![]]);
     let root = Colt::root();

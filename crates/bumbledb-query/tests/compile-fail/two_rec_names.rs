@@ -17,4 +17,5 @@ pub fn q() -> bumbledb::Query {
         rec b(c) | Parent(child: c, parent: p), b(p);
         (c) | a(c);
     })
+    .into_query()
 }

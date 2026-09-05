@@ -609,4 +609,64 @@ theorem capacity_point_exact {A : Set Fact} {φ : Selection}
   · intro h g hg hψ
     exact (measure_point_admits_iff wt.apply n _).mpr (h g hg hψ)
 
+/-! ## Successor obligations (chapter 10 §2): zero weight is not
+absence, and the widened fold never wraps -/
+
+/-- A constant-zero weighting sums to zero over any list. -/
+theorem natSum_map_zero : ∀ l : List α,
+    natSum (l.map fun _ => 0) = 0
+  | [] => rfl
+  | a :: l => by simp [natSum, natSum_map_zero l]
+
+/-- **Zero weight is not absence**: a group holding a zero-weight
+child has exact weighted measure zero while its COUNT is not zero —
+weighted total zero does not prove the group empty, so
+count/containment and weighted measures are not interchangeable
+without the required premise. -/
+theorem zero_weight_membership_distinct :
+    ∃ (s : Set Nat) (w : Nat → Nat),
+      Set.ExactMeasure w s 0 ∧ ¬ s.AtMost 0 := by
+  refine ⟨fun a => a = 0, fun _ => 0,
+    ⟨Set.measureAtLeast_zero _ _, ?_⟩, ?_⟩
+  · intro l _ _
+    exact Nat.le_of_eq (natSum_map_zero l)
+  · intro h
+    have h1 := h [0]
+      (List.Pairwise.cons (fun x hx => nomatch hx) List.Pairwise.nil)
+      (fun a ha => by
+        rcases List.mem_singleton.mp ha with rfl
+        rfl)
+    exact absurd h1 (by decide)
+
+/-- Weighted sums are bounded by count times the weight ceiling. -/
+theorem natSum_map_le_length_mul (w : α → Nat) (c : Nat)
+    (hw : ∀ a, w a ≤ c) : ∀ l : List α,
+      natSum (l.map w) ≤ l.length * c
+  | [] => Nat.zero_le _
+  | a :: l => by
+    have hrec := natSum_map_le_length_mul w c hw l
+    have hstep : natSum ((a :: l).map w) = w a + natSum (l.map w) :=
+      rfl
+    have hlen : (a :: l).length * c = l.length * c + c :=
+      Nat.succ_mul l.length c
+    rw [hstep, hlen]
+    calc w a + natSum (l.map w)
+        ≤ c + l.length * c := Nat.add_le_add (hw a) hrec
+      _ = l.length * c + c := Nat.add_comm _ _
+
+/-- **The widened fold bound** (chapter 10 §2's proved widened
+integer domain): u64 child weights over at most 2^64 distinct
+children sum strictly below 2^128 — the 128-bit accumulator never
+wraps and never needs to narrow a witness. -/
+theorem natSum_widened_bound (w : α → Nat)
+    (hw : ∀ a, w a < 2 ^ 64) (l : List α)
+    (hlen : l.length ≤ 2 ^ 64) :
+    natSum (l.map w) < 2 ^ 128 := by
+  have hb := natSum_map_le_length_mul w (2 ^ 64 - 1)
+    (fun a => Nat.le_pred_of_lt (hw a)) l
+  have hmul : l.length * (2 ^ 64 - 1) ≤ 2 ^ 64 * (2 ^ 64 - 1) :=
+    Nat.mul_le_mul hlen (Nat.le_refl _)
+  have hlit : (2 : Nat) ^ 64 * (2 ^ 64 - 1) < 2 ^ 128 := by decide
+  exact Nat.lt_of_le_of_lt (Nat.le_trans hb hmul) hlit
+
 end Bumbledb

@@ -5,25 +5,27 @@
 //! value equality is `fact_bytes` equality.
 mod decode;
 mod encode;
-mod fact_hash;
 mod layout;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
 pub(crate) use decode::FieldDecodeError;
 pub use decode::{
-    decode_bool, decode_bool_at, decode_f64, decode_field, decode_fixed_bytes,
-    decode_fixed_interval_start, decode_i64, decode_interval_i64, decode_interval_u64, decode_u64,
-    field_bytes, field_word_bytes,
+    decode_bool, decode_f64, decode_fixed_interval_start, decode_i64, field_bytes, field_word_bytes,
 };
-pub(crate) use decode::{decode_values, decode_values_keyed_into, interval_words, split_halves};
-pub use encode::{
-    append_field, encode_bool, encode_f64, encode_fact, encode_i64, encode_literal, encode_u64,
+#[cfg(test)]
+pub use decode::{
+    decode_bool_at, decode_field, decode_fixed_bytes, decode_id128, decode_interval_f64,
+    decode_interval_i64, decode_interval_u64, decode_u64,
 };
+pub(crate) use decode::{decode_values, interval_words, split_halves};
+pub use encode::{append_field, encode_bool, encode_f64, encode_i64, encode_literal, encode_u64};
+#[cfg(test)]
+pub use encode::{encode_fact, encode_id128};
 
 #[cfg(test)]
-pub(crate) use encode::encode_interval_u64;
-pub use fact_hash::fact_hash;
+pub(crate) use encode::{encode_interval_f64, encode_interval_u64};
 
 pub use bumbledb_theory::schema::ValueType;
 
@@ -111,6 +113,10 @@ pub enum ValueRef {
     I64(i64),
     F64(bumbledb_theory::F64),
 
+    /// The application-owned identity scalar: sixteen exact bytes, stored
+    /// and indexed verbatim (byte order is its total order).
+    Id128(bumbledb_theory::Id128),
+
     String(InternId),
 
     Bytes([u8; MAX_FIXED_BYTES]),
@@ -118,6 +124,10 @@ pub enum ValueRef {
     IntervalU64(Interval<u64>),
 
     IntervalI64(Interval<i64>),
+
+    /// A checked dense-line interval; physical words are the two F64
+    /// order keys, so `(start, end)` sorts lexicographically.
+    IntervalF64(Interval<bumbledb_theory::F64>),
 }
 
 impl ValueRef {
@@ -169,18 +179,9 @@ impl FactLayout {
         self.fields[field_idx].1
     }
 
-    #[must_use]
-    pub(crate) fn view<'bytes, 'layout>(
-        &'layout self,
-        bytes: &'bytes [u8],
-    ) -> Option<FactView<'bytes, 'layout>> {
-        (bytes.len() == self.fact_width).then_some(FactView {
-            bytes,
-            layout: self,
-        })
-    }
-
-    /// tests. Width is a programmer invariant (`encode_fact` writes
+    /// View already-encoded fact bytes through this layout. Width is a
+    /// programmer invariant: encoders write exactly `fact_width` bytes at
+    /// the layout's types, checked in debug builds.
     #[must_use]
     pub(crate) fn encoded<'bytes, 'layout>(
         &'layout self,
@@ -200,12 +201,7 @@ pub(crate) struct FactView<'bytes, 'layout> {
     layout: &'layout FactLayout,
 }
 
-impl<'bytes, 'layout> FactView<'bytes, 'layout> {
-    #[must_use]
-    pub(crate) const fn bytes(self) -> &'bytes [u8] {
-        self.bytes
-    }
-
+impl<'layout> FactView<'_, 'layout> {
     #[must_use]
     pub(crate) const fn layout(self) -> &'layout FactLayout {
         self.layout

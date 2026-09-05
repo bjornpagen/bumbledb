@@ -48,21 +48,10 @@ fn rejects_duplicate_field_name() {
     );
 }
 
-#[test]
-fn rejects_fresh_on_non_u64() {
-    let decl = one_relation(vec![FieldDescriptor {
-        name: "id".into(),
-        value_type: ValueType::I64,
-        generation: Generation::Fresh,
-    }]);
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::FreshOnNonU64 {
-            relation: RelationId(0),
-            field: FieldId(0)
-        }
-    );
-}
+// The fresh-generation refusals are deleted with the mechanism itself:
+// `FieldDescriptor` carries no generation attribute, so `fresh` on the
+// wrong type or on a closed relation is UNREPRESENTABLE, not rejected
+// (E-NO-RESERVE: no database-issued identity capability survives).
 
 #[test]
 fn rejects_fixed_bytes_widths_outside_the_range() {
@@ -86,7 +75,7 @@ fn rejects_fixed_bytes_widths_outside_the_range() {
 #[test]
 fn rejects_interval_widths_outside_the_range() {
     let fixed = |width: u64| ValueType::FixedInterval {
-        element: IntervalElement::U64,
+        element: FixedIntervalElement::U64,
         width,
     };
     for width in [0u64, u64::MAX] {
@@ -144,18 +133,14 @@ fn rejects_a_relation_whose_derived_column_count_overflows_u16() {
 
 #[test]
 fn the_column_cap_fires_before_any_u16_field_id_is_minted() {
-    // mints the auto-key's FieldId before relation validation runs, so
-
-    // width rejection cannot run until after the ids are minted).
+    // The cap must fire before per-field checks that mint u16 ids (an
+    // invalid bytes<0> width rejection cannot run until after the ids are
+    // minted), so an over-wide roster is one typed refusal, never a panic.
     for filler in [ValueType::U64, ValueType::FixedBytes { len: 0 }] {
         let mut fields: Vec<FieldDescriptor> = (0..66_000)
             .map(|i| field(&format!("c{i}"), filler))
             .collect();
-        fields.push(FieldDescriptor {
-            name: "id".into(),
-            value_type: ValueType::U64,
-            generation: Generation::Fresh,
-        });
+        fields.push(field("id", ValueType::U64));
         assert_eq!(
             one_relation(fields).validate().unwrap_err(),
             SchemaError::RelationTooManyColumns {
@@ -462,7 +447,7 @@ fn rejects_permuted_duplicate_functionality() {
 
 #[test]
 fn rejects_determinant_overflow() {
-    let count = crate::storage::keys::MAX_DETERMINANT_WIDTH / 8 + 1;
+    let count = crate::schema::validate::MAX_DETERMINANT_WIDTH / 8 + 1;
     let fields: Vec<FieldDescriptor> = (0..count)
         .map(|i| field(&format!("f{i}"), ValueType::U64))
         .collect();
@@ -864,25 +849,6 @@ fn rejects_str_on_a_closed_relation() {
     assert_eq!(
         decl.validate().unwrap_err(),
         SchemaError::StrOnClosedRelation {
-            relation: RelationId(0),
-            field: FieldId(1)
-        }
-    );
-}
-
-#[test]
-fn rejects_fresh_on_a_closed_relation() {
-    let decl = SchemaDescriptor {
-        relations: vec![closed(
-            "Currency",
-            vec![fresh_field("code")],
-            vec![row("Usd", vec![Value::U64(0)])],
-        )],
-        statements: vec![],
-    };
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        SchemaError::FreshOnClosedRelation {
             relation: RelationId(0),
             field: FieldId(1)
         }
@@ -1413,6 +1379,61 @@ fn rejects_a_duration_weight_over_a_scalar() {
     );
 }
 
+/// Float capacity is refused at schema validation, never judged with
+/// rounding (chapter 11): a dense `interval<f64>` field is an interval,
+/// but not an exact integral duration — neither a `[Duration(field)]`
+/// weight nor a `{0..Duration(field)}` bound may read it. A
+/// `FixedInterval<F64>` cannot even be spelled (its element enum is
+/// discrete), so only the general dense interval needs a refusal.
+#[test]
+fn rejects_float_interval_duration_weights_and_bounds() {
+    let dense = ValueType::Interval {
+        element: IntervalElement::F64,
+    };
+    // Weight over a dense source interval.
+    let mut decl = extension_tree();
+    decl.relations[1].fields.push(field("window", dense));
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::DurationOf(FieldId(5)),
+        0,
+        Some(Bound::Lit(3600)),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityWeightNotDuration {
+            relation: RelationId(1),
+            field: FieldId(5)
+        }
+        .at(StatementId(1))
+    );
+    // Dependent bound over a dense target interval.
+    let mut decl = extension_tree();
+    decl.relations[0].fields.push(field("window", dense));
+    decl.relations[1].fields.push(field(
+        "busy",
+        ValueType::Interval {
+            element: IntervalElement::U64,
+        },
+    ));
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::DurationOf(FieldId(5)),
+        0,
+        Some(Bound::TargetDuration(FieldId(1))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityBoundNotDuration {
+            relation: RelationId(0),
+            field: FieldId(1)
+        }
+        .at(StatementId(1))
+    );
+}
+
 #[test]
 fn rejects_an_unknown_weight_field() {
     let mut decl = extension_tree();
@@ -1598,37 +1619,29 @@ fn rejects_an_inverted_window() {
     );
 }
 
+/// The spelling-ban table is deleted: the vacuous `{0..*}` window and the
+/// unit existence window `{1..*}` are accepted canonical grouped-measure
+/// laws (chapter 10's normalization decision), preserving each statement's
+/// authored attribution instead of policing its utterance. The vacuous
+/// window is trivially satisfied; the existence window is judged like any
+/// floor. Inverted literal bounds remain a genuine semantic refusal.
 #[test]
-fn rejects_the_vacuous_window() {
-    // (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
-    let mut decl = extension_tree();
-    decl.statements.push(capacity(
-        side(RelationId(1), &[FieldId(0)]),
-        0,
-        None,
-        side(RelationId(0), &[FieldId(0)]),
-    ));
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        StatementErrorKind::CapacityVacuousWindow.at(StatementId(1))
-    );
-}
-
-#[test]
-fn rejects_the_containment_respelled_as_a_window() {
-    // (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
-
-    let mut decl = extension_tree();
-    decl.statements.push(capacity(
-        side(RelationId(1), &[FieldId(0)]),
-        1,
-        None,
-        side(RelationId(0), &[FieldId(0)]),
-    ));
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        StatementErrorKind::CapacityContainmentWindow.at(StatementId(1))
-    );
+fn accepts_vacuous_and_existence_windows_as_canonical_laws() {
+    for lo in [0u64, 1, 4] {
+        let mut decl = extension_tree();
+        decl.statements.push(capacity(
+            side(RelationId(1), &[FieldId(0)]),
+            lo,
+            None,
+            side(RelationId(0), &[FieldId(0)]),
+        ));
+        let schema = decl
+            .validate()
+            .unwrap_or_else(|error| panic!("floor {{{lo}..*}} is a law: {error:?}"));
+        let statement = &schema.capacities()[0];
+        assert_eq!(statement.lo, lo);
+        assert_eq!(statement.hi, crate::schema::SealedBound::Unbounded);
+    }
 }
 
 #[test]
@@ -1716,7 +1729,7 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
         vec![field(
             "slot",
             ValueType::FixedInterval {
-                element: IntervalElement::U64,
+                element: FixedIntervalElement::U64,
                 width: 1,
             },
         )],

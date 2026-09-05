@@ -27,7 +27,11 @@ impl Sink for AggregateSink {
         }
         // Exact floating folds use the constant-group batch path, which
         // already preserves shared Sum/Mean lanes and binding distinctness.
-        if self.finds.iter().any(|find| matches!(find, SinkSpec::Agg(AggSpec::Float { .. }))) {
+        if self
+            .finds
+            .iter()
+            .any(|find| matches!(find, SinkSpec::Agg(AggSpec::Float { .. })))
+        {
             return ScanOffer::Declined;
         }
 
@@ -134,7 +138,8 @@ impl Sink for AggregateSink {
 
     fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
         let count = self.scan_count;
-        if count == 0 || self.cardinality_overflow {
+        self.maybe_spill_groups();
+        if count == 0 || self.error.is_some() || self.cardinality_overflow {
             return 0;
         }
 
@@ -157,7 +162,7 @@ impl Sink for AggregateSink {
                     let Acc::Count(n) = acc else {
                         unreachable!("accumulators are seeded per op");
                     };
-                    *n += count;
+                    *n = n.saturating_add(count);
                 }
                 AggSpec::Fold { op, slot, .. } => {
                     let source = self.scan_sources[fold_i];
@@ -195,7 +200,7 @@ impl Sink for AggregateSink {
                 (Acc::SumUnsigned(t), Acc::SumUnsigned(p)) => *t += p,
                 (Acc::Min(t), Acc::Min(p)) => *t = (*t).min(*p),
                 (Acc::Max(t), Acc::Max(p)) => *t = (*t).max(*p),
-                (Acc::Count(t), Acc::Count(p)) => *t += p,
+                (Acc::Count(t), Acc::Count(p)) => *t = t.saturating_add(*p),
                 _ => unreachable!("partials are seeded from the same finds"),
             }
         }
@@ -218,7 +223,21 @@ impl Sink for AggregateSink {
             self.cached_constant_group,
         ) {
             (true, true) => self.fold_batch_dedup_constant_group(batch),
-            (false, true) => self.fold_batch_constant_group(batch, batch.survivors),
+            // Raw survivor multiplicity (`push_repeated`) is legal ONLY
+            // under the checked distinct-binding witness: exact float
+            // accumulation is NOT idempotent (the merge doubles a replayed
+            // partition — `lean/Bumbledb/Float64/Sum.lean:
+            // merge_not_idempotent`, bench `partial_state_replay_is_not_
+            // idempotent`), so a multiplicity contribution without either
+            // a seen-set verdict or the plan's `DistinctWitness` would
+            // double-count overlapping derivations.
+            (false, true) => {
+                debug_assert!(
+                    matches!(self.dedup, DedupState::Elided { .. }),
+                    "raw batch multiplicity requires the distinct-binding witness"
+                );
+                self.fold_batch_constant_group(batch, batch.survivors);
+            }
 
             (_, false) => self.fold_batch_rows(batch),
         }

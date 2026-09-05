@@ -165,13 +165,13 @@ fn example_schema_resolves_exactly() {
             RelationDescriptor {
                 extension: None,
                 name: "Holder".into(),
-                fields: vec![fresh_field("id"), field("name", ValueType::String)],
+                fields: vec![id_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "Account".into(),
                 fields: vec![
-                    fresh_field("id"),
+                    id_field("id"),
                     field("holder", ValueType::U64),
                     field("kind", ValueType::U64),
                     field(
@@ -192,6 +192,10 @@ fn example_schema_resolves_exactly() {
             },
         ],
         statements: vec![
+            // Declared identity keys replace the old fresh auto-keys, in the
+            // same materialized positions (0 and 1).
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(0)]),
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -387,7 +391,6 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
 
     assert_eq!(relation.fields()[0].name.as_ref(), "id");
     assert_eq!(relation.fields()[0].value_type, ValueType::U64);
-    assert_eq!(relation.fields()[0].generation, Generation::None);
     assert_eq!(relation.fields()[1].name.as_ref(), "minor_units");
     assert_eq!(relation.layout().fact_width(), 16);
 
@@ -407,30 +410,34 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     assert_eq!(relation.keys(), &[KeyId(0)]);
 }
 
-/// Holder declares AFTER Currency so the fresh/closed grouping (not relation
-/// order) is what the assertion pins; the declared containment also proves the
-/// closed auto-key targetable like any key.
+/// Holder declares AFTER Currency; only closed auto-handle keys are
+/// materialized before declared statements (no fresh auto-key exists —
+/// E-NO-RESERVE). The declared containment also proves the closed
+/// auto-key targetable like any key.
 #[test]
-fn closed_auto_keys_sit_between_fresh_auto_fds_and_declared_statements() {
+fn closed_auto_keys_sit_before_declared_statements() {
     let decl = SchemaDescriptor {
         relations: vec![
             currency(),
             RelationDescriptor {
                 extension: None,
                 name: "Holder".into(),
-                fields: vec![fresh_field("id"), field("currency", ValueType::U64)],
+                fields: vec![id_field("id"), field("currency", ValueType::U64)],
             },
         ],
-        statements: vec![containment(
-            side(RelationId(1), &[FieldId(1)]),
-            side(RelationId(0), &[FieldId(0)]),
-        )],
+        statements: vec![
+            fd(RelationId(1), &[FieldId(0)]),
+            containment(
+                side(RelationId(1), &[FieldId(1)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+        ],
     };
     assert_eq!(
         decl.materialized_statements(),
         vec![
-            fd(RelationId(1), &[FieldId(0)]),
             fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(0)]),
             containment(
                 side(RelationId(1), &[FieldId(1)]),
                 side(RelationId(0), &[FieldId(0)]),
@@ -883,7 +890,7 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
                     field(
                         "slot",
                         ValueType::FixedInterval {
-                            element: IntervalElement::U64,
+                            element: FixedIntervalElement::U64,
                             width: 1,
                         },
                     ),

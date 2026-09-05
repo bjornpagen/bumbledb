@@ -2,6 +2,7 @@ use super::*;
 use crate::error::{AtomIndex, FindIndex};
 use crate::ir::FoldOp;
 use crate::ir::{CmpOp, Comparison, Value};
+use bumbledb_theory::schema::FixedIntervalElement;
 
 #[test]
 fn rejects_unknown_relation() {
@@ -172,7 +173,6 @@ fn closed_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![
@@ -486,7 +486,6 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
                 .map(|i| FieldDescriptor {
                     name: format!("f{i}").into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 })
                 .collect(),
         }],
@@ -947,7 +946,6 @@ fn cross_domain_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -958,7 +956,7 @@ fn cross_domain_schema() -> Schema {
                 field(
                     "ulane",
                     ValueType::FixedInterval {
-                        element: IntervalElement::U64,
+                        element: FixedIntervalElement::U64,
                         width: 5,
                     },
                 ),

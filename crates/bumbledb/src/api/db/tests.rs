@@ -1,1707 +1,1019 @@
-use super::*;
-use crate::error::{
-    ConditionalWrite, DynIdError, Error, FactShapeError, FindIndex, LmdbFailure, Mismatch,
-};
-use crate::ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, Value, VarId};
-use crate::testutil::TempDir;
+//! Authored embedding-surface tests over the successor store (F1: written,
+//! executed only in F3).
+//!
+//! Gate mapping (chapter 70 / audit 50):
+//! - typed/dyn/accepted lane equality, reports, walls → E-DELTA, E-CODEC
+//!   consumers, SDK substrate; the three lanes share one shape judgment.
+//! - own-writes/committed fall-through point reads → E-VISIBILITY (api
+//!   half), G06 candidate children.
+//! - key-conflict rejection with both competing rows cited → ENG-005 /
+//!   E-ADMIT through the full public path (the historical shared-key
+//!   counterexample, preserved across the fresh-mechanism deletion).
+//! - closed-relation refusals and sealed-extension reads → E-VALUE.
+//! - witness lifecycle (clone/stale/foreign) → CONC substrate, SDK-009.
+//! - deleted text unreachable after delete + reopen → ENG-006 (E-TEXT api
+//!   remainder; no dictionary exists to leak).
+//! - no `*_nosync` constructor exists (ENG-008) — structural: the surface
+//!   has no such symbol; E-DURABILITY execution lives in the store tests.
+//! - generation moves only on change → E-SNAPSHOT/G06 remainder.
+//!
+//! The fresh/reserve mechanism tests of the transitional surface are
+//! deleted WITH the mechanism (ENG-004/E-NO-RESERVE): `reserve`,
+//! `FreshRange`, `fresh_field` and `DynIdError::NotAFreshField` no longer
+//! exist to test. Their safety intent — an aborted write leaks no issued
+//! authority — is unrepresentable now: identities are application values.
+
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, StatementDescriptor,
-    StatementId, ValueType,
+    FieldDescriptor, RelationId, Row, SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
 
-fn named_schema() -> SchemaDescriptor {
-    SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "Named".into(),
-            fields: vec![FieldDescriptor {
-                name: "name".into(),
-                value_type: ValueType::String,
-                generation: Generation::None,
+use crate::error::{Admission, Error, Result, Violation};
+use crate::ir::Value;
+use crate::storage::store::StoreError;
+use crate::testutil::{TempDir, expect_rejected};
+use crate::{ChangeSet, Db, InstanceBuilder, WorkContext};
+
+use super::row_reader::RowReader;
+use super::{Fact, Key};
+
+// --- Test theory: one keyed relation, hand-built (the exact Fact/Key
+// roster the schema! macro targets — P07's C-contract witness). ---
+
+const ENTRY: RelationId = RelationId(0);
+const ENTRY_NAME_KEY: StatementId = StatementId(0);
+
+#[derive(Clone, Copy)]
+struct Ledger;
+
+impl crate::Theory for Ledger {
+    fn descriptor(self) -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![bumbledb_theory::schema::RelationDescriptor {
+                name: "entry".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "name".into(),
+                        value_type: ValueType::String,
+                    },
+                    FieldDescriptor {
+                        name: "amount".into(),
+                        value_type: ValueType::I64,
+                    },
+                ],
+                extension: None,
             }],
-        }],
-        statements: vec![],
+            statements: vec![StatementDescriptor::Functionality {
+                relation: ENTRY,
+                projection: Box::new([bumbledb_theory::schema::FieldId(0)]),
+            }],
+        }
     }
 }
 
-#[test]
-fn the_reader_cache_is_invisible_except_in_speed() {
-    let dir = TempDir::new("db-reader-cache");
-    let db = Db::create(dir.path(), named_schema())
+#[derive(Debug, PartialEq, Eq)]
+struct Entry<'a> {
+    name: &'a str,
+    amount: i64,
+}
+
+impl<'a> Fact<'a> for Entry<'a> {
+    type Schema = Ledger;
+
+    const RELATION: RelationId = ENTRY;
+
+    fn append_values(&self, out: &mut Vec<Value>) -> Result<()> {
+        out.push(Value::String(self.name.into()));
+        out.push(Value::I64(self.amount));
+        Ok(())
+    }
+
+    fn decode(mut row: RowReader<'a>) -> Result<Self> {
+        let name = row.next_str()?;
+        let amount = row.next_i64()?;
+        row.finish()?;
+        Ok(Self { name, amount })
+    }
+}
+
+struct EntryName<'a>(&'a str);
+
+impl<'a> Key<'a> for EntryName<'a> {
+    type Schema = Ledger;
+    type Fact = Entry<'a>;
+
+    const STATEMENT: StatementId = ENTRY_NAME_KEY;
+
+    fn append_key_values(&self, out: &mut Vec<Value>) -> Result<()> {
+        out.push(Value::String(self.0.into()));
+        Ok(())
+    }
+}
+
+fn entry_row(name: &str, amount: i64) -> Vec<Value> {
+    vec![Value::String(name.into()), Value::I64(amount)]
+}
+
+fn create(dir: &TempDir) -> Db<Ledger> {
+    Db::create(dir.path(), Ledger)
         .expect("create")
-        .expect("accepted");
-    let named = RelationId(0);
-    let count_named = |snap: &ReadInstance<'_, SchemaDescriptor>| -> Result<u64> {
-        let mut n = 0;
-        for row in snap.scan(named)? {
-            row?;
-            n += 1;
-        }
-        Ok(n)
-    };
+        .expect("empty theory admits")
+}
 
-    let before = db.read(|snap| count_named(snap)).expect("read");
-    assert_eq!(before, 0);
-    db.write(|tx| {
-        tx.insert_dyn(named, [&[Value::String("first".into())]])
-            .map(|_| ())
-    })
-    .expect("write")
-    .unwrap();
-    let after = db.read(|snap| count_named(snap)).expect("read");
-    assert_eq!(after, 1, "the commit is visible to the very next read");
+// --- The three write lanes produce identical stores. ---
 
-    #[expect(
-        clippy::redundant_closure_for_method_calls,
-        reason = "ReadInstance::generation is not HRTB enough for Db::read"
-    )]
-    let g1 = db.read(|snap| snap.generation()).expect("read");
-    #[expect(
-        clippy::redundant_closure_for_method_calls,
-        reason = "ReadInstance::generation is not HRTB enough for Db::read"
-    )]
-    let g2 = db.read(|snap| snap.generation()).expect("read");
-    assert_eq!(g1, g2, "parked reuse serves the same snapshot");
+#[test]
+fn the_three_write_lanes_produce_identical_stores() {
+    let typed_dir = TempDir::new("db-lane-typed");
+    let dyn_dir = TempDir::new("db-lane-dyn");
+    let accepted_dir = TempDir::new("db-lane-accepted");
+    let typed = create(&typed_dir);
+    let dynamic = create(&dyn_dir);
+    let accepted = create(&accepted_dir);
 
-    let err: Result<()> = db.read(|_| {
-        Err(crate::error::Error::Overflow(
-            crate::error::OverflowKind::Aggregate { find: FindIndex(7) },
-        ))
-    });
-    assert!(err.is_err());
-    let again = db.read(|snap| count_named(snap)).expect("read after error");
-    assert_eq!(again, 1);
+    let facts = [
+        Entry {
+            name: "alpha",
+            amount: 3,
+        },
+        Entry {
+            name: "beta",
+            amount: -7,
+        },
+    ];
+    typed
+        .write(|tx| {
+            let report = tx.insert(facts.iter())?;
+            assert_eq!(report.submitted(), 2);
+            assert_eq!(report.changed(), 2);
+            Ok(())
+        })
+        .expect("write")
+        .unwrap();
 
-    for i in 0..100u64 {
-        db.write(|tx| {
-            tx.insert_dyn(named, [&[Value::String(format!("n{i}").into())]])
+    dynamic
+        .write(|tx| {
+            tx.insert_dyn(ENTRY, [entry_row("alpha", 3), entry_row("beta", -7)])
                 .map(|_| ())
         })
         .expect("write")
         .unwrap();
-        for _ in 0..100 {
-            db.read(|snap| count_named(snap)).expect("read");
-        }
-    }
-    let total = db.read(|snap| count_named(snap)).expect("read");
-    assert_eq!(total, 101);
-}
 
-fn dict_entries<S>(db: &Db<S>) -> u64 {
-    let rtxn = db.env.read_txn().expect("txn");
-    db.env.dict().len(rtxn.raw()).expect("len")
-}
+    let schema = accepted.schema();
+    let collection = crate::AcceptedCollection::from_value_rows(
+        ENTRY,
+        schema.relation(ENTRY).fields(),
+        [entry_row("alpha", 3), entry_row("beta", -7)],
+    )
+    .expect("shape proof");
+    accepted
+        .write(|tx| tx.insert_accepted(&collection).map(|_| ()))
+        .expect("write")
+        .unwrap();
 
-#[test]
-fn a_typo_delete_leaves_the_dictionary_unchanged() {
-    let dir = TempDir::new("db-mint-free-dict");
-    let db = Db::create(dir.path(), named_schema())
-        .expect("create")
-        .expect("accepted");
-    let named = RelationId(0);
-    db.write(|tx| {
-        tx.insert_dyn(named, [&[Value::String("real".into())]])
-            .map(|_| ())
-    })
-    .expect("seed")
-    .unwrap();
-    let entries = dict_entries(&db);
-    assert_eq!(entries, 2, "one value: forward + reverse entries");
-
-    db.write(|tx| {
-        let changed = tx.delete_dyn(named, [&[Value::String("ghost".into())]])?;
-        assert_eq!(
-            changed.changed(),
-            0,
-            "a never-interned value matches no fact"
-        );
-        Ok(())
-    })
-    .expect("typo delete")
-    .unwrap();
-    assert_eq!(dict_entries(&db), entries, "the dictionary grew on a miss");
-
-    db.write(|tx| {
-        let changed = tx.delete_dyn(named, [&[Value::String("real".into())]])?;
-        assert_eq!(changed.changed(), 1);
-        Ok(())
-    })
-    .expect("real delete")
-    .unwrap();
-}
-
-fn entry_schema() -> SchemaDescriptor {
-    SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "Entry".into(),
-            fields: vec![
-                FieldDescriptor {
-                    name: "name".into(),
-                    value_type: ValueType::String,
-                    generation: Generation::None,
-                },
-                FieldDescriptor {
-                    name: "amount".into(),
-                    value_type: ValueType::I64,
-                    generation: Generation::None,
-                },
-            ],
-        }],
-        statements: vec![StatementDescriptor::Functionality {
-            relation: RelationId(0),
-            projection: Box::new([FieldId(0)]),
-        }],
-    }
-}
-
-const ENTRY: RelationId = RelationId(0);
-const ENTRY_KEY: StatementId = StatementId(0);
-
-fn entry(name: &str, amount: i64) -> Vec<Value> {
-    vec![Value::String(name.into()), Value::I64(amount)]
+    let digest = typed.catalog_digest().expect("digest");
+    assert_eq!(digest, dynamic.catalog_digest().expect("digest"));
+    assert_eq!(digest, accepted.catalog_digest().expect("digest"));
 }
 
 #[test]
-fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
-    let dir = TempDir::new("db-get-dyn-ryw");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
+fn accepted_collection_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<crate::AcceptedCollection>();
+}
 
+// --- Reports, no-ops, and the ENG-006 remainder. ---
+
+#[test]
+fn a_typo_delete_is_a_counted_noop_and_moves_nothing() {
+    let dir = TempDir::new("db-typo-delete");
+    let db = create(&dir);
     db.write(|tx| {
-        assert_eq!(tx.insert_dyn(ENTRY, [&entry("a", 1)])?.changed(), 1);
-        assert_eq!(
-            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
-            Some(entry("a", 1))
-        );
-
-        assert_eq!(tx.delete_dyn(ENTRY, [&entry("a", 1)])?.changed(), 1);
-        assert_eq!(
-            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
-            None
-        );
-
-        assert_eq!(tx.insert_dyn(ENTRY, [&entry("a", 2)])?.changed(), 1);
-        assert_eq!(
-            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
-            Some(entry("a", 2))
-        );
+        tx.insert([&Entry {
+            name: "kept",
+            amount: 1,
+        }])
+        .map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    let before = db.generation().expect("generation");
+    db.write(|tx| {
+        let report = tx.delete([&Entry {
+            name: "absent",
+            amount: 9,
+        }])?;
+        assert_eq!(report.submitted(), 1);
+        assert_eq!(report.changed(), 0);
         Ok(())
     })
     .expect("write")
     .unwrap();
+    // A no-op command does not move the generation (G06 remainder).
+    assert_eq!(db.generation().expect("generation"), before);
+    assert_eq!(
+        db.read(|snap| snap.count(ENTRY)).expect("count"),
+        1,
+        "the typo delete deleted nothing"
+    );
+}
 
-    db.write(|tx| {
-        assert_eq!(
-            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
-            Some(entry("a", 2))
+#[test]
+fn deleted_text_is_unreachable_after_delete_and_reopen() {
+    let dir = TempDir::new("db-text-gone");
+    {
+        let db = create(&dir);
+        db.write(|tx| {
+            tx.insert([
+                &Entry {
+                    name: "resident",
+                    amount: 1,
+                },
+                &Entry {
+                    name: "ephemeral",
+                    amount: 2,
+                },
+            ])
+            .map(|_| ())
+        })
+        .expect("write")
+        .unwrap();
+        db.write(|tx| {
+            tx.delete([&Entry {
+                name: "ephemeral",
+                amount: 2,
+            }])
+            .map(|_| ())
+        })
+        .expect("write")
+        .unwrap();
+        assert!(
+            !db.read(|snap| snap.contains(&Entry {
+                name: "ephemeral",
+                amount: 2
+            }))
+            .expect("contains")
         );
+    }
+    // Reopen: canonical rows own their text inline; the deleted tuple left
+    // no independently live text entry anywhere (ENG-006: no dictionary
+    // namespace even exists in the store).
+    let db = Db::open(dir.path(), Ledger).expect("open");
+    let rows: Vec<Vec<Value>> = db
+        .read(|snap| snap.scan(ENTRY)?.collect::<Result<_>>())
+        .expect("scan");
+    assert_eq!(rows, vec![entry_row("resident", 1)]);
+}
+
+// --- Point reads: own writes, committed fall-through, typed errors. ---
+
+#[test]
+fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
+    let dir = TempDir::new("db-own-writes");
+    let db = create(&dir);
+    db.write(|tx| {
+        tx.insert_dyn(ENTRY, [entry_row("alpha", 3)])?;
+        // The write's own final-state view answers like a later reader.
+        let row = tx
+            .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())])?
+            .expect("own write visible");
+        assert_eq!(row, entry_row("alpha", 3));
+        // Replacement inside the same command: delete + insert, either order.
+        tx.delete_dyn(ENTRY, [entry_row("alpha", 3)])?;
+        tx.insert_dyn(ENTRY, [entry_row("alpha", 5)])?;
+        let row = tx
+            .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())])?
+            .expect("replacement visible");
+        assert_eq!(row, entry_row("alpha", 5));
+        assert!(tx.contains_dyn(ENTRY, &entry_row("alpha", 5))?);
+        assert!(!tx.contains_dyn(ENTRY, &entry_row("alpha", 3))?);
         Ok(())
     })
-    .expect("read back")
+    .expect("write")
     .unwrap();
+    let row = db
+        .read(|snap| snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("alpha".into())]))
+        .expect("read")
+        .expect("committed");
+    assert_eq!(row, entry_row("alpha", 5));
 }
 
 #[test]
 fn get_dyn_falls_through_to_committed_state() {
-    let dir = TempDir::new("db-get-dyn-committed");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| tx.insert_dyn(ENTRY, [&entry("seed", 42)]).map(|_| ()))
-        .expect("seed")
+    let dir = TempDir::new("db-fall-through");
+    let db = create(&dir);
+    db.write(|tx| tx.insert_dyn(ENTRY, [entry_row("base", 10)]).map(|_| ()))
+        .expect("write")
         .unwrap();
-
     db.write(|tx| {
-        tx.insert_dyn(ENTRY, [&entry("other", 1)])?;
-        assert_eq!(
-            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("seed".into())])?,
-            Some(entry("seed", 42))
+        // Nothing pending for "base": the read falls through to committed.
+        let row = tx
+            .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("base".into())])?
+            .expect("committed row visible");
+        assert_eq!(row, entry_row("base", 10));
+        // A pending delete hides the committed row from this view.
+        tx.delete_dyn(ENTRY, [entry_row("base", 10)])?;
+        assert!(
+            tx.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("base".into())])?
+                .is_none()
         );
-        Ok(())
+        // Abort by error: nothing changed durably.
+        Err::<(), _>(Error::ForeignWitness)
     })
-    .expect("read")
-    .unwrap();
-}
-
-#[test]
-fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
-    let dir = TempDir::new("db-get-dyn-mint-free");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| tx.insert_dyn(ENTRY, [&entry("real", 1)]).map(|_| ()))
-        .expect("seed")
-        .unwrap();
-    let entries = dict_entries(&db);
-
-    db.write(|tx| {
-        assert_eq!(
-            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("ghost".into())])?,
-            None
-        );
-        assert_eq!(
-            tx.delta().dict_next(),
-            None,
-            "the point read minted a provisional id"
-        );
-        Ok(())
-    })
-    .expect("probe")
-    .unwrap();
-    assert_eq!(dict_entries(&db), entries, "the dictionary grew on a miss");
+    .expect_err("deliberate abort");
+    assert!(
+        db.read(|snap| snap.contains_dyn(ENTRY, &entry_row("base", 10)))
+            .expect("read"),
+        "the aborted delete never reached storage"
+    );
 }
 
 #[test]
 fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
-    let dir = TempDir::new("db-get-dyn-shape");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| {
-        let err = tx
-            .get_dyn(ENTRY, StatementId(7), &[Value::String("x".into())])
-            .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::Id(DynIdError::NotAKeyStatement {
-                    relation: ENTRY,
-                    statement: StatementId(7),
-                }))
-            ),
-            "{err:?}"
-        );
-
-        let err = tx.get_dyn(ENTRY, ENTRY_KEY, &entry("x", 1)).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::ArityMismatch {
-                    relation: ENTRY,
-                    mismatch: Mismatch {
-                        witnessed: 2,
-                        required: 1,
-                    },
-                })
-            ),
-            "{err:?}"
-        );
-
-        let err = tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::U64(3)]).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::TypeMismatch {
-                    relation: ENTRY,
-                    field: FieldId(0),
-                })
-            ),
-            "{err:?}"
-        );
-        Ok(())
-    })
-    .expect("probe")
-    .unwrap();
-}
-
-fn fresh_schema() -> SchemaDescriptor {
-    SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "S".into(),
-            fields: vec![
-                FieldDescriptor {
-                    name: "id".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::Fresh,
-                },
-                FieldDescriptor {
-                    name: "v".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::None,
-                },
-            ],
-        }],
-        statements: vec![],
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SId(u64);
-
-impl Fresh for SId {
-    type Schema = SchemaDescriptor;
-    const RELATION: RelationId = RelationId(0);
-    const FIELD: FieldId = FieldId(0);
-    fn from_fresh(raw: u64) -> Self {
-        Self(raw)
-    }
-    fn fresh(self) -> u64 {
-        self.0
-    }
-}
-
-#[test]
-fn fresh_field_rejects_non_witnesses_with_typed_errors() {
-    let dir = TempDir::new("db-fresh-field-resolver");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    assert_eq!(
-        db.fresh_field(RelationId(0), FieldId(1)).unwrap_err(),
-        FactShapeError::Id(DynIdError::NotAFreshField {
-            relation: RelationId(0),
-            field: FieldId(1),
-        })
-    );
-    assert_eq!(
-        db.fresh_field(RelationId(9), FieldId(0)).unwrap_err(),
-        FactShapeError::Id(DynIdError::UnknownRelation {
-            relation: RelationId(9),
-        })
-    );
-    assert_eq!(
-        db.fresh_field(RelationId(0), FieldId(9)).unwrap_err(),
-        FactShapeError::Id(DynIdError::UnknownField {
-            relation: RelationId(0),
-            field: FieldId(9),
-        })
-    );
-}
-
-#[test]
-fn a_witness_mints_the_same_sequence_as_the_typed_path() {
-    let dir = TempDir::new("db-alloc-witness");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let id_field = db
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh field");
-    db.write(|tx| {
-        assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 0);
-        assert_eq!(
-            tx.reserve::<SId>(1)?.start().expect("nonempty"),
-            SId(1),
-            "one sequence, two surfaces"
-        );
-        assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 2);
-        assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 3);
-        assert_eq!(tx.reserve::<SId>(1)?.start().expect("nonempty"), SId(4));
-        Ok(())
-    })
-    .expect("mint")
-    .unwrap();
-
-    db.write(|tx| {
-        assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 5);
-        Ok(())
-    })
-    .expect("mint again")
-    .unwrap();
-}
-
-/// The panic gap, closed (`EscapedIdBurn`, the drop guard in `db/write.rs`):
-/// the never-reissue law binds EVERY termination of a write — a PANICKING
-/// closure included. `reserve` hands the id to the host before the commit's
-/// fate is known (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`), so
-/// the unwound transaction persists no data but burns its escaped mint — the
-/// api-level mirror of the storage-level
-/// `fresh_ids_reserved_in_a_rejected_txn_are_burned`.
-#[test]
-fn a_panicking_write_burns_its_escaped_fresh_ids() {
-    let dir = TempDir::new("db-panic-fresh-burn");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let id_field = db
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh field");
-    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = db.write(|tx| -> Result<()> {
-            assert_eq!(
-                tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
-                0,
-                "the id escapes to the host"
-            );
-            panic!("the host's own bug, mid-closure");
-        });
-    }));
-    assert!(unwound.is_err(), "the closure's panic propagates");
-
-    assert_eq!(db.generation().expect("generation").value(), 0);
-
-    db.write(|tx| {
-        assert_eq!(
-            tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
-            1,
-            "0 was issued and never re-issues, the panic notwithstanding"
-        );
-        Ok(())
-    })
-    .expect("the writer surface survives the panic")
-    .unwrap();
-}
-
-#[test]
-fn a_failed_escaped_flush_on_closure_err_is_visible_and_retried() {
-    let dir = TempDir::new("db-flush-fail-closure");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let id_field = db
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh field");
-    db.env().fail_next_fresh_flushes(1);
-    let err = db
-        .write(|tx| -> Result<()> {
-            assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 0);
-            Err(Error::ForeignWitness)
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, Error::Lmdb(LmdbFailure::Mdb(heed::MdbError::MapFull))),
-        "flush failure is the visible error, got {err:?}"
-    );
-    db.write(|tx| {
-        assert_eq!(
-            tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
-            1,
-            "the parked burn retried; 0 was never reissued"
-        );
-        Ok(())
-    })
-    .expect("retry at write begin succeeds")
-    .unwrap();
-}
-
-#[test]
-fn a_still_failing_q_burn_poisons_the_next_write_begin() {
-    let dir = TempDir::new("db-flush-poison");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let id_field = db
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh field");
-    db.env().fail_next_fresh_flushes(2);
-    let _ = db
-        .write(|tx| -> Result<()> {
-            assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 0);
-            Err(Error::ForeignWitness)
-        })
-        .unwrap_err();
-    let ran = std::sync::atomic::AtomicBool::new(false);
-    let err = db
-        .write(|tx| {
-            ran.store(true, std::sync::atomic::Ordering::SeqCst);
-            let _ = tx.reserve_at(id_field, 1)?.start().expect("nonempty");
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, Error::Lmdb(LmdbFailure::Mdb(heed::MdbError::MapFull))),
-        "{err:?}"
-    );
-    assert!(
-        !ran.load(std::sync::atomic::Ordering::SeqCst),
-        "the write closure must not run while Q is not durable"
-    );
-}
-
-#[test]
-fn a_panicking_write_with_a_failed_flush_still_never_reissues() {
-    let dir = TempDir::new("db-panic-flush-fail");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let id_field = db
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh field");
-    db.env().fail_next_fresh_flushes(1);
-    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = db.write(|tx| -> Result<()> {
-            assert_eq!(tx.reserve_at(id_field, 1)?.start().expect("nonempty"), 0);
-            panic!("host bug after reserve");
-        });
-    }));
-    assert!(unwound.is_err());
-    db.write(|tx| {
-        assert_eq!(
-            tx.reserve_at(id_field, 1)?.start().expect("nonempty"),
-            1,
-            "Drop discarded the flush error but kept the in-process floor"
-        );
-        Ok(())
-    })
-    .expect("write begin retried the parked burn")
-    .unwrap();
-}
-
-/// The drop-order lock window: `Db`'s fields drop in declaration order, and a
-/// parked reader's transaction owns its own env clone — if the `Environment`
-/// (and with it the advisory lock) dropped before `read_cache`, another handle
-/// could acquire the lock while heed still holds the path open, and its
-/// `Db::open` would surface heed's `EnvAlreadyOpened` as an untyped `Lmdb`
-/// error — breaking a retry loop keyed on the typed `EnvironmentLocked`.
-#[test]
-fn dropping_the_handle_never_leaks_an_env_already_opened_window() {
-    let dir = TempDir::new("db-drop-order");
-    drop(
-        Db::create(dir.path(), named_schema())
-            .expect("create")
-            .expect("accepted"),
-    );
-
-    // hundred on the M2 Max; the budget keeps the race real without
-
-    for _ in 0..1000 {
-        let db = Db::open(dir.path(), named_schema()).expect("open owner");
-        db.read(|_| Ok(())).expect("park a reader");
-        let path = dir.path().to_path_buf();
-        let hot = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let hot_flag = std::sync::Arc::clone(&hot);
-        let opener = std::thread::spawn(move || -> Result<()> {
-            loop {
-                match Db::open(&path, named_schema()) {
-                    Ok(reopened) => {
-                        drop(reopened);
-                        return Ok(());
-                    }
-                    Err(Error::EnvironmentLocked) => {
-                        hot_flag.store(true, std::sync::atomic::Ordering::Release);
-                    }
-                    Err(other) => return Err(other),
-                }
-            }
-        });
-        // The opener is provably in its retry loop before the drop
-
-        while !hot.load(std::sync::atomic::Ordering::Acquire) {
-            std::hint::spin_loop();
-        }
-        drop(db);
-        opener
-            .join()
-            .expect("opener thread")
-            .expect("the retry loop must see EnvironmentLocked or success, never a raw Lmdb error");
-    }
-}
-
-/// The refusal aborts the transaction whole: no Q entry, no state change.
-#[test]
-fn a_foreign_witness_is_refused_typed_not_minted() {
-    let foreign_dir = TempDir::new("db-foreign-witness-resolver");
-    let foreign = Db::create(foreign_dir.path(), fresh_schema())
-        .expect("create foreign")
-        .expect("accepted");
-    let witness = foreign
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh in ITS OWN schema");
-    let dir = TempDir::new("db-foreign-witness");
-
-    let db = Db::create(dir.path(), named_schema())
-        .expect("create")
-        .expect("accepted");
-    let outcome = db.write(|tx| tx.reserve_at(witness, 1).map(|_| ()));
-    match outcome.unwrap_err() {
-        Error::FactShape(FactShapeError::Id(DynIdError::NotAFreshField { relation, field })) => {
-            assert_eq!(relation, RelationId(0));
-            assert_eq!(field, FieldId(0));
-        }
-        other => panic!("a foreign witness must refuse typed, not mint: {other:?}"),
-    }
-
-    assert_eq!(db.generation().expect("generation").value(), 0);
-}
-
-#[test]
-fn a_shape_failure_does_not_poison_the_write() {
-    let dir = TempDir::new("db-shape-no-poison");
-    let db = Db::create(dir.path(), named_schema())
-        .expect("create")
-        .expect("accepted");
-    let named = RelationId(0);
-
-    db.write(|tx| {
-        let err = tx
-            .insert_dyn(named, [Vec::<Value>::new()])
-            .expect_err("empty row is the wrong arity");
-        assert!(matches!(err, Error::FactShape(_)), "{err:?}");
-        assert_eq!(
-            tx.insert_dyn(named, [&[Value::String("ok".into())]])?
-                .changed(),
-            1
-        );
-        Ok(())
-    })
-    .expect("the shape miss did not poison")
-    .unwrap();
-    let n = db.read(|snap| Ok(snap.scan(named)?.count())).expect("scan");
-    assert_eq!(n, 1);
-}
-
-#[test]
-fn empty_fresh_range_has_no_minted_id() {
-    let dir = TempDir::new("db-empty-fresh");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let field = db
-        .fresh_field(RelationId(0), FieldId(0))
-        .expect("fresh field");
-    db.write(|tx| {
-        let range = tx.reserve::<SId>(0)?;
-        assert!(range.is_empty());
-        assert!(range.start().is_none());
-        assert!(range.get(0).is_none());
-        assert!(range.iter().next().is_none());
-        let raw = tx.reserve_at(field, 0)?;
-        assert!(raw.start().is_none());
-        Ok(())
-    })
-    .expect("empty reserve")
-    .unwrap();
-}
-
-#[test]
-fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
-    let dir = TempDir::new("db-noop-not-applied");
-    let db = Db::create(dir.path(), named_schema())
-        .expect("create")
-        .expect("accepted");
-    let named = RelationId(0);
-    let row = [Value::String("keep".into())];
-    db.write(|tx| tx.insert_dyn(named, [&row]).map(|_| ()))
-        .expect("seed")
-        .unwrap();
-    db.write(|tx| {
-        assert_eq!(tx.insert_dyn(named, [&row])?.changed(), 0, "redundant");
-        let err = tx
-            .insert_dyn(named, [Vec::<Value>::new()])
-            .expect_err("shape");
-        assert!(matches!(err, Error::FactShape(_)), "{err:?}");
-        assert_eq!(
-            tx.insert_dyn(named, [&[Value::String("next".into())]])?
-                .changed(),
-            1
-        );
-        Ok(())
-    })
-    .expect("shape fail after no-op did not poison")
-    .unwrap();
-}
-
-#[test]
-fn poison_preserves_the_original_error_and_empty_insert_is_no_engine_request() {
-    let dir = TempDir::new("db-poison-kind");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let rel = RelationId(0);
-    let outcome = db.write(|tx| {
-        tx.insert_dyn(rel, [&[Value::U64(u64::MAX), Value::U64(0)]])?;
-        let first = tx.reserve::<SId>(1).expect_err("exhausted");
-        assert!(
-            matches!(first, Error::FreshExhausted { .. }),
-            "first apply failure is the original: {first:?}"
-        );
-        assert_eq!(
-            tx.insert_dyn(rel, Vec::<Vec<Value>>::new())
-                .expect("empty is no engine request")
-                .submitted(),
-            0
-        );
-        Ok(())
-    });
-    match outcome {
-        Err(Error::TransactionPoisoned { source }) => {
-            assert!(matches!(source.as_ref(), Error::FreshExhausted { .. }));
-        }
-        other => panic!("Db::write aborts on Ok after poison: {other:?}"),
-    }
-}
-
-/// Currency { `minor_units`: u64 } = { Usd(2), Eur(2) }: the closed fixture for
-/// the write-refusal tests (hand-built — the macro grammar for closed relations
-/// is the emission PRD's).
-fn closed_schema() -> SchemaDescriptor {
-    SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: Some(Box::new([
-                bumbledb_theory::schema::Row {
-                    handle: "Usd".into(),
-                    values: Box::new([Value::U64(2)]),
-                },
-                bumbledb_theory::schema::Row {
-                    handle: "Eur".into(),
-                    values: Box::new([Value::U64(2)]),
-                },
-            ])),
-            name: "Currency".into(),
-            fields: vec![FieldDescriptor {
-                name: "minor_units".into(),
-                value_type: ValueType::U64,
-                generation: Generation::None,
-            }],
-        }],
-        statements: vec![],
-    }
-}
-
-/// Any delta operation naming a closed relation is `ClosedRelationWrite`, typed
-/// away before any encoding runs — the mis-shaped value below (one value where
-/// the sealed arity is two) never even reaches the shape check — and nothing
-/// reaches the delta: a closure that swallows the refusal commits empty, so the
-/// state-changing generation never moves and the store stays rowless.
-#[test]
-fn writes_to_a_closed_relation_are_refused_before_the_delta() {
-    let dir = TempDir::new("db-closed-write");
-    let db = Db::create(dir.path(), closed_schema())
-        .expect("create")
-        .expect("accepted");
-    let currency = RelationId(0);
-
-    let insert = db.write(|tx| tx.insert_dyn(currency, [&[Value::U64(9)]]).map(|_| ()));
-    assert!(matches!(
-        insert,
-        Err(Error::ClosedRelationWrite { relation }) if relation == currency
-    ));
-    let delete = db.write(|tx| tx.delete_dyn(currency, [&[Value::U64(2)]]).map(|_| ()));
-    assert!(matches!(
-        delete,
-        Err(Error::ClosedRelationWrite { relation }) if relation == currency
-    ));
-
-    // A collection naming a closed relation is refused the same way —
-
-    let collection = db
-        .write(|tx| {
-            tx.insert_dyn(currency, vec![vec![Value::U64(9)]])
-                .map(crate::MutationReport::changed)
-        })
-        .expect_err("closed relations refuse collection inserts");
-    assert!(matches!(
-        collection,
-        Error::ClosedRelationWrite { relation } if relation == currency
-    ));
-
-    // The delta stayed empty: swallowing the refusal commits nothing —
-
-    let before = db.generation().expect("generation");
-    db.write(|tx| {
-        assert!(matches!(
-            tx.insert_dyn(currency, [&[Value::U64(9)]]),
-            Err(Error::ClosedRelationWrite { .. })
-        ));
-        Ok(())
-    })
-    .expect("the refusal is the operation's, not the transaction's")
-    .unwrap();
-    assert_eq!(db.generation().expect("generation"), before);
-
+    let dir = TempDir::new("db-mis-shaped");
+    let db = create(&dir);
     db.read(|snap| {
-        let rows: Vec<Vec<Value>> = snap.scan(currency)?.collect::<crate::error::Result<_>>()?;
-        assert_eq!(
-            rows,
-            vec![
-                vec![Value::U64(0), Value::U64(2)],
-                vec![Value::U64(1), Value::U64(2)],
-            ]
-        );
+        // Unknown relation.
+        let unknown = RelationId(77);
+        assert!(matches!(
+            snap.get_dyn(unknown, ENTRY_NAME_KEY, &[Value::U64(1)]),
+            Err(Error::FactShape(crate::error::FactShapeError::Id(
+                crate::error::DynIdError::UnknownRelation { relation }
+            ))) if relation == unknown
+        ));
+        // A statement id that is not a key statement of this relation.
+        assert!(matches!(
+            snap.get_dyn(ENTRY, StatementId(9), &[Value::U64(1)]),
+            Err(Error::FactShape(crate::error::FactShapeError::Id(
+                crate::error::DynIdError::NotAKeyStatement { .. }
+            )))
+        ));
+        // Arity mismatch of the key tuple.
+        assert!(matches!(
+            snap.get_dyn(
+                ENTRY,
+                ENTRY_NAME_KEY,
+                &[Value::String("a".into()), Value::I64(1)]
+            ),
+            Err(Error::FactShape(
+                crate::error::FactShapeError::ArityMismatch { .. }
+            ))
+        ));
+        // Type mismatch of the key value.
+        assert!(matches!(
+            snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::U64(1)]),
+            Err(Error::FactShape(
+                crate::error::FactShapeError::TypeMismatch { .. }
+            ))
+        ));
         Ok(())
     })
     .expect("read");
 }
 
 #[test]
-fn closed_point_reads_resolve_against_the_extension() {
-    let dir = TempDir::new("db-closed-get");
-    let db = Db::create(dir.path(), closed_schema())
+fn typed_get_borrows_decoded_text_from_the_lease() {
+    let dir = TempDir::new("db-typed-get");
+    let db = create(&dir);
+    db.write(|tx| {
+        tx.insert([&Entry {
+            name: "gamma",
+            amount: 4,
+        }])
+        .map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    db.read(|snap| {
+        let fact = snap.get(EntryName("gamma"))?.expect("present");
+        assert_eq!(
+            fact,
+            Entry {
+                name: "gamma",
+                amount: 4
+            }
+        );
+        assert!(snap.get(EntryName("missing"))?.is_none());
+        let scanned: Vec<Entry<'_>> = snap.scan_facts::<Entry<'_>>()?.collect::<Result<_>>()?;
+        assert_eq!(
+            scanned,
+            vec![Entry {
+                name: "gamma",
+                amount: 4
+            }]
+        );
+        Ok(())
+    })
+    .expect("read");
+}
+
+// --- The historical shared-key counterexample, full public path. ---
+
+#[test]
+fn a_key_conflict_is_rejected_with_both_competing_rows_cited() {
+    let dir = TempDir::new("db-key-conflict");
+    let db = create(&dir);
+    let violations = expect_rejected(db.write(|tx| {
+        tx.insert([
+            &Entry {
+                name: "shared",
+                amount: 1,
+            },
+            &Entry {
+                name: "shared",
+                amount: 2,
+            },
+        ])
+        .map(|_| ())
+    }));
+    assert_eq!(violations.len(), 1, "one violated statement");
+    let violation = violations.get(0).expect("violation");
+    assert!(matches!(violation, Violation::Functionality { .. }));
+    assert_eq!(
+        violation.statement_id(db.schema()),
+        ENTRY_NAME_KEY,
+        "the stable materialized statement id is cited"
+    );
+    // Both competing proposals are evidence (ENG-005: the judge saw the
+    // whole final state, not an install failure).
+    let cited = violations.cited_facts(0);
+    assert!(
+        cited.len() >= 2,
+        "both conflicting rows cited, got {cited:?}"
+    );
+    // The losing candidate is invisible: nothing was committed.
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 0);
+    assert_eq!(db.generation().expect("generation").value(), 0);
+}
+
+#[test]
+fn a_conflict_with_a_committed_row_rejects_and_preserves_it() {
+    let dir = TempDir::new("db-committed-conflict");
+    let db = create(&dir);
+    db.write(|tx| {
+        tx.insert([&Entry {
+            name: "holder",
+            amount: 1,
+        }])
+        .map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    let violations = expect_rejected(db.write(|tx| {
+        tx.insert([&Entry {
+            name: "holder",
+            amount: 2,
+        }])
+        .map(|_| ())
+    }));
+    assert_eq!(violations.len(), 1);
+    let row = db
+        .read(|snap| snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("holder".into())]))
+        .expect("read")
+        .expect("incumbent survives");
+    assert_eq!(row, entry_row("holder", 1));
+}
+
+#[test]
+fn replacement_in_one_command_is_judged_as_final_state() {
+    let dir = TempDir::new("db-replacement");
+    let db = create(&dir);
+    db.write(|tx| {
+        tx.insert([&Entry {
+            name: "acct",
+            amount: 1,
+        }])
+        .map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    // delete(old) + insert(new) with one key: the final state holds one
+    // row, so the key law admits — no transient-order refusal exists.
+    db.write(|tx| {
+        tx.delete([&Entry {
+            name: "acct",
+            amount: 1,
+        }])?;
+        tx.insert([&Entry {
+            name: "acct",
+            amount: 2,
+        }])?;
+        Ok(())
+    })
+    .expect("write")
+    .unwrap();
+    let row = db
+        .read(|snap| snap.get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String("acct".into())]))
+        .expect("read")
+        .expect("replaced");
+    assert_eq!(row, entry_row("acct", 2));
+}
+
+// --- Witnesses. ---
+
+#[test]
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the bare `witness` method path defeats the read closure's HRTB inference"
+)]
+fn write_from_borrows_a_cloneable_witness() {
+    let dir = TempDir::new("db-witness");
+    let db = create(&dir);
+    let witness = db.read(|snap| snap.witness()).expect("witness");
+    let again = witness.clone();
+    let outcome = db
+        .write_from(&witness, |tx| {
+            tx.insert([&Entry {
+                name: "w",
+                amount: 1,
+            }])
+            .map(|_| ())
+        })
+        .expect("write");
+    assert!(matches!(outcome, crate::ConditionalWrite::Accepted(_)));
+    // The clone is now stale: the compare answers Moved, not an error.
+    let moved = db
+        .write_from(&again, |tx| {
+            tx.insert([&Entry {
+                name: "x",
+                amount: 2,
+            }])
+            .map(|_| ())
+        })
+        .expect("write");
+    assert!(matches!(moved, crate::ConditionalWrite::Moved { .. }));
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 1);
+}
+
+#[test]
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the bare `witness` method path defeats the read closure's HRTB inference"
+)]
+fn write_from_rejects_a_foreign_witness() {
+    let a_dir = TempDir::new("db-foreign-witness-a");
+    let b_dir = TempDir::new("db-foreign-witness-b");
+    let a = create(&a_dir);
+    let b = create(&b_dir);
+    let foreign = b.read(|snap| snap.witness()).expect("witness");
+    let err = a
+        .write_from(&foreign, |tx| {
+            tx.insert([&Entry {
+                name: "n",
+                amount: 1,
+            }])
+            .map(|_| ())
+        })
+        .expect_err("foreign witness refused");
+    assert!(matches!(err, Error::ForeignWitness), "{err:?}");
+    assert_eq!(a.generation().expect("generation").value(), 0);
+}
+
+// --- Poisoning and refusal boundaries. ---
+
+#[test]
+fn a_shape_failure_does_not_poison_a_clean_write() {
+    let dir = TempDir::new("db-clean-shape-fail");
+    let db = create(&dir);
+    db.write(|tx| {
+        // A mis-shaped dyn insert refuses before anything is staged.
+        assert!(tx.insert_dyn(ENTRY, [vec![Value::U64(1)]]).is_err());
+        // The transaction is still usable: nothing had applied.
+        tx.insert_dyn(ENTRY, [entry_row("fine", 1)]).map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 1);
+}
+
+#[test]
+fn poison_preserves_the_original_error_after_an_applied_prefix() {
+    let dir = TempDir::new("db-poison");
+    let db = create(&dir);
+    let err = db
+        .write(|tx| {
+            tx.insert_dyn(ENTRY, [entry_row("applied", 1)])?;
+            // Now a later collection fails its shape check: the transaction
+            // poisons (a prefix already entered the delta).
+            let failure = tx.insert_dyn(ENTRY, [vec![Value::U64(9)]]).unwrap_err();
+            // Every later operation reports the poisoned state.
+            let poisoned = tx
+                .contains_dyn(ENTRY, &entry_row("applied", 1))
+                .unwrap_err();
+            assert!(matches!(poisoned, Error::TransactionPoisoned { .. }));
+            // Swallow the refusal: the engine still refuses to commit.
+            drop(failure);
+            Ok(())
+        })
+        .expect_err("poisoned write refuses commit");
+    assert!(matches!(err, Error::TransactionPoisoned { .. }), "{err:?}");
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 0);
+}
+
+#[test]
+fn an_empty_write_commits_without_moving_the_generation() {
+    let dir = TempDir::new("db-empty-write");
+    let db = create(&dir);
+    let committed = db.write(|_tx| Ok(42)).expect("write").unwrap();
+    assert_eq!(committed.value, 42);
+    assert_eq!(committed.generation.value(), 0);
+}
+
+#[test]
+fn a_reentrant_write_is_refused_typed_not_deadlocked() {
+    let dir = TempDir::new("db-reentrant");
+    let db = create(&dir);
+    let err = db
+        .write(|_outer| {
+            // The transitional surface panicked here; the successor refuses
+            // with the store's typed reentrancy error (same safety intent,
+            // now an answer instead of an abort).
+            match db.write(|_inner| Ok(())) {
+                Err(error) => Err::<(), _>(error),
+                Ok(_) => panic!("nested write must not run"),
+            }
+        })
+        .expect_err("nested write refused");
+    assert!(
+        matches!(&err, Error::Store(inner) if matches!(**inner, StoreError::ReentrantWriter)),
+        "{err:?}"
+    );
+}
+
+// --- Closed relations. ---
+
+const CURRENCY: RelationId = RelationId(0);
+
+#[derive(Clone, Copy)]
+struct Currencies;
+
+impl crate::Theory for Currencies {
+    fn descriptor(self) -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![bumbledb_theory::schema::RelationDescriptor {
+                name: "Currency".into(),
+                fields: vec![FieldDescriptor {
+                    name: "minor_units".into(),
+                    value_type: ValueType::U64,
+                }],
+                extension: Some(Box::new([
+                    Row {
+                        handle: "Usd".into(),
+                        values: Box::new([Value::U64(2)]),
+                    },
+                    Row {
+                        handle: "Eur".into(),
+                        values: Box::new([Value::U64(2)]),
+                    },
+                ])),
+            }],
+            statements: vec![],
+        }
+    }
+}
+
+#[test]
+fn writes_to_a_closed_relation_are_refused_before_the_delta() {
+    let dir = TempDir::new("db-closed-write");
+    let db = Db::create(dir.path(), Currencies)
         .expect("create")
         .expect("accepted");
-    let currency = RelationId(0);
-    let auto_key = StatementId(0);
-
+    let insert = db.write(|tx| tx.insert_dyn(CURRENCY, [&[Value::U64(9)]]).map(|_| ()));
+    assert!(matches!(
+        insert,
+        Err(Error::ClosedRelationWrite { relation }) if relation == CURRENCY
+    ));
+    // A closure that swallows the refusal commits empty: the generation
+    // never moves and the store stays rowless.
     db.write(|tx| {
-        let row = tx
-            .get_dyn(currency, auto_key, &[Value::U64(1)])?
-            .expect("Eur is row 1");
-        assert_eq!(row, vec![Value::U64(1), Value::U64(2)]);
+        let _ = tx.delete_dyn(CURRENCY, [&[Value::U64(0), Value::U64(2)]]);
+        Ok(())
+    })
+    .expect("write")
+    .unwrap();
+    assert_eq!(db.generation().expect("generation").value(), 0);
+}
 
-        assert_eq!(tx.get_dyn(currency, auto_key, &[Value::U64(9)])?, None);
-
-        assert!(matches!(
-            tx.get_dyn(RelationId(7), auto_key, &[Value::U64(0)]),
-            Err(Error::FactShape(FactShapeError::Id(
-                DynIdError::UnknownRelation { .. }
-            )))
-        ));
-        assert!(matches!(
-            tx.get_dyn(currency, StatementId(9), &[Value::U64(0)]),
-            Err(Error::FactShape(FactShapeError::Id(
-                DynIdError::NotAKeyStatement { .. }
-            )))
-        ));
-        assert!(matches!(
-            tx.get_dyn(currency, auto_key, &[]),
-            Err(Error::FactShape(FactShapeError::ArityMismatch { .. }))
-        ));
+#[test]
+fn closed_point_reads_resolve_against_the_extension() {
+    let dir = TempDir::new("db-closed-read");
+    let db = Db::create(dir.path(), Currencies)
+        .expect("create")
+        .expect("accepted");
+    // The auto-materialized handle key is the first statement.
+    let key = StatementId(0);
+    db.read(|snap| {
+        assert_eq!(snap.count(CURRENCY)?, 2);
+        let usd = snap
+            .get_dyn(CURRENCY, key, &[Value::U64(0)])?
+            .expect("sealed row");
+        assert_eq!(usd, vec![Value::U64(0), Value::U64(2)]);
+        assert!(snap.contains_dyn(CURRENCY, &[Value::U64(1), Value::U64(2)])?);
+        assert!(!snap.contains_dyn(CURRENCY, &[Value::U64(1), Value::U64(3)])?);
+        let rows: Vec<Vec<Value>> = snap.scan(CURRENCY)?.collect::<Result<_>>()?;
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    })
+    .expect("read");
+    // The same answers inside a write transaction's view.
+    db.write(|tx| {
+        assert!(tx.contains_dyn(CURRENCY, &[Value::U64(0), Value::U64(2)])?);
+        assert!(
+            tx.get_dyn(CURRENCY, key, &[Value::U64(1)])?.is_some(),
+            "closed reads are identical on both surfaces"
+        );
         Ok(())
     })
     .expect("write")
     .unwrap();
 }
 
+// --- InstanceBuilder / OwnedInstance / publication. ---
+
 #[test]
-fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
-    let dir = TempDir::new("db-fresh-ratchet");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let rel = RelationId(0);
-    let field = bumbledb_theory::schema::FieldId(0);
-
-    db.write(|tx| {
-        tx.insert_dyn(rel, [&[Value::U64(41), Value::U64(1)]])
-            .map(|_| ())
-    })
-    .expect("explicit-id write")
-    .unwrap();
-
-    let witness = db.fresh_field(rel, field).expect("fresh field");
-    let minted = db
-        .write(|tx| {
-            let id = tx.reserve_at(witness, 1)?.start().expect("nonempty");
-            tx.insert_dyn(rel, [&[Value::U64(id), Value::U64(2)]])?;
-            Ok(id)
-        })
-        .expect("minting write")
-        .unwrap()
-        .value;
-    assert!(minted > 41, "minted {minted} must exceed the copied id 41");
-
-    // And the ratchet survives a reopen: the mark was flushed to `Q`,
-
-    drop(db);
-    let db = Db::open(dir.path(), fresh_schema()).expect("reopen");
-    let witness = db.fresh_field(rel, field).expect("fresh field");
-    let after_reopen = db
-        .write(|tx| Ok(tx.reserve_at(witness, 1)?.start().expect("nonempty")))
-        .expect("mint after reopen")
-        .unwrap()
-        .value;
+fn a_builder_admits_judged_content_and_publishes_it() {
+    let mut builder = InstanceBuilder::new(Ledger).expect("builder");
+    builder
+        .load([&Entry {
+            name: "alpha",
+            amount: 3,
+        }])
+        .expect("load");
+    builder
+        .load_dyn(ENTRY, [entry_row("beta", -7)])
+        .expect("load_dyn");
+    // Overlay reads see the staged state.
     assert!(
-        after_reopen > minted,
-        "post-reopen mint {after_reopen} must exceed {minted}"
+        builder
+            .contains(&Entry {
+                name: "alpha",
+                amount: 3
+            })
+            .expect("contains")
+    );
+    let staged = builder
+        .get(EntryName("beta"))
+        .expect("get")
+        .expect("staged row");
+    assert_eq!(
+        staged,
+        Entry {
+            name: "beta",
+            amount: -7
+        }
+    );
+    let instance = builder.admit().expect("admit").expect("lawful content");
+    assert_eq!(instance.count(ENTRY).expect("count"), 2);
+
+    // Publication: the durable copy carries exactly the admitted content.
+    let dir = TempDir::new("db-from-instance");
+    let path = dir.path().join("published");
+    let db = Db::from_instance(&path, &instance).expect("publish");
+    assert_eq!(
+        db.catalog_digest().expect("digest"),
+        instance.catalog_digest().expect("digest"),
+        "the replication oracle agrees across backends"
     );
 }
 
 #[test]
-fn get_dyn_into_reuses_the_callers_buffer_on_both_surfaces() {
-    let dir = TempDir::new("db-get-dyn-into");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| {
-        tx.insert_dyn(ENTRY, [&entry("a", 1)])?;
-        tx.insert_dyn(ENTRY, [&entry("b", 2)]).map(|_| ())
-    })
-    .expect("seed")
-    .unwrap();
-
-    let mut out = Vec::new();
-    db.read(|snap| {
-        assert!(snap.get_dyn_into(ENTRY, ENTRY_KEY, &[Value::String("a".into())], &mut out)?);
-        assert_eq!(out, entry("a", 1));
-        let (capacity, ptr) = (out.capacity(), out.as_ptr());
-        assert!(snap.get_dyn_into(ENTRY, ENTRY_KEY, &[Value::String("b".into())], &mut out)?);
-        assert_eq!(out, entry("b", 2));
-        assert_eq!(
-            (out.capacity(), out.as_ptr()),
-            (capacity, ptr),
-            "the warm get reuses the caller's allocation"
-        );
-        assert!(!snap.get_dyn_into(
-            ENTRY,
-            ENTRY_KEY,
-            &[Value::String("missing".into())],
-            &mut out
-        )?);
-        assert!(out.is_empty(), "a miss leaves the buffer empty");
-        assert_eq!(
-            snap.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".into())])?,
-            Some(entry("a", 1)),
-            "the owned convenience is the same read"
-        );
-        Ok(())
-    })
-    .expect("snapshot reads");
-
-    db.write(|tx| {
-        assert!(tx.get_dyn_into(ENTRY, ENTRY_KEY, &[Value::String("a".into())], &mut out)?);
-        assert_eq!(out, entry("a", 1));
-        assert!(!tx.get_dyn_into(ENTRY, ENTRY_KEY, &[Value::String("zzz".into())], &mut out)?);
-        assert!(out.is_empty());
-        Ok(())
-    })
-    .expect("write-surface reads")
-    .unwrap();
-}
-
-fn all_entries() -> Query {
-    Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-        atoms: vec![Atom {
-            source: AtomSource::Edb(ENTRY),
-            bindings: vec![
-                (FieldId(0), Term::Var(VarId(0))),
-                (FieldId(1), Term::Var(VarId(1))),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    })
+fn a_builder_rejection_is_the_same_complete_verdict() {
+    let mut builder = InstanceBuilder::new(Ledger).expect("builder");
+    builder
+        .load([
+            &Entry {
+                name: "dup",
+                amount: 1,
+            },
+            &Entry {
+                name: "dup",
+                amount: 2,
+            },
+        ])
+        .expect("staging accepts; judgment decides");
+    let violations = match builder.admit().expect("admit runs") {
+        Admission::Rejected(violations) => violations,
+        Admission::Accepted(_) => panic!("conflicting keys must reject"),
+    };
+    assert_eq!(violations.len(), 1);
+    assert!(violations.cited_facts(0).len() >= 2);
 }
 
 #[test]
-fn read_instance_prepares_executes_and_gets() {
-    let dir = TempDir::new("db-read-instance-query");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| tx.insert_dyn(ENTRY, [&entry("ada", 10)]).map(|_| ()))
-        .expect("seed")
-        .expect("accepted");
-
-    db.read(|instance| {
-        assert_eq!(instance.count(ENTRY)?, 1);
-        assert_eq!(
-            instance.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("ada".into())])?,
-            Some(entry("ada", 10))
-        );
-        let mut prepared = instance.prepare(&all_entries())?;
-        let mut out = crate::Answers::new();
-        instance.execute(&mut prepared, &[] as &[crate::ParamArg], &mut out)?;
-        assert_eq!(out.len(), 1);
-        Ok(())
-    })
-    .expect("read");
-}
-
-/// The exact-count law on the store surface: after mixed inserts and deletes
-/// across commits, `count` equals the scan length in the SAME lease — the API
-/// twin of the storage pin
-/// (`storage/read/tests.rs::row_count_equals_scan_count_after_mixed_commits`).
-#[test]
-fn count_equals_scan_length_after_mixed_commits_and_reads_the_sealed_extension() {
-    let dir = TempDir::new("db-count");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    db.write(|tx| {
-        tx.insert_dyn(ENTRY, [&entry("a", 1), &entry("b", 2), &entry("c", 3)])
-            .map(|_| ())
-    })
-    .expect("seed")
-    .unwrap();
-    db.write(|tx| {
-        tx.delete_dyn(ENTRY, [&entry("b", 2)])?;
-        tx.insert_dyn(ENTRY, [&entry("d", 4)]).map(|_| ())
-    })
-    .expect("mixed commit")
-    .unwrap();
-    db.read(|instance| {
-        let mut scanned = 0u64;
-        for row in instance.scan(ENTRY)? {
-            row?;
-            scanned += 1;
-        }
-        assert_eq!(instance.count(ENTRY)?, scanned, "count is the scan length");
-        assert_eq!(scanned, 3);
-        Ok(())
-    })
-    .expect("read");
-
-    let closed_dir = TempDir::new("db-count-closed");
-    let closed = Db::create(closed_dir.path(), closed_schema())
-        .expect("create")
-        .expect("accepted");
-    closed
-        .read(|instance| {
-            assert_eq!(
-                instance.count(RelationId(0))?,
-                2,
-                "a closed relation's count IS its sealed extension length"
-            );
-            Ok(())
-        })
-        .expect("read");
-}
-
-fn mint_witness<S>(instance: &ReadInstance<'_, S>) -> Result<Witness<S>> {
-    instance.witness()
-}
-
-#[test]
-fn write_from_borrows_a_cloneable_witness() {
-    let dir = TempDir::new("db-write-from-witness");
-    let db = Db::create(dir.path(), named_schema())
-        .expect("create")
-        .expect("accepted");
-    let named = RelationId(0);
-    let witness = db.read(mint_witness).expect("mint witness");
-    let retained = witness.clone();
-
-    match db
-        .write_from(&witness, |tx| {
-            tx.insert_dyn(named, [&[Value::String("one".into())]])
-                .map(|_| ())
-        })
-        .expect("first write_from")
-    {
-        ConditionalWrite::Accepted(_) => {}
-        other => panic!("first write_from must accept: {other:?}"),
-    }
-    match db
-        .write_from(&retained, |tx| {
-            tx.insert_dyn(named, [&[Value::String("two".into())]])
-                .map(|_| ())
-        })
-        .expect("clone after move")
-    {
-        ConditionalWrite::Moved { witnessed, current } => {
-            assert_eq!(witnessed.value(), 0);
-            assert_eq!(current.value(), 1);
-        }
-        other => panic!("stale clone must report Moved: {other:?}"),
-    }
-
-    let fresh = db.read(mint_witness).expect("fresh witness");
-    match db.write_from(&fresh, |_| Ok(())).expect("no-op") {
-        ConditionalWrite::Accepted(_) => {}
-        other => panic!("same-generation reuse must accept: {other:?}"),
-    }
-    match db.write_from(&fresh, |_| Ok(())).expect("reuse") {
-        ConditionalWrite::Accepted(_) => {}
-        other => panic!("one witness justifies two writes: {other:?}"),
-    }
-}
-
-#[test]
-fn write_from_rejects_a_foreign_witness() {
-    let dir = TempDir::new("db-write-from-foreign-a");
-    let foreign_dir = TempDir::new("db-write-from-foreign-b");
-    let db = Db::create(dir.path(), named_schema())
-        .expect("create")
-        .expect("accepted");
-    let foreign = Db::create(foreign_dir.path(), named_schema())
-        .expect("create foreign")
-        .expect("accepted");
-    let witness = foreign.read(mint_witness).expect("foreign witness");
-    let err = db.write_from(&witness, |_| Ok(())).unwrap_err();
-    assert!(matches!(err, Error::ForeignWitness), "{err:?}");
-    assert_eq!(db.generation().expect("generation").value(), 0);
-}
-
-crate::schema! {
-    pub OneRep;
-    relation Sample {
-        flag: bool,
-        count: u64,
-        delta: i64,
-        memo: str,
-        tag: bytes<3>,
-        window: interval<u64>,
-        span: interval<i64>,
-    }
-}
-
-fn sample_facts() -> Vec<Sample<'static>> {
-    let iv_u = |a, b| crate::Interval::<u64>::new(a, b).expect("nonempty");
-    let iv_i = |a, b| crate::Interval::<i64>::new(a, b).expect("nonempty");
-    vec![
-        Sample {
-            flag: true,
-            count: 7,
-            delta: -3,
-            memo: "alpha",
-            tag: [1, 2, 3],
-            window: iv_u(1, 5),
-            span: iv_i(-4, 4),
-        },
-        Sample {
-            flag: false,
-            count: 8,
-            delta: 9,
-            memo: "beta",
-            tag: [9, 9, 9],
-            window: iv_u(0, 2),
-            span: iv_i(-1, 0),
-        },
-        Sample {
-            flag: true,
-            count: 7,
-            delta: -3,
-            memo: "alpha",
-            tag: [1, 2, 3],
-            window: iv_u(2, 6),
-            span: iv_i(0, 3),
-        },
-    ]
-}
-
-fn sample_value_rows() -> Vec<Vec<Value>> {
-    sample_facts()
-        .iter()
-        .map(|fact| {
-            vec![
-                Value::Bool(fact.flag),
-                Value::U64(fact.count),
-                Value::I64(fact.delta),
-                Value::String(fact.memo.into()),
-                Value::FixedBytes(Box::from(fact.tag.as_slice())),
-                Value::IntervalU64(fact.window),
-                Value::IntervalI64(fact.span),
-            ]
-        })
-        .collect()
-}
-
-fn sorted_scan(db: &Db<OneRep>) -> Vec<Vec<Value>> {
-    let mut rows: Vec<Vec<Value>> = db
-        .read(|snap| snap.scan(Sample::RELATION)?.collect::<Result<_>>())
-        .expect("scan");
-    rows.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
-    rows
-}
-
-fn coherent(db: &Db<OneRep>) {
-    let report = db.verify_store().expect("verify");
+fn builder_deletes_are_set_arithmetic_from_empty() {
+    let mut builder = InstanceBuilder::new(Ledger).expect("builder");
+    let report = builder
+        .load_dyn(ENTRY, [entry_row("a", 1), entry_row("b", 2)])
+        .expect("load");
+    assert_eq!((report.submitted(), report.changed()), (2, 2));
+    let report = builder
+        .delete_dyn(ENTRY, [entry_row("a", 1), entry_row("absent", 9)])
+        .expect("delete");
+    assert_eq!((report.submitted(), report.changed()), (2, 1));
+    let instance = builder.admit().expect("admit").expect("lawful");
+    assert_eq!(instance.count(ENTRY).expect("count"), 1);
     assert!(
-        matches!(
-            report.verdict,
-            crate::verify_store::StoreVerdict::Coherent { .. }
-        ),
-        "{report:?}"
+        instance
+            .contains_dyn(ENTRY, &entry_row("b", 2))
+            .expect("contains")
     );
 }
 
-#[test]
-fn the_three_write_lanes_produce_identical_stores() {
-    let typed_dir = TempDir::new("db-lanes-typed");
-    let dyn_dir = TempDir::new("db-lanes-dyn");
-    let accepted_dir = TempDir::new("db-lanes-accepted");
-    let typed_db = Db::create(typed_dir.path(), OneRep)
-        .expect("create")
-        .expect("accepted");
-    let dyn_db = Db::create(dyn_dir.path(), OneRep)
-        .expect("create")
-        .expect("accepted");
-    let accepted_db = Db::create(accepted_dir.path(), OneRep)
-        .expect("create")
-        .expect("accepted");
+// --- AcceptedCollection walls (one shape judgment for every lane). ---
 
-    let typed_report = typed_db
-        .write(|tx| tx.insert(&sample_facts()))
-        .expect("typed insert")
-        .unwrap()
-        .value;
-    let dyn_report = dyn_db
-        .write(|tx| tx.insert_dyn(Sample::RELATION, sample_value_rows()))
-        .expect("dyn insert")
-        .unwrap()
-        .value;
-    let accepted_report = accepted_db
-        .write(|tx| {
-            let fields = accepted_db.schema().relation(Sample::RELATION).fields();
-            let mut builder = CollectionBuilder::new(Sample::RELATION, fields);
-            for fact in sample_facts() {
-                builder.push_bool(fact.flag)?;
-                builder.push_u64(fact.count)?;
-                builder.push_i64(fact.delta)?;
-                builder.push_str(fact.memo)?;
-                builder.push_bytes(&fact.tag)?;
-                builder.push_interval_u64(fact.window)?;
-                builder.push_interval_i64(fact.span)?;
-            }
-            tx.insert_accepted(&builder.seal()?)
-        })
-        .expect("accepted insert")
-        .unwrap()
-        .value;
-
-    assert_eq!(typed_report, dyn_report);
-    assert_eq!(typed_report, accepted_report);
-    assert_eq!(typed_report.submitted(), 3);
-    assert_eq!(typed_report.changed(), 3);
-
-    let typed_rows = sorted_scan(&typed_db);
-    assert_eq!(typed_rows.len(), 3);
-    assert_eq!(typed_rows, sorted_scan(&dyn_db));
-    assert_eq!(typed_rows, sorted_scan(&accepted_db));
-    assert_eq!(dict_entries(&typed_db), dict_entries(&dyn_db));
-    assert_eq!(dict_entries(&typed_db), dict_entries(&accepted_db));
-    let generation = typed_db.generation().expect("generation");
-    assert_eq!(generation, dyn_db.generation().expect("generation"));
-    assert_eq!(generation, accepted_db.generation().expect("generation"));
-    coherent(&typed_db);
-    coherent(&dyn_db);
-    coherent(&accepted_db);
-}
-
-/// The collection is `Send` by construction — built on the caller's thread,
-/// consumable on the transaction's (invariant 5 of 20).
-#[test]
-fn accepted_collection_is_send() {
-    fn assert_send<T: Send>() {}
-    assert_send::<AcceptedCollection>();
-}
-
-/// Law 2, accepted lane: an empty collection is `MutationReport::EMPTY` before
-/// ANY refusal — unknown relation, closed relation, and a poisoned transaction
-/// all answer the empty report, exactly as the dyn lane always has.
-#[test]
-fn an_empty_accepted_collection_is_lawful_before_any_refusal() {
-    let dir = TempDir::new("db-accepted-empty");
-    let db = Db::create(dir.path(), fresh_schema())
-        .expect("create")
-        .expect("accepted");
-    let fields = db.schema().relation(RelationId(0)).fields();
-    // Unknown relation, empty: no engine request, no refusal.
-    let unknown = CollectionBuilder::new(RelationId(99), fields)
-        .seal()
-        .expect("empty seals lawfully");
-
-    let outcome = db.write(|tx| {
-        assert_eq!(
-            tx.insert_accepted(&unknown)
-                .expect("empty is no engine request")
-                .submitted(),
-            0
-        );
-        tx.insert_dyn(RelationId(0), [&[Value::U64(u64::MAX), Value::U64(0)]])?;
-        let exhausted = tx.reserve::<SId>(1).expect_err("exhausted");
-        assert!(matches!(exhausted, Error::FreshExhausted { .. }));
-        let empty = CollectionBuilder::new(RelationId(0), fields)
-            .seal()
-            .expect("empty seals lawfully");
-        assert_eq!(
-            tx.insert_accepted(&empty)
-                .expect("empty precedes the poison refusal")
-                .submitted(),
-            0
-        );
-        // Nonempty against the poisoned transaction: typed refusal.
-        let row = AcceptedCollection::from_value_rows(
-            RelationId(0),
-            fields,
-            [&[Value::U64(1), Value::U64(2)]],
-        )
-        .expect("shape-lawful");
-        let err = tx.insert_accepted(&row).expect_err("poisoned");
-        assert!(matches!(err, Error::TransactionPoisoned { .. }), "{err:?}");
-        Ok(())
-    });
-    assert!(matches!(outcome, Err(Error::TransactionPoisoned { .. })));
-}
-
-/// Laws 5 and the roster walls, accepted lane: closed refusal is typed before
-/// the delta; an unknown relation is `UnknownRelation`; a collection whose
-/// sealed arity disagrees with the target roster is the authoritative second
-/// wall's `ArityMismatch`.
 #[test]
 fn accepted_collections_hit_the_same_walls_as_the_dyn_lane() {
     let dir = TempDir::new("db-accepted-walls");
-    let db = Db::create(dir.path(), closed_schema())
-        .expect("create")
-        .expect("accepted");
-    let currency = RelationId(0);
-    let sealed_fields = db.schema().relation(currency).fields();
-
-    db.write(|tx| {
-        // Closed refusal, both dispositions.
-        let row = AcceptedCollection::from_value_rows(
-            currency,
-            sealed_fields,
-            [&[Value::U64(0), Value::U64(2)]],
-        )
-        .expect("shape-lawful against the sealed roster");
-        for err in [
-            tx.insert_accepted(&row).expect_err("closed"),
-            tx.delete_accepted(&row).expect_err("closed"),
-        ] {
-            assert!(
-                matches!(err, Error::ClosedRelationWrite { relation } if relation == currency),
-                "{err:?}"
-            );
-        }
-
-        let foreign = AcceptedCollection::from_value_rows(
-            RelationId(99),
-            sealed_fields,
-            [&[Value::U64(0), Value::U64(2)]],
-        )
-        .expect("the constructor judges shape, not the roster");
-        let err = tx.insert_accepted(&foreign).expect_err("unknown");
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::Id(DynIdError::UnknownRelation { .. }))
-            ),
-            "{err:?}"
-        );
-        Ok(())
-    })
-    .expect("walls refuse operations, not the transaction")
-    .unwrap();
-}
-
-/// The arity re-verification (the authoritative second wall): a collection
-/// sealed against a narrower roster than the target's is refused with the same
-/// typed `ArityMismatch` the dyn parse would raise.
-#[test]
-fn an_accepted_collection_of_foreign_arity_is_refused_at_apply() {
-    let dir = TempDir::new("db-accepted-arity-wall");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    let fields = db.schema().relation(ENTRY).fields();
-
-    let mut builder = CollectionBuilder::new(ENTRY, &fields[..1]);
-    builder.push_str("ada").expect("string column");
-    let narrow = builder.seal().expect("complete against its roster");
-    db.write(|tx| {
-        let err = tx.insert_accepted(&narrow).expect_err("arity wall");
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::ArityMismatch {
-                    relation: ENTRY,
-                    mismatch: Mismatch {
-                        witnessed: 1,
-                        required: 2,
-                    },
-                })
-            ),
-            "{err:?}"
-        );
-        Ok(())
-    })
-    .expect("the wall refuses the operation, not the transaction")
-    .unwrap();
-}
-
-/// The roster ECHO (the second wall's type half): a collection sealed against a
-/// forged roster of the SAME arity but different value types is refused at
-/// apply with the typed `TypeMismatch` naming the first differing field — arity
-/// re-anchoring alone would have admitted it and the encoder's positional arms
-/// would have written wrong-width fact bytes.
-#[test]
-fn an_accepted_collection_of_foreign_types_is_refused_at_apply() {
-    let dir = TempDir::new("db-accepted-type-wall");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-
-    let forged = [
+    let db = create(&dir);
+    let fields = db.schema().relation(ENTRY).fields().to_vec();
+    // Foreign arity: a one-field roster against the two-field relation.
+    let narrow = crate::AcceptedCollection::from_value_rows(
+        ENTRY,
+        &fields[..1],
+        [vec![Value::String("a".into())]],
+    )
+    .expect("internally consistent");
+    let err = db
+        .write(|tx| tx.insert_accepted(&narrow).map(|_| ()))
+        .expect_err("foreign arity refused at apply");
+    assert!(matches!(
+        err,
+        Error::FactShape(crate::error::FactShapeError::ArityMismatch { .. })
+    ));
+    // Foreign type roster of the right arity.
+    let foreign_fields = vec![
         FieldDescriptor {
             name: "name".into(),
             value_type: ValueType::U64,
-            generation: Generation::None,
-        },
-        FieldDescriptor {
-            name: "amount".into(),
-            value_type: ValueType::U64,
-            generation: Generation::None,
-        },
-    ];
-    let mut builder = CollectionBuilder::new(ENTRY, &forged);
-    builder.push_u64(7).expect("u64 against the forged roster");
-    builder.push_u64(9).expect("u64 against the forged roster");
-    let foreign = builder.seal().expect("complete against its roster");
-    db.write(|tx| {
-        let err = tx.insert_accepted(&foreign).expect_err("type wall");
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::TypeMismatch {
-                    relation: ENTRY,
-                    field: FieldId(0),
-                })
-            ),
-            "{err:?}"
-        );
-        Ok(())
-    })
-    .expect("the wall refuses the operation, not the transaction")
-    .unwrap();
-}
-
-#[test]
-fn accepted_reports_are_exact_and_delete_never_mints() {
-    let dir = TempDir::new("db-accepted-exact");
-    let db = Db::create(dir.path(), entry_schema())
-        .expect("create")
-        .expect("accepted");
-    let fields = db.schema().relation(ENTRY).fields();
-    db.write(|tx| {
-        let twice = AcceptedCollection::from_value_rows(
-            ENTRY,
-            fields,
-            [&entry("ada", 1), &entry("ada", 1)],
-        )
-        .expect("shape-lawful");
-        let report = tx.insert_accepted(&twice)?;
-        assert_eq!(report.submitted(), 2);
-        assert_eq!(report.changed(), 1);
-        Ok(())
-    })
-    .expect("seed")
-    .unwrap();
-
-    let before = dict_entries(&db);
-    db.write(|tx| {
-        let ghost =
-            AcceptedCollection::from_value_rows(ENTRY, fields, [&entry("never-interned", 9)])
-                .expect("shape-lawful");
-        let report = tx.delete_accepted(&ghost)?;
-        assert_eq!(report.submitted(), 1);
-        assert_eq!(report.changed(), 0, "a dictionary miss proves absence");
-        let real = AcceptedCollection::from_value_rows(ENTRY, fields, [&entry("ada", 1)])
-            .expect("shape-lawful");
-        assert_eq!(tx.delete_accepted(&real)?.changed(), 1);
-        Ok(())
-    })
-    .expect("delete lane")
-    .unwrap();
-    assert_eq!(
-        dict_entries(&db),
-        before,
-        "the delete disposition interned nothing"
-    );
-}
-
-fn nullary_schema() -> SchemaDescriptor {
-    SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "Marker".into(),
-            fields: vec![],
-        }],
-        statements: vec![],
-    }
-}
-
-#[test]
-fn a_nullary_accepted_collection_applies_in_constant_time() {
-    let dir = TempDir::new("db-accepted-nullary");
-    let db = Db::create(dir.path(), nullary_schema())
-        .expect("create")
-        .expect("accepted");
-    let marker = RelationId(0);
-    let fields = db.schema().relation(marker).fields();
-    let huge = CollectionBuilder::new(marker, fields)
-        .seal_nullary(u64::MAX)
-        .expect("a fieldless collection seals from the stated count");
-    assert_eq!(huge.rows(), u64::MAX);
-    db.write(|tx| {
-        let report = tx.insert_accepted(&huge)?;
-        assert_eq!(report.submitted(), u64::MAX, "submitted is exact");
-        assert_eq!(report.changed(), 1, "the one empty tuple entered once");
-        Ok(())
-    })
-    .expect("insert lane")
-    .unwrap();
-    db.write(|tx| {
-        let report = tx.delete_accepted(&huge)?;
-        assert_eq!(report.submitted(), u64::MAX, "submitted is exact");
-        assert_eq!(report.changed(), 1, "the delete twin: one op, changed <= 1");
-        Ok(())
-    })
-    .expect("delete lane")
-    .unwrap();
-
-    let entry_fields = [
-        FieldDescriptor {
-            name: "name".into(),
-            value_type: ValueType::String,
-            generation: Generation::None,
         },
         FieldDescriptor {
             name: "amount".into(),
             value_type: ValueType::I64,
-            generation: Generation::None,
         },
     ];
-    let err = CollectionBuilder::new(marker, &entry_fields)
-        .seal_nullary(1)
-        .expect_err("widthful roster");
+    let foreign = crate::AcceptedCollection::from_value_rows(
+        ENTRY,
+        &foreign_fields,
+        [vec![Value::U64(1), Value::I64(2)]],
+    )
+    .expect("internally consistent");
+    let err = db
+        .write(|tx| tx.insert_accepted(&foreign).map(|_| ()))
+        .expect_err("foreign types refused at apply");
+    assert!(matches!(
+        err,
+        Error::FactShape(crate::error::FactShapeError::TypeMismatch { .. })
+    ));
+    // The mis-typed cell refuses at construction on the true roster.
     assert!(
-        matches!(
-            err,
-            Error::FactShape(FactShapeError::ArityMismatch {
-                relation,
-                mismatch: Mismatch {
-                    witnessed: 0,
-                    required: 2,
-                },
-            }) if relation == marker
-        ),
-        "{err:?}"
+        crate::AcceptedCollection::from_value_rows(
+            ENTRY,
+            &fields,
+            [vec![Value::U64(1), Value::I64(2)]],
+        )
+        .is_err()
     );
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 0);
 }
 
 #[test]
-fn a_fieldless_row_push_is_refused_typed() {
-    let dir = TempDir::new("db-nullary-push");
-    let db = Db::create(dir.path(), nullary_schema())
-        .expect("create")
-        .expect("accepted");
-    let marker = RelationId(0);
-    let fields = db.schema().relation(marker).fields();
-    // The mixed sequence is refused AT THE PUSH, with the zero-width
-
-    let mut builder = CollectionBuilder::new(marker, fields);
-    let err = builder.push_value_row(&[]).expect_err("one spelling");
-    assert!(
-        matches!(
-            err,
-            Error::FactShape(FactShapeError::ArityMismatch {
-                relation,
-                mismatch: Mismatch {
-                    witnessed: 1,
-                    required: 0,
-                },
-            }) if relation == marker
-        ),
-        "{err:?}"
-    );
-
-    let rows: [&[Value]; 3] = [&[], &[], &[]];
-    let coll = AcceptedCollection::from_value_rows(marker, fields, rows)
-        .expect("empty slices are the fieldless roster's arity-lawful rows");
-    assert_eq!(coll.rows(), 3);
+fn accepted_reports_are_exact_and_delete_never_mints() {
+    let dir = TempDir::new("db-accepted-reports");
+    let db = create(&dir);
+    let fields = db.schema().relation(ENTRY).fields().to_vec();
+    let rows = crate::AcceptedCollection::from_value_rows(
+        ENTRY,
+        &fields,
+        [entry_row("a", 1), entry_row("a", 1), entry_row("b", 2)],
+    )
+    .expect("shape proof");
     db.write(|tx| {
-        let report = tx.insert_dyn(marker, rows)?;
-        assert_eq!(report.submitted(), 3, "submitted is exact");
-        assert_eq!(report.changed(), 1, "the one empty tuple entered once");
+        let report = tx.insert_accepted(&rows)?;
+        assert_eq!((report.submitted(), report.changed()), (3, 2));
+        let report = tx.delete_accepted(&rows)?;
+        assert_eq!((report.submitted(), report.changed()), (3, 2));
         Ok(())
     })
-    .expect("dyn lane")
+    .expect("write")
     .unwrap();
-
-    // mismatch it always was, judged before any count accrues.
-    let wide: [&[Value]; 2] = [&[], &[Value::U64(1)]];
-    let err = AcceptedCollection::from_value_rows(marker, fields, wide).expect_err("widthful row");
-    assert!(
-        matches!(
-            err,
-            Error::FactShape(FactShapeError::ArityMismatch {
-                relation,
-                mismatch: Mismatch {
-                    witnessed: 1,
-                    required: 0,
-                },
-            }) if relation == marker
-        ),
-        "{err:?}"
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 0);
+    assert_eq!(
+        db.generation().expect("generation").value(),
+        0,
+        "insert and delete of the same rows is one no-op command"
     );
 }
 
+// --- Compaction and the integration adjunct. ---
+
 #[test]
-fn the_collection_builder_is_the_one_shape_judgment() {
-    let schema = crate::schema::ValidateDescriptor::validate(crate::Theory::descriptor(OneRep))
-        .expect("valid");
-    let rel = Sample::RELATION;
-    let fields = schema.relation(rel).fields();
-    let type_mismatch = |err: Error, field: u16| {
-        assert!(
-            matches!(
-                err,
-                Error::FactShape(FactShapeError::TypeMismatch { relation, field: f })
-                    if relation == rel && f == FieldId(field)
-            ),
-            "{err:?}"
+fn compact_copies_content_host_records_and_generation_coherently() {
+    let dir = TempDir::new("db-compact");
+    let db = create(&dir);
+    db.write(|tx| {
+        tx.insert([&Entry {
+            name: "kept",
+            amount: 1,
+        }])
+        .map(|_| ())
+    })
+    .expect("write")
+    .unwrap();
+    // Attach one host record + attachment through the integration seam.
+    let work = super::embedded_work().expect("work");
+    {
+        let mut session = db.integration_writer(&work).expect("session");
+        let empty = ChangeSet::builder(db.schema(), work.clone())
+            .finish()
+            .expect("empty delta");
+        let prepared = match session.prepare(&empty).expect("prepare") {
+            Admission::Accepted(prepared) => prepared,
+            Admission::Rejected(_) => panic!("the empty delta admits"),
+        };
+        let records = [crate::storage::store::HostRecordChange::Put {
+            key: b"receipt/1",
+            value: b"decided",
+        }];
+        let sealed = prepared
+            .seal(crate::storage::store::HostChanges {
+                records: &records,
+                attachment: crate::storage::store::AttachmentChange::Put(b"control"),
+            })
+            .expect("seal");
+        let commit = sealed.commit().expect("commit");
+        assert!(commit.changed, "host mutation advances the generation once");
+    }
+    let generation = db.generation().expect("generation");
+    let dest = dir.path().join("compacted");
+    db.compact(&dest).expect("compact");
+    let copy = Db::open(&dest, Ledger).expect("open copy");
+    assert_eq!(
+        copy.catalog_digest().expect("digest"),
+        db.catalog_digest().expect("digest")
+    );
+    assert_eq!(copy.generation().expect("generation"), generation);
+    copy.read(|snap| {
+        assert_eq!(
+            snap.integration_host_record(b"receipt/1").expect("record"),
+            Some(b"decided".as_slice())
         );
+        assert_eq!(
+            snap.integration_host_attachment()?,
+            Some(b"control".as_slice())
+        );
+        Ok(())
+    })
+    .expect("read copy");
+}
+
+#[test]
+fn a_rejected_integration_candidate_retains_the_session() {
+    let dir = TempDir::new("db-session-retained");
+    let db = create(&dir);
+    let work: WorkContext = super::embedded_work().expect("work");
+    let conflicting = {
+        let mut builder = ChangeSet::builder(db.schema(), work.clone());
+        builder
+            .insert(ENTRY, &entry_row("same", 1))
+            .expect("draft row");
+        builder
+            .insert(ENTRY, &entry_row("same", 2))
+            .expect("draft row");
+        builder.finish().expect("sealed delta")
     };
-
-    type_mismatch(
-        CollectionBuilder::new(rel, fields)
-            .push_u64(1)
-            .expect_err("bool column"),
-        0,
-    );
-    let mut builder = CollectionBuilder::new(rel, fields);
-    builder.push_bool(true).expect("flag");
-    type_mismatch(builder.push_i64(-1).expect_err("u64 column"), 1);
-    builder.push_u64(7).expect("count");
-    type_mismatch(builder.push_bool(false).expect_err("i64 column"), 2);
-    builder.push_i64(-3).expect("delta");
-    type_mismatch(builder.push_bytes(&[1, 2, 3]).expect_err("str column"), 3);
-    builder.push_str("alpha").expect("memo");
-
-    type_mismatch(builder.push_bytes(&[1, 2]).expect_err("bytes<3>"), 4);
-    type_mismatch(builder.push_str("not-bytes").expect_err("bytes<3>"), 4);
-    builder.push_bytes(&[1, 2, 3]).expect("tag");
-
-    type_mismatch(
-        builder
-            .push_interval_i64(crate::Interval::<i64>::new(-1, 1).expect("nonempty"))
-            .expect_err("interval<u64> column"),
-        5,
-    );
-    builder
-        .push_interval_u64(crate::Interval::<u64>::new(1, 5).expect("nonempty"))
-        .expect("window");
-    type_mismatch(
-        builder
-            .push_interval_u64(crate::Interval::<u64>::new(1, 5).expect("nonempty"))
-            .expect_err("interval<i64> column"),
-        6,
-    );
-    builder
-        .push_interval_i64(crate::Interval::<i64>::new(-4, 4).expect("nonempty"))
-        .expect("span");
-
-    builder.push_bool(true).expect("second row opens");
-    let err = builder.seal().expect_err("partial row");
-    assert!(
-        matches!(
-            err,
-            Error::FactShape(FactShapeError::ArityMismatch {
-                relation,
-                mismatch: Mismatch {
-                    witnessed: 1,
-                    required: 7,
-                },
-            }) if relation == rel
-        ),
-        "{err:?}"
-    );
-
-    let ok = sample_value_rows().remove(0);
-    let short = vec![Value::Bool(true)];
-    let err = AcceptedCollection::from_value_rows(rel, fields, [&ok, &short])
-        .expect_err("arity per row first");
-    assert!(
-        matches!(
-            err,
-            Error::FactShape(FactShapeError::ArityMismatch {
-                relation,
-                mismatch: Mismatch {
-                    witnessed: 1,
-                    required: 7,
-                },
-            }) if relation == rel
-        ),
-        "{err:?}"
-    );
-    let mut wrong = ok.clone();
-    wrong[3] = Value::U64(9);
-    let err = AcceptedCollection::from_value_rows(rel, fields, [&ok, &wrong])
-        .expect_err("type-kind per cell");
-    type_mismatch(err, 3);
+    let mut session = db.integration_writer(&work).expect("session");
+    match session.prepare(&conflicting).expect("prepare") {
+        Admission::Rejected(violations) => assert_eq!(violations.len(), 1),
+        Admission::Accepted(_) => panic!("conflicting keys must reject"),
+    }
+    // The same exclusive session prepares the receipt-only follow-up: no
+    // gap for another writer, no application fact changed.
+    let empty = ChangeSet::builder(db.schema(), work.clone())
+        .finish()
+        .expect("empty delta");
+    let prepared = match session.prepare(&empty).expect("prepare") {
+        Admission::Accepted(prepared) => prepared,
+        Admission::Rejected(_) => panic!("the empty delta admits"),
+    };
+    let records = [crate::storage::store::HostRecordChange::Put {
+        key: b"receipt/rejected",
+        value: b"rejection recorded",
+    }];
+    let sealed = prepared
+        .seal(crate::storage::store::HostChanges {
+            records: &records,
+            attachment: crate::storage::store::AttachmentChange::Keep,
+        })
+        .expect("seal");
+    sealed.commit().expect("commit");
+    drop(session);
+    assert_eq!(db.read(|snap| snap.count(ENTRY)).expect("count"), 0);
+    db.read(|snap| {
+        assert!(
+            snap.integration_host_record(b"receipt/rejected")
+                .expect("record")
+                .is_some()
+        );
+        Ok(())
+    })
+    .expect("read");
 }

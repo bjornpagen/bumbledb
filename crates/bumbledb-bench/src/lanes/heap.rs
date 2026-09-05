@@ -11,7 +11,7 @@ use crate::corpus_gen::{self, GenConfig, MANDATE_SEGMENTS, Sizes};
 use crate::harness::{self, Protocol, Stats};
 use crate::json;
 use crate::report::Provenance;
-use crate::schema::{Account, AccountId, Ledger, ids};
+use crate::schema::{Account, AccountById, AccountId, Ledger, ids};
 
 pub const DEFAULT_PREFIXES: [u64; 4] = [256, 1_024, 4_096, 16_384];
 
@@ -242,11 +242,13 @@ pub fn run(args: &HeapArgs) -> Result<i32, String> {
 
     let publish_dir = scratch.join("from-instance");
     let publish_start = Instant::now();
-    let db = Db::from_instance_nosync(&publish_dir, &heap)
-        .map_err(|e| format!("from_instance: {e:?}"))?;
+    // ENG-008: the no-sync publish surface is deleted; the heap-arm ladder
+    // publishes durably (publish_ns prices the durable path — recorded in
+    // the artifact by construction).
+    let db = Db::from_instance(&publish_dir, &heap).map_err(|e| format!("from_instance: {e:?}"))?;
     let publish_ns = u64::try_from(publish_start.elapsed().as_nanos()).expect("fits");
 
-    let key = AccountId(0);
+    let key = AccountById { id: AccountId(0) };
     let heap_get = harness::measure(proto, || {
         heap.get(key)
             .map(|got| u64::from(got.is_some()))

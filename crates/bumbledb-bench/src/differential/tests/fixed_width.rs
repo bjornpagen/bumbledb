@@ -25,7 +25,7 @@ fn ladder_schema() -> SchemaDescriptor {
                     field(
                         "lane",
                         ValueType::FixedInterval {
-                            element: IntervalElement::U64,
+                            element: bumbledb::schema::FixedIntervalElement::U64,
                             width: 5,
                         },
                     ),
@@ -214,7 +214,7 @@ fn playlist_schema() -> SchemaDescriptor {
                     field(
                         "slot",
                         ValueType::FixedInterval {
-                            element: IntervalElement::U64,
+                            element: bumbledb::schema::FixedIntervalElement::U64,
                             width: 1,
                         },
                     ),

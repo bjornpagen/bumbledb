@@ -155,6 +155,9 @@ fn param_value(
     let (rel, field) = (anchor.relation, anchor.field);
     let ty = &target::schema().relation(rel).field(field).value_type;
     match ty {
+        ValueType::Id128 => {
+            unreachable!("the querygen target declares no id128 column — teach the draws first")
+        }
         ValueType::U64 => {
             let domain = u64_domain(rel, field, domains).max(1);
             Value::U64(match kind {
@@ -237,22 +240,45 @@ fn param_value(
             }
         }
 
-        ValueType::Interval { element } | ValueType::FixedInterval { element, .. } => {
-            let group = rng.range(64);
-            match element {
-                IntervalElement::U64 => {
-                    let ((start, end), _) = interval_data::ladder_u64(cfg.seed, group, rng);
-                    Value::IntervalU64(
-                        bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
-                    )
-                }
-                IntervalElement::I64 => {
-                    let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
-                    Value::IntervalI64(
-                        bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
-                    )
-                }
-            }
+        ValueType::Interval { element } => interval_param(*element, rng, cfg),
+        ValueType::FixedInterval { element, .. } => interval_param(element.element(), rng, cfg),
+    }
+}
+
+fn interval_param(element: IntervalElement, rng: &mut Rng, cfg: GenConfig) -> Value {
+    let group = rng.range(64);
+    match element {
+        IntervalElement::U64 => {
+            let ((start, end), _) = interval_data::ladder_u64(cfg.seed, group, rng);
+            Value::IntervalU64(
+                bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+            )
+        }
+        IntervalElement::I64 => {
+            let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
+            Value::IntervalI64(
+                bumbledb::Interval::<i64>::new(start, end).expect("nonempty interval"),
+            )
+        }
+        IntervalElement::F64 => {
+            // No target relation declares a dense-interval column today; the
+            // draw stays honest for one that does: integer-ladder endpoints
+            // on the dense line, with a unit fallback where rounding would
+            // collapse the pair.
+            let ((start, end), _) = interval_data::ladder_i64(cfg.seed, group, rng);
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a deliberately rounding draw: a collapsed pair falls \
+                          back to the unit interval below"
+            )]
+            let dense = |v: i64| bumbledb::F64::from(v as f64);
+            let unit = || {
+                bumbledb::Interval::new(bumbledb::F64::from(0.0), bumbledb::F64::from(1.0))
+                    .expect("the unit interval is nonempty")
+            };
+            Value::IntervalF64(
+                bumbledb::Interval::new(dense(start), dense(end)).unwrap_or_else(unit),
+            )
         }
     }
 }

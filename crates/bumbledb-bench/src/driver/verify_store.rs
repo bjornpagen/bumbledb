@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
-use bumbledb::error::CorruptionError;
 use bumbledb::schema::render;
+use bumbledb::store::verify::VerifyCorruption;
 use bumbledb::{Db, Schema, StatementId, StoreFinding, StoreReport};
 
 use crate::cli::CorpusArgs;
@@ -30,17 +30,16 @@ pub fn cmd_verify_store(corpus: &CorpusArgs) -> Result<i32, String> {
     Ok(i32::from(!report.findings().is_empty()))
 }
 
-fn finding_statement(finding: &StoreFinding, schema: &Schema) -> Option<StatementId> {
+fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
     match finding {
-        StoreFinding::Judgment(violation) => Some(violation.statement_id(schema)),
+        // The complete re-judgment's violation names its statement directly.
+        StoreFinding::Judgment(violation) => Some(violation.statement),
+        // The fresh-row determinant arm is gone with the mint (E-NO-RESERVE):
+        // the successor has no fresh rows for the sweeper to convict. The
+        // statement-citing structural findings are the determinant desyncs.
         StoreFinding::Corruption(
-            CorruptionError::FactWithoutDeterminant { statement, .. }
-            | CorruptionError::DeterminantWithoutFact { statement, .. }
-            | CorruptionError::PointwiseOverlap { statement, .. }
-            | CorruptionError::FactWithoutReverseEdge { statement, .. }
-            | CorruptionError::ReverseEdgeWithoutFact { statement, .. }
-            | CorruptionError::ReverseEdgeWeightDesync { statement, .. }
-            | CorruptionError::FreshRowDeterminantEntry { statement, .. },
+            VerifyCorruption::DanglingDeterminant { statement, .. }
+            | VerifyCorruption::UnknownDeterminantStatement { statement },
         ) => Some(*statement),
         StoreFinding::Corruption(_) => None,
     }
@@ -50,16 +49,14 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
     let mut out = String::new();
     for finding in report.findings() {
         let _ = write!(out, "finding: {finding:?}");
-        if let Some(id) = finding_statement(finding, schema) {
+        if let Some(id) = finding_statement(finding) {
             let _ = write!(out, " — statement: {}", render::render(schema, id));
         }
         out.push('\n');
     }
-    let _ = writeln!(
-        out,
-        "dangling intern ids (the accepted leak): {}",
-        report.dangling_intern_ids()
-    );
+    // The immortal-dictionary leak line is gone with the dictionary itself
+    // (ENG-006): the successor store persists inline canonical text, so
+    // there is no intern namespace left to leak.
     if report.findings().is_empty() {
         let _ = writeln!(out, "verify-store OK: namespaces coherent, judgments hold");
     } else {
@@ -75,7 +72,7 @@ fn render_report(schema: &Schema, report: &StoreReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bumbledb::{RelationId, StoreVerdict};
+    use bumbledb::StoreVerdict;
 
     #[test]
     fn findings_render_through_the_statement_renderer() {
@@ -88,15 +85,12 @@ mod tests {
         let report = StoreReport {
             verdict: StoreVerdict::Desynced {
                 findings: vec![StoreFinding::Corruption(
-                    CorruptionError::FactWithoutDeterminant {
-                        relation: RelationId(0),
+                    VerifyCorruption::DanglingDeterminant {
                         statement: containment,
-                        row_id: 0,
-                        determinant_key: Box::new([]),
+                        row: bumbledb::store::RowId(0),
                     },
                 )]
                 .into(),
-                dangling_intern_ids: 0,
             },
         };
         let rendered = render_report(schema, &report);
@@ -110,15 +104,13 @@ mod tests {
         );
 
         let clean = StoreReport {
-            verdict: StoreVerdict::Coherent {
-                dangling_intern_ids: 3,
-            },
+            verdict: StoreVerdict::Coherent,
         };
         let rendered = render_report(schema, &clean);
         assert!(rendered.contains("verify-store OK"), "{rendered}");
         assert!(
-            rendered.contains("dangling intern ids (the accepted leak): 3"),
-            "{rendered}"
+            !rendered.contains("intern"),
+            "the dictionary leak line is gone with the dictionary (ENG-006): {rendered}"
         );
     }
 }

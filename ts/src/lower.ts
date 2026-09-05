@@ -41,6 +41,8 @@ function valueTypeOf(field: AnyField): ValueTypeSpec {
 			return { kind: "i64" }
 		case "f64":
 			return { kind: "f64" }
+		case "id128":
+			return { kind: "id128" }
 		case "str":
 			return { kind: "string" }
 		case "bytes":
@@ -54,8 +56,7 @@ function lowerField(name: string, field: AnyField, newtype: string | undefined):
 	return {
 		name,
 		valueType: valueTypeOf(field),
-		newtype,
-		fresh: "fresh" in field && field.fresh === true
+		newtype
 	}
 }
 

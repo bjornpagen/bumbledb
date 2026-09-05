@@ -1,5 +1,16 @@
 import { Data } from "effect"
 
+/**
+ * Pure authoring refusals and SDK-invariant defects. These are the ONLY
+ * non-`DbError` throw families in the core package: chapter 35 permits
+ * programmer-facing AST misuse to throw synchronously (no I/O ever), and a
+ * contradiction between SDK and native state is a defect, not a domain
+ * outcome. Every operational failure of effectful work is the single
+ * `DbError` tagged-reason class in `#runtime-errors.ts` — the old
+ * per-surface `Err*` wrapper family is deleted (duplicate error wrappers
+ * are banned by C02/C10).
+ */
+
 /** A pure schema, query, parameter, or value-authoring refusal. */
 export class AuthoringError extends Data.TaggedError("AuthoringError")<{
 	readonly message: string
@@ -17,7 +28,7 @@ export class NativeLoadError extends Data.TaggedError("NativeLoadError")<{
 	readonly cause: unknown
 }> {}
 
-/** The legacy bridge's contextual failure; the exact thrown value is retained. */
+/** A native bridge call's contextual failure; the exact thrown value is retained. */
 export class NativeOperationError extends Data.TaggedError("NativeOperationError")<{
 	readonly operation: string
 	readonly cause: unknown
@@ -36,54 +47,4 @@ export class NativeReportedError extends Data.TaggedError("NativeReportedError")
 	readonly kind: string
 	readonly message: string
 	readonly cause: unknown
-}> {}
-
-export class ErrAsyncCallback extends Data.TaggedError("ErrAsyncCallback")<{
-	readonly scope: "read" | "write"
-	readonly message: string
-}> {}
-
-export class ErrSpentHandle extends Data.TaggedError("ErrSpentHandle")<{
-	readonly handle: "ownedInstance" | "instanceBuilder" | "witness"
-	readonly state: "disposed" | "spent" | "leasedForPublish" | "foreign"
-	readonly message: string
-	readonly cause?: unknown
-}> {}
-
-export class ErrUseAfterScope extends Data.TaggedError("ErrUseAfterScope")<{
-	readonly handle: "readInstance" | "writeTransaction"
-	readonly message: string
-}> {}
-
-export class ErrForeignPrepared extends Data.TaggedError("ErrForeignPrepared")<{
-	readonly reason: "notPrepared" | "foreignStore"
-	readonly message: string
-}> {}
-
-export class ErrForeignWitness extends Data.TaggedError("ErrForeignWitness")<{
-	readonly reason: "notWitness" | "foreignStore"
-	readonly message: string
-}> {}
-
-export class ErrNewtypeMismatch extends Data.TaggedError("ErrNewtypeMismatch")<{
-	readonly operation: string
-	readonly path: string
-	readonly message: string
-}> {}
-
-export class ErrSchemaError extends Data.TaggedError("ErrSchemaError")<{
-	readonly operation: string
-	readonly path: string
-	readonly message: string
-}> {}
-
-export class ErrFingerprintMismatch extends Data.TaggedError("ErrFingerprintMismatch")<{
-	readonly operation: string
-	readonly path: string
-	readonly message: string
-}> {}
-
-export class ErrIrError extends Data.TaggedError("ErrIrError")<{
-	readonly operation: "prepare"
-	readonly message: string
 }> {}

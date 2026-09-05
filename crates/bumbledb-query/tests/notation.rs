@@ -28,25 +28,25 @@ mod ledger {
         closed relation Tag as TagId = { Fee, Rebate, Adjustment };
 
         relation Holder {
-            id: u64 as HolderId, fresh,
+            id: u64 as HolderId,
             name: str,
         }
         relation Account {
-            id: u64 as AccountId, fresh,
+            id: u64 as AccountId,
             holder: u64 as HolderId,
             currency: u64 as CurrencyId,
         }
         relation Instrument {
-            id: u64 as InstrumentId, fresh,
+            id: u64 as InstrumentId,
             symbol: str,
         }
         relation JournalEntry {
-            id: u64 as JournalEntryId, fresh,
+            id: u64 as JournalEntryId,
             source: u64 as SourceId,
             created_at: i64,
         }
         relation Posting {
-            id: u64 as PostingId, fresh,
+            id: u64 as PostingId,
             entry: u64 as JournalEntryId,
             account: u64 as AccountId,
             instrument: u64 as InstrumentId,
@@ -58,7 +58,7 @@ mod ledger {
             tag: u64 as TagId,
         }
         relation Org {
-            id: u64 as OrgId, fresh,
+            id: u64 as OrgId,
             name: str,
         }
         relation OrgParent {
@@ -70,6 +70,16 @@ mod ledger {
             org: u64 as OrgId,
             active: interval<i64>,
         }
+
+        // Declared id keys FIRST (E-NO-RESERVE): the retired fresh
+        // auto-keys become ordinary declared statements, at the head so
+        // every later declared statement id keeps its historical position.
+        Holder(id)       -> Holder;
+        Account(id)      -> Account;
+        Instrument(id)   -> Instrument;
+        JournalEntry(id) -> JournalEntry;
+        Posting(id)      -> Posting;
+        Org(id)          -> Org;
 
         Account(holder)      <= Holder(id);
         Account(currency)    <= Currency(id);
@@ -96,27 +106,27 @@ mod calendar {
         closed relation ClaimKind as ClaimKindId = { Busy, Ooo };
 
         relation Account {
-            id: u64 as CalAccountId, fresh,
+            id: u64 as CalAccountId,
             name: str,
         }
         relation Person {
-            id: u64 as CalPersonId, fresh,
+            id: u64 as CalPersonId,
             account: u64 as CalAccountId,
             name: str,
         }
         relation Calendar {
-            id: u64 as CalendarId, fresh,
+            id: u64 as CalendarId,
             owner: u64 as CalPersonId,
         }
         relation Event {
-            id: u64 as CalEventId, fresh,
+            id: u64 as CalEventId,
             calendar: u64 as CalendarId,
             span: interval<i64>,
             created_at: i64,
             hash: bytes<32>,
         }
         relation Attendance {
-            id: u64 as AttendanceId, fresh,
+            id: u64 as AttendanceId,
             event: u64 as CalEventId,
             person: u64 as CalPersonId,
             rsvp: u64 as RsvpId,
@@ -128,7 +138,7 @@ mod calendar {
             span: interval<i64>,
         }
         relation Room {
-            id: u64 as RoomId, fresh,
+            id: u64 as RoomId,
             name: str,
         }
         relation Booking {
@@ -140,6 +150,13 @@ mod calendar {
             person: u64 as CalPersonId,
             hours: interval<i64>,
         }
+
+        Account(id)    -> Account;
+        Person(id)     -> Person;
+        Calendar(id)   -> Calendar;
+        Event(id)      -> Event;
+        Attendance(id) -> Attendance;
+        Room(id)       -> Room;
 
         Person(account)     <= Account(id);
         Calendar(owner)     <= Person(id);
@@ -172,11 +189,11 @@ mod tax {
         closed relation Status as StatusId = { Draft, Active, Repealed };
 
         relation Year {
-            id: u64 as YearId, fresh,
+            id: u64 as YearId,
             span: interval<i64>,
         }
         relation Regime {
-            id: u64 as RegimeId, fresh,
+            id: u64 as RegimeId,
             year: u64 as YearId,
             status: u64 as StatusId,
         }
@@ -185,6 +202,9 @@ mod tax {
             income: interval<i64>,
             rate_bps: i64,
         }
+
+        Year(id)   -> Year;
+        Regime(id) -> Regime;
 
         Regime(year)    <= Year(id);
         Regime(status)  <= Status(id);
@@ -267,7 +287,7 @@ fn calendar_union_lowers_to_the_exact_ir() {
         })],
     };
     assert_eq!(
-        lowered,
+        *lowered,
         bumbledb::Query::single(arm_rule(ClaimKind::Busy.id().0))
     );
 }
@@ -386,7 +406,7 @@ fn closed_reference_handles_are_a_fixed_point() {
     let qualified = query!(Tax {
         (v0) | Regime(id: v0, status == Status::Active);
     });
-    assert_eq!(qualified, reparsed);
+    assert_eq!(*qualified, *reparsed);
 }
 
 /// Every named-aggregate head form in one rule; the names stay at the
@@ -530,7 +550,7 @@ fn recursive_lowers_to_the_exact_ir() {
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
     };
-    assert_eq!(lowered, expected);
+    assert_eq!(*lowered.query(), expected);
 }
 
 /// Named params get dense ids by first occurrence in IR walk order —
@@ -603,7 +623,7 @@ fn rec_then_main_mint_param_ids_in_walk_order() {
             vec![cond(CmpOp::Eq, 0, 1)],
         )],
     };
-    assert_eq!(lowered, expected);
+    assert_eq!(*lowered.query(), expected);
 }
 
 /// The indexed spellings survive for what the ordered form cannot say —
@@ -785,7 +805,7 @@ fn condition_tree_lowers_to_the_exact_ir() {
             ConditionTree::And(vec![leaf(CmpOp::Gt, -50), leaf(CmpOp::Lt, -10)]),
         ])],
     };
-    assert_eq!(banded, bumbledb::Query::single(rule));
+    assert_eq!(*banded, bumbledb::Query::single(rule));
 }
 
 /// `start..end` interval literals must emit `Value::Interval*(Interval::new(...))`,
@@ -813,7 +833,7 @@ fn interval_literals_compile_prepare_and_render() {
     });
     let interval = Interval::<u64>::new(0, 10).expect("nonempty");
     assert_eq!(
-        point_in,
+        *point_in,
         bumbledb::Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
@@ -868,7 +888,7 @@ mod primer {
         closed relation State as StateId = { Upheld, Broken };
 
         relation Grp {
-            id: u64 as GrpId, fresh,
+            id: u64 as GrpId,
         }
         relation Produces {
             grp: u64 as GrpId,

@@ -2,32 +2,50 @@ use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
 use crate::error::Result;
 use crate::exec::sink::ProjectionSink;
+use crate::image::intern::InternerHandle;
 use crate::ir::validate::SignatureColumn;
-use crate::storage::catalog::CatalogRead;
 
 /// Reverses if: a profiled finalize shows the String/FixedBytes match arms'
 /// mere presence taxing an all-words fill ≥ the house bar — re-twin before
 /// believing it.
-pub(super) fn finalize<C: CatalogRead>(
+pub(super) fn finalize(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
-    catalog: &C,
+    interner: &InternerHandle<'_>,
     columns: &[SignatureColumn],
     out: &mut Answers,
 ) -> Result<()> {
     memo.clear();
     match sink {
         EitherSink::Computed(sink) => {
-            if let Some(error) = &sink.error { return Err(error.clone()); }
-            finalize(&mut sink.inner, answer_scratch, memo, catalog, columns, out)
+            if let Some(error) = &sink.error {
+                return Err(error.clone());
+            }
+            finalize(
+                &mut sink.inner,
+                answer_scratch,
+                memo,
+                interner,
+                columns,
+                out,
+            )
         }
         EitherSink::Projection(sink) => {
             let base = out.cells.len();
-            let result = fill_resolved_answers(out, catalog, memo, columns, sink);
+            let result = if let Some(error) = sink.take_error() {
+                // A sticky emit failure spoiled the execution: refuse
+                // before any answer publishes (Q-ATOMIC).
+                Err(error)
+            } else if sink.spilled() {
+                // The spilled drain is row-major across both tiers.
+                drain_spilled_answers(out, interner, memo, columns, sink)
+            } else {
+                fill_resolved_answers(out, interner, memo, columns, sink)
+            };
             if result.is_err() {
-                // The columnar fill pre-sizes its rows: drop the
-
+                // The fills pre-size/append rows: drop the partial carrier
+                // content so no failed work looks like a result.
                 out.cells.truncate(base);
             }
             result
@@ -35,15 +53,25 @@ pub(super) fn finalize<C: CatalogRead>(
         EitherSink::Aggregate(sink) => {
             out.cells.reserve(sink.group_count() * columns.len());
             sink.finalize_into(answer_scratch, |answer| {
-                push_resolved_answer(out, catalog, memo, columns, answer)
+                push_resolved_answer(out, interner, memo, columns, answer)
             })
         }
     }
 }
 
-fn fill_resolved_answers<C: CatalogRead>(
+fn drain_spilled_answers(
     out: &mut Answers,
-    catalog: &C,
+    interner: &InternerHandle<'_>,
+    memo: &mut ResolveMemo,
+    columns: &[SignatureColumn],
+    sink: &mut ProjectionSink,
+) -> Result<()> {
+    sink.for_each_answer(&mut |answer| push_resolved_answer(out, interner, memo, columns, answer))
+}
+
+fn fill_resolved_answers(
+    out: &mut Answers,
+    interner: &InternerHandle<'_>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     sink: &ProjectionSink,
@@ -56,7 +84,7 @@ fn fill_resolved_answers<C: CatalogRead>(
         word += match column.ty() {
             ValueType::String => {
                 for (row, answer) in sink.answers().enumerate() {
-                    let (start, len) = memo.resolve(catalog, answer[word], out)?;
+                    let (start, len) = memo.resolve(interner, answer[word], out)?;
                     out.cells[base + row * arity + col] = Cell::String { start, len };
                 }
                 1
@@ -105,9 +133,22 @@ fn fill_fixed_column(
                 slots[col] = Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?);
             }
         }
-        ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => {
+        ValueType::Id128 => {
+            for (slots, answer) in rows {
+                slots[col] = Answers::id128_cell(answer[word], answer[word + 1]);
+            }
+            return Ok(2);
+        }
+        ValueType::Interval { element, .. } => {
             for (slots, answer) in rows {
                 slots[col] = Answers::interval_cell(*element, answer[word], answer[word + 1]);
+            }
+            return Ok(2);
+        }
+        ValueType::FixedInterval { element, .. } => {
+            for (slots, answer) in rows {
+                slots[col] =
+                    Answers::interval_cell(element.element(), answer[word], answer[word + 1]);
             }
             return Ok(2);
         }
@@ -121,9 +162,9 @@ fn fill_fixed_column(
     Ok(1)
 }
 
-fn push_resolved_answer<C: CatalogRead>(
+fn push_resolved_answer(
     out: &mut Answers,
-    catalog: &C,
+    interner: &InternerHandle<'_>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     answer: &[u64],
@@ -138,12 +179,17 @@ fn push_resolved_answer<C: CatalogRead>(
                 Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?),
                 1,
             ),
-            ValueType::Interval { element, .. } | ValueType::FixedInterval { element, .. } => (
+            ValueType::Id128 => (Answers::id128_cell(answer[word], answer[word + 1]), 2),
+            ValueType::Interval { element, .. } => (
                 Answers::interval_cell(*element, answer[word], answer[word + 1]),
                 2,
             ),
+            ValueType::FixedInterval { element, .. } => (
+                Answers::interval_cell(element.element(), answer[word], answer[word + 1]),
+                2,
+            ),
             ValueType::String => {
-                let (start, len) = memo.resolve(catalog, answer[word], out)?;
+                let (start, len) = memo.resolve(interner, answer[word], out)?;
                 (Cell::String { start, len }, 1)
             }
             ValueType::FixedBytes { len } => {

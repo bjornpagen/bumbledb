@@ -8,24 +8,18 @@ impl From<heed::Error> for Error {
     fn from(err: heed::Error) -> Self {
         match err {
             // and the remedy is releasing snapshots, not diagnosing LMDB.
-            heed::Error::Mdb(heed::MdbError::ReadersFull) => Self::ReadersFull {
-                max_readers: crate::storage::env::MAX_READERS,
-            },
+            heed::Error::Mdb(heed::MdbError::ReadersFull) => {
+                Self::from_store(crate::storage::store::StoreError::ReaderSlotsExhausted)
+            }
             other => Self::Lmdb(LmdbFailure::from(other)),
         }
     }
 }
 
 impl Error {
-    /// macOS: the data-page `pwrite`s, `fcntl(F_FULLFSYNC)`, the
-    pub(crate) fn from_commit(err: heed::Error) -> Self {
-        match err {
-            heed::Error::Io(error) => Self::CommitSync {
-                retries: 0,
-                error: IoFailure::from_io(&error),
-            },
-            other => other.into(),
-        }
+    /// Box a successor-store condition into the shared error surface.
+    pub(crate) fn from_store(error: crate::storage::store::StoreError) -> Self {
+        Self::Store(Box::new(error))
     }
 }
 
@@ -62,6 +56,14 @@ impl From<FactShapeError> for Error {
 impl From<CorruptionError> for Error {
     fn from(err: CorruptionError) -> Self {
         Self::Corruption(err)
+    }
+}
+
+/// Infallible operand sources (heap image rows) satisfy the generic
+/// `Error: From<O::Error>` bounds; no value ever exists to convert.
+impl From<std::convert::Infallible> for Error {
+    fn from(infallible: std::convert::Infallible) -> Self {
+        match infallible {}
     }
 }
 

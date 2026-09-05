@@ -12,6 +12,14 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
             bytes: Box::from(text.as_bytes()),
         },
         Value::FixedBytes(raw) => fixed_bytes_const(raw),
+        // Sixteen exact bytes as two big-endian column words: byte order
+        // is the value's one total order, so the words compare exactly.
+        Value::Id128(id) => {
+            let bytes = id.to_bytes();
+            let hi = u64::from_be_bytes(bytes[..8].try_into().expect("sixteen bytes"));
+            let lo = u64::from_be_bytes(bytes[8..].try_into().expect("sixteen bytes"));
+            Const::Words(Box::from([hi, lo]))
+        }
         Value::IntervalU64(interval) => Const::Interval {
             start: interval.start(),
             end: interval.end(),
@@ -19,6 +27,12 @@ pub(crate) fn lower_literal(value: &Value) -> Const {
         Value::IntervalI64(interval) => Const::Interval {
             start: i64_word(interval.start()),
             end: i64_word(interval.end()),
+        },
+        // Dense-line endpoints lower to their order-key words — the same
+        // words the image columns hold (`image/decode.rs`).
+        Value::IntervalF64(interval) => Const::Interval {
+            start: interval.start().to_order_key(),
+            end: interval.end().to_order_key(),
         },
     }
 }
@@ -55,7 +69,11 @@ pub(super) fn point_word(value: &Value) -> u64 {
     match value {
         Value::U64(v) => *v,
         Value::I64(v) => i64_word(*v),
-        _ => unreachable!("validated: interval points are U64/I64"),
+        // A dense point probes by its order key; the finite-probe guard
+        // (`image/view/eval.rs::dense_probe_word`) makes a nonfinite
+        // literal an ordinary nonmatch at evaluation.
+        Value::F64(v) => v.to_order_key(),
+        _ => unreachable!("validated: interval points are U64/I64/F64"),
     }
 }
 

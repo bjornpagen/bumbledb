@@ -169,12 +169,13 @@ function consumerProgram(): string {
 } from "@bjornpagen/bumbledb"
 import { contained, key, on, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 
-const Holder = relation("Holder", { id: u64.fresh, name: str })
-const Account = relation("Account", { id: u64.fresh, holder: u64 })
+const Holder = relation("Holder", { id: u64, name: str })
+const Account = relation("Account", { id: u64, holder: u64 })
 const Terms = relation("Terms", { account: u64, rate: u64 })
+const holderKey = key(Holder, ["id"])
 const termsKey = key(Terms, ["account"])
 const holderOf = contained(on(Account, "holder"), on(Holder, "id"))
-const Theory = schema("T", { Holder, Account, Terms }, [termsKey, holderOf])
+const Theory = schema("T", { Holder, Account, Terms }, [holderKey, termsKey, holderOf])
 type Rels = (typeof Theory)["relations"]
 
 const implied: ImpliedKeyViolation<Rels> = {

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use bumbledb::schema::{FieldId, RelationId, SchemaDescriptor};
-use bumbledb::{Admission, Db, FreshField, InstanceBuilder};
+use bumbledb::schema::{RelationId, SchemaDescriptor};
+use bumbledb::{Admission, Db, InstanceBuilder};
 
 use crate::cli::PrimerlaneArgs;
 
@@ -65,18 +65,6 @@ fn rel_at(idx: usize) -> RelationId {
     RelationId(u32::try_from(idx).expect("relation count fits u32"))
 }
 
-fn fresh_fields(
-    db: &Db<SchemaDescriptor>,
-    counts: &[u64],
-) -> Result<Vec<FreshField<SchemaDescriptor>>, String> {
-    (0..counts.len())
-        .map(|idx| {
-            db.fresh_field(rel_at(idx), FieldId(0))
-                .map_err(|e| format!("fresh field {idx}: {e:?}"))
-        })
-        .collect()
-}
-
 fn builder_lane(
     cfg: &PrimerConfig,
     counts: &[u64],
@@ -91,13 +79,8 @@ fn builder_lane(
     phase(phases, "builder_load", total, alloc, || {
         for (idx, &n) in counts.iter().enumerate() {
             let rel = rel_at(idx);
-            let fresh = builder
-                .fresh_field(rel, FieldId(0))
-                .map_err(|e| format!("fresh field {idx}: {e:?}"))?;
-            let range = builder
-                .reserve_at(fresh, n)
-                .map_err(|e| format!("reserve {idx}: {e:?}"))?;
-            assert_eq!(range.start(), Some(0), "builder ids are index-aligned");
+            // Application-owned ids (E-NO-RESERVE): the generator's row
+            // index IS the id, dense from 0 — nothing left to reserve.
             builder
                 .load_dyn(rel, (0..n).map(|i| corpus::row(cfg, counts, rel, i)))
                 .map_err(|e| format!("load {idx}: {e:?}"))?;
@@ -133,12 +116,11 @@ fn delta_lane(
             Admission::Rejected(v) => Err(format!("empty admission rejected: {v}")),
         }
     })?;
-    let fresh = fresh_fields(&db, counts)?;
     phase(phases, "delta_seed", seeded, alloc, || {
-        commit_halves(cfg, counts, &db, &fresh, Half::First)
+        commit_halves(cfg, counts, &db, Half::First)
     })?;
     phase(phases, "delta_write", total - seeded, alloc, || {
-        commit_halves(cfg, counts, &db, &fresh, Half::Second)
+        commit_halves(cfg, counts, &db, Half::Second)
     })?;
     Ok(db)
 }
@@ -153,7 +135,6 @@ fn commit_halves(
     cfg: &PrimerConfig,
     counts: &[u64],
     db: &Db<SchemaDescriptor>,
-    fresh: &[FreshField<SchemaDescriptor>],
     half: Half,
 ) -> Result<(), String> {
     let committed = db
@@ -164,8 +145,9 @@ fn commit_halves(
                     Half::First => (0, n / 2),
                     Half::Second => (n / 2, n),
                 };
-                let range = tx.reserve_at(fresh[idx], end - start)?;
-                assert_eq!(range.start(), Some(start), "delta ids are index-aligned");
+                // Application-owned ids (E-NO-RESERVE): the generator's
+                // row index IS the id — the halves partition `0..n`, so
+                // the two commits stay index-aligned by construction.
                 tx.insert_dyn(rel, (start..end).map(|i| corpus::row(cfg, counts, rel, i)))?;
             }
             Ok(())

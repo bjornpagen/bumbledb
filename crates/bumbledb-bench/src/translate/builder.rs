@@ -37,7 +37,16 @@ fn sql_literal(value: &Value) -> Result<String, String> {
             hex.push('\'');
             hex
         }
-        Value::IntervalU64(..) | Value::IntervalI64(..) => {
+        Value::Id128(id) => {
+            let mut hex = String::with_capacity(35);
+            hex.push_str("X'");
+            for b in id.as_bytes() {
+                let _ = write!(hex, "{b:02X}");
+            }
+            hex.push('\'');
+            hex
+        }
+        Value::IntervalU64(..) | Value::IntervalI64(..) | Value::IntervalF64(..) => {
             return Err("interval literal in a scalar position".to_owned());
         }
     })

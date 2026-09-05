@@ -4,7 +4,16 @@
 //! own surface stays pure-data IR. The notation is the statement grammar's query side,
 //! promoted:
 //! ```text
-//! query     := cq | reach
+//! query     := import* (cq | reach)
+//! import    := 'use' derived '=' expr ';'    // nonrecursive composition (ch. 34):
+//!                                            //   binds an existing schema-bound
+//!                                            //   `&Query` template into the lexical
+//!                                            //   relation roster; its whole body
+//!                                            //   splices as derived stages (owned
+//!                                            //   immutable IR, cloned — never a
+//!                                            //   borrow of a database or session);
+//!                                            //   recursive or parameterized
+//!                                            //   templates refuse at construction
 //! cq        := interior* main
 //! reach     := interior* recblock main
 //! interior  := 'interior' derived '(' head ')' '|' body ';'
@@ -21,9 +30,20 @@
 //!                                        //   `interior` / `rec` is a compile
 //!                                        //   error (the former named-head sneak)
 //! head    := headterm (',' headterm)*
-//! headterm:= var | [name ':'] agg        // named positions become result columns
-//! agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
+//! headterm:= var | [name ':'] agg        // named positions become result columns;
+//!                                        //   interior heads may aggregate too (a
+//!                                        //   nonrecursive stage emits aggregate/
+//!                                        //   computed outputs — the projection-only
+//!                                        //   wall is deleted); REC heads stay
+//!                                        //   projection-only (nothing aggregates
+//!                                        //   through the feedback cycle)
+//! agg     := Sum(t) | Mean(t) | Min(t) | Max(t) | Count | Pack(v)
 //!            where t := v | Duration(v)
+//! literal := bool | int | int..int | float | float..float
+//!          | id128:"32 lowercase hex" | "str" | b"bytes"
+//!                                        //   float..float is a dense nonempty
+//!                                        //   half-open interval (canonical
+//!                                        //   binary64 endpoints, -0 → +0)
 //! body    := item (',' item)*
 //! item    := atom                        // positive occurrence
 //!          | '!' atom                    // negation (anti-probe; safety per roster)
@@ -74,6 +94,25 @@
 //! engine-side; the renderer's functional forms are grammar, so the
 //! named after the field** — projection shorthand, Rust's struct-shorthand
 //! after its referencing field; one named otherwise is written
+//!
+//! **Typed templates (chapter 34):** `query!` evaluates to a per-expansion
+//! TEMPLATE value wrapping the owned immutable `::bumbledb::Query` — it
+//! derefs to `&Query` (so `db.prepare(&q)`, `use x = &q;` and
+//! `ir::render(&schema, &q)` are unchanged), moves the plain IR out via
+//! `into_query()`, and carries the name→`ParamId` table plus the head
+//! column names (`param_names()` / `columns()`). A NAMED-param template
+//! additionally has `bind(params! { name: value, … })` — order-free typed
+//! named binding: unknown/missing/doubled names are compile errors (a
+//! typestate builder), the value roster is the C05 `BindValue` vocabulary
+//! (`bool`/`u64`/`i64`/`F64`/`f64`/`&str`/`&String`/`Id128`/`&[u8]`/
+//! `Interval<u64|i64|F64>`, plus `BindValue`/`ParamArg` themselves;
+//! `field in ?p` set params take `&[Value]`), and value-vs-slot TYPE
+//! agreement stays the engine's typed bind error at execution — exactly
+//! chapter 34's fallible `bind(...)?`, with the fallible half on
+//! prepare/execute. Positional (`?0`) templates keep the untyped
+//! positional `BindArgs` path and get no `bind`. The template type is
+//! expansion-local (unnameable): retain templates as local values, or
+//! carry `into_query()`'s plain `Query` across signatures.
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::fmt::Write as _;
 use std::iter::Peekable;
@@ -148,7 +187,21 @@ enum Lit {
     Int(Int),
     Float(u64),
 
-    Interval { start: Int, end: Int },
+    Interval {
+        start: Int,
+        end: Int,
+    },
+
+    /// `0.5..1.5` — a dense float interval with finite canonical binary64
+    /// endpoints, both spelled as floats (the schema grammar's spelling).
+    FloatInterval {
+        start: u64,
+        end: u64,
+    },
+
+    /// `id128:"32 lowercase hex"` — an application-owned 128-bit identity
+    /// literal (the renderer's `id128:…` spelling, quoted for the lexer).
+    Id128([u8; 16]),
 
     Str(String),
 
@@ -243,8 +296,17 @@ impl AggOp {
 
 enum HeadTerm {
     Var(Name),
-    Count,
-    Agg { op: AggOp, over: Name },
+    Count {
+        /// The written `name:` column label, kept for the typed template's
+        /// `columns()` table (never in the IR or the fingerprint).
+        label: Option<Name>,
+    },
+    Agg {
+        op: AggOp,
+        over: Name,
+        /// As on [`HeadTerm::Count`]: the column label, template-only.
+        label: Option<Name>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -462,9 +524,92 @@ fn finish_int(tokens: &mut Tokens, start: Int) -> Parse<Lit> {
     Ok(Lit::Int(start))
 }
 
+/// Canonicalizes a binary64 bit image the way the engine's `F64::from_bits`
+/// does for the two literal-reachable cases: `-0.0` becomes `+0.0` (finite
+/// literals cannot spell NaN or an infinity).
+fn canonical_float_bits(bits: u64) -> u64 {
+    const SIGN: u64 = 0x8000_0000_0000_0000;
+    if bits & !SIGN == 0 { 0 } else { bits }
+}
+
+/// After a float literal: `start..end` makes a dense float interval — both
+/// endpoints spelled as (finite) floats, strictly ordered after `-0`
+/// canonicalization (the schema grammar's float-interval literal, verbatim).
+fn finish_float(tokens: &mut Tokens, start: Lit) -> Parse<Lit> {
+    if !peek_punct(tokens, '.') {
+        return Ok(start);
+    }
+    let Lit::Float(start_bits) = start else {
+        unreachable!("finish_float is called on float literals only");
+    };
+    let dot = expect_punct(tokens, '.', "the float interval's `..`")?;
+    expect_punct(tokens, '.', "the float interval's `..`")?;
+    let Some(Lit::Float(end_bits)) = parse_float(tokens)? else {
+        return fail(
+            dot,
+            "query!: a float interval spells both endpoints as floats — \
+             write `0.0..1.0`-style bounds",
+        );
+    };
+    let start_bits = canonical_float_bits(start_bits);
+    let end_bits = canonical_float_bits(end_bits);
+    if f64::from_bits(start_bits) >= f64::from_bits(end_bits) {
+        return fail(
+            dot,
+            "query!: a float interval is half-open and nonempty — \
+             start < end strictly, after `-0` canonicalizes to `+0`",
+        );
+    }
+    Ok(Lit::FloatInterval {
+        start: start_bits,
+        end: end_bits,
+    })
+}
+
+/// After the `id128` keyword: `:"32 lowercase hex characters"` — the
+/// canonical application-identity literal, validated at expansion.
+fn parse_id128_body(tokens: &mut Tokens, keyword: Span) -> Parse<Lit> {
+    expect_colon(tokens, "the id128 literal's `:`")?;
+    let Some(TokenTree::Literal(lit)) = tokens.next() else {
+        return fail(
+            keyword,
+            "query!: `id128:` takes a quoted canonical value — `id128:\"…32 lowercase hex…\"`",
+        );
+    };
+    let text = lit.to_string();
+    let Some(hex) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
+        return fail(
+            lit.span(),
+            "query!: `id128:` takes a quoted canonical value — `id128:\"…32 lowercase hex…\"`",
+        );
+    };
+    if hex.len() != 32
+        || !hex
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    {
+        return fail(
+            lit.span(),
+            "query!: an Id128 literal is exactly 32 lowercase hex characters — \
+             uppercase, UUID punctuation and other widths refuse",
+        );
+    }
+    let mut bytes = [0u8; 16];
+    for (index, chunk) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        let high = (chunk[0] as char).to_digit(16).expect("checked hex");
+        let low = (chunk[1] as char).to_digit(16).expect("checked hex");
+        bytes[index] = u8::try_from(high * 16 + low).expect("two hex digits fit a byte");
+    }
+    Ok(Lit::Id128(bytes))
+}
+
 fn parse_lit(tokens: &mut Tokens) -> Parse<Lit> {
+    if peek_ident_text(tokens).as_deref() == Some("id128") {
+        let keyword = expect_ident(tokens, "`id128`")?;
+        return parse_id128_body(tokens, keyword.span);
+    }
     if let Some(float) = parse_float(tokens)? {
-        return Ok(float);
+        return finish_float(tokens, float);
     }
     if peek_punct(tokens, '-') {
         let start = parse_int(tokens, "an integer literal")?;
@@ -565,9 +710,9 @@ fn agg_op(name: &str) -> Option<AggOp> {
         .map(|(_, op)| *op)
 }
 
-fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
+fn parse_agg(tokens: &mut Tokens, op: AggOp, label: Option<Name>) -> Parse<HeadTerm> {
     if op == AggOp::Count {
-        return Ok(HeadTerm::Count);
+        return Ok(HeadTerm::Count { label });
     }
     let (mut arg, _) = take_paren_group(tokens, "the aggregate's argument")?;
     let first = expect_ident(&mut arg, "a variable")?;
@@ -581,7 +726,7 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     if let Some(extra) = arg.next() {
         return fail(extra.span(), "query!: the aggregate takes one argument");
     }
-    Ok(HeadTerm::Agg { op, over })
+    Ok(HeadTerm::Agg { op, over, label })
 }
 
 /// Params are refused here: a param is an execution input, not a result column.
@@ -609,10 +754,10 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
                 ),
             );
         };
-        return parse_agg(tokens, op);
+        return parse_agg(tokens, op, Some(name));
     }
     if let Some(op) = agg_op(&name.text) {
-        return parse_agg(tokens, op);
+        return parse_agg(tokens, op, None);
     }
     if name.text == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
         return fail(
@@ -657,6 +802,9 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
         return Ok(match word.as_str() {
             "true" => SelValue::Lit(Lit::Bool(true)),
             "false" => SelValue::Lit(Lit::Bool(false)),
+            "id128" if peek_punct(tokens, ':') => {
+                SelValue::Lit(parse_id128_body(tokens, name.span)?)
+            }
             _ => {
                 if peek_punct(tokens, ':') {
                     expect_colon(tokens, "the handle path's `::`")?;
@@ -747,6 +895,9 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
         }
         if word == "false" {
             return Ok(Term::Lit(Lit::Bool(false)));
+        }
+        if word == "id128" && peek_punct(tokens, ':') {
+            return Ok(Term::Lit(parse_id128_body(tokens, name.span)?));
         }
         if word == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
             return fail(
@@ -975,12 +1126,17 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
 }
 
 fn validate_derived_name(name: &Name) -> Parse<()> {
-    if name.text == "and" || name.text == "or" || name.text == "interior" || name.text == "rec" {
+    if name.text == "and"
+        || name.text == "or"
+        || name.text == "interior"
+        || name.text == "rec"
+        || name.text == "use"
+    {
         return fail(
             name.span,
             format!(
                 "query!: `{}` is reserved — `and`/`or` are the condition grammar, \
-                 `interior`/`rec` introduce derived tables",
+                 `interior`/`rec` introduce derived tables, `use` imports templates",
                 name.text
             ),
         );
@@ -1066,6 +1222,13 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                              an interior/rec cannot take either tree name",
                             ident.text
                         ),
+                    );
+                }
+                "use" => {
+                    return fail(
+                        ident.span,
+                        "query!: `use` imports precede every rule — declaration \
+                         order is imports, then interiors, then rec, then main",
                     );
                 }
                 "interior" | "rec" => {
@@ -1195,9 +1358,29 @@ fn screaming_snake(name: &str) -> String {
     out
 }
 
+/// One named param's usage shape, recorded at its FIRST use: a scalar
+/// position (`== ?p`, comparisons, membership sides) or a set-membership
+/// position (`field in ?p`). One name keeps one shape — the engine's
+/// per-slot `ParamSpec` is scalar XOR set, so a mixed spelling can never
+/// validate; the macro refuses it with the name in hand.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParamShape {
+    Scalar,
+    Set,
+}
+
+impl ParamShape {
+    fn describe(self) -> &'static str {
+        match self {
+            Self::Scalar => "a scalar (`== ?p` / comparison) position",
+            Self::Set => "a set (`field in ?p`) position",
+        }
+    }
+}
+
 enum ParamStyle {
     Empty,
-    Named(Vec<String>),
+    Named(Vec<(Name, ParamShape)>),
     Index,
 }
 
@@ -1214,7 +1397,7 @@ impl Default for Params {
 }
 
 impl Params {
-    fn resolve(&mut self, param: &Param) -> Parse<u16> {
+    fn resolve(&mut self, param: &Param, shape: ParamShape) -> Parse<u16> {
         match param {
             Param::Named(name) => {
                 if matches!(self.style, ParamStyle::Index) {
@@ -1225,20 +1408,35 @@ impl Params {
                     );
                 }
                 if matches!(self.style, ParamStyle::Empty) {
-                    self.style = ParamStyle::Named(vec![name.text.clone()]);
+                    self.style = ParamStyle::Named(vec![(name.clone(), shape)]);
                     return Ok(0);
                 }
                 let ParamStyle::Named(named) = &mut self.style else {
                     unreachable!("Empty and Index returned above");
                 };
-                let position = named
+                if let Some((position, (_, existing))) = named
                     .iter()
-                    .position(|existing| *existing == name.text)
-                    .unwrap_or_else(|| {
-                        named.push(name.text.clone());
-                        named.len() - 1
-                    });
-                u16::try_from(position)
+                    .enumerate()
+                    .find(|(_, (existing, _))| existing.text == name.text)
+                {
+                    if *existing != shape {
+                        return fail(
+                            name.span,
+                            format!(
+                                "query!: ?{} is used as both {} and {} — one param \
+                                 name binds one engine slot, and a slot is scalar \
+                                 XOR set; use two names",
+                                name.text,
+                                existing.describe(),
+                                shape.describe()
+                            ),
+                        );
+                    }
+                    return u16::try_from(position)
+                        .map_or_else(|_| fail(name.span, "query!: too many params"), Ok);
+                }
+                named.push((name.clone(), shape));
+                u16::try_from(named.len() - 1)
                     .map_or_else(|_| fail(name.span, "query!: too many params"), Ok)
             }
             Param::Index { index, span } => {
@@ -1376,11 +1574,21 @@ fn interior_style(atom: &Atom) -> Parse<BindingStyle> {
     Ok(style)
 }
 
+/// One derived table in scope: its macro-local name and the emitted
+/// `InteriorId` EXPRESSION addressing it. With no `use` imports every id is
+/// a compile-time literal; with imports the spliced stages shift declared
+/// ids by a runtime base (`__ibase`), and each import's head stage id is a
+/// runtime local (`__useK`).
+struct Derived {
+    name: String,
+    id_expr: String,
+}
+
 struct Emitter<'a> {
     theory: &'a str,
     params: Params,
 
-    derived: Vec<String>,
+    derived: Vec<Derived>,
 }
 
 impl Emitter<'_> {
@@ -1389,7 +1597,7 @@ impl Emitter<'_> {
     }
 
     fn param(&mut self, param: &Param) -> Parse<String> {
-        let id = self.params.resolve(param)?;
+        let id = self.params.resolve(param, ParamShape::Scalar)?;
         Ok(format!(
             "::bumbledb::Term::Param(::bumbledb::ParamId({id}))"
         ))
@@ -1424,6 +1632,15 @@ impl Emitter<'_> {
                     int_text(end)
                 )
             }
+            Lit::FloatInterval { start, end } => format!(
+                "{value}::IntervalF64(::bumbledb::Interval::<::bumbledb::F64>::new(\
+                 ::bumbledb::F64::from_bits({start}u64), ::bumbledb::F64::from_bits({end}u64))\
+                 .expect(\"query! float interval literals are nonempty\"))"
+            ),
+            Lit::Id128(bytes) => format!(
+                "{value}::Id128(::bumbledb::Id128::from_bytes(*b\"{}\"))",
+                bytes.escape_ascii()
+            ),
             Lit::Str(text) => {
                 format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")
             }
@@ -1458,7 +1675,7 @@ impl Emitter<'_> {
     }
 
     /// Interior/rec atom: bare idents are ordered dense bindings; indexed labels are sparse/selection; the two never mix.
-    fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: u32) -> Parse<String> {
+    fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: &str) -> Parse<String> {
         let bindings = self.interior_bindings(scope, atom)?;
         Ok(format!(
             "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId({interior})), bindings: ::std::vec![{bindings}] }}"
@@ -1520,7 +1737,7 @@ impl Emitter<'_> {
                 }
                 Binding::Value { field, value } => (field, self.sel_value(field, value)?),
                 Binding::SetParam { field, param } => {
-                    let id = self.params.resolve(param)?;
+                    let id = self.params.resolve(param, ParamShape::Set)?;
                     (
                         field,
                         format!("::bumbledb::Term::ParamSet(::bumbledb::ParamId({id}))"),
@@ -1538,13 +1755,13 @@ impl Emitter<'_> {
 
     /// must not resolve to `Parent`'s constants.
     fn atom(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
-        if let Some(interior) = self
+        if let Some(id_expr) = self
             .derived
             .iter()
-            .position(|name| *name == atom.relation.text)
-            .and_then(|index| u32::try_from(index).ok())
+            .find(|entry| entry.name == atom.relation.text)
+            .map(|entry| entry.id_expr.clone())
         {
-            return self.interior_atom(scope, atom, interior);
+            return self.interior_atom(scope, atom, &id_expr);
         }
         if atom
             .relation
@@ -1598,7 +1815,7 @@ impl Emitter<'_> {
                 Binding::Var { field, var } => (field, Self::var(scope.intern(var)?)),
                 Binding::Value { field, value } => (field, self.sel_value(field, value)?),
                 Binding::SetParam { field, param } => {
-                    let id = self.params.resolve(param)?;
+                    let id = self.params.resolve(param, ParamShape::Set)?;
                     (
                         field,
                         format!("::bumbledb::Term::ParamSet(::bumbledb::ParamId({id}))"),
@@ -1671,15 +1888,16 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Var(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Count => "::bumbledb::FindTerm::Count".to_string(),
+            HeadTerm::Count { .. } => "::bumbledb::FindTerm::Count".to_string(),
             HeadTerm::Agg {
                 op: AggOp::Pack,
                 over,
+                ..
             } => format!(
                 "::bumbledb::FindTerm::Pack {{ over: ::bumbledb::VarId({}) }}",
                 scope.head_var(over)?
             ),
-            HeadTerm::Agg { op, over } => format!(
+            HeadTerm::Agg { op, over, .. } => format!(
                 "::bumbledb::FindTerm::Aggregate {{ op: ::bumbledb::FoldOp::{}, \
                      over: ::bumbledb::VarId({}) }}",
                 op.fold_ir_name(),
@@ -1695,18 +1913,22 @@ impl Emitter<'_> {
                 HeadTerm::Var(name) => {
                     let _ = write!(finds, "::bumbledb::VarId({}),", scope.head_var(name)?);
                 }
-                HeadTerm::Count => {
+                HeadTerm::Count { .. } => {
                     return fail(
                         Span::call_site(),
-                        "query!: an interior/rec head projects bound variables only — \
-                         Count is a fold over a finished set",
+                        "query!: a rec head projects bound variables only — no \
+                         aggregate, arithmetic-created value or negation may flow \
+                         through the recursive feedback cycle (interiors may \
+                         aggregate; the cycle may not)",
                     );
                 }
                 HeadTerm::Agg { over, .. } => {
                     return fail(
                         over.span,
-                        "query!: an interior/rec head projects bound variables only — \
-                         aggregates fold a finished set",
+                        "query!: a rec head projects bound variables only — no \
+                         aggregate, arithmetic-created value or negation may flow \
+                         through the recursive feedback cycle (interiors may \
+                         aggregate; the cycle may not)",
                     );
                 }
             }
@@ -1743,18 +1965,6 @@ impl Emitter<'_> {
         }
         Ok(format!(
             "::bumbledb::Rule {{ \
-                 finds: ::std::vec![{finds}], \
-                 atoms: ::std::vec![{atoms}], \
-                 negated: ::std::vec![{negated}], \
-                 conditions: ::std::vec![{conditions}] }}"
-        ))
-    }
-
-    fn projection_rule(&mut self, rule: &ParsedRule) -> Parse<String> {
-        let (scope, atoms, negated, conditions) = self.body_parts(rule)?;
-        let finds = Self::projection_vars(&scope, rule.head())?;
-        Ok(format!(
-            "::bumbledb::ProjectionRule {{ \
                  finds: ::std::vec![{finds}], \
                  atoms: ::std::vec![{atoms}], \
                  negated: ::std::vec![{negated}], \
@@ -2067,14 +2277,6 @@ fn classify(parsed: Vec<ParsedRule>, block: Span) -> Parse<Classified> {
     })
 }
 
-fn emit_projection_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
-    let mut out = String::new();
-    for rule in rules {
-        let _ = write!(out, "{},", emitter.projection_rule(rule)?);
-    }
-    Ok(out)
-}
-
 fn emit_rec_base(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
     let mut out = String::new();
     for rule in rules {
@@ -2109,6 +2311,66 @@ fn emit_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> 
     Ok(out)
 }
 
+/// One `use name = &template;` import (chapter 34's nonrecursive
+/// composition): the expression's tokens splice verbatim into the expansion
+/// and must evaluate to `&::bumbledb::Query`.
+struct Import {
+    name: Name,
+    expr: String,
+}
+
+/// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
+/// composition binds an existing schema-bound typed query value into the
+/// macro's lexical relation roster (chapter 34). Declaration order is
+/// imports, then interiors, then rec, then main.
+fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
+    let mut imports: Vec<Import> = Vec::new();
+    while peek_ident_text(tokens).as_deref() == Some("use") {
+        let keyword = expect_ident(tokens, "`use`")?;
+        let name = expect_ident(tokens, "the imported template's local name")?;
+        validate_derived_name(&name)?;
+        if imports.iter().any(|import| import.name.text == name.text) {
+            return fail(
+                name.span,
+                format!(
+                    "query!: `use {0}` is already bound — derived names are unique",
+                    name.text
+                ),
+            );
+        }
+        expect_punct(tokens, '=', "the import's `=`")?;
+        let mut expr = TokenStream::new();
+        loop {
+            match tokens.peek() {
+                Some(TokenTree::Punct(p)) if p.as_char() == ';' => {
+                    tokens.next();
+                    break;
+                }
+                Some(_) => {
+                    let Some(tree) = tokens.next() else {
+                        unreachable!("peeked a token");
+                    };
+                    expr.extend(std::iter::once(tree));
+                }
+                None => {
+                    return fail(keyword.span, "query!: a `use` import ends with `;`");
+                }
+            }
+        }
+        if expr.is_empty() {
+            return fail(
+                keyword.span,
+                "query!: `use` takes a borrowed template — `use stats = &attempt_stats;`",
+            );
+        }
+        imports.push(Import {
+            name,
+            expr: expr.to_string(),
+        });
+    }
+    Ok(imports)
+}
+
 fn expand(input: TokenStream) -> Parse<String> {
     let mut tokens: Tokens = input.into_iter().peekable();
     let theory = parse_theory(&mut tokens)?;
@@ -2119,6 +2381,7 @@ fn expand(input: TokenStream) -> Parse<String> {
         return fail(extra.span(), "query!: nothing follows the rule block");
     }
     let mut rule_tokens: Tokens = group.stream().into_iter().peekable();
+    let imports = parse_imports(&mut rule_tokens)?;
     let mut parsed: Vec<ParsedRule> = Vec::new();
     while rule_tokens.peek().is_some() {
         parsed.push(parse_rule(&mut rule_tokens)?);
@@ -2127,13 +2390,44 @@ fn expand(input: TokenStream) -> Parse<String> {
         return fail(group.span(), "query!: a query needs at least one rule");
     }
     let classified = classify(parsed, group.span())?;
+    let taken = |name: &Name| imports.iter().find(|import| import.name.text == name.text);
     match classified {
-        Classified::Cq { interiors, main } => emit_cq(&theory, &interiors, &main),
+        Classified::Cq { interiors, main } => {
+            for interior in &interiors {
+                if let Some(import) = taken(&interior.name) {
+                    return fail(
+                        interior.name.span,
+                        format!(
+                            "query!: `{}` is already a `use` import — derived names are unique",
+                            import.name.text
+                        ),
+                    );
+                }
+            }
+            emit_cq(&theory, &imports, &interiors, &main)
+        }
         Classified::Reach {
             interiors,
             rec,
             main,
-        } => emit_reach(&theory, &interiors, &rec, &main),
+        } => {
+            for name in interiors
+                .iter()
+                .map(|group| &group.name)
+                .chain(std::iter::once(&rec.name))
+            {
+                if let Some(import) = taken(name) {
+                    return fail(
+                        name.span,
+                        format!(
+                            "query!: `{}` is already a `use` import — derived names are unique",
+                            import.name.text
+                        ),
+                    );
+                }
+            }
+            emit_reach(&theory, &imports, &interiors, &rec, &main)
+        }
     }
 }
 
@@ -2145,60 +2439,527 @@ fn rec_derived_name(rec: &RecGroup, rec_id: usize) -> String {
     }
 }
 
+/// The derived roster: imports first (runtime `__useK` ids), then declared
+/// interiors, then the rec. With no imports every id expression is the
+/// compile-time literal it always was; with imports the declared ids shift
+/// by the runtime splice base `__ibase`.
+fn derived_roster(
+    imports: &[Import],
+    interiors: &[InteriorGroup],
+    rec_name: Option<String>,
+) -> Vec<Derived> {
+    let mut derived: Vec<Derived> = imports
+        .iter()
+        .enumerate()
+        .map(|(index, import)| Derived {
+            name: import.name.text.clone(),
+            id_expr: format!("__use{index}"),
+        })
+        .collect();
+    for (index, group) in interiors.iter().enumerate() {
+        derived.push(Derived {
+            name: group.name.text.clone(),
+            id_expr: if imports.is_empty() {
+                index.to_string()
+            } else {
+                format!("__ibase + {index}u32")
+            },
+        });
+    }
+    if let Some(name) = rec_name {
+        derived.push(Derived {
+            name,
+            id_expr: if imports.is_empty() {
+                interiors.len().to_string()
+            } else {
+                format!("__ibase + {}u32", interiors.len())
+            },
+        });
+    }
+    derived
+}
+
+/// The runtime splice helpers, emitted once per expansion with imports: an
+/// import's whole nonrecursive body becomes derived stages of the importing
+/// query — its own interiors first, then its main rules as the head stage —
+/// with every internal `Interior(id)` reference shifted by the splice
+/// offset. The imported template stays owned immutable IR; the splice
+/// clones, never mutates the source.
+const IMPORT_HELPERS: &str = "\
+    fn __shift_atom(atom: &::bumbledb::Atom, offset: u32) -> ::bumbledb::Atom {\
+        ::bumbledb::Atom {\
+            source: match atom.source {\
+                ::bumbledb::AtomSource::Interior(id) =>\
+                    ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId(id.0 + offset)),\
+                other => other,\
+            },\
+            bindings: atom.bindings.clone(),\
+        }\
+    }\
+    fn __shift_rule(rule: &::bumbledb::Rule, offset: u32) -> ::bumbledb::Rule {\
+        ::bumbledb::Rule {\
+            finds: rule.finds.clone(),\
+            atoms: rule.atoms.iter().map(|atom| __shift_atom(atom, offset)).collect(),\
+            negated: rule.negated.iter().map(|atom| __shift_atom(atom, offset)).collect(),\
+            conditions: rule.conditions.clone(),\
+        }\
+    }\
+    fn __term_free(term: &::bumbledb::Term) -> bool {\
+        !matches!(term, ::bumbledb::Term::Param(_) | ::bumbledb::Term::ParamSet(_))\
+    }\
+    fn __cond_free(tree: &::bumbledb::ConditionTree) -> bool {\
+        match tree {\
+            ::bumbledb::ConditionTree::Leaf(cmp) => __term_free(&cmp.lhs) && __term_free(&cmp.rhs),\
+            ::bumbledb::ConditionTree::And(children) | ::bumbledb::ConditionTree::Or(children) =>\
+                children.iter().all(__cond_free),\
+        }\
+    }\
+    fn __param_free(rule: &::bumbledb::Rule) -> bool {\
+        rule.atoms.iter().chain(rule.negated.iter())\
+            .all(|atom| atom.bindings.iter().all(|binding| __term_free(&binding.1)))\
+            && rule.conditions.iter().all(__cond_free)\
+    }";
+
+/// Emits the import splices: helper fns, the growing `__interiors` vector,
+/// one `__useK` head-stage id per import, and the declared-interior base.
+fn emit_import_prelude(imports: &[Import]) -> String {
+    let mut out = String::new();
+    out.push_str(IMPORT_HELPERS);
+    out.push_str(
+        "let mut __interiors: ::std::vec::Vec<::bumbledb::Interior> = ::std::vec::Vec::new(); ",
+    );
+    for (index, import) in imports.iter().enumerate() {
+        let name = &import.name.text;
+        let expr = &import.expr;
+        let _ = write!(
+            out,
+            "let __use{index}: u32 = {{ \
+                 let __imported: &::bumbledb::Query = {expr}; \
+                 assert!(__imported.rec().is_none(), \
+                     \"query!: `use {name}` imports a NONRECURSIVE template — a completed \
+                       recursive result is consumed by downstream queries, not spliced\"); \
+                 let __offset = u32::try_from(__interiors.len())\
+                     .expect(\"query!: too many interiors\"); \
+                 for __stage in __imported.interiors() {{ \
+                     assert!(__stage.rules.iter().all(__param_free), \
+                         \"query!: `use {name}` imports a parameterless template — \
+                           supply values in the importing query's own atoms\"); \
+                     __interiors.push(::bumbledb::Interior {{ \
+                         rules: __stage.rules.iter()\
+                             .map(|__rule| __shift_rule(__rule, __offset)).collect() }}); \
+                 }} \
+                 assert!(__imported.rules().iter().all(__param_free), \
+                     \"query!: `use {name}` imports a parameterless template — \
+                       supply values in the importing query's own atoms\"); \
+                 __interiors.push(::bumbledb::Interior {{ \
+                     rules: __imported.rules().iter()\
+                         .map(|__rule| __shift_rule(__rule, __offset)).collect() }}); \
+                 u32::try_from(__interiors.len() - 1).expect(\"query!: too many interiors\") \
+             }}; "
+        );
+    }
+    out.push_str(
+        "let __ibase: u32 = u32::try_from(__interiors.len())\
+             .expect(\"query!: too many interiors\"); ",
+    );
+    out
+}
+
+/// Emits the declared interior stages as FULL rules — a nonrecursive stage
+/// may aggregate and compute (P03's generalized `Interior { rules: Vec<Rule> }`;
+/// the old projection-only wall is deleted). Returns the `let` prelude and,
+/// for the no-import case, the vector-literal elements.
 fn emit_interiors(
     emitter: &mut Emitter<'_>,
     interiors: &[InteriorGroup],
+    with_imports: bool,
 ) -> Parse<(String, String)> {
     let mut lets = String::new();
     let mut defs = String::new();
     for (index, group) in interiors.iter().enumerate() {
-        let rules = emit_projection_rules(emitter, &group.rules)?;
-        let _ = write!(lets, "let interior{index}_rules = ::std::vec![{rules}]; ");
-        let _ = write!(
-            defs,
-            "::bumbledb::Interior {{ rules: interior{index}_rules }},"
-        );
+        let rules = emit_rules(emitter, &group.rules)?;
+        if with_imports {
+            let _ = write!(
+                lets,
+                "__interiors.push(::bumbledb::Interior {{ rules: ::std::vec![{rules}] }}); "
+            );
+        } else {
+            let _ = write!(lets, "let interior{index}_rules = ::std::vec![{rules}]; ");
+            let _ = write!(
+                defs,
+                "::bumbledb::Interior {{ rules: interior{index}_rules }},"
+            );
+        }
     }
     Ok((lets, defs))
 }
 
-fn emit_cq(theory: &str, interiors: &[InteriorGroup], main: &[ParsedRule]) -> Parse<String> {
-    let derived: Vec<String> = interiors
-        .iter()
-        .map(|group| group.name.text.clone())
-        .collect();
+/// The display spelling of a head aggregate for the template's `columns()`
+/// table when the author wrote no `name:` label.
+fn agg_display(op: AggOp) -> &'static str {
+    match op {
+        AggOp::Sum => "Sum",
+        AggOp::Mean => "Mean",
+        AggOp::Min => "Min",
+        AggOp::Max => "Max",
+        AggOp::Count => "Count",
+        AggOp::Pack => "Pack",
+    }
+}
+
+/// One head column's name for the typed template: a projected variable's
+/// own name, the written `name:` label, or the aggregate's rendered
+/// spelling (`Sum(score)`). Template-side metadata only — never in the IR
+/// or the fingerprint.
+fn column_name(term: &HeadTerm) -> String {
+    match term {
+        HeadTerm::Var(name) => name.text.clone(),
+        HeadTerm::Count { label } => label
+            .as_ref()
+            .map_or_else(|| "Count".to_owned(), |label| label.text.clone()),
+        HeadTerm::Agg { op, over, label } => label.as_ref().map_or_else(
+            || format!("{}({})", agg_display(*op), over.text),
+            |label| label.text.clone(),
+        ),
+    }
+}
+
+/// Reserved words that cannot become a generated builder method name.
+/// Raw-identifier params are not offered: rename the param instead.
+const RESERVED_METHOD_NAMES: [&str; 53] = [
+    "Self", "abstract", "as", "async", "await", "become", "box", "break", "const", "continue",
+    "crate", "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if",
+    "impl", "in", "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub",
+    "raw", "ref", "return", "self", "static", "struct", "super", "trait", "true", "try", "type",
+    "typeof", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
+];
+
+/// The per-expansion scalar-argument conversion trait: exactly the C05
+/// `BindValue` roster, so a host value binds with no positional ceremony
+/// and the SLOT-type agreement stays the engine's typed bind error
+/// (`ParamTypeMismatch` — chapter 34's `bind(...)?` runtime half).
+/// `ParamArg`/`BindValue` themselves are the escape hatches.
+const SCALAR_ARG_TRAIT: &str = "\
+    #[allow(dead_code, non_camel_case_types)] \
+    trait __BumbledbScalarArg<'a> { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a>; \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::ParamArg<'a> { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { self } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::BindValue<'a> { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { ::bumbledb::ParamArg::Scalar(self) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for bool { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Bool(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for u64 { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::U64(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for i64 { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::I64(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::F64 { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::F64(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for f64 { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::F64(::bumbledb::F64::from(self))) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for &'a str { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Str(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for &'a ::std::string::String { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Str(self.as_str())) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Id128 { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Id128(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for &'a [u8] { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::FixedBytes(self)) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Interval<u64> { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::IntervalU64(self.start(), self.end())) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Interval<i64> { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::IntervalI64(self.start(), self.end())) } \
+    } \
+    #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Interval<::bumbledb::F64> { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::IntervalF64(self)) } \
+    }";
+
+/// Emits the typed-template wrapper around the built `::bumbledb::Query`
+/// expression (chapter 34's typed templates/`params!`): a per-expansion
+/// inline struct — self-contained, core paths only, so the SAME `query!`
+/// works re-exported from `bumbledb` and from `bumbledb-query` —
+/// carrying the name→`ParamId` table that dies with the expansion
+/// otherwise. `Deref<Target = Query>` keeps every untyped consumer
+/// (`db.prepare(&q)`, `use x = &q;`, `ir::render(&schema, &q)`)
+/// compiling unchanged; `into_query()` moves the plain IR out where a
+/// `Query` VALUE is needed. Named-param templates additionally get
+/// `bind(params! { name: value, … })` — a typestate builder closure:
+/// an unknown name is a missing method, a missing or doubled name is a
+/// type error, order is free; VALUE-vs-slot type agreement stays the
+/// engine's typed bind refusal (C05 `ParamTypeMismatch`), exactly like
+/// chapter 34's fallible `bind(...)?`. Positional (`?0`) templates keep
+/// the untyped positional `BindArgs` path and get no `bind`.
+fn wrap_template(query_expr: &str, params: &Params, head: &[HeadTerm]) -> Parse<String> {
+    let mut columns_lit = String::new();
+    for term in head {
+        let _ = write!(columns_lit, "{:?},", column_name(term));
+    }
+    let named: &[(Name, ParamShape)] = match &params.style {
+        ParamStyle::Empty => &[],
+        ParamStyle::Named(entries) => entries.as_slice(),
+        ParamStyle::Index => {
+            return Ok(positional_template(query_expr, &columns_lit));
+        }
+    };
+    for (name, _) in named {
+        if RESERVED_METHOD_NAMES.contains(&name.text.as_str()) {
+            return fail(
+                name.span,
+                format!(
+                    "query!: ?{} cannot become a typed bind method (Rust keyword) — \
+                     rename the param",
+                    name.text
+                ),
+            );
+        }
+    }
+    let count = named.len();
+    let mut names_lit = String::new();
+    let mut generics = String::new();
+    let mut unset = String::new();
+    let mut bound = String::new();
+    let mut nones = String::new();
+    for (index, (name, _)) in named.iter().enumerate() {
+        let _ = write!(names_lit, "{:?},", name.text);
+        let _ = write!(generics, "__P{index},");
+        unset.push_str("__BumbledbUnset,");
+        bound.push_str("__BumbledbBound,");
+        nones.push_str("::core::option::Option::None,");
+    }
+    let phantom = format!("({generics})");
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "#[allow(dead_code, non_camel_case_types)] \
+         struct __BumbledbTemplate {{ __query: ::bumbledb::Query }} \
+         impl ::core::ops::Deref for __BumbledbTemplate {{ \
+             type Target = ::bumbledb::Query; \
+             fn deref(&self) -> &::bumbledb::Query {{ &self.__query }} \
+         }} \
+         #[allow(dead_code, non_camel_case_types)] \
+         struct __BumbledbUnset; \
+         #[allow(dead_code, non_camel_case_types)] \
+         struct __BumbledbBound; \
+         #[allow(dead_code, non_camel_case_types)] \
+         struct __BumbledbParams<'a, {generics}> {{ \
+             __args: [::core::option::Option<::bumbledb::ParamArg<'a>>; {count}usize], \
+             __state: ::core::marker::PhantomData<{phantom}>, \
+         }} \
+         {SCALAR_ARG_TRAIT} \
+         #[allow(dead_code)] \
+         impl __BumbledbTemplate {{ \
+             const PARAM_NAMES: &'static [&'static str] = &[{names_lit}]; \
+             const COLUMNS: &'static [&'static str] = &[{columns_lit}]; \
+             fn query(&self) -> &::bumbledb::Query {{ &self.__query }} \
+             fn into_query(self) -> ::bumbledb::Query {{ self.__query }} \
+             fn param_names(&self) -> &'static [&'static str] {{ Self::PARAM_NAMES }} \
+             fn columns(&self) -> &'static [&'static str] {{ Self::COLUMNS }} \
+             fn bind<'a>(\
+                 &self, \
+                 fill: impl ::core::ops::FnOnce(\
+                     __BumbledbParams<'a, {unset}>\
+                 ) -> __BumbledbParams<'a, {bound}>, \
+             ) -> ::std::vec::Vec<::bumbledb::ParamArg<'a>> {{ \
+                 let __filled = fill(__BumbledbParams {{ \
+                     __args: [{nones}], \
+                     __state: ::core::marker::PhantomData, \
+                 }}); \
+                 let mut __out = ::std::vec::Vec::with_capacity({count}usize); \
+                 for __slot in __filled.__args {{ \
+                     match __slot {{ \
+                         ::core::option::Option::Some(__arg) => __out.push(__arg), \
+                         ::core::option::Option::None => ::core::unreachable!(\
+                             \"query! bind: the typestate sets every param exactly once\"), \
+                     }} \
+                 }} \
+                 __out \
+             }} \
+         }}"
+    );
+    out.push_str(&bind_method_impls(named));
+    let _ = write!(out, " __BumbledbTemplate {{ __query: {query_expr} }}");
+    Ok(out)
+}
+
+/// [`wrap_template`]'s positional arm: positional (`?0`) templates keep
+/// the untyped positional `BindArgs` path — the wrapper still carries
+/// the columns and the IR accessors, and gets no typed `bind`.
+fn positional_template(query_expr: &str, columns_lit: &str) -> String {
+    format!(
+        "#[allow(dead_code, non_camel_case_types)] \
+         struct __BumbledbTemplate {{ __query: ::bumbledb::Query }} \
+         impl ::core::ops::Deref for __BumbledbTemplate {{ \
+             type Target = ::bumbledb::Query; \
+             fn deref(&self) -> &::bumbledb::Query {{ &self.__query }} \
+         }} \
+         #[allow(dead_code)] \
+         impl __BumbledbTemplate {{ \
+             const PARAM_NAMES: &'static [&'static str] = &[]; \
+             const COLUMNS: &'static [&'static str] = &[{columns_lit}]; \
+             fn query(&self) -> &::bumbledb::Query {{ &self.__query }} \
+             fn into_query(self) -> ::bumbledb::Query {{ self.__query }} \
+             fn param_names(&self) -> &'static [&'static str] {{ Self::PARAM_NAMES }} \
+             fn columns(&self) -> &'static [&'static str] {{ Self::COLUMNS }} \
+         }} \
+         __BumbledbTemplate {{ __query: {query_expr} }}"
+    )
+}
+
+/// [`wrap_template`]'s typestate methods: one `impl` per named param,
+/// defined only at the state where exactly that param is unset, so a
+/// missing or doubled name is a type error and order stays free.
+fn bind_method_impls(named: &[(Name, ParamShape)]) -> String {
+    let mut out = String::new();
+    for (index, (name, shape)) in named.iter().enumerate() {
+        let mut impl_generics = String::new();
+        let mut before = String::new();
+        let mut after = String::new();
+        for (other, _) in named.iter().enumerate() {
+            if other == index {
+                before.push_str("__BumbledbUnset,");
+                after.push_str("__BumbledbBound,");
+            } else {
+                let _ = write!(impl_generics, "__P{other},");
+                let _ = write!(before, "__P{other},");
+                let _ = write!(after, "__P{other},");
+            }
+        }
+        let method = &name.text;
+        match shape {
+            ParamShape::Scalar => {
+                let _ = write!(
+                    out,
+                    " impl<'a, {impl_generics}> __BumbledbParams<'a, {before}> {{ \
+                         #[allow(dead_code)] \
+                         fn {method}(\
+                             mut self, \
+                             value: impl __BumbledbScalarArg<'a>, \
+                         ) -> __BumbledbParams<'a, {after}> {{ \
+                             self.__args[{index}usize] = ::core::option::Option::Some(\
+                                 __BumbledbScalarArg::__bumbledb_arg(value)); \
+                             __BumbledbParams {{ \
+                                 __args: self.__args, \
+                                 __state: ::core::marker::PhantomData }} \
+                         }} \
+                     }}"
+                );
+            }
+            ParamShape::Set => {
+                let _ = write!(
+                    out,
+                    " impl<'a, {impl_generics}> __BumbledbParams<'a, {before}> {{ \
+                         #[allow(dead_code)] \
+                         fn {method}(\
+                             mut self, \
+                             values: &'a [::bumbledb::Value], \
+                         ) -> __BumbledbParams<'a, {after}> {{ \
+                             self.__args[{index}usize] = ::core::option::Option::Some(\
+                                 ::bumbledb::ParamArg::Set(values)); \
+                             __BumbledbParams {{ \
+                                 __args: self.__args, \
+                                 __state: ::core::marker::PhantomData }} \
+                         }} \
+                     }}"
+                );
+            }
+        }
+    }
+    out
+}
+
+fn emit_cq(
+    theory: &str,
+    imports: &[Import],
+    interiors: &[InteriorGroup],
+    main: &[ParsedRule],
+) -> Parse<String> {
     let mut emitter = Emitter {
         theory,
         params: Params::default(),
-        derived,
+        derived: derived_roster(imports, interiors, None),
     };
-    let (lets, interior_defs) = emit_interiors(&mut emitter, interiors)?;
+    let with_imports = !imports.is_empty();
+    let prelude = if with_imports {
+        emit_import_prelude(imports)
+    } else {
+        String::new()
+    };
+    let (lets, interior_defs) = emit_interiors(&mut emitter, interiors, with_imports)?;
     let main_rules = emit_rules(&mut emitter, main)?;
-    Ok(format!(
-        "{{ {lets}let rules = ::std::vec![{main_rules}]; \
+    let interiors_expr = if with_imports {
+        "__interiors".to_owned()
+    } else {
+        format!("::std::vec![{interior_defs}]")
+    };
+    let query_expr = format!(
+        "{{ {prelude}{lets}let rules = ::std::vec![{main_rules}]; \
              let head = ::bumbledb::Rule::head(&rules[0]); \
-             ::bumbledb::Query::cq(::std::vec![{interior_defs}], head, rules) }}"
-    ))
+             ::bumbledb::Query::cq({interiors_expr}, head, rules) }}"
+    );
+    let head = main.first().map_or(&[][..], ParsedRule::head);
+    let template = wrap_template(&query_expr, &emitter.params, head)?;
+    Ok(format!("{{ {template} }}"))
 }
 
 fn emit_reach(
     theory: &str,
+    imports: &[Import],
     interiors: &[InteriorGroup],
     rec: &RecGroup,
     main: &[ParsedRule],
 ) -> Parse<String> {
-    let mut derived: Vec<String> = interiors
-        .iter()
-        .map(|group| group.name.text.clone())
-        .collect();
-    derived.push(rec_derived_name(rec, interiors.len()));
+    let rec_name = rec_derived_name(rec, interiors.len());
     let mut emitter = Emitter {
         theory,
         params: Params::default(),
-        derived,
+        derived: derived_roster(imports, interiors, Some(rec_name.clone())),
     };
-    let (mut lets, interior_defs) = emit_interiors(&mut emitter, interiors)?;
-    let rec_name = rec_derived_name(rec, interiors.len());
+    let with_imports = !imports.is_empty();
+    let prelude = if with_imports {
+        emit_import_prelude(imports)
+    } else {
+        String::new()
+    };
+    let (mut lets, interior_defs) = emit_interiors(&mut emitter, interiors, with_imports)?;
     let base = emit_rec_base(&mut emitter, &rec.base)?;
     let step = emit_rec_steps(&mut emitter, &rec.rec, &rec_name)?;
     let _ = write!(
@@ -2208,15 +2969,23 @@ fn emit_reach(
         step = nonempty(&step, "rec step"),
     );
     let main_rules = emit_rules(&mut emitter, main)?;
-    Ok(format!(
-        "{{ {lets}let rules = ::std::vec![{main_rules}]; \
+    let interiors_expr = if with_imports {
+        "__interiors".to_owned()
+    } else {
+        format!("::std::vec![{interior_defs}]")
+    };
+    let query_expr = format!(
+        "{{ {prelude}{lets}let rules = ::std::vec![{main_rules}]; \
              let head = ::bumbledb::Rule::head(&rules[0]); \
              ::bumbledb::Query::reach( \
-                 ::std::vec![{interior_defs}], \
+                 {interiors_expr}, \
                  ::bumbledb::Rec {{ base: rec_base, rec: rec_step }}, \
                  head, \
                  rules) }}"
-    ))
+    );
+    let head = main.first().map_or(&[][..], ParsedRule::head);
+    let template = wrap_template(&query_expr, &emitter.params, head)?;
+    Ok(format!("{{ {template} }}"))
 }
 
 /// The query notation, lowered at compile time to the `ir::Query` value
@@ -2247,6 +3016,108 @@ fn emit_reach(
 pub fn query(input: TokenStream) -> TokenStream {
     match expand(input) {
         Ok(code) => code.parse().expect("query!: generated code parses"),
+        Err(error) => compile_error(&error),
+    }
+}
+
+/// Parses one `name: expr` entry off the `params!` input, returning the
+/// name and the value's raw tokens (spans preserved — the value is the
+/// caller's expression, never restringified).
+fn parse_param_entry(tokens: &mut Tokens) -> Parse<(Name, TokenStream)> {
+    let name = expect_ident(tokens, "a param name")?;
+    expect_colon(tokens, "the param entry's `:`")?;
+    let mut value = TokenStream::new();
+    while let Some(tree) = tokens.peek() {
+        if let TokenTree::Punct(p) = tree
+            && p.as_char() == ','
+        {
+            break;
+        }
+        let Some(tree) = tokens.next() else {
+            unreachable!("peeked a token");
+        };
+        value.extend(std::iter::once(tree));
+    }
+    if value.is_empty() {
+        return fail(name.span, "params!: a param entry is `name: value`");
+    }
+    Ok((name, value))
+}
+
+fn expand_params(input: TokenStream) -> Parse<TokenStream> {
+    let mut tokens: Tokens = input.into_iter().peekable();
+    let mut entries: Vec<(Name, TokenStream)> = Vec::new();
+    while tokens.peek().is_some() {
+        let (name, value) = parse_param_entry(&mut tokens)?;
+        if RESERVED_METHOD_NAMES.contains(&name.text.as_str()) {
+            return fail(
+                name.span,
+                format!(
+                    "params!: {} is a Rust keyword — typed bind methods carry the \
+                     param's name; rename the param",
+                    name.text
+                ),
+            );
+        }
+        if entries
+            .iter()
+            .any(|(existing, _)| existing.text == name.text)
+        {
+            return fail(
+                name.span,
+                format!(
+                    "params!: {} is supplied twice — one value per param",
+                    name.text
+                ),
+            );
+        }
+        entries.push((name, value));
+        if peek_punct(&mut tokens, ',') {
+            tokens.next();
+        } else if let Some(extra) = tokens.next() {
+            return fail(
+                extra.span(),
+                format!("params!: expected `,` between entries, found `{extra}`"),
+            );
+        }
+    }
+    // |__params| __params.name(value).name2(value2)…
+    // A plain (non-`move`) closure: owned values are still move-captured
+    // by their by-value use, while a by-reference set bind (`sizes: &small`)
+    // borrows the caller's local directly, so the returned `ParamArg`s may
+    // outlive the closure (`bind` invokes it immediately).
+    let mut body = TokenStream::new();
+    body.extend([TokenTree::Ident(Ident::new("__params", Span::call_site()))]);
+    for (name, value) in entries {
+        body.extend([
+            TokenTree::Punct(Punct::new('.', Spacing::Alone)),
+            TokenTree::Ident(Ident::new(&name.text, name.span)),
+            TokenTree::Group(Group::new(Delimiter::Parenthesis, value)),
+        ]);
+    }
+    let mut out = TokenStream::new();
+    out.extend([
+        TokenTree::Punct(Punct::new('|', Spacing::Alone)),
+        TokenTree::Ident(Ident::new("__params", Span::call_site())),
+        TokenTree::Punct(Punct::new('|', Spacing::Alone)),
+    ]);
+    out.extend(body);
+    Ok(out)
+}
+
+/// Typed named-parameter construction against a `query!` template
+/// (chapter 34): `template.bind(params! { student: student_id })` yields
+/// the positional `Vec<ParamArg>` the C05 execute surface takes
+/// (`instance.execute(&mut prepared, &bound, &mut out)`). Order-free;
+/// an unknown name, a missing name and a doubled name are compile
+/// errors (the template's typestate builder); value-vs-slot TYPE
+/// agreement stays the engine's typed bind error at execution. Expands
+/// to a plain builder closure — `params!` is token construction, never
+/// a text parser, and carries no schema or engine dependency.
+#[proc_macro]
+pub fn params(input: TokenStream) -> TokenStream {
+    match expand_params(input) {
+        Ok(tokens) => tokens,
         Err(error) => compile_error(&error),
     }
 }

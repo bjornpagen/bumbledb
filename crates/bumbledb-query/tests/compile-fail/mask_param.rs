@@ -18,4 +18,5 @@ pub fn q() -> bumbledb::Query {
             Mandate(org, active),
             Allen(active, ?mask, active);
     })
+    .into_query()
 }

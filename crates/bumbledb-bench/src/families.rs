@@ -37,8 +37,10 @@ pub fn bind_value(value: &Value) -> BindValue<'_> {
         Value::F64(v) => BindValue::F64(*v),
         Value::String(text) => BindValue::Str(text),
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
+        Value::Id128(id) => BindValue::Id128(*id),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
+        Value::IntervalF64(interval) => BindValue::IntervalF64(*interval),
     }
 }
 

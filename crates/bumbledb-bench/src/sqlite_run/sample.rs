@@ -43,6 +43,15 @@ pub(crate) fn drain_typed(
                     std::hint::black_box(value.as_i64()?);
                     column += 1;
                 }
+                ValueType::Interval {
+                    element: bumbledb::schema::IntervalElement::F64,
+                } => {
+                    for half in [column, column + 1] {
+                        let value = row.get_ref(half)?;
+                        std::hint::black_box(value.as_blob()?);
+                    }
+                    column += 2;
+                }
                 ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
                     for half in [column, column + 1] {
                         let value = row.get_ref(half)?;
@@ -55,7 +64,7 @@ pub(crate) fn drain_typed(
                     std::hint::black_box(value.as_str()?);
                     column += 1;
                 }
-                ValueType::FixedBytes { .. } | ValueType::F64 => {
+                ValueType::FixedBytes { .. } | ValueType::F64 | ValueType::Id128 => {
                     let value = row.get_ref(column)?;
                     std::hint::black_box(value.as_blob()?);
                     column += 1;

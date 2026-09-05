@@ -233,12 +233,15 @@ fn a_finished_interior_feeds_a_linear_rec() {
 
     let query = Query {
         interiors: vec![Interior {
-            rules: vec![ProjectionRule {
-                finds: vec![VarId(0), VarId(1)],
-                atoms: vec![edge_atom(0, 1)],
-                negated: vec![],
-                conditions: vec![],
-            }],
+            rules: vec![
+                ProjectionRule {
+                    finds: vec![VarId(0), VarId(1)],
+                    atoms: vec![edge_atom(0, 1)],
+                    negated: vec![],
+                    conditions: vec![],
+                }
+                .into(),
+            ],
         }],
         rec: Some(Rec {
             base: NonEmpty::one(RecRule {

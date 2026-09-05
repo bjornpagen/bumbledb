@@ -11,7 +11,7 @@ use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Row, SchemaDescriptor, Side,
+    FieldDescriptor, IntervalElement, RelationDescriptor, Row, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
 
@@ -19,7 +19,6 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
     }
 }
 
@@ -27,7 +26,6 @@ fn fresh(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Fresh,
     }
 }
 
@@ -369,6 +367,7 @@ fn assert_structured_filters_parse() {
         &FilterPredicate::PointIn {
             field: f.into(),
             point: ViewWordSource::Word(4),
+            dense: false,
         },
         true,
     );
@@ -376,6 +375,7 @@ fn assert_structured_filters_parse() {
         &FilterPredicate::FieldsPointIn {
             interval: f.into(),
             point: FieldId(2).into(),
+            dense: false,
         },
         true,
     );
@@ -383,6 +383,7 @@ fn assert_structured_filters_parse() {
         &FilterPredicate::FieldWithin {
             field: f.into(),
             outer: IntervalConst::Interval { start: 2, end: 9 },
+            dense: false,
         },
         true,
     );
@@ -455,10 +456,12 @@ fn assert_other_refusals() {
         FilterPredicate::PointIn {
             field: f.into(),
             point: ViewWordSource::Param(crate::ir::ParamId(0)),
+            dense: false,
         },
         FilterPredicate::AnyPointIn {
             field: f.into(),
             set: SetConst::ParamSet(crate::ir::ParamId(0)),
+            dense: false,
         },
         FilterPredicate::FieldAllen {
             field: f.into(),
@@ -468,6 +471,7 @@ fn assert_other_refusals() {
         FilterPredicate::FieldWithin {
             field: f.into(),
             outer: IntervalConst::Param(crate::ir::ParamId(0)),
+            dense: false,
         },
     ] {
         assert_parse(&filter, false);
@@ -510,6 +514,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             vec![FilterPredicate::PointIn {
                 field: FieldId(1).into(),
                 point: ViewWordSource::Word(3),
+                dense: false,
             }],
             vec![0],
         ),

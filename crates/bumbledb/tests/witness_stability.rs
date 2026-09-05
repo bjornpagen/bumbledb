@@ -18,11 +18,11 @@ bumbledb::schema! {
     pub WitnessWorld;
 
     relation WParent {
-        id: u64 as WParentId, fresh,
+        id: u64 as WParentId,
         kind: u64,
     }
     relation WChild {
-        id: u64 as WChildId, fresh,
+        id: u64 as WChildId,
         parent: u64 as WParentId,
         flag: u64,
     }

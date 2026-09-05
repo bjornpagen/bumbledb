@@ -52,9 +52,9 @@ fn pragma_u64(conn: &rusqlite::Connection, pragma: &str) -> Result<u64, String> 
 
 /// # Errors
 /// # Panics
-/// On a broken working-set law at the end of the run, and on the monotone-burn
-/// invariant inside [`engines::apply_ours`] — both programmer errors, loud by
-/// design.
+/// On a broken working-set law at the end of the run — a programmer error,
+/// loud by design. (The old monotone-burn panic is gone with the engine
+/// mint: [`engines::apply_ours`]'s cursor is monotone by construction.)
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -74,7 +74,7 @@ pub fn run_spec(
     let mut mirrors: Vec<SqliteLaneState> = Vec::with_capacity(spec.sqlite.len());
     for kind in spec.sqlite {
         let path = dir.join(format!("{}.sqlite", kind.label()));
-        let conn = engines::create_sqlite(&path, cfg.r#gen, kind.sync())?;
+        let conn = engines::create_sqlite(&path, cfg.r#gen)?;
         mirrors.push(SqliteLaneState {
             label: kind.label(),
             maintained: kind.maintained(),

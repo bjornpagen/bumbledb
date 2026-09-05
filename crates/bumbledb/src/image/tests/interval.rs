@@ -1,17 +1,12 @@
-use crate::encoding::{ValueRef, encode_fact, encode_i64};
-use crate::error::{CorruptionError, Error};
-use crate::image::{ColumnSpan, ColumnWidth, build};
+use crate::encoding::encode_i64;
+use crate::image::testsupport::TestSource;
+use crate::image::{ColumnSpan, ColumnWidth};
+use crate::ir::Value;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::storage::keys;
-use crate::storage::read;
-use crate::testutil::TempDir;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
 };
 
 fn schema() -> Schema {
@@ -23,19 +18,16 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "during".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::I64,
                     },
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "kind".into(),
                     value_type: ValueType::Bool,
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -49,47 +41,31 @@ const T: RelationId = RelationId(0);
 
 const ROWS: [(u64, i64, i64, bool); 3] = [(0, -100, -7, false), (1, -5, 9, true), (2, 3, 7, false)];
 
-fn fact(schema: &Schema, id: u64, start: i64, end: i64, kind: bool) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
-        &[
-            ValueRef::U64(id),
-            ValueRef::IntervalI64(
-                bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval"),
-            ),
-            ValueRef::Bool(kind),
-        ],
-        schema.relation(T).layout(),
-        &mut b,
-    );
-    b
-}
-
 fn w(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
 
-fn populated(dir: &TempDir, schema: &Schema) -> Environment {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, start, end, kind) in ROWS {
-        delta
-            .insert(&view, T, &fact(schema, id, start, end, kind))
-            .expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    env
+fn populated(schema: &Schema) -> TestSource {
+    let facts: Vec<Vec<Value>> = ROWS
+        .iter()
+        .map(|(id, start, end, kind)| {
+            vec![
+                Value::U64(*id),
+                Value::IntervalI64(
+                    bumbledb_theory::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
+                ),
+                Value::Bool(*kind),
+            ]
+        })
+        .collect();
+    TestSource::new(schema, &[(T, facts)])
 }
 
 #[test]
 fn interval_field_decodes_into_two_word_columns_with_golden_words() {
-    let dir = TempDir::new("image-interval-golden");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, T).expect("build");
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(T);
     assert_eq!(image.row_count(), 3);
 
     // The field→column map: three fields, four columns — the interval
@@ -145,41 +121,68 @@ fn interval_field_decodes_into_two_word_columns_with_golden_words() {
 }
 
 #[test]
-fn inverted_interval_halves_abort_the_build() {
-    let dir = TempDir::new("image-interval-inverted");
-    let schema = schema();
-    let env = populated(&dir, &schema);
-
-    let layout = schema.relation(T).layout();
-    let offset = layout.field_offset(1);
-    let mut corrupt = fact(&schema, 2, 3, 7, false);
-    for i in 0..8 {
-        corrupt.swap(offset + i, offset + 8 + i);
+fn dense_float_intervals_decode_into_order_key_word_pairs() {
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "D".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                },
+                FieldDescriptor {
+                    name: "range".into(),
+                    value_type: ValueType::Interval {
+                        element: IntervalElement::F64,
+                    },
+                },
+            ],
+        }],
+        statements: vec![],
     }
-    let victim = {
-        let txn = env.read_txn().expect("txn");
-        read::scan(&txn, &schema, T)
-            .expect("scan")
-            .map(|e| e.expect("ok").0)
-            .max()
-            .expect("nonempty")
+    .validate()
+    .expect("valid fixture");
+    let interval = |start: f64, end: f64| {
+        bumbledb_theory::Interval::new(
+            bumbledb_theory::F64::from(start),
+            bumbledb_theory::F64::from(end),
+        )
+        .expect("nonempty dense interval")
     };
-    {
-        let mut wtxn = env.write_txn().expect("txn");
-        let key = keys::fact_key(T, victim);
-        env.data().put(wtxn.raw_mut(), &key, &corrupt).expect("put");
-        wtxn.commit().expect("commit");
+    let facts = vec![
+        vec![Value::U64(0), Value::IntervalF64(interval(-1.5, 2.25))],
+        vec![
+            Value::U64(1),
+            Value::IntervalF64(
+                bumbledb_theory::Interval::new(
+                    bumbledb_theory::F64::NEG_INFINITY,
+                    bumbledb_theory::F64::from(0.0),
+                )
+                .expect("left ray"),
+            ),
+        ],
+    ];
+    let source = TestSource::new(&schema, &[(T, facts)]);
+    let (_cache, image) = source.image_with_cache(T);
+    assert_eq!(image.row_count(), 2);
+    let ids = image.column_words(0);
+    let starts = image.column_words(1);
+    let ends = image.column_words(2);
+    for position in 0..2 {
+        let (expected_start, expected_end) = if ids[position] == 0 {
+            (
+                bumbledb_theory::F64::from(-1.5).to_order_key(),
+                bumbledb_theory::F64::from(2.25).to_order_key(),
+            )
+        } else {
+            (
+                bumbledb_theory::F64::NEG_INFINITY.to_order_key(),
+                bumbledb_theory::F64::from(0.0).to_order_key(),
+            )
+        };
+        assert_eq!(starts[position], expected_start, "dense start order key");
+        assert_eq!(ends[position], expected_end, "dense end order key");
+        assert!(starts[position] < ends[position]);
     }
-
-    let txn = env.read_txn().expect("txn");
-    let err = build(&txn.catalog(), &schema, T).unwrap_err();
-    let mut halves = [0u8; 16];
-    halves.copy_from_slice(&corrupt[offset..offset + 16]);
-    assert!(
-        matches!(
-            err,
-            Error::Corruption(CorruptionError::InvalidInterval(bytes)) if bytes == halves
-        ),
-        "{err:?}"
-    );
 }

@@ -18,14 +18,14 @@ bumbledb::schema! {
     };
 
     relation Holder {
-        id: u64 as HolderId, fresh,
+        id: u64 as HolderId,
         name: str,
         digest: bytes<16>,
         at: interval<u64>,
     }
 
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         kind: u64 as KindId,
         status: u64 as StatusId,
@@ -41,18 +41,25 @@ bumbledb::schema! {
     // all enter the lock's encoding surface — statement for statement the
     // SDK twin's tail.
     relation Pool {
-        id: u64 as PoolId, fresh,
+        id: u64 as PoolId,
         supply: u64,
         open: interval<u64>,
     }
 
     relation Device {
-        id: u64 as DeviceId, fresh,
+        id: u64 as DeviceId,
         pool: u64 as PoolId,
         watts: u64,
         ran: interval<u64>,
     }
 
+    // The successor issues no database identity: the old `fresh` modifier
+    // is DECLARED key statements now (`R(id) -> R;`) — same identity law,
+    // spelled in the statement grammar the encoding surface hashes.
+    Holder(id) -> Holder;
+    Account(id) -> Account;
+    Pool(id) -> Pool;
+    Device(id) -> Device;
     SavingsTerms(account) -> SavingsTerms;
     Account(holder) <= Holder(id);
     Account(kind) <= Kind(id);
@@ -73,7 +80,7 @@ bumbledb::schema! {
     Pool(id) <=[Duration(ran)]{0..Duration(open)} Device(pool);
     // Lock extension, statement for statement the SDK twin's tail:
     // the ψ-on-closed containment (the member set {DirectPass} folds at
-    // validate) and the generator-less `==` pair — no fresh field touches
+    // validate) and the generator-less `==` pair — no key statement touches
     // `rate_bps`, so the TS side's class laws name that class by least
     // coordinate while the hash below proves they contribute zero bytes.
     Account(kind) <= Kind(id | mastered == true);
@@ -82,12 +89,15 @@ bumbledb::schema! {
     SavingsTerms(account, rate_bps) == AuditTrail(account, rate_bps);
 }
 
-/// The pinned cross-host fingerprint of the `CrossHost` theory. The SAME
-/// constant is baked into `test/fingerprint.test.ts`; a change here without
-/// the twin change there (or vice versa) is exactly the drift this lock
-/// exists to catch. `18446744073709551615` above is `u64::MAX` — the `at`
-/// selection literal is the unbounded ray `[5, ∞)`.
-const PIN: &str = "588df888bd1f1a21057dbf0742af1d1223cc5c2e28ce265f803af989611f1418";
+/// The pinned cross-host fingerprint of the `CrossHost` theory. The macro
+/// twin must keep hashing to this constant: a silent encoding-surface change
+/// in the engine (or the `schema!` grammar) is exactly the drift this lock
+/// exists to catch. The 0.x TS twin (`test/fingerprint.test.ts`) died with
+/// the fresh-modifier grammar; when the SDK regrows a fingerprint pin it
+/// bakes THIS constant (F3 note in implementation/packets/P06.md).
+/// `18446744073709551615` above is `u64::MAX` — the `at` selection literal
+/// is the unbounded ray `[5, ∞)`.
+const PIN: &str = "84481bd32f7182df21ea5aea542c05d13a7dd52fe378cdb05c4fef9558624d31";
 
 /// A self-cleaning per-test store directory (the engine's integration
 /// `TempDir` twin — this crate deliberately has no dev-dependencies). The

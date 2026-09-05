@@ -12,22 +12,22 @@ bumbledb::schema! {
     pub Olap;
 
     relation Store {
-        id: u64 as OStoreId, fresh,
+        id: u64 as OStoreId,
         region: u64 as ORegionId,
         tier: u64 as OTierId,
     }
     relation Product {
-        id: u64 as OProductId, fresh,
+        id: u64 as OProductId,
         category: u64 as OCategoryId,
         brand: u64,
         price: i64,
     }
     relation Customer {
-        id: u64 as OCustomerId, fresh,
+        id: u64 as OCustomerId,
         segment: u64 as OSegmentId,
     }
     relation Sale {
-        id: u64 as OSaleId, fresh,
+        id: u64 as OSaleId,
         day: i64,
         store: u64 as OStoreId,
         product: u64 as OProductId,
@@ -43,6 +43,14 @@ bumbledb::schema! {
         C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15,
     };
     closed relation Segment as OSegmentId = { Consumer, Smb, Enterprise, Public };
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Store(id)    -> Store;
+    Product(id)  -> Product;
+    Customer(id) -> Customer;
+    Sale(id)     -> Sale;
 
     Store(region) <= Region(id);
     Store(tier) <= Tier(id);

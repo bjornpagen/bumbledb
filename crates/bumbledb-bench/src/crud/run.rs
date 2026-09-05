@@ -12,7 +12,7 @@ use crate::sqlite_run::{self, PreparedFamily};
 use crate::translate::{self, Translated};
 use crate::{clockproxy, compare, poststate, report, trace_out};
 
-use super::lanes::{self, FreshCursor, read_query};
+use super::lanes::{self, MintCursor, read_query};
 use super::{CrudSizes, CrudWorld, corpus, families, ids, ops, render, schema};
 
 #[derive(Debug, Clone)]
@@ -123,8 +123,8 @@ pub(crate) fn fold(
             sizes,
             translated: &translated,
             types: &types,
-            ours_cursor: FreshCursor::at_base(sizes),
-            theirs_cursor: FreshCursor::at_base(sizes),
+            ours_cursor: MintCursor::at_base(sizes),
+            theirs_cursor: MintCursor::at_base(sizes),
             model: ops::CounterModel::at_load(sizes),
             trace_dir: trace_root.map(|root| root.join("trace").join("crud").join(lane.label())),
         };
@@ -180,8 +180,8 @@ struct LaneRun<'l> {
     sizes: CrudSizes,
     translated: &'l Translated,
     types: &'l [ValueType],
-    ours_cursor: FreshCursor,
-    theirs_cursor: FreshCursor,
+    ours_cursor: MintCursor,
+    theirs_cursor: MintCursor,
     model: ops::CounterModel,
 
     trace_dir: Option<PathBuf>,

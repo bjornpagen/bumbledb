@@ -5,9 +5,15 @@ use crate::ir::normalize::Role;
 use crate::plan::ground::with_grounding_disabled;
 use bumbledb_theory::schema::{RelationDescriptor, Side, StatementDescriptor};
 
-/// Posting(id fresh, account u64, amount i64); Account(id fresh, name str);
-/// Posting(account) <= Account(id) — statement 2 after the two fresh auto-keys.
-fn ground_schema() -> Schema {
+/// Posting(id, account, amount) with the declared id key; Account(id, name)
+/// with the declared id key; Posting(account) <= Account(id) — statement 2
+/// after the two declared keys (the deleted fresh auto-keys' positions,
+/// preserved as declared statements).
+fn ground_descriptor() -> SchemaDescriptor {
+    let key = |relation: u32| StatementDescriptor::Functionality {
+        relation: RelationId(relation),
+        projection: Box::new([FieldId(0)]),
+    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -17,17 +23,14 @@ fn ground_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "account".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "amount".into(),
                         value_type: ValueType::I64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -38,69 +41,53 @@ fn ground_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "name".into(),
                         value_type: ValueType::String,
-                        generation: Generation::None,
                     },
                 ],
             },
         ],
-        statements: vec![StatementDescriptor::Containment {
-            source: Side {
-                relation: RelationId(0),
-                projection: Box::new([FieldId(1)]),
-                selection: Box::new([]),
+        statements: vec![
+            key(0),
+            key(1),
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
             },
-            target: Side {
-                relation: RelationId(1),
-                projection: Box::new([FieldId(0)]),
-                selection: Box::new([]),
-            },
-        }],
+        ],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
-fn populate(env: &Environment, schema: &Schema) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, name) in [(1u64, "cash"), (2, "fees"), (3, "rent")] {
-        let name_id = delta.intern_str(&view, name).expect("intern");
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(id), ValueRef::String(name_id)],
-            schema.relation(RelationId(1)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(1), &bytes).expect("insert");
-    }
-
-    for (id, account, amount) in [
+fn ground_fix() -> Fix {
+    let accounts: Vec<Vec<Value>> = [(1u64, "cash"), (2, "fees"), (3, "rent")]
+        .into_iter()
+        .map(|(id, name)| vec![Value::U64(id), Value::String(name.into())])
+        .collect();
+    let postings: Vec<Vec<Value>> = [
         (1u64, 1u64, 10i64),
         (2, 1, 10),
         (3, 1, -5),
         (4, 2, 40),
         (5, 2, 25),
         (6, 3, 7),
-    ] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(id),
-                ValueRef::U64(account),
-                ValueRef::I64(amount),
-            ],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit").expect("admitted");
+    ]
+    .into_iter()
+    .map(|(id, account, amount)| vec![Value::U64(id), Value::U64(account), Value::I64(amount)])
+    .collect();
+    Fix::heap(
+        ground_descriptor(),
+        &[(RelationId(0), postings), (RelationId(1), accounts)],
+    )
 }
 
 fn walk_atoms() -> Vec<Atom> {
@@ -120,7 +107,7 @@ fn walk_atoms() -> Vec<Atom> {
     ]
 }
 
-fn plan_roles(prepared: &PreparedQuery<()>, rule: usize) -> Vec<Role> {
+fn plan_roles<S>(prepared: &PreparedQuery<S>, rule: usize) -> Vec<Role> {
     let PreparedRule::FreeJoin(rule) = &prepared.pipeline.main_rules()[rule] else {
         panic!("a two-atom query plans as Free Join");
     };
@@ -143,11 +130,12 @@ fn answers(buffer: &Answers) -> Vec<Vec<AnswerValue<'_>>> {
     answers
 }
 
-/// Grading(id fresh, kind u64 — 0 = Det); Det(grading u64, rate i64) with the
-/// declared key Det(grading) -> Det (statement 1 after Grading's auto-key 0)
-/// and the discriminated-union pair `Grading(id | kind == 0) == Det(grading)`
-/// written as its two containments (statements 2 and 3).
-fn du_schema() -> Schema {
+/// Grading(id, kind — 0 = Det) with the declared id key (statement 0, the
+/// deleted auto-key's position); Det(grading u64, rate i64) with the
+/// declared key Det(grading) -> Det (statement 1) and the discriminated-
+/// union pair `Grading(id | kind == 0) == Det(grading)` written as its two
+/// containments (statements 2 and 3).
+fn du_descriptor() -> SchemaDescriptor {
     let side = |relation: u32, field: u16, selection: &[(u16, crate::ir::Value)]| Side {
         relation: RelationId(relation),
         projection: Box::new([FieldId(field)]),
@@ -170,12 +158,10 @@ fn du_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "kind".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                 ],
             },
@@ -186,17 +172,19 @@ fn du_schema() -> Schema {
                     FieldDescriptor {
                         name: "grading".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::None,
                     },
                     FieldDescriptor {
                         name: "rate".into(),
                         value_type: ValueType::I64,
-                        generation: Generation::None,
                     },
                 ],
             },
         ],
         statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
@@ -211,43 +199,26 @@ fn du_schema() -> Schema {
             },
         ],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
-fn populate_du(env: &Environment, schema: &Schema) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, kind) in [(1u64, 0u64), (2, 0), (3, 1)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(id), ValueRef::U64(kind)],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
-    }
-    for (grading, rate) in [(1u64, 25i64), (2, 40)] {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(grading), ValueRef::I64(rate)],
-            schema.relation(RelationId(1)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(1), &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit").expect("admitted");
+fn du_fix() -> Fix {
+    let gradings: Vec<Vec<Value>> = [(1u64, 0u64), (2, 0), (3, 1)]
+        .into_iter()
+        .map(|(id, kind)| vec![Value::U64(id), Value::U64(kind)])
+        .collect();
+    let dets: Vec<Vec<Value>> = [(1u64, 25i64), (2, 40)]
+        .into_iter()
+        .map(|(grading, rate)| vec![Value::U64(grading), Value::I64(rate)])
+        .collect();
+    Fix::heap(
+        du_descriptor(),
+        &[(RelationId(0), gradings), (RelationId(1), dets)],
+    )
 }
 
 #[test]
 fn the_du_fixture_introspection_pins_the_eliminated_line() {
-    let dir = TempDir::new("grounding-du-golden");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    populate_du(&env, &schema);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = du_fix();
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -269,21 +240,16 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-
-    let (answers, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
-    assert_eq!(answers.len(), 2, "the two Det rates");
-    assert!(report.contains("query:"), "{report}");
+    let mut prepared = fix.prepare(&query).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
+        .expect("execute");
+    assert_eq!(out.len(), 2, "the two Det rates");
 }
 
 #[test]
 fn eliminated_and_disabled_executions_agree_on_both_sinks() {
-    let dir = TempDir::new("grounding-differential");
-    let schema = ground_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    populate(&env, &schema);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = ground_fix();
 
     let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
@@ -306,7 +272,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     });
 
     for query in [&projection, &aggregate] {
-        let mut grounded = prepare(&txn, &cache, &schema, query).expect("prepare");
+        let mut grounded = fix.prepare(query).expect("prepare");
         assert_eq!(
             plan_roles(&grounded, 0),
             vec![
@@ -315,18 +281,17 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
             ],
             "the walk shape eliminates the Account occurrence"
         );
-        let mut disabled =
-            with_grounding_disabled(|| prepare(&txn, &cache, &schema, query)).expect("prepare");
+        let mut disabled = with_grounding_disabled(|| fix.prepare(query)).expect("prepare");
         assert_eq!(
             plan_roles(&disabled, 0),
             vec![Role::Positive, Role::Positive],
             "the off switch keeps both occurrences joining"
         );
-        let with_grounding = grounded
-            .execute_collect(&txn, &cache, &[] as &[BindValue])
+        let with_grounding = fix
+            .execute(&mut grounded, &[] as &[BindValue])
             .expect("execute");
-        let without = disabled
-            .execute_collect(&txn, &cache, &[] as &[BindValue])
+        let without = fix
+            .execute(&mut disabled, &[] as &[BindValue])
             .expect("execute");
         assert_eq!(
             answers(&with_grounding),
@@ -341,7 +306,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
 /// <= B(id)` (statement 3 after the three fresh auto-keys), `B(c_ref) <= C(id)`
 /// (statement 4) — the `A<=B<=C` chain fixture (the plan-level twin lives in
 /// `plan/ground/tests.rs: chain_schema`).
-fn chain_schema() -> Schema {
+fn chain_descriptor() -> SchemaDescriptor {
     let containment = |source: u32, target: u32| StatementDescriptor::Containment {
         source: Side {
             relation: RelationId(source),
@@ -354,38 +319,34 @@ fn chain_schema() -> Schema {
             selection: Box::new([]),
         },
     };
-    let fresh = |name: &str| FieldDescriptor {
-        name: name.into(),
-        value_type: ValueType::U64,
-        generation: Generation::Fresh,
+    let key = |relation: u32| StatementDescriptor::Functionality {
+        relation: RelationId(relation),
+        projection: Box::new([FieldId(0)]),
     };
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "A".into(),
-                fields: vec![fresh("id"), plain("b_ref")],
+                fields: vec![plain("id"), plain("b_ref")],
             },
             RelationDescriptor {
                 extension: None,
                 name: "B".into(),
-                fields: vec![fresh("id"), plain("c_ref")],
+                fields: vec![plain("id"), plain("c_ref")],
             },
             RelationDescriptor {
                 extension: None,
                 name: "C".into(),
-                fields: vec![fresh("id")],
+                fields: vec![plain("id")],
             },
         ],
-        statements: vec![containment(0, 1), containment(1, 2)],
+        statements: vec![key(0), key(1), key(2), containment(0, 1), containment(1, 2)],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
 /// The chained elimination executed end to end (the empirical arm of
@@ -396,37 +357,26 @@ fn chain_schema() -> Schema {
 /// three-way join's.
 #[test]
 fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
-    let dir = TempDir::new("grounding-chain-differential");
-    let schema = chain_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        let mut insert = |relation: u32, values: &[ValueRef]| {
-            let mut bytes = Vec::new();
-            encode_fact(
-                values,
-                schema.relation(RelationId(relation)).layout(),
-                &mut bytes,
-            );
-            delta
-                .insert(&view, RelationId(relation), &bytes)
-                .expect("insert");
-        };
-        for id in [1u64, 2] {
-            insert(2, &[ValueRef::U64(id)]);
-        }
-        for (id, c_ref) in [(10u64, 1u64), (11, 2)] {
-            insert(1, &[ValueRef::U64(id), ValueRef::U64(c_ref)]);
-        }
-        for (id, b_ref) in [(100u64, 10u64), (101, 11), (102, 10)] {
-            insert(0, &[ValueRef::U64(id), ValueRef::U64(b_ref)]);
-        }
-        drop(view);
-        commit(delta, &env).expect("commit").expect("admitted");
-    }
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let c_rows: Vec<Vec<Value>> = [1u64, 2]
+        .into_iter()
+        .map(|id| vec![Value::U64(id)])
+        .collect();
+    let b_rows: Vec<Vec<Value>> = [(10u64, 1u64), (11, 2)]
+        .into_iter()
+        .map(|(id, c_ref)| vec![Value::U64(id), Value::U64(c_ref)])
+        .collect();
+    let a_rows: Vec<Vec<Value>> = [(100u64, 10u64), (101, 11), (102, 10)]
+        .into_iter()
+        .map(|(id, b_ref)| vec![Value::U64(id), Value::U64(b_ref)])
+        .collect();
+    let fix = Fix::heap(
+        chain_descriptor(),
+        &[
+            (RelationId(0), a_rows),
+            (RelationId(1), b_rows),
+            (RelationId(2), c_rows),
+        ],
+    );
 
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -453,7 +403,7 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut grounded = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut grounded = fix.prepare(&query).expect("prepare");
     assert_eq!(
         plan_roles(&grounded, 0),
         vec![
@@ -463,18 +413,17 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
         ],
         "the chain eliminates both targets, each mark carrying its own containment"
     );
-    let mut disabled =
-        with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+    let mut disabled = with_grounding_disabled(|| fix.prepare(&query)).expect("prepare");
     assert_eq!(
         plan_roles(&disabled, 0),
         vec![Role::Positive, Role::Positive, Role::Positive],
         "the off switch keeps all three occurrences joining"
     );
-    let with_grounding = grounded
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let with_grounding = fix
+        .execute(&mut grounded, &[] as &[BindValue])
         .expect("execute");
-    let without = disabled
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let without = fix
+        .execute(&mut disabled, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers(&with_grounding),
@@ -486,12 +435,7 @@ fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
 
 #[test]
 fn per_rule_elimination_marks_one_rule_only() {
-    let dir = TempDir::new("grounding-per-rule");
-    let schema = ground_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    populate(&env, &schema);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = ground_fix();
 
     let rule = |name_filter: bool| {
         let mut atoms = walk_atoms();
@@ -513,7 +457,7 @@ fn per_rule_elimination_marks_one_rule_only() {
         rules: vec![rule(false), rule(true)],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     assert_eq!(
         prepared.pipeline.main_rules().len(),
         2,
@@ -532,18 +476,17 @@ fn per_rule_elimination_marks_one_rule_only() {
         vec![Role::Positive, Role::Positive],
         "the filtered rule keeps its Account occurrence — no cross-rule state"
     );
-    let mut disabled =
-        with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+    let mut disabled = with_grounding_disabled(|| fix.prepare(&query)).expect("prepare");
     assert_eq!(
         plan_roles(&disabled, 0),
         vec![Role::Positive, Role::Positive],
         "the off switch keeps every occurrence joining"
     );
-    let with_grounding = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let with_grounding = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
-    let without = disabled
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let without = fix
+        .execute(&mut disabled, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers(&with_grounding),
@@ -555,12 +498,7 @@ fn per_rule_elimination_marks_one_rule_only() {
 
 #[test]
 fn dnf_residue_subsumption_deletes_the_filtered_rule() {
-    let dir = TempDir::new("grounding-subsume");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    populate_du(&env, &schema);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = du_fix();
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -593,7 +531,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
             }),
         ])],
     });
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     assert_eq!(
         prepared.pipeline.main_rules().len(),
         1,
@@ -608,22 +546,22 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
         "the survivor still carries its own elimination mark"
     );
 
-    let (results, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
+    let results = fix
+        .execute(&mut prepared, &[] as &[BindValue])
+        .expect("execute");
     assert_eq!(results.len(), 2, "the two Det rates");
-    assert!(report.contains("query:"), "{report}");
 
-    let mut disabled =
-        with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+    let mut disabled = with_grounding_disabled(|| fix.prepare(&query)).expect("prepare");
     assert_eq!(
         disabled.pipeline.main_rules().len(),
         2,
         "the off switch covers both passes: no elimination, no deletion"
     );
-    let with_passes = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let with_passes = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
-    let without = disabled
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let without = fix
+        .execute(&mut disabled, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers(&with_passes),

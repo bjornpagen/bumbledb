@@ -266,3 +266,53 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod dense_tests {
+    use super::{Basic, classify};
+    use bumbledb_theory::{F64, Interval};
+
+    fn dense(start: F64, end: F64) -> Interval<F64> {
+        Interval::<F64>::new(start, end).expect("checked dense fixture")
+    }
+
+    /// F-INTERVAL: Allen classification serves the dense line through the
+    /// same exact endpoint order — equal endpoints meet, a gap of one
+    /// representable value is Before, and unbounded endpoints are ordinary
+    /// bounds under the canonical total order.
+    #[test]
+    fn dense_line_classification_uses_exact_endpoint_order() {
+        let one = F64::from(1.0);
+        let next_up = F64::from_bits(one.to_bits() + 1);
+        let two = F64::from(2.0);
+
+        assert_eq!(
+            classify(dense(F64::ZERO, one), dense(one, two)),
+            Basic::Meets,
+            "shared endpoint value meets"
+        );
+        assert_eq!(
+            classify(dense(F64::ZERO, one), dense(next_up, two)),
+            Basic::Before,
+            "one representable value of gap is a real gap, never adjacency"
+        );
+        assert_eq!(
+            classify(dense(F64::ZERO, two), dense(one, next_up)),
+            Basic::Contains
+        );
+        // Unbounded endpoints are ordinary bounds in the endpoint order.
+        let line = dense(F64::NEG_INFINITY, F64::INFINITY);
+        assert_eq!(classify(line, line), Basic::Equals);
+        assert_eq!(
+            classify(dense(F64::NEG_INFINITY, F64::MIN_FINITE), line),
+            Basic::Starts,
+            "the below-min-finite left ray starts the whole line"
+        );
+        assert_eq!(classify(dense(one, F64::INFINITY), line), Basic::Finishes);
+        // Canonical zero: [-0, 1) and [+0, 1) are one interval.
+        assert_eq!(
+            classify(dense(F64::from(-0.0), one), dense(F64::from(0.0), one)),
+            Basic::Equals
+        );
+    }
+}

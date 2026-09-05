@@ -12,6 +12,7 @@ impl ImageCache {
                 .iter()
                 .map(|relation| RelationSlot::for_store(relation.body()))
                 .collect(),
+            interner: std::sync::Mutex::new(crate::image::intern::TextInterner::default()),
             counters: stats::CacheCounters::new(),
         }
     }

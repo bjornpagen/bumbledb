@@ -12,10 +12,6 @@ pub(super) struct CacheCounters {
     hits: AtomicU64,
     misses: AtomicU64,
     builds: AtomicU64,
-
-    appends: AtomicU64,
-
-    carries: AtomicU64,
     evicted: AtomicU64,
 }
 
@@ -37,14 +33,6 @@ impl CacheCounters {
         self.builds.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(super) fn append(&self) {
-        self.appends.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn carry(&self) {
-        self.carries.fetch_add(1, Ordering::Relaxed);
-    }
-
     pub(super) fn evicted(&self, entries: u64) {
         self.evicted.fetch_add(entries, Ordering::Relaxed);
     }
@@ -54,24 +42,20 @@ impl CacheCounters {
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
             builds: self.builds.load(Ordering::Relaxed),
-            appends: self.appends.load(Ordering::Relaxed),
-            carries: self.carries.load(Ordering::Relaxed),
             evicted: self.evicted.load(Ordering::Relaxed),
         }
     }
 }
 
 /// One reading of the cache counters. A miss resolves through exactly one
-/// of `builds` / `appends` / `carries` — the delete-fallback pin's
-/// through `builds`; a delete-free one lands in `appends` or `carries`.
+/// build (generation-keyed rebuild); the old append/carry lineage arms are
+/// deleted with the transitional storage.
 #[cfg(feature = "trace")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
     pub hits: u64,
     pub misses: u64,
     pub builds: u64,
-    pub appends: u64,
-    pub carries: u64,
     pub evicted: u64,
 }
 
@@ -97,12 +81,6 @@ impl CacheCounters {
 
     #[inline]
     pub(super) fn build(&self) {}
-
-    #[inline]
-    pub(super) fn append(&self) {}
-
-    #[inline]
-    pub(super) fn carry(&self) {}
 
     #[inline]
     pub(super) fn evicted(&self, _: u64) {}

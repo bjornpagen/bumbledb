@@ -12,7 +12,7 @@ bumbledb::schema! {
     pub Tiny;
 
     relation Row {
-        id: u64 as RowId, fresh,
+        id: u64 as RowId,
         val: i64,
     }
 }

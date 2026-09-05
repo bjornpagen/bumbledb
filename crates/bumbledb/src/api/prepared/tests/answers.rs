@@ -4,14 +4,7 @@ use crate::ir::FoldOp;
 
 #[test]
 fn overflow_errors_leave_answers_reusable() {
-    let dir = TempDir::new("prepared-overflow-reuse");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(
-        &env,
-        &schema,
-        &[(1, 7, "a", i64::MAX), (2, 7, "b", 1), (3, 8, "c", 4)],
-    );
+    let fix = postings(&[(1, 7, "a", i64::MAX), (2, 7, "b", 1), (3, 8, "c", 4)]);
 
     let query = Query::single(Rule {
         finds: vec![
@@ -32,13 +25,11 @@ fn overflow_errors_leave_answers_reusable() {
         negated: vec![],
         conditions: vec![],
     });
-    let txn = env.read_txn().expect("txn");
-    let cache = crate::image::cache::ImageCache::new(&schema);
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
+    let mut prepared = fix.prepare(&query).expect("prepares");
     let mut out = Answers::new();
     for _ in 0..2 {
-        let err = prepared
-            .execute(&txn, &cache, &[] as &[BindValue], &mut out)
+        let err = fix
+            .execute_into(&mut prepared, &[] as &[BindValue], &mut out)
             .expect_err("account 7 overflows");
         assert!(
             matches!(
@@ -66,8 +57,8 @@ fn overflow_errors_leave_answers_reusable() {
             rhs: Term::Literal(crate::ir::Value::U64(8)),
         })],
     });
-    let mut ok = prepare(&txn, &cache, &schema, &ok_query).expect("prepares");
-    ok.execute(&txn, &cache, &[] as &[BindValue], &mut out)
+    let mut ok = fix.prepare(&ok_query).expect("prepares");
+    fix.execute_into(&mut ok, &[] as &[BindValue], &mut out)
         .expect("executes");
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0, 0), AnswerValue::U64(8));
@@ -76,29 +67,18 @@ fn overflow_errors_leave_answers_reusable() {
 
 #[test]
 fn answer_reuse_retains_capacity_and_answers_stay_identical() {
-    let dir = TempDir::new("prepared-buffer-reuse");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(
-        &env,
-        &schema,
-        &[(1, 7, "one", 1), (2, 7, "two", 2), (3, 7, "three", 3)],
-    );
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+    let fix = postings(&[(1, 7, "one", 1), (2, 7, "two", 2), (3, 7, "three", 3)]);
+    let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
     let mut out = Answers::new();
     let params = [BindValue::U64(7), BindValue::I64(0)];
 
-    prepared
-        .execute(&txn, &cache, &params, &mut out)
+    fix.execute_into(&mut prepared, &params, &mut out)
         .expect("execute");
     let first = answers_of(&out);
     let (cells_cap, text_cap) = (out.cells.capacity(), out.text.capacity());
     assert!(cells_cap > 0 && text_cap > 0);
 
-    prepared
-        .execute(&txn, &cache, &params, &mut out)
+    fix.execute_into(&mut prepared, &params, &mut out)
         .expect("execute");
     assert_eq!(answers_of(&out), first);
 
@@ -111,10 +91,6 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
 #[test]
 fn finalize_resolves_each_distinct_intern_once() {
     use crate::obs;
-
-    let dir = TempDir::new("prepared-resolve-memo");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
 
     let facts: Vec<(u64, u64, String, i64)> = (0..64)
         .map(|id| {
@@ -131,15 +107,13 @@ fn finalize_resolves_each_distinct_intern_once() {
         .iter()
         .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
         .collect();
-    insert_postings(&env, &schema, &borrowed);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+    let fix = postings(&borrowed);
+    let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
 
-    let resolves = |prepared: &mut PreparedQuery<()>, account: u64| {
+    let resolves = |prepared: &mut PreparedQuery<T>, account: u64| {
         obs::start_capture();
-        let out = prepared
-            .execute_collect(&txn, &cache, &[BindValue::U64(account), BindValue::I64(-1)])
+        let out = fix
+            .execute(prepared, &[BindValue::U64(account), BindValue::I64(-1)])
             .expect("execute");
         let events = obs::finish_capture();
         let count = events

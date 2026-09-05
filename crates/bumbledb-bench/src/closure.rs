@@ -19,6 +19,8 @@ use crate::harness::{self, Modes, Protocol, Rotation};
 use crate::translate::{ParamSlot, Translated};
 use crate::{clockproxy, compare, report, sqlite_run, sqlmap};
 
+pub mod history_model;
+
 #[cfg(test)]
 mod tests;
 
@@ -26,13 +28,14 @@ bumbledb::schema! {
     pub Reachability;
 
     relation Node {
-        id: u64 as ClosNodeId, fresh,
+        id: u64 as ClosNodeId,
     }
     relation Edge {
         src: u64 as ClosNodeId,
         dst: u64 as ClosNodeId,
     }
 
+    Node(id) -> Node;
     Edge(src) <= Node(id);
     Edge(dst) <= Node(id);
 }

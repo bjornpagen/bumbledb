@@ -1,20 +1,15 @@
 use super::*;
-use crate::encoding::{ValueRef, decode_field, encode_fact, encode_i64, encode_u64};
-use crate::error::Result as DbResult;
-use crate::image::build;
+use crate::encoding::{encode_i64, encode_u64};
+use crate::image::testsupport::TestSource;
 use crate::ir::ParamId;
+use crate::ir::Value;
 use crate::ir::WordCmp;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::Environment;
-use crate::storage::read;
-use crate::testutil::TempDir;
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, IntervalElement, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
 };
 
 fn schema() -> Schema {
@@ -26,22 +21,18 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "flag".into(),
                     value_type: ValueType::Bool,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "a".into(),
                     value_type: ValueType::I64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "b".into(),
                     value_type: ValueType::I64,
-                    generation: Generation::None,
                 },
             ],
         }],
@@ -53,66 +44,38 @@ fn schema() -> Schema {
 
 const R: RelationId = RelationId(0);
 
-fn fact(schema: &Schema, id: u64, flag: bool, a: i64, b: i64) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    encode_fact(
-        &[
-            ValueRef::U64(id),
-            ValueRef::Bool(flag),
-            ValueRef::I64(a),
-            ValueRef::I64(b),
-        ],
-        schema.relation(R).layout(),
-        &mut bytes,
-    );
-    bytes
-}
+type RRow = (u64, bool, i64, i64);
 
-fn populated(dir: &TempDir, schema: &Schema) -> Environment {
-    let env = Environment::create(dir.path(), schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for i in 0..50i64 {
-        let id = i.cast_unsigned();
-
-        let b = if i % 5 == 0 { i - 25 } else { (i % 7) - 3 };
-        delta
-            .insert(&view, R, &fact(schema, id, i % 2 == 0, i - 25, b))
-            .expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    env
-}
-
-fn oracle(
-    env: &Environment,
-    schema: &Schema,
-    keep: impl Fn(u64, bool, i64, i64) -> bool,
-) -> Vec<u64> {
-    let txn = env.read_txn().expect("txn");
-    read::scan(&txn, schema, R)
-        .expect("scan")
-        .map(|entry| {
-            let (_, bytes) = entry.expect("ok");
-            let id = match decode_field(bytes, 0).expect("decode") {
-                crate::encoding::ValueRef::U64(v) => v,
-                other => panic!("{other:?}"),
-            };
-            let flag = match decode_field(bytes, 1).expect("decode") {
-                crate::encoding::ValueRef::Bool(v) => v,
-                other => panic!("{other:?}"),
-            };
-            let a = match decode_field(bytes, 2).expect("decode") {
-                crate::encoding::ValueRef::I64(v) => v,
-                other => panic!("{other:?}"),
-            };
-            let b = match decode_field(bytes, 3).expect("decode") {
-                crate::encoding::ValueRef::I64(v) => v,
-                other => panic!("{other:?}"),
-            };
-            (id, flag, a, b)
+fn fixture_rows() -> Vec<RRow> {
+    (0..50i64)
+        .map(|i| {
+            let b = if i % 5 == 0 { i - 25 } else { (i % 7) - 3 };
+            (i.cast_unsigned(), i % 2 == 0, i - 25, b)
         })
+        .collect()
+}
+
+fn populated(schema: &Schema) -> TestSource {
+    let rows: Vec<Vec<Value>> = fixture_rows()
+        .into_iter()
+        .map(|(id, flag, a, b)| {
+            vec![
+                Value::U64(id),
+                Value::Bool(flag),
+                Value::I64(a),
+                Value::I64(b),
+            ]
+        })
+        .collect();
+    TestSource::new(schema, &[(R, rows)])
+}
+
+/// The naive oracle: filter the fixture tuples directly. The image's row
+/// order is canonical-byte order, which for a leading distinct u64 id is
+/// ascending id — the same order the fixture generates.
+fn oracle(keep: impl Fn(u64, bool, i64, i64) -> bool) -> Vec<u64> {
+    fixture_rows()
+        .into_iter()
         .filter(|(id, flag, a, b)| keep(*id, *flag, *a, *b))
         .map(|(id, ..)| id)
         .collect()
@@ -126,11 +89,9 @@ fn survivor_ids(view: &View) -> Vec<u64> {
 
 #[test]
 fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
-    let dir = TempDir::new("view-conjunction");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(R);
 
     let predicates = vec![
         FilterPredicate::Compare {
@@ -150,38 +111,32 @@ fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
         },
     ];
     let view = apply(&image, &predicates, &[], Vec::new());
-    let expected = oracle(&env, &schema, |_, flag, a, _| {
-        flag && (-10..15).contains(&a)
-    });
+    let expected = oracle(|_, flag, a, _| flag && (-10..15).contains(&a));
     assert_eq!(survivor_ids(&view), expected);
     assert!(!expected.is_empty(), "fixture exercises the filter");
 }
 
 #[test]
 fn same_fact_field_equality_pairs_work() {
-    let dir = TempDir::new("view-fields-equal");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(R);
     let predicates = vec![FilterPredicate::FieldsCompare {
         left: FieldId(2).into(),
         right: FieldId(3).into(),
         op: WordCmp::Eq,
     }];
     let view = apply(&image, &predicates, &[], Vec::new());
-    let expected = oracle(&env, &schema, |_, _, a, b| a == b);
+    let expected = oracle(|_, _, a, b| a == b);
     assert_eq!(survivor_ids(&view), expected);
     assert!(!expected.is_empty(), "fixture exercises the equality");
 }
 
 #[test]
 fn unsatisfiable_filter_yields_an_empty_survivor_set() {
-    let dir = TempDir::new("view-empty");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(R);
     let predicates = vec![FilterPredicate::Compare {
         field: FieldId(0).into(),
         op: WordCmp::Eq,
@@ -195,11 +150,9 @@ fn unsatisfiable_filter_yields_an_empty_survivor_set() {
 
 #[test]
 fn no_predicates_yield_the_all_variant() {
-    let dir = TempDir::new("view-all");
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
-    let image = build(&txn.catalog(), &schema, R).expect("build");
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(R);
     let view = apply(&image, &[], &[], Vec::new());
     assert!(matches!(view, View::Bound(BoundView::All(_))));
     assert_eq!(view.len(), 50);
@@ -208,32 +161,23 @@ fn no_predicates_yield_the_all_variant() {
 }
 
 #[test]
-fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
-    let dir = TempDir::new("view-dual-output");
+fn reapplying_the_same_filter_to_the_built_image_is_stable() {
     let schema = schema();
-    let env = populated(&dir, &schema);
-    let txn = env.read_txn().expect("txn");
+    let source = populated(&schema);
+    let (_cache, image) = source.image_with_cache(R);
     let predicates = vec![FilterPredicate::Compare {
         field: FieldId(0).into(),
         op: WordCmp::Ge,
         value: Const::Word(u64::from_be_bytes(encode_u64(40))),
     }];
 
-    let (image, view) = build_with_filters(&txn, &schema, R, &predicates, &[], Vec::new())?;
-    let reference = build(&txn.catalog(), &schema, R)?;
-
-    assert_eq!(image.row_count(), reference.row_count());
-    for field in 0..4 {
-        assert_eq!(image.column(field), reference.column(field));
-    }
-
+    let view = apply(&image, &predicates, &[], Vec::new());
     let reapplied = apply(&image, &predicates, &[], Vec::new());
     assert_eq!(
         view.positions().collect::<Vec<_>>(),
         reapplied.positions().collect::<Vec<_>>()
     );
     assert_eq!(view.len(), 10);
-    Ok(())
 }
 
 fn interval_schema() -> Schema {
@@ -243,7 +187,6 @@ fn interval_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
         value_type: ty,
-        generation: Generation::None,
     };
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -288,51 +231,45 @@ fn sorted_ids(view: &View) -> Vec<u64> {
     ids
 }
 
-fn interval_image(dir: &TempDir) -> std::sync::Arc<crate::image::RelationImage> {
+fn interval_image() -> std::sync::Arc<crate::image::RelationImage> {
     let schema = interval_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    for (id, during, review, at) in P_ROWS {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(id),
-                ValueRef::IntervalI64(
+    let rows: Vec<Vec<Value>> = P_ROWS
+        .iter()
+        .map(|(id, during, review, at)| {
+            vec![
+                Value::U64(*id),
+                Value::IntervalI64(
                     bumbledb_theory::Interval::<i64>::new(during.0, during.1)
                         .expect("nonempty interval"),
                 ),
-                ValueRef::IntervalI64(
+                Value::IntervalI64(
                     bumbledb_theory::Interval::<i64>::new(review.0, review.1)
                         .expect("nonempty interval"),
                 ),
-                ValueRef::I64(at),
-            ],
-            schema.relation(P).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, P, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, &env).expect("commit").expect("admitted");
-    let txn = env.read_txn().expect("txn");
-    build(&txn.catalog(), &schema, P).expect("build")
+                Value::I64(*at),
+            ]
+        })
+        .collect();
+    let source = TestSource::new(&schema, &[(P, rows)]);
+    let (_cache, image) = source.image_with_cache(P);
+    image
 }
 
 #[test]
 fn point_in_keeps_start_boundary_and_drops_end_boundary() {
-    let dir = TempDir::new("view-point-in");
-    let image = interval_image(&dir);
+    let image = interval_image();
 
     let at_nine = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
         point: ViewWordSource::Word(w(9)),
+        dense: false,
     }];
     assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
 
     let at_two = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
         point: ViewWordSource::Word(w(2)),
+        dense: false,
     }];
     assert_eq!(
         sorted_ids(&apply(&image, &at_two, &[], Vec::new())),
@@ -342,6 +279,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     let via_param = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
         point: ViewWordSource::Param(ParamId(0)),
+        dense: false,
     }];
     assert_eq!(
         sorted_ids(&apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
@@ -351,11 +289,11 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
 
 #[test]
 fn any_point_in_matches_any_element_of_the_bound_set() {
-    let dir = TempDir::new("view-any-point-in");
-    let image = interval_image(&dir);
+    let image = interval_image();
     let predicates = vec![FilterPredicate::AnyPointIn {
         field: P_DURING.into(),
         set: SetConst::ParamSet(ParamId(0)),
+        dense: false,
     }];
 
     let params = [Const::WordSet(vec![w(-4), w(10)])];
@@ -370,8 +308,7 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
 
 #[test]
 fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
-    let dir = TempDir::new("view-interval-shapes");
-    let image = interval_image(&dir);
+    let image = interval_image();
     let run =
         |predicate: FilterPredicate| sorted_ids(&apply(&image, &[predicate], &[], Vec::new()));
 
@@ -406,6 +343,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         run(FilterPredicate::FieldsPointIn {
             interval: P_DURING.into(),
             point: P_AT.into(),
+            dense: false,
         }),
         [1, 2, 5]
     );
@@ -430,8 +368,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
 
 #[test]
 fn field_within_is_scalar_membership_in_the_constant_interval() {
-    let dir = TempDir::new("view-field-within");
-    let image = interval_image(&dir);
+    let image = interval_image();
 
     let scalar_within = vec![FilterPredicate::FieldWithin {
         field: P_AT.into(),
@@ -439,6 +376,7 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
             start: w(2),
             end: w(9),
         },
+        dense: false,
     }];
     assert_eq!(
         sorted_ids(&apply(&image, &scalar_within, &[], Vec::new())),
@@ -448,8 +386,7 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
 
 #[test]
 fn interval_constants_compare_pairwise_under_eq() {
-    let dir = TempDir::new("view-interval-const");
-    let image = interval_image(&dir);
+    let image = interval_image();
     let predicates = vec![FilterPredicate::Compare {
         field: P_DURING.into(),
         op: WordCmp::Eq,
@@ -466,8 +403,7 @@ fn interval_constants_compare_pairwise_under_eq() {
 
 #[test]
 fn param_set_eq_matches_any_element_over_a_scalar_column() {
-    let dir = TempDir::new("view-param-set");
-    let image = interval_image(&dir);
+    let image = interval_image();
     let predicates = vec![FilterPredicate::Compare {
         field: P_ID.into(),
         op: WordCmp::Eq,

@@ -67,8 +67,13 @@ impl AggregateSink {
     }
 
     /// every `Key` arm below asserts it non-empty before gathering.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the per-accumulator fold arms are one linear table"
+    )]
     fn fold_constant_group(&mut self, batch: &LeafBatch<'_>, count: u64, survivors: &[u32]) {
-        if self.cardinality_overflow {
+        self.maybe_spill_groups();
+        if self.error.is_some() || self.cardinality_overflow {
             return;
         }
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
@@ -115,8 +120,10 @@ impl AggregateSink {
                         LeafSource::Key(word) => {
                             debug_assert!(!survivors.is_empty(), "count-only folds never gather");
                             survivors.iter().try_for_each(|&entry| {
-                                accumulator.push(bumbledb_theory::F64::from_order_key(batch.key(entry, word))
-                                    .expect("validated canonical F64 binding"))
+                                accumulator.push(
+                                    bumbledb_theory::F64::from_order_key(batch.key(entry, word))
+                                        .expect("validated canonical F64 binding"),
+                                )
                             })
                         }
                     };
@@ -129,7 +136,7 @@ impl AggregateSink {
                     let Acc::Count(n) = acc else {
                         unreachable!("accumulators are seeded per op");
                     };
-                    *n += count;
+                    *n = n.saturating_add(count);
                 }
                 AggSpec::Fold {
                     op, slot, signed, ..

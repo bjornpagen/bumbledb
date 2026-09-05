@@ -43,14 +43,9 @@ fn union_query() -> Query {
 
 #[test]
 fn a_multi_rule_query_prepares_with_every_rules_plan() {
-    let dir = TempDir::new("prepared-rules-build");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
-    let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
+    let prepared = fix.prepare(&union_query()).expect("multi-rule builds");
     assert_eq!(prepared.pipeline.main_rules().len(), 2, "one plan per rule");
     for rule in prepared.pipeline.main_rules() {
         let PreparedRule::FreeJoin(rule) = rule else {
@@ -72,18 +67,11 @@ fn a_multi_rule_query_prepares_with_every_rules_plan() {
 
 #[test]
 fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
-    let dir = TempDir::new("prepared-rules-union");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
     let floor = vec![BindValue::I64(0)];
 
-    let mut prepared = prepare(&txn, &cache, &schema, &union_query()).expect("prepare");
-    let union = prepared
-        .execute_collect(&txn, &cache, &floor)
-        .expect("execute");
+    let mut prepared = fix.prepare(&union_query()).expect("prepare");
+    let union = fix.execute(&mut prepared, &floor).expect("execute");
     assert_eq!(
         answers_of(&union),
         vec![
@@ -96,16 +84,10 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
 
     let mut concatenated = Vec::new();
     for account in [3, 7] {
-        let mut single = prepare(
-            &txn,
-            &cache,
-            &schema,
-            &Query::single(by_account_rule(account)),
-        )
-        .expect("prepare");
-        let out = single
-            .execute_collect(&txn, &cache, &floor)
-            .expect("execute");
+        let mut single = fix
+            .prepare(&Query::single(by_account_rule(account)))
+            .expect("prepare");
+        let out = fix.execute(&mut single, &floor).expect("execute");
         concatenated.extend(answers_of(&out));
     }
     concatenated.sort();
@@ -122,16 +104,11 @@ fn an_overlapping_union_has_no_duplicates_and_host_concatenation_does() {
 
 #[test]
 fn params_bind_once_and_reach_all_rules() {
-    let dir = TempDir::new("prepared-rules-params");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
-    let mut prepared = prepare(&txn, &cache, &schema, &union_query()).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[BindValue::I64(20)])
+    let mut prepared = fix.prepare(&union_query()).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[BindValue::I64(20)])
         .expect("execute");
     assert_eq!(
         answers_of(&out),
@@ -139,20 +116,15 @@ fn params_bind_once_and_reach_all_rules() {
         "the floor filtered account 3's 10 AND account 7's nothing-below-20"
     );
 
-    let out = prepared
-        .execute_collect(&txn, &cache, &[BindValue::I64(30)])
+    let out = fix
+        .execute(&mut prepared, &[BindValue::I64(30)])
         .expect("execute");
     assert_eq!(answers_of(&out), vec![("c".to_owned(), 40)]);
 }
 
 #[test]
 fn aggregates_fold_the_union_of_head_projected_bindings() {
-    let dir = TempDir::new("prepared-rules-fold");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
     let agg_rule = |account: u64| Rule {
         finds: vec![
@@ -181,9 +153,9 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
         rules: vec![agg_rule(3), agg_rule(7)],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let mut prepared = fix.prepare(&query).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
 
@@ -193,12 +165,7 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
 
 #[test]
 fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
-    let dir = TempDir::new("prepared-rules-groups");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
     let rule = |account: u64| Rule {
         finds: vec![
@@ -225,9 +192,9 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         rules: vec![rule(3), rule(7)],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let mut prepared = fix.prepare(&query).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(String, i64)> = (0..out.len())
         .map(|answer| {
@@ -259,12 +226,7 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
 /// disjunct, host-merged.
 #[test]
 fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
-    let dir = TempDir::new("prepared-rules-count");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
     let rule = |account: u64| Rule {
         finds: vec![FindTerm::Count],
@@ -284,7 +246,7 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
         rules: vec![rule(3), rule(7)],
         rec: None,
     };
-    let Err(err) = prepare(&txn, &cache, &schema, &query) else {
+    let Err(err) = fix.prepare(&query) else {
         panic!("fold-free nullary Count across written rules must refuse at validation");
     };
     assert!(
@@ -298,12 +260,7 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
 
 #[test]
 fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
-    let dir = TempDir::new("prepared-rules-grouped-count");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
     let rule = |account: u64| Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Count],
@@ -324,7 +281,7 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
         rules: vec![rule(3), rule(7)],
         rec: None,
     };
-    let Err(err) = prepare(&txn, &cache, &schema, &query) else {
+    let Err(err) = fix.prepare(&query) else {
         panic!("grouped fold-free Count across written rules must refuse at validation");
     };
     assert!(
@@ -343,12 +300,7 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
 /// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
 #[test]
 fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
-    let dir = TempDir::new("prepared-rules-dnf-fold");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
     let rule = Rule {
         finds: vec![
@@ -389,14 +341,14 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
         rules: vec![rule],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     assert_eq!(
         prepared.pipeline.main_rules().len(),
         2,
         "the or lowered to two disjunct rules"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(out.len(), 1);
 
@@ -414,32 +366,20 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
 
 #[test]
 fn introspection_reports_per_rule_stats_and_the_union_accounting() {
-    let dir = TempDir::new("prepared-rules-introspect");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = posting_store("prepared-rules-introspect", &overlap_postings());
 
-    let mut prepared = prepare(&txn, &cache, &schema, &union_query()).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[ParamArg::Scalar(BindValue::I64(0))])
-        .expect("execute");
-    assert_eq!(out.len(), 3, "the union");
-    let (_, report) = prepared
-        .introspect(&txn, &cache, &[ParamArg::Scalar(BindValue::I64(0))])
+    let mut prepared = fix.prepare(&union_query()).expect("prepare");
+    let (out, report) = fix
+        .db
+        .read(|instance| prepared.introspect(instance, &[ParamArg::Scalar(BindValue::I64(0))]))
         .expect("introspect");
+    assert_eq!(out.len(), 3, "the union");
     assert!(report.contains("query:"), "{report}");
 }
 
 #[test]
 fn a_key_probe_rule_unions_through_the_sink() {
-    let dir = TempDir::new("prepared-rules-key_probe");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &overlap_postings());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = postings(&overlap_postings());
 
     let key_probe_rule = Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -462,13 +402,13 @@ fn a_key_probe_rule_unions_through_the_sink() {
         rules: vec![rule0, key_probe_rule],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     assert!(
         matches!(prepared.pipeline.main_rules()[1], PreparedRule::KeyProbe(_)),
         "rule 1 classifies as the point fast path"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         answers_of(&out),

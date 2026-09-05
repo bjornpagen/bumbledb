@@ -1,7 +1,7 @@
 {
 	"name": "@bjornpagen/bumbledb",
 	"version": "0.20.3",
-	"description": "Embedded relational database for TypeScript with typed schemas, queries, and commit-time constraints",
+	"description": "Effect-native embedded relational database for TypeScript: typed schemas and queries, exact floats, commit-time constraints",
 	"type": "module",
 	"exports": {
 		".": {
@@ -27,8 +27,6 @@
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"test": "pnpm run build && node --test 'test/**/*.test.ts'",
-		"prepack": "node scripts/pin.ts inject",
-		"postpack": "node scripts/pin.ts restore",
 		"prepublishOnly": "pnpm run build"
 	},
 	"keywords": [

@@ -3,25 +3,25 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Holder {
-        id: u64 as HolderId, fresh,
+        id: u64 as HolderId,
         name: str,
     }
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         currency: u64 as CurrencyId,
     }
     relation Instrument {
-        id: u64 as InstrumentId, fresh,
+        id: u64 as InstrumentId,
         symbol: str,
     }
     relation JournalEntry {
-        id: u64 as JournalEntryId, fresh,
+        id: u64 as JournalEntryId,
         source: u64 as SourceId,
         created_at: i64,
     }
     relation Posting {
-        id: u64 as PostingId, fresh,
+        id: u64 as PostingId,
         entry: u64 as JournalEntryId,
         account: u64 as AccountId,
         instrument: u64 as InstrumentId,
@@ -33,7 +33,7 @@ bumbledb::schema! {
         tag: u64 as TagId,
     }
     relation Org {
-        id: u64 as OrgId, fresh,
+        id: u64 as OrgId,
         name: str,
     }
     relation OrgParent {
@@ -49,6 +49,18 @@ bumbledb::schema! {
     closed relation Currency as CurrencyId = { Usd, Eur, Gbp };
     closed relation Source as SourceId = { Manual, Import, System };
     closed relation Tag as TagId = { Fee, Rebate, Adjustment };
+
+    // Declared id keys FIRST (E-NO-RESERVE): the retired fresh auto-keys
+    // become ordinary declared statements. Materialized order is now
+    // closed auto-handle keys, then this declared list — putting the six
+    // id keys at the head keeps every later declared statement id at its
+    // historical position.
+    Holder(id)       -> Holder;
+    Account(id)      -> Account;
+    Instrument(id)   -> Instrument;
+    JournalEntry(id) -> JournalEntry;
+    Posting(id)      -> Posting;
+    Org(id)          -> Org;
 
     Account(holder)      <= Holder(id);
     Account(currency)    <= Currency(id);
@@ -167,6 +179,13 @@ mod tests {
         })
     }
 
+    /// STALE PIN, DELIBERATELY (F1, 2026-09-04): the successor moved the
+    /// canonical stream to v6 (no per-field generation byte) and this schema
+    /// replaced its six fresh auto-keys with declared id keys, so this hex
+    /// WILL mismatch at F3 — which is exactly this test's job: the failure
+    /// forces the deliberate corpus/report re-baseline (record the new hex
+    /// from the failure message; no execution is allowed in F1 to compute
+    /// it here).
     #[test]
     fn the_fingerprint_is_pinned() {
         assert_eq!(
@@ -208,8 +227,8 @@ mod tests {
         }
         assert_eq!(
             autos, 9,
-            "Holder/Account/Instrument/JournalEntry/Posting/Org fresh ids \
-             plus the Currency/Source/Tag closed auto-keys"
+            "Holder/Account/Instrument/JournalEntry/Posting/Org declared id \
+             keys plus the Currency/Source/Tag closed auto-keys"
         );
         assert_eq!(pointwise, 1, "the pointwise Mandate key");
         assert_eq!(

@@ -16,7 +16,7 @@ pub(super) fn load_group_key(
 }
 
 impl AggregateSink {
-    /// Check before accumulation: for at most u64::MAX inputs all I64/U64
+    /// Check before accumulation: for at most `u64::MAX` inputs all I64/U64
     /// exact totals fit the existing i128/u128 hot-path accumulators.
     pub(super) fn advance_group(&mut self, group: usize, count: u64) -> bool {
         let Some(total) = self.group_counts[group].checked_add(count) else {
@@ -92,12 +92,17 @@ impl AggregateSink {
                                 }).flatten();
                                 let (index, primary) = if let Some(alias) = alias {
                                     let Acc::Float { index, .. } = accs[first_acc + alias] else {
-                                        unreachable!("alias references an earlier float accumulator")
+                                        unreachable!(
+                                            "alias references an earlier float accumulator"
+                                        )
                                     };
                                     (index, false)
                                 } else {
                                     let index = self.float_accs.len();
-                                    self.float_accs.push(Default::default());
+                                    self.float_accs.push(
+                                        crate::exec::kernel::numeric::ExactF64Accumulator::default(
+                                        ),
+                                    );
                                     (index, true)
                                 };
                                 accs.push(Acc::Float { index, primary });

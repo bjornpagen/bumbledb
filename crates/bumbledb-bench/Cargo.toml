@@ -8,7 +8,9 @@ publish = false
 obs = ["bumbledb/trace", "bumbledb/alloc-counter"]
 
 [dependencies]
-bumbledb = { path = "../bumbledb" }
+aegis = "=0.9.15"
+blake3 = "1"
+bumbledb = { path = "../bumbledb", features = ["collision-probe"] }
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 
 [dev-dependencies]

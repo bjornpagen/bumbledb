@@ -137,7 +137,11 @@ pub struct Occurrence {
 
     pub filters: Vec<FilterPredicate>,
 
-    pub point_vars: Vec<(FieldId, VarId)>,
+    /// Var-sourced point-membership probes: `(interval field, point var,
+    /// dense)` — `dense` marks the F64 element domain, whose nonfinite
+    /// probe words are ordinary nonmatches (the finite-probe guard,
+    /// `image/view/eval.rs::dense_probe_word`).
+    pub point_vars: Vec<(FieldId, VarId, bool)>,
 }
 
 impl Occurrence {
@@ -200,7 +204,12 @@ impl SlotWidth {
     #[must_use]
     pub fn of(value_type: &ValueType) -> Self {
         match value_type {
-            ValueType::Interval { .. } | ValueType::FixedInterval { .. } => Self::TWO,
+            // Intervals are two order words; `Id128` is sixteen exact
+            // identity bytes — two big-endian words, byte order = total
+            // order (the bytes<16> layout, nominal name).
+            ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Id128 => {
+                Self::TWO
+            }
             ValueType::FixedBytes { len } => Self(
                 u8::try_from(crate::encoding::fixed_bytes_words(*len))
                     .expect("bytes width is at most 8 words"),

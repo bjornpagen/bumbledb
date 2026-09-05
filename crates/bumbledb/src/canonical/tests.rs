@@ -1,5 +1,5 @@
 use super::*;
-use crate::schema::{Generation, IntervalElement};
+use crate::schema::{FixedIntervalElement, IntervalElement};
 use crate::work::{ExecutionPolicy, Resource};
 use std::time::Duration;
 
@@ -23,7 +23,6 @@ fn fields(types: &[ValueType]) -> Vec<FieldDescriptor> {
         .map(|value_type| FieldDescriptor {
             name: "v".into(),
             value_type: *value_type,
-            generation: Generation::None,
         })
         .collect()
 }
@@ -41,7 +40,7 @@ fn independent_all_scalar_golden_and_every_truncation() {
             element: IntervalElement::U64,
         },
         ValueType::FixedInterval {
-            element: IntervalElement::I64,
+            element: FixedIntervalElement::I64,
             width: 2,
         },
     ]);
@@ -87,6 +86,91 @@ fn independent_all_scalar_golden_and_every_truncation() {
     assert!(matches!(
         CanonicalRow::parse(&fields, &trailing, &ctx),
         Err(RowError::TrailingBytes)
+    ));
+}
+
+/// Id128 (tag 8) and the dense float interval (tag 9) have exact golden
+/// wire bytes: endpoints are canonical binary64 payload bits, big endian,
+/// never index order keys (E-CODEC, F-WIRE, F-INTERVAL).
+#[test]
+fn id128_and_dense_interval_golden_roundtrip() {
+    let fields = fields(&[
+        ValueType::Id128,
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        },
+    ]);
+    let id = crate::Id128::from_bytes([0xaa; 16]);
+    let span = Interval::<F64>::new(F64::NEG_INFINITY, F64::from(1.0)).unwrap();
+    let values = [Value::Id128(id), Value::IntervalF64(span)];
+    let mut expected: Vec<u8> = vec![0, 2, 8];
+    expected.extend_from_slice(&[0xaa; 16]);
+    expected.push(9);
+    expected.extend_from_slice(&0xfff0_0000_0000_0000u64.to_be_bytes());
+    expected.extend_from_slice(&0x3ff0_0000_0000_0000u64.to_be_bytes());
+    let ctx = work();
+    let row = CanonicalRow::encode(&fields, &values, &ctx).unwrap();
+    assert_eq!(row.as_bytes(), &expected[..]);
+    let parsed = CanonicalRow::parse(&fields, &expected, &ctx).unwrap();
+    assert_eq!(parsed.as_bytes(), &expected[..]);
+    let decoded = decode(&fields, &expected, &ctx).unwrap();
+    assert_eq!(decoded.values, values);
+    for end in 0..expected.len() {
+        assert!(
+            CanonicalRow::parse(&fields, &expected[..end], &ctx).is_err(),
+            "prefix {end}"
+        );
+    }
+}
+
+/// A forged dense-interval wire value cannot parse into a successful
+/// canonical row: noncanonical endpoint bits, NaN endpoints, equal or
+/// inverted bounds each refuse with their own diagnostic (E-CODEC).
+#[test]
+fn forged_dense_interval_bytes_refuse() {
+    let ctx = work();
+    let fields = fields(&[ValueType::Interval {
+        element: IntervalElement::F64,
+    }]);
+    let framed = |start: u64, end: u64| {
+        let mut bytes = vec![0, 1, 9];
+        bytes.extend_from_slice(&start.to_be_bytes());
+        bytes.extend_from_slice(&end.to_be_bytes());
+        bytes
+    };
+    // Noncanonical endpoints: negative zero and a signaling NaN payload.
+    for (start, end) in [
+        (0x8000_0000_0000_0000u64, 0x3ff0_0000_0000_0000u64),
+        (0x0000_0000_0000_0000, 0x7ff0_0000_0000_0001),
+    ] {
+        assert!(matches!(
+            CanonicalRow::parse(&fields, &framed(start, end), &ctx),
+            Err(RowError::NonCanonicalFloat { field: 0 })
+        ));
+    }
+    // Canonical NaN is refused as an ENDPOINT, empty and inverted bounds
+    // as an INTERVAL; the parser never normalizes any of them.
+    for (start, end) in [
+        (0x7ff8_0000_0000_0000u64, 0x7ff8_0000_0000_0000u64), // NaN..NaN
+        (0x0000_0000_0000_0000, 0x7ff8_0000_0000_0000),       // 0..NaN
+        (0x3ff0_0000_0000_0000, 0x3ff0_0000_0000_0000),       // [1,1)
+        (0x4000_0000_0000_0000, 0x3ff0_0000_0000_0000),       // [2,1)
+        (0x7ff0_0000_0000_0000, 0x7ff0_0000_0000_0000),       // [inf,inf)
+    ] {
+        assert!(
+            matches!(
+                CanonicalRow::parse(&fields, &framed(start, end), &ctx),
+                Err(RowError::InvalidInterval { field: 0 })
+            ),
+            "{start:#x}..{end:#x}"
+        );
+    }
+    // The typed encoder cannot be tricked either: value/type cross-checks
+    // refuse an integer interval at a dense position and vice versa.
+    let integer = Value::IntervalU64(Interval::new(0, 1).unwrap());
+    assert!(matches!(
+        CanonicalRow::encode(&fields, &[integer], &ctx),
+        Err(RowError::Type { field: 0 })
     ));
 }
 

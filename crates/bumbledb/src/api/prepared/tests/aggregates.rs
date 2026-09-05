@@ -3,7 +3,7 @@ use super::*;
 use crate::ir::FoldOp;
 use bumbledb_theory::schema::IntervalElement;
 
-fn interval_schema() -> Schema {
+fn interval_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -12,65 +12,49 @@ fn interval_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "emp".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "during".into(),
                     value_type: ValueType::Interval {
                         element: IntervalElement::I64,
                     },
-                    generation: Generation::None,
                 },
             ],
         }],
         statements: vec![],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
 const PAYROLL: RelationId = RelationId(0);
 
-fn insert_payroll(env: &Environment, schema: &Schema, rows: &[(u64, u64, (i64, i64))]) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, emp, (start, end)) in rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(*emp),
-                ValueRef::IntervalI64(
+fn payroll(rows: &[(u64, u64, (i64, i64))]) -> Fix {
+    let facts: Vec<Vec<Value>> = rows
+        .iter()
+        .map(|(id, emp, (start, end))| {
+            vec![
+                Value::U64(*id),
+                Value::U64(*emp),
+                Value::IntervalI64(
                     bumbledb_theory::Interval::<i64>::new(*start, *end).expect("nonempty interval"),
                 ),
-            ],
-            schema.relation(PAYROLL).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, PAYROLL, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit").expect("admitted");
+            ]
+        })
+        .collect();
+    Fix::heap(interval_descriptor(), &[(PAYROLL, facts)])
 }
 
 #[test]
 fn interval_find_round_trips_through_answers() {
-    let dir = TempDir::new("prepared-interval-roundtrip");
-    let schema = interval_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
     let stored = [
         (1u64, 10u64, (5i64, 9i64)),
         (2, 10, (-3, 4)),
         (3, 11, (i64::MIN, i64::MAX)),
     ];
-    insert_payroll(&env, &schema, &stored);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = payroll(&stored);
 
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -84,7 +68,7 @@ fn interval_find_round_trips_through_answers() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     let types: Vec<ValueType> = prepared
         .signature()
         .columns
@@ -101,8 +85,8 @@ fn interval_find_round_trips_through_answers() {
         ],
         "the signature reports the interval type"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, i64, i64)> = (0..out.len())
         .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
@@ -121,12 +105,7 @@ fn interval_find_round_trips_through_answers() {
 
 #[test]
 fn a_closed_group_key_takes_the_dense_table() {
-    let dir = TempDir::new("agg-dense-groups");
-    let schema = super::folded::closed_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    super::folded::insert_readings(&env, &schema, super::folded::READINGS);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = super::folded::readings(super::folded::READINGS);
 
     let query = Query::single(Rule {
         finds: vec![
@@ -147,7 +126,7 @@ fn a_closed_group_key_takes_the_dense_table() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     let EitherSink::Aggregate(sink) = &prepared.sink else {
         panic!("folds build the aggregate sink");
     };
@@ -155,8 +134,8 @@ fn a_closed_group_key_takes_the_dense_table() {
         sink.dense_group_table(),
         "the closed domain (4 rows) proves the dense table"
     );
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, i64, u64)> = (0..out.len())
         .map(|answer| {
@@ -193,7 +172,7 @@ fn a_closed_group_key_takes_the_dense_table() {
         negated: vec![],
         conditions: vec![],
     });
-    let prepared = prepare(&txn, &cache, &schema, &open).expect("prepare");
+    let prepared = fix.prepare(&open).expect("prepare");
     let EitherSink::Aggregate(sink) = &prepared.sink else {
         panic!("folds build the aggregate sink");
     };
@@ -202,8 +181,7 @@ fn a_closed_group_key_takes_the_dense_table() {
 
 #[test]
 fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
-    let dir = TempDir::new("prepared-fold-gj-composition");
-    let edge_schema: Schema = SchemaDescriptor {
+    let edge_descriptor = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
             name: "Edge".into(),
@@ -211,37 +189,20 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
                 FieldDescriptor {
                     name: "src".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "dst".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
             ],
         }],
         statements: vec![],
-    }
-    .validate()
-    .expect("valid fixture");
-    let env = Environment::create(dir.path(), &edge_schema).expect("create");
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&edge_schema);
-        for (src, dst) in [(1u64, 2u64), (2, 3), (1, 3), (3, 1), (2, 1), (4, 1)] {
-            let mut bytes = Vec::new();
-            encode_fact(
-                &[ValueRef::U64(src), ValueRef::U64(dst)],
-                edge_schema.relation(RelationId(0)).layout(),
-                &mut bytes,
-            );
-            delta.insert(&view, RelationId(0), &bytes).expect("insert");
-        }
-        drop(view);
-        commit(delta, &env).expect("commit").expect("admitted");
-    }
-    let cache = ImageCache::new(&edge_schema);
-    let txn = env.read_txn().expect("txn");
+    };
+    let edges: Vec<Vec<Value>> = [(1u64, 2u64), (2, 3), (1, 3), (3, 1), (2, 1), (4, 1)]
+        .into_iter()
+        .map(|(src, dst)| vec![Value::U64(src), Value::U64(dst)])
+        .collect();
+    let fix = Fix::heap(edge_descriptor, &[(RelationId(0), edges)]);
 
     let edge = |a: u16, b: u16| Atom {
         source: crate::ir::AtomSource::Edb(RelationId(0)),
@@ -256,9 +217,9 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
         negated: vec![],
         conditions: vec![],
     });
-    let mut prepared = prepare(&txn, &cache, &edge_schema, &query).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let mut prepared = fix.prepare(&query).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {

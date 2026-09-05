@@ -2,8 +2,8 @@
 //! complete-admission cases.
 use bumbledb::Value;
 use bumbledb::schema::{
-    Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Row,
-    SchemaDescriptor, Side, StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
+    StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
 };
 
 use crate::differential::{self, Verdict};
@@ -23,7 +23,6 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type,
-        generation: Generation::None,
     }
 }
 

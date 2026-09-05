@@ -5,11 +5,12 @@ type ValueTypeSpec =
 	| { readonly kind: "u64" }
 	| { readonly kind: "i64" }
 	| { readonly kind: "f64" }
+	| { readonly kind: "id128" }
 	| { readonly kind: "string" }
 	| { readonly kind: "fixedBytes"; readonly len: number }
 	| {
 			readonly kind: "interval"
-			readonly element: "u64" | "i64"
+			readonly element: "u64" | "i64" | "f64"
 			readonly width: bigint | undefined
 	  }
 
@@ -18,10 +19,12 @@ type ValueSpec =
 	| { readonly kind: "u64"; readonly value: bigint }
 	| { readonly kind: "i64"; readonly value: bigint }
 	| { readonly kind: "f64"; readonly value: number }
+	| { readonly kind: "id128"; readonly value: string }
 	| { readonly kind: "string"; readonly value: string }
 	| { readonly kind: "fixedBytes"; readonly value: Uint8Array }
 	| { readonly kind: "intervalU64"; readonly start: bigint; readonly end: bigint }
 	| { readonly kind: "intervalI64"; readonly start: bigint; readonly end: bigint }
+	| { readonly kind: "intervalF64"; readonly start: number; readonly end: number }
 
 type LiteralSpec =
 	| { readonly kind: "value"; readonly value: ValueSpec }
@@ -52,11 +55,15 @@ type CapacityWindowSpec =
 	| { readonly kind: "range"; readonly lo: CapacityBoundSpec; readonly hi: CapacityBoundSpec }
 	| { readonly kind: "floor"; readonly lo: CapacityBoundSpec }
 
+/**
+ * One field: name, structural type, and host newtype label. There is no
+ * `fresh` mark: the database issues no identity, and key laws are declared
+ * statements (C01, chapter 30).
+ */
 interface FieldSpec {
 	readonly name: string
 	readonly valueType: ValueTypeSpec
 	readonly newtype: string | undefined
-	readonly fresh: boolean
 }
 
 interface RowSpec {
@@ -172,15 +179,10 @@ function renderLiteral(literal: LiteralSpec): string {
 		case "u64":
 		case "i64":
 			return value.value.toString()
-		case "f64": {
-			const image = new DataView(new ArrayBuffer(8))
-			if (Number.isNaN(value.value)) {
-				image.setBigUint64(0, 0x7ff8000000000000n)
-			} else {
-				image.setFloat64(0, value.value === 0 ? 0 : value.value)
-			}
-			return `f64:0x${image.getBigUint64(0).toString(16).padStart(16, "0")}`
-		}
+		case "f64":
+			return `f64:0x${f64BitsHex(value.value)}`
+		case "id128":
+			return `id128:${value.value}`
 		case "string": {
 			let out = '"'
 			for (const ch of value.value) {
@@ -198,7 +200,24 @@ function renderLiteral(literal: LiteralSpec): string {
 		case "intervalU64":
 		case "intervalI64":
 			return `${value.start}..${value.end}`
+		case "intervalF64":
+			return `f64:0x${f64BitsHex(value.start)}..f64:0x${f64BitsHex(value.end)}`
 	}
+}
+
+/**
+ * The canonical binary64 bit image as sixteen lowercase hex digits — the
+ * one f64 rendering (chapter 11): every NaN is the quiet canonical NaN and
+ * `-0` renders as `+0`, mirroring the engine's `f64:0x{bits:016x}`.
+ */
+function f64BitsHex(value: number): string {
+	const image = new DataView(new ArrayBuffer(8))
+	if (Number.isNaN(value)) {
+		image.setBigUint64(0, 0x7ff8000000000000n)
+	} else {
+		image.setFloat64(0, value === 0 ? 0 : value)
+	}
+	return image.getBigUint64(0).toString(16).padStart(16, "0")
 }
 
 function renderLiteralSet(set: LiteralSetSpec): string {
@@ -256,4 +275,4 @@ export type {
 	ValueTypeSpec,
 	WeightSpec
 }
-export { renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight }
+export { f64BitsHex, renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight }

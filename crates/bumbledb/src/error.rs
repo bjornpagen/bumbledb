@@ -14,7 +14,7 @@ use crate::ir::{InteriorId, ParamId, VarId};
 use crate::schema::KeyId;
 use crate::schema::StatementRef;
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::storage::env::GenerationId;
+use crate::storage::GenerationId;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
 
 /// Occurrence index of an atom inside the first failing rule (positive
@@ -264,11 +264,6 @@ pub enum SchemaError {
         relation: RelationId,
         name: Box<str>,
     },
-    FreshOnNonU64 {
-        relation: RelationId,
-        field: FieldId,
-    },
-
     FixedBytesWidthOutOfRange {
         relation: RelationId,
         field: FieldId,
@@ -327,11 +322,6 @@ pub enum SchemaError {
         field: FieldId,
     },
 
-    FreshOnClosedRelation {
-        relation: RelationId,
-        field: FieldId,
-    },
-
     Statement {
         statement: StatementId,
         kind: StatementErrorKind,
@@ -386,12 +376,6 @@ pub enum StatementErrorKind {
         hi: u64,
     },
 
-    /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`), and a
-    CapacityVacuousWindow,
-
-    /// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
-    /// meaning, one spelling: drop the window and declare the
-    CapacityContainmentWindow,
     /// Roster "an interval position in a capacity projection" — refused
     /// (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
     CapacityIntervalPosition {
@@ -525,11 +509,6 @@ pub enum DynIdError {
         field: FieldId,
     },
 
-    NotAFreshField {
-        relation: RelationId,
-        field: FieldId,
-    },
-
     NotAKeyStatement {
         relation: RelationId,
         statement: StatementId,
@@ -575,7 +554,10 @@ impl From<DynIdError> for FactShapeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {
     EmptyRuleSet,
-    ScalarExpression { find: FindIndex, source: crate::ScalarError },
+    ScalarExpression {
+        find: FindIndex,
+        source: crate::ScalarError,
+    },
 
     TooManyRules {
         count: usize,
@@ -1026,14 +1008,6 @@ impl Violation {
             | Self::Capacity { .. } => None,
         }
     }
-
-    fn citation(&self, schema: &crate::schema::Schema) -> (StatementId, Option<Direction>) {
-        let id = schema.id_of(self.statement());
-        match self {
-            Self::Functionality { .. } | Self::Capacity { .. } => (id, None),
-            Self::Containment { direction, .. } => (id, Some(*direction)),
-        }
-    }
 }
 
 /// One cited fact of a violation, decoded to owned field values — the
@@ -1084,29 +1058,56 @@ pub(crate) type CitedCitations = Box<[(Violation, Box<[CitedFact]>)]>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violations {
     citations: CitedCitations,
+    /// One flag per citation: true when offending facts exist beyond the
+    /// cited examples (the judge's own per-statement example budget
+    /// truncated). Parallel to `citations`; all-false by default so every
+    /// pre-existing constructor keeps its meaning.
+    truncated: Box<[bool]>,
 }
 
 impl Violations {
-    pub(crate) fn seal(schema: &crate::schema::Schema, mut found: Vec<Violation>) -> Admission<()> {
-        if found.is_empty() {
-            return Admission::Accepted(());
-        }
-        found.sort_by_key(|violation| violation.citation(schema));
-        found.dedup_by_key(|violation| violation.citation(schema));
-        Admission::Rejected(Self {
-            citations: found
-                .into_iter()
-                .map(|violation| (violation, Box::<[CitedFact]>::from([])))
-                .collect(),
-        })
-    }
-
+    #[cfg(test)]
     pub(crate) fn from_pairs(citations: CitedCitations) -> Self {
         debug_assert!(
             !citations.is_empty(),
             "a sealed rejection is nonempty by construction"
         );
-        Self { citations }
+        let truncated = vec![false; citations.len()].into_boxed_slice();
+        Self {
+            citations,
+            truncated,
+        }
+    }
+
+    /// As [`Self::from_pairs`], carrying the judge's per-statement
+    /// example-truncation labels (one per citation, same order). The label
+    /// says "offending facts exist beyond the cited examples"; the verdict
+    /// (the statement set) is never truncated.
+    pub(crate) fn from_pairs_with_truncation(
+        citations: CitedCitations,
+        truncated: Box<[bool]>,
+    ) -> Self {
+        debug_assert!(
+            !citations.is_empty(),
+            "a sealed rejection is nonempty by construction"
+        );
+        debug_assert_eq!(
+            citations.len(),
+            truncated.len(),
+            "one truncation label per citation"
+        );
+        Self {
+            citations,
+            truncated,
+        }
+    }
+
+    /// True when the judge's per-statement example budget dropped offending
+    /// facts beyond the examples cited for the violation at `index`. Out of
+    /// range reads as false (never a panic on a diagnostic accessor).
+    #[must_use]
+    pub fn examples_truncated(&self, index: usize) -> bool {
+        self.truncated.get(index).copied().unwrap_or(false)
     }
 
     #[must_use]
@@ -1183,9 +1184,11 @@ impl<'a> IntoIterator for &'a Violations {
 /// payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowKind {
-    Aggregate { find: FindIndex },
+    Aggregate {
+        find: FindIndex,
+    },
 
-    /// A group has more than u64::MAX distinct contributing bindings.
+    /// A group has more than `u64::MAX` distinct contributing bindings.
     Cardinality,
 
     OriginCapacity,
@@ -1303,11 +1306,6 @@ pub enum Error {
 
     FactShape(FactShapeError),
 
-    FreshExhausted {
-        relation: RelationId,
-        field: FieldId,
-    },
-
     /// delta. Checked at every write-surface entry before any encoding
     ClosedRelationWrite {
         relation: RelationId,
@@ -1373,12 +1371,20 @@ pub enum Error {
     },
 
     Overflow(OverflowKind),
-    Scalar { find: FindIndex, source: crate::ScalarError },
+    Scalar {
+        find: FindIndex,
+        source: crate::ScalarError,
+    },
 
     /// limit — NOT the map size; do not sweep it with the map constant.)
     ResultBytesOverflow,
 
     Corruption(CorruptionError),
+
+    /// A successor-store condition, surfaced with its full typed roster
+    /// ([`crate::storage::store::StoreError`]) — distinct physical
+    /// conditions stay distinct.
+    Store(Box<crate::storage::store::StoreError>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -1400,7 +1406,6 @@ pub enum ErrorFamily {
     Schema,
     Validation,
     FactShape,
-    FreshExhausted,
     ClosedRelationWrite,
     CommitSync,
     TransactionPoisoned,
@@ -1413,6 +1418,7 @@ pub enum ErrorFamily {
     Scalar,
     ResultBytesOverflow,
     Corruption,
+    Store,
 }
 
 pub(crate) struct ErrorDescriptor<'a> {
@@ -1468,7 +1474,6 @@ impl Error {
             Self::Schema(_) => family_only(ErrorFamily::Schema),
             Self::Validation(_) => family_only(ErrorFamily::Validation),
             Self::FactShape(_) => family_only(ErrorFamily::FactShape),
-            Self::FreshExhausted { .. } => family_only(ErrorFamily::FreshExhausted),
             Self::ClosedRelationWrite { .. } => family_only(ErrorFamily::ClosedRelationWrite),
             Self::CommitSync { error, .. } => family_source(ErrorFamily::CommitSync, error),
             Self::TransactionPoisoned { source } => {
@@ -1488,6 +1493,7 @@ impl Error {
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),
+            Self::Store(err) => family_source(ErrorFamily::Store, err.as_ref()),
         }
     }
 
@@ -1541,7 +1547,11 @@ mod zero_dyn_census {
         // The opaque transaction adjunct preserves its concrete Work/Storage
         // causes through std::error::Error. No query dispatch uses this trait.
         (
-            "crates/bumbledb/src/storage/env/host.rs",
+            "crates/bumbledb/src/storage/store/host.rs",
+            "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {",
+        ),
+        (
+            "crates/bumbledb/src/storage/store/error.rs",
             "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {",
         ),
     ];

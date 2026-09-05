@@ -3,7 +3,7 @@ use super::*;
 use crate::ir::FoldOp;
 use crate::ir::{HeadOp, HeadTerm};
 
-fn du_schema() -> Schema {
+fn du_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             extension: None,
@@ -12,46 +12,35 @@ fn du_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "kind".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
                 FieldDescriptor {
                     name: "payload".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::None,
                 },
             ],
         }],
         statements: vec![],
     }
-    .validate()
-    .expect("valid fixture")
 }
 
 const ITEM: RelationId = RelationId(0);
 
-fn insert_items(env: &Environment, schema: &Schema, rows: &[(u64, u8, u64)]) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (id, kind, payload) in rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(u64::from(*kind)),
-                ValueRef::U64(*payload),
-            ],
-            schema.relation(ITEM).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, ITEM, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit").expect("admitted");
+fn items(rows: &[(u64, u8, u64)]) -> Fix {
+    let facts: Vec<Vec<Value>> = rows
+        .iter()
+        .map(|(id, kind, payload)| {
+            vec![
+                Value::U64(*id),
+                Value::U64(u64::from(*kind)),
+                Value::U64(*payload),
+            ]
+        })
+        .collect();
+    Fix::heap(du_descriptor(), &[(ITEM, facts)])
 }
 
 fn item_rows() -> Vec<(u64, u8, u64)> {
@@ -87,12 +76,7 @@ fn du_query(rules: Vec<Rule>) -> Query {
 /// below) — the disjointness proof cannot make a constant informative.
 #[test]
 fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
-    let dir = TempDir::new("prepared-disjoint-count");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = items(&item_rows());
 
     let rule = |kind: u8| Rule {
         finds: vec![
@@ -119,15 +103,15 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         rules: vec![rule(0), rule(1)],
         rec: None,
     };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let mut prepared = fix.prepare(&query).expect("prepare");
     assert!(!prepared.distinct_bindings(), "unions always retain dedup");
     let EitherSink::Aggregate(sink) = &prepared.sink else {
         panic!("Sum builds the aggregate sink");
     };
     assert!(!sink.seen_elided(), "the spanning seen-set exists");
 
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     assert_eq!(
         prepared.sink.distinct_seen(),
@@ -159,7 +143,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         rules: vec![count_rule(0), count_rule(1)],
         rec: None,
     };
-    let Err(err) = prepare(&txn, &cache, &schema, &refused) else {
+    let Err(err) = fix.prepare(&refused) else {
         panic!("fold-free nullary Count across written rules refuses");
     };
     assert!(
@@ -173,17 +157,12 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
 
 #[test]
 fn a_three_arm_union_absorbs_nothing_across_rules() {
-    let dir = TempDir::new("prepared-disjoint-spanning");
-    let schema = du_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_items(&env, &schema, &item_rows());
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
+    let fix = items(&item_rows());
 
     let query = du_query(vec![arm_rule(0), arm_rule(1), arm_rule(2)]);
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    let out = prepared
-        .execute_collect(&txn, &cache, &[] as &[BindValue])
+    let mut prepared = fix.prepare(&query).expect("prepare");
+    let out = fix
+        .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| {

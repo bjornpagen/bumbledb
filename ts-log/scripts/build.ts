@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process"
 import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import { Result } from "effect"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { BuildInputError, BuildOperationError } from "./errors.ts"
+import { stageLogPackage, tarballFile, tarballFiles } from "./stage.ts"
 
 function build(): void {
 	const packageRoot = fileURLToPath(new URL("..", import.meta.url))
@@ -24,69 +26,73 @@ function build(): void {
 	assertDeclarationsAreIsolated(distDir)
 	verifyPack(packageRoot)
 }
+
+/**
+ * The tarball proof over IMMUTABLE STAGING: pack the staged tree for
+ * real in a scratch dir and assert the shipped shape on the actual
+ * tarball — dist entry points and the migrations CLI present, no src/
+ * leak, the packed manifest's exports/bin/imports map exact, no repo
+ * tooling fields, and the committed manifest untouched (asserted again
+ * inside stageLogPackage). The peer handshake (exact Effect RC, exact
+ * same-version core peer) is refused at staging time.
+ */
 function verifyPack(packageRoot: string): void {
-	const files = packDryRun(packageRoot)
-	if (!files.includes("package.json")) {
-		throw new BuildInputError({ message: "package tarball is missing package.json" })
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-log-pack-"))
+	try {
+		const staging = path.join(scratch, "staging")
+		fs.mkdirSync(staging, { recursive: true })
+		const tarball = stageLogPackage(packageRoot, staging, scratch)
+
+		const files = tarballFiles(tarball)
+		for (const required of ["package.json", "dist/index.js", "dist/index.d.ts", "dist/schema.js", "dist/migrations/index.js", "dist/migrations/bin.js"]) {
+			if (!files.includes(required)) {
+				throw new BuildInputError({ message: `package tarball is missing ${required}` })
+			}
+		}
+		const leakedSrc = files.filter((file) => file.startsWith("src/"))
+		if (leakedSrc.length > 0) {
+			throw new BuildInputError({ message: `package tarball must not carry src/, found ${leakedSrc.join(", ")}` })
+		}
+
+		const packed = Result.try(() => JSON.parse(tarballFile(tarball, "package.json")) as Record<string, unknown>)
+		if (Result.isFailure(packed)) {
+			throw new BuildOperationError({ message: "parse the packed package.json", cause: packed.failure })
+		}
+		if ("scripts" in packed.success || "devDependencies" in packed.success) {
+			throw new BuildInputError({
+				message: "the packed manifest must not carry scripts or devDependencies (repo tooling never ships)"
+			})
+		}
+		assertPackedImports(packed.success)
+		const exports = packed.success.exports
+		if (typeof exports !== "object" || exports === null) {
+			throw new BuildInputError({ message: "package.json is missing exports" })
+		}
+		const table = exports as Record<string, unknown>
+		assertEntry(table, ".", "./dist/index.d.ts", "./dist/index.js")
+		assertEntry(table, "./schema", "./dist/schema.d.ts", "./dist/schema.js")
+		assertEntry(table, "./migrations", "./dist/migrations/index.d.ts", "./dist/migrations/index.js")
+		const bin = packed.success.bin
+		if (typeof bin !== "object" || bin === null || (bin as Record<string, unknown>)["bumbledb-log"] !== "./dist/migrations/bin.js") {
+			throw new BuildInputError({ message: 'package.json bin must map "bumbledb-log" to ./dist/migrations/bin.js' })
+		}
+	} finally {
+		fs.rmSync(scratch, { recursive: true, force: true })
 	}
-	if (!files.includes("dist/index.js")) {
-		throw new BuildInputError({ message: "package tarball is missing dist/index.js" })
+	console.log("bumbledb-log build: staged tarball carries dist JS, declarations, subpaths and the CLI; checkout untouched")
+}
+
+function assertEntry(exports: Record<string, unknown>, entry: string, types: string, main: string): void {
+	const value = exports[entry]
+	if (typeof value !== "object" || value === null) {
+		throw new BuildInputError({ message: `package.json is missing exports["${entry}"]` })
 	}
-	if (!files.includes("dist/index.d.ts")) {
-		throw new BuildInputError({ message: "package tarball is missing dist/index.d.ts" })
-	}
-	const leakedSrc = files.filter((file) => file.startsWith("src/"))
-	if (leakedSrc.length > 0) {
-		throw new BuildInputError({ message: `package tarball must not carry src/, found ${leakedSrc.join(", ")}` })
-	}
-	const manifest = readJson(path.join(packageRoot, "package.json"))
-	assertPackedImports(manifest)
-	const exports = manifest.exports
-	if (typeof exports !== "object" || exports === null) {
-		throw new BuildInputError({ message: "package.json is missing exports" })
-	}
-	const root = (exports as Record<string, unknown>)["."]
-	if (typeof root !== "object" || root === null) {
-		throw new BuildInputError({ message: 'package.json is missing exports["."]' })
-	}
-	const entry = root as Record<string, unknown>
-	if (entry.types !== "./dist/index.d.ts" || entry.default !== "./dist/index.js") {
+	const record = value as Record<string, unknown>
+	if (record.types !== types || record.default !== main) {
 		throw new BuildInputError({
-			message: 'exports["."] must point types at dist/index.d.ts and default at dist/index.js'
+			message: `exports["${entry}"] must point types at ${types} and default at ${main}`
 		})
 	}
-	console.log("bumbledb-log build: tarball carries dist JS and declarations")
 }
-function packDryRun(dir: string): string[] {
-	const result = spawnSync("pnpm", ["pack", "--dry-run", "--json"], { cwd: dir })
-	if (result.error) {
-		throw new BuildOperationError({ message: "spawn pnpm pack", cause: result.error })
-	}
-	if (result.status !== 0) {
-		throw new BuildInputError({ message: `pnpm pack exited with status ${result.status}: ${result.stderr.toString()}` })
-	}
-	const parsed = Result.try(
-		() =>
-			JSON.parse(result.stdout.toString()) as {
-				files: ReadonlyArray<{
-					path: string
-				}>
-			}
-	)
-	if (Result.isFailure(parsed)) {
-		throw new BuildOperationError({ message: "parse pnpm pack --json output", cause: parsed.failure })
-	}
-	return parsed.success.files.map((file) => file.path)
-}
-function readJson(file: string): Record<string, unknown> {
-	const text = Result.try(() => fs.readFileSync(file, "utf8"))
-	if (Result.isFailure(text)) {
-		throw new BuildOperationError({ message: `read ${file}`, cause: text.failure })
-	}
-	const parsed = Result.try(() => JSON.parse(text.success) as Record<string, unknown>)
-	if (Result.isFailure(parsed)) {
-		throw new BuildOperationError({ message: `parse ${file}`, cause: parsed.failure })
-	}
-	return parsed.success
-}
+
 build()

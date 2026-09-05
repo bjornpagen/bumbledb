@@ -1,6 +1,0 @@
-{
-  "kind": "lease",
-  "expect": "refusal",
-  "note": "the line terminator is LF; a CRLF-terminated body is not a lease",
-  "hex": "4c454153452f310d0a370d0a330d0a3130300d0a"
-}

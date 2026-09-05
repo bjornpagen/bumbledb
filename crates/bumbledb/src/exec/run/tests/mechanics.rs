@@ -3,12 +3,11 @@ use crate::ir::WordCmp;
 
 #[test]
 fn dynamic_cover_prefers_the_forced_small_side() {
-    let dir = TempDir::new("run-cover-choice");
     let schema = schema(2);
 
     let r: Vec<(u64, u64)> = (0..500).map(|i| (i % 250, i)).collect();
     let s: Vec<(u64, u64)> = vec![(0, 0), (1, 1)];
-    let views = views_of(&dir, &schema, &[r, s]);
+    let views = views_of(&schema, &[r, s]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -69,12 +68,11 @@ fn dynamic_cover_prefers_the_forced_small_side() {
 /// already-bound variable must never be a runtime-eligible cover.
 #[test]
 fn covers_never_rebind_an_already_bound_variable() {
-    let dir = TempDir::new("run-cover-rebind");
     let schema = schema(3);
     let r = vec![(1, 1)];
     let s: Vec<(u64, u64)> = (0..100).map(|z| (1, z)).collect();
     let t = vec![(2, 5)];
-    let views = views_of(&dir, &schema, &[r, s, t]);
+    let views = views_of(&schema, &[r, s, t]);
 
     let normalized = normalized(
         vec![
@@ -108,11 +106,10 @@ fn covers_never_rebind_an_already_bound_variable() {
 
 #[test]
 fn backtracking_restores_sources_across_sequential_executions() {
-    let dir = TempDir::new("run-backtrack");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..20).map(|i| (i % 4, i)).collect();
     let s: Vec<(u64, u64)> = (0..4).map(|i| (i, i * 10)).collect();
-    let views = views_of(&dir, &schema, &[r, s]);
+    let views = views_of(&schema, &[r, s]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -151,12 +148,11 @@ fn backtracking_restores_sources_across_sequential_executions() {
 
 #[test]
 fn results_are_identical_across_batch_sizes() {
-    let dir = TempDir::new("run-batch-equality");
     let schema = schema(3);
     let r: Vec<(u64, u64)> = (0..150).map(|i| (i % 7, i % 11)).collect();
     let s: Vec<(u64, u64)> = (0..90).map(|i| (i % 11, i % 5)).collect();
     let t: Vec<(u64, u64)> = (0..40).map(|i| (i % 5, i)).collect();
-    let views = views_of(&dir, &schema, &[r, s, t]);
+    let views = views_of(&schema, &[r, s, t]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -180,8 +176,7 @@ fn results_are_identical_across_batch_sizes() {
         );
     }
 
-    let dir2 = TempDir::new("run-batch-empty");
-    let views = views_of(&dir2, &schema, &[vec![(1, 2)], vec![], vec![(0, 0)]]);
+    let views = views_of(&schema, &[vec![(1, 2)], vec![], vec![(0, 0)]]);
     for batch in [1usize, 2, 64, 128, 256, 1024] {
         assert!(run_batched(&plan, &views, batch).is_empty());
     }
@@ -189,11 +184,10 @@ fn results_are_identical_across_batch_sizes() {
 
 #[test]
 fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
-    let dir = TempDir::new("run-two-phase");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..10).map(|i| (i, i)).collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i, i * 2)).collect();
-    let views = views_of(&dir, &schema, &[r, s]);
+    let views = views_of(&schema, &[r, s]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -228,7 +222,6 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
 
 #[test]
 fn pinned_siblings_probe_without_hashing() {
-    let dir = TempDir::new("run-pinned-hash");
     let schema = schema(3);
 
     // so both pin to Cursor::Row after node 0. At node 1 both B(c)
@@ -236,7 +229,7 @@ fn pinned_siblings_probe_without_hashing() {
     let a_rows: Vec<(u64, u64)> = vec![(1, 10), (2, 20)];
     let b_rows: Vec<(u64, u64)> = vec![(1, 100), (2, 200)];
     let c_rows: Vec<(u64, u64)> = vec![(10, 100), (20, 200)];
-    let views = views_of(&dir, &schema, &[a_rows, b_rows, c_rows]);
+    let views = views_of(&schema, &[a_rows, b_rows, c_rows]);
     let normalized = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -354,13 +347,12 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
         fn skip(&mut self, _: usize) {}
     }
 
-    let dir = TempDir::new("run-residual-order-pipe");
     let schema = schema(2);
     let r: Vec<(u64, u64)> = (0..10)
         .map(|i| if i < 5 { (i, i) } else { (i, i + 1) })
         .collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i, i * 2)).collect();
-    let views = views_of(&dir, &schema, &[r, s]);
+    let views = views_of(&schema, &[r, s]);
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
@@ -402,12 +394,11 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
         "10 residuals compact to 5 before the first bucket load"
     );
 
-    let dir = TempDir::new("run-residual-order-leaf");
     let r2: Vec<(u64, u64)> = (0..10)
         .map(|i| if i < 5 { (i, i) } else { (i, i + 1) })
         .collect();
     let s2: Vec<(u64, u64)> = r2.clone();
-    let views = views_of(&dir, &schema, &[r2, s2]);
+    let views = views_of(&schema, &[r2, s2]);
     let query = normalized(
         vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),

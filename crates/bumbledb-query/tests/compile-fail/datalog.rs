@@ -20,4 +20,5 @@ pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Cal {
         (p) :- Busy(person: p);
     })
+    .into_query()
 }

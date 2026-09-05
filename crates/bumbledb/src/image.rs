@@ -7,18 +7,20 @@ pub mod view;
 
 mod bind;
 mod build;
+pub(crate) mod canon;
 mod decode;
 mod distinct;
 mod epoch;
-mod frozen;
+pub(crate) mod intern;
 mod stride;
+#[cfg(test)]
+pub(crate) mod testsupport;
 
-pub(crate) use bind::{ImageBind, LmdbSource};
+pub(crate) use bind::{ImageBind, SourceImages};
+pub(crate) use build::build_from_source;
 pub(crate) use epoch::ViewEpoch;
-pub(crate) use frozen::FrozenSource;
 
 pub use build::{TransientImage, synthesize_closed};
-pub(crate) use build::{append, build};
 
 const SET_STRIDE: usize = 16_384;
 
@@ -88,6 +90,10 @@ pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[
                 ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => {
                     ColumnWidth::Word
                 }
+                // Sixteen exact identity bytes: two big-endian word
+                // columns — byte order IS the value's one total order,
+                // so two-word lexicographic comparison is exact.
+                ValueType::Id128 => ColumnWidth::Words { count: 2 },
                 ValueType::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))
                         .expect("bytes width is at most 8 words")

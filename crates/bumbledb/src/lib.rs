@@ -8,10 +8,12 @@
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
-//!     relation Holder { id: u64 as HolderId, fresh }
-//!     relation Account { id: u64 as AccountId, fresh }
+//!     relation Holder { id: id128 as HolderId }
+//!     relation Account { id: id128 as AccountId }
+//!     Holder(id) -> Holder;
+//!     Account(id) -> Account;
 //! }
-//! let account = AccountId(1);
+//! let account = AccountId(bumbledb::Id128::from_bytes([1; 16]));
 //! let _holder: HolderId = account; // mismatched types: rustc refuses
 //! ```
 //! The schema typestate closes the cross-schema hole the same way: an
@@ -19,17 +21,19 @@
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
-//!     relation Holder { id: u64 as HolderId, fresh }
+//!     relation Holder { id: id128 as HolderId }
+//!     Holder(id) -> Holder;
 //! }
 //! bumbledb::schema! {
 //!     pub Inventory;
-//!     relation Item { id: u64 as ItemId, fresh }
+//!     relation Item { id: id128 as ItemId }
+//!     Item(id) -> Item;
 //! }
 //! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
 //! # let _ = std::fs::remove_dir_all(&dir);
 //! let db = bumbledb::Db::create(&dir, Ledger).unwrap().unwrap();
 //! db.write(|tx| {
-//!     let id = tx.reserve::<ItemId>(1)?.start().expect("count 1").unwrap();
+//!     let id = ItemId(bumbledb::Id128::from_bytes([7; 16]));
 //!     tx.insert([&Item { id }]) // schema-B fact, schema-A database: rustc refuses
 //!         .map(|_| ())
 //! })
@@ -42,7 +46,6 @@
 //! cargo clippy --workspace --all-targets -- -D warnings
 //! cargo test --workspace
 //! ```
-#![feature(try_blocks)]
 #![feature(portable_simd)]
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only");
@@ -56,7 +59,6 @@ pub mod allen;
 #[doc(hidden)]
 pub mod alloc_counter;
 pub(crate) mod api;
-pub(crate) mod arena;
 pub mod canonical;
 pub mod changes;
 /// Content digest used by the bench corpus/stamp harness. Not embedding API.
@@ -72,8 +74,8 @@ pub mod ir;
 #[doc(hidden)]
 pub mod obs;
 pub(crate) mod plan;
-pub mod schema;
 pub mod scalar;
+pub mod schema;
 pub(crate) mod storage;
 mod value;
 mod verify_store;
@@ -85,11 +87,12 @@ pub use allen::{AllenMask, Basic, classify};
 #[doc(hidden)]
 pub use api::db::{AcceptedCollection, CollectionBuilder};
 pub use api::db::{
-    CodecRead, CodecWrite, Db, Fact, Fresh, FreshRange, FreshRangeIter, InstanceBuilder, Key,
-    MutationReport, OwnedInstance, Probe, ReadInstance, Witness, WriteTx,
+    Db, Fact, InstanceBuilder, Key, MutationReport, OwnedInstance, ReadInstance, RowReader,
+    Witness, WriteTx,
 };
 pub use api::prepared::{
-    Answer, AnswerValue, Answers, BindArgs, BindValue, ParamArg, PreparedQuery,
+    Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, ParamArg, PreparedQuery,
+    ResultCursor, ResultIdentity, ResultPage,
 };
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Id128, Id128ParseError};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
@@ -98,10 +101,9 @@ pub use scalar::{NumericCast, ScalarError, ScalarEvaluator, ScalarExpr};
 #[doc(hidden)]
 pub mod integration {
     pub use crate::api::db::session::{
-        CoreCommit, IntegrationError, PreparedWrite, SealedWrite, WriterSession,
+        ApplicationChanges, CoreCommit, IntegrationError, PreparedWrite, SealedWrite, WriterSession,
     };
-    pub use crate::storage::commit::ApplicationChanges;
-    pub use crate::storage::env::host::{
+    pub use crate::storage::store::{
         AttachmentChange, HostChanges, HostRecordChange, HostSealError,
     };
 }
@@ -110,7 +112,7 @@ pub use error::{
     Exceeded, IoFailure, LmdbFailure, Mismatch, OverflowKind, Result, Violation, Violations,
 };
 pub use exec::kernel::numeric::{F64Math, FloatCardinalityOverflow, UnsupportedNumericalPlatform};
-pub use interval::Interval;
+pub use interval::{Discrete, Element, FloatMeasureError, Interval};
 /// The grounding's test-support off switch (`plan/ground.rs`): reachable only
 /// under the `ground-off` feature, which the bench crate's dual-run
 /// differential unit tests (as a dev-dependency) enable.
@@ -120,9 +122,15 @@ pub use plan::ground::with_grounding_disabled;
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived
 /// artifact, never reuse one.
-pub use storage::env::FORMAT_VERSION as STORAGE_FORMAT_VERSION;
-pub use storage::env::GenerationId;
+pub use storage::GenerationId;
+pub use storage::store::format::LAYOUT as STORAGE_FORMAT_VERSION;
 pub use work::{ExecutionPolicy, WorkContext, WorkError};
+
+/// Successor physical store (C04): LMDB owner, owned snapshots, private
+/// candidate. Consumed by the internal log and the native runtime.
+pub mod store {
+    pub use crate::storage::store::*;
+}
 
 pub use ir::{
     AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, FoldOp, HeadOp, HeadTerm,
@@ -131,15 +139,15 @@ pub use ir::{
 };
 
 pub use crate::encoding::InternId;
+pub use bumbledb_theory::schema::FixedIntervalElement;
 pub use error::{
     AtomIndex, CitedFact, DynIdError, FactShapeError, FindIndex, RowIndex, RuleIndex, SchemaError,
     StatementErrorKind, ValidationError,
 };
 pub use schema::fingerprint::SchemaFingerprint;
 pub use schema::{
-    FieldId, FreshField, Manifest, RelationId, RenderedFact, RenderedViolation, Schema,
-    SchemaDescriptor, SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory,
-    render_rejection,
+    FieldId, Manifest, RelationId, RenderedFact, RenderedViolation, Schema, SchemaDescriptor,
+    SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory, render_rejection,
 };
 /// Offline store sweeper used by the bench harness and engine tests.
 /// Not embedding API.
@@ -156,7 +164,7 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 /// invocation's first item is the header `pub Name;` — the unit struct
 /// ```compile_fail
 /// bumbledb::schema! {
-///     relation Holder { id: u64 as HolderId, fresh }
+///     relation Holder { id: u64 as HolderId }
 /// }
 /// ```
 /// statement:
@@ -164,11 +172,11 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, fresh, unique }
+///     relation Holder { id: u64 as HolderId, unique }
 /// }
 /// ```
-/// An unknown modifier — the only modifier is `fresh`, and the dead SQL
-/// (``schema!: unknown field modifier `autoincrement` (the only modifier is `fresh`)``):
+/// An unknown modifier — field modifiers do not exist, and the dead SQL
+/// (``schema!: unknown field modifier `autoincrement` (field modifiers do not exist)``):
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
@@ -179,8 +187,8 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, fresh }
-///     relation Account { id: u64 as AccountId, fresh, holder: u64 as HolderId }
+///     relation Holder { id: u64 as HolderId }
+///     relation Account { id: u64 as AccountId, holder: u64 as HolderId }
 ///     Account(holder) -> Holder;
 /// }
 /// ```
@@ -190,7 +198,7 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 ///     pub Ledger;
 ///     closed relation Kind as KindId = { Checking, Savings };
 ///     relation Account {
-///         id: u64 as AccountId, fresh,
+///         id: u64 as AccountId,
 ///         kind: u64 as KindId,
 ///     }
 ///     Account(kind) <= Kind(id);
@@ -202,7 +210,7 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, fresh }
+///     relation Holder { id: u64 as HolderId }
 ///     Holder(nope) -> Holder;
 /// }
 /// ```
@@ -211,16 +219,22 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Blob { id: u64 as BlobId, fresh, payload: bytes }
+///     relation Blob { id: u64 as BlobId, payload: bytes }
 /// }
 /// ```
 pub use bumbledb_macros::schema;
+
+/// Named-parameter binder for typed templates (chapter 34).
+pub use bumbledb_query_macros::params;
+/// The typed query AST macro (chapter 34): `query! { ... }` builds a typed
+/// per-expansion template (Deref to the untyped core IR).
+pub use bumbledb_query_macros::query;
 
 /// `schema!` expansion plumbing. Not API: no stability promises, nothing
 /// here is part of the documented surface — the macro is the only caller.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::api::db::plumbing::{encode_fact_for, fixed_interval_i64, fixed_interval_u64};
+    pub use crate::api::db::plumbing::{fixed_interval_i64, fixed_interval_u64};
     pub use crate::encoding::{ValueRef, append_field};
 }
 

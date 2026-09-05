@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { Result } from "effect"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { ScriptError } from "./errors.ts"
+import { assertEffectPin } from "./pin.ts"
 import {
 	deriveDevTwinManifest,
 	isPublishPlatform,
@@ -14,6 +15,7 @@ import {
 	nativeArtifactName,
 	PUBLISH_PLATFORMS
 } from "./platform.ts"
+import { stageMainPackage, stagePlatformPackage, tarballFile, tarballFiles } from "./stage.ts"
 
 const LOCAL_PLATFORM = localPlatformTarget(process.platform, process.arch)
 
@@ -26,7 +28,7 @@ function build(): void {
 
 	const version = assertVersionLockstep(packageRoot)
 	console.log(
-		`bumbledb build: version ${version} (main == platform == napi crate == engine; the platform pin injects at pack)`
+		`bumbledb build: version ${version} (main == platform == napi crate == engine; the platform pin lives in the staged manifest)`
 	)
 
 	fs.rmSync(distDir, { recursive: true, force: true })
@@ -76,7 +78,7 @@ function build(): void {
 	rewriteDeclarationImports(distDir)
 	assertDeclarationsAreIsolated(distDir)
 
-	verifyPack(packageRoot, localPackageDir, version)
+	verifyPack(packageRoot, version)
 }
 
 const VERSION_ROSTER = "scripts/version-roster.txt"
@@ -240,11 +242,11 @@ function assertTsLogPeer(repoRoot: string, version: string): void {
  * its own-version binary; `engineVersion` bakes
  * `CARGO_PKG_VERSION` into the shipped binary. The platform PIN is not a
  * repo field: the repo manifest carries no `optionalDependencies`;
- * `scripts/pin.ts` injects the pin into the PACKED manifest at prepack,
- * exact-version by construction from the one source, and `verifyPack`
- * proves the injected pin on a real tarball. A divergence fails the build
- * before anything is produced. Pure manifest reads, so the gate holds on
- * every build host.
+ * `scripts/stage.ts` derives the STAGED manifest with the exact-version
+ * pins (one source) inside an isolated staging tree, and `verifyPack`
+ * proves the pins on a real staged tarball while the committed manifest
+ * stays byte-identical. A divergence fails the build before anything is
+ * produced. Pure manifest reads, so the gate holds on every build host.
  */
 function assertVersionLockstep(packageRoot: string): string {
 	const repoRoot = path.join(packageRoot, "..")
@@ -253,9 +255,10 @@ function assertVersionLockstep(packageRoot: string): string {
 	if ("optionalDependencies" in main) {
 		throw new ScriptError({
 			message:
-				"the repo package.json carries optionalDependencies — the platform pin lives only in the PACKED manifest (scripts/pin.ts injects it at prepack; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
+				"the repo package.json carries optionalDependencies — the platform pin lives only in the STAGED manifest (scripts/stage.ts derives it; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
 		})
 	}
+	assertEffectPin(main, "ts/package.json")
 	const roster = readVersionRoster(repoRoot)
 	for (const rel of roster) {
 		const got = manifestVersion(repoRoot, rel)
@@ -362,53 +365,39 @@ function smokeLoad(packageRoot: string, release: string): void {
 	}
 }
 
-function verifyPack(packageRoot: string, localPackageDir: string, version: string): void {
-	const mainFiles = packDryRun(packageRoot)
-	const binary = mainFiles.find((file) => file.endsWith(".node"))
-	if (binary !== undefined) {
-		throw new ScriptError({ message: `main package tarball must carry no native binary, found ${binary}` })
-	}
-	if (!mainFiles.includes("package.json")) {
-		throw new ScriptError({ message: "main package tarball is missing package.json" })
-	}
-	if (!mainFiles.some((file) => file.startsWith("dist/"))) {
-		throw new ScriptError({ message: "main package tarball carries no dist/ output" })
-	}
-
-	const platformFiles = packDryRun(localPackageDir).toSorted()
-	const expected = ["LICENSE", "bumbledb.node", "package.json"]
-	if (JSON.stringify(platformFiles) !== JSON.stringify(expected)) {
-		throw new ScriptError({
-			message: `platform package tarball must contain exactly ${JSON.stringify(expected)}, found ${JSON.stringify(platformFiles)}`
-		})
-	}
-
-	verifyInjectedPin(packageRoot, version)
-
-	console.log(
-		"bumbledb build: tarball manifests verified (main has no binary; platform has only the binary; the packed pin is exact)"
-	)
-}
-
-function verifyInjectedPin(packageRoot: string, version: string): void {
+/**
+ * The tarball proof, over IMMUTABLE STAGING: stage and pack the main
+ * package and the locally built platform package for real in a scratch
+ * dir, then assert the shipped shape on the actual tarballs — the main
+ * tarball carries dist plus the source-isolation map and NO native
+ * binary; its staged manifest carries every exact platform pin and no
+ * repo-tooling fields; the platform tarball is exactly
+ * [LICENSE, bumbledb.node, package.json]; and the committed ts manifest
+ * is byte-identical before and after (no prepack/postpack mutation
+ * exists anywhere in the pack path).
+ */
+function verifyPack(packageRoot: string, version: string): void {
+	const repoManifestPath = path.join(packageRoot, "package.json")
+	const before = fs.readFileSync(repoManifestPath, "utf8")
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-pack-"))
 	try {
-		const tarball = path.join(scratch, "main.tgz")
-		const pack = spawnSync("pnpm", ["pack", "--out", tarball], { cwd: packageRoot })
-		if (pack.error) {
-			throw new ScriptError({ message: "spawn pnpm pack", cause: pack.error })
+		const staging = path.join(scratch, "staging")
+		fs.mkdirSync(staging, { recursive: true })
+		const mainTarball = stageMainPackage(packageRoot, staging, scratch)
+
+		const mainFiles = tarballFiles(mainTarball)
+		const binary = mainFiles.find((file) => file.endsWith(".node"))
+		if (binary !== undefined) {
+			throw new ScriptError({ message: `main package tarball must carry no native binary, found ${binary}` })
 		}
-		if (pack.status !== 0) {
-			throw new ScriptError({ message: `pnpm pack exited with status ${pack.status}: ${pack.stderr.toString()}` })
+		if (!mainFiles.includes("package.json")) {
+			throw new ScriptError({ message: "main package tarball is missing package.json" })
 		}
-		const extract = spawnSync("tar", ["-xzOf", tarball, "package/package.json"], { cwd: scratch })
-		if (extract.error) {
-			throw new ScriptError({ message: "spawn tar", cause: extract.error })
+		if (!mainFiles.some((file) => file.startsWith("dist/"))) {
+			throw new ScriptError({ message: "main package tarball carries no dist/ output" })
 		}
-		if (extract.status !== 0) {
-			throw new ScriptError({ message: `tar exited with status ${extract.status}: ${extract.stderr.toString()}` })
-		}
-		const packed = Result.try(() => JSON.parse(extract.stdout.toString()) as Record<string, unknown>)
+
+		const packed = Result.try(() => JSON.parse(tarballFile(mainTarball, "package.json")) as Record<string, unknown>)
 		if (Result.isFailure(packed)) {
 			throw new ScriptError({ message: "parse the packed package.json", cause: packed.failure })
 		}
@@ -421,36 +410,39 @@ function verifyInjectedPin(packageRoot: string, version: string): void {
 			const pin = optional[platformName]
 			if (pin !== version) {
 				throw new ScriptError({
-					message: `the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
+					message: `the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/stage.ts derives the staged manifest)`
 				})
 			}
 		}
+		if ("scripts" in packed.success || "devDependencies" in packed.success) {
+			throw new ScriptError({
+				message: "the packed manifest must not carry scripts or devDependencies (repo tooling never ships)"
+			})
+		}
+		assertEffectPin(packed.success, "the packed manifest")
 		assertPackedImports(packed.success)
+
+		// The platform tarball allowlist is asserted inside stagePlatformPackage.
+		stagePlatformPackage(packageRoot, LOCAL_PLATFORM, staging, scratch, false)
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })
 	}
-	const repo = readJson(path.join(packageRoot, "package.json"))
-	if ("optionalDependencies" in repo) {
+
+	const after = fs.readFileSync(repoManifestPath, "utf8")
+	if (after !== before) {
 		throw new ScriptError({
-			message:
-				"the repo package.json still carries optionalDependencies after pack — postpack's restore failed (the committed manifest must stay pin-free)"
+			message: "packing mutated the committed ts/package.json — immutable staging is broken"
 		})
 	}
-}
-
-function packDryRun(dir: string): string[] {
-	const result = spawnSync("pnpm", ["pack", "--dry-run", "--json"], { cwd: dir })
-	if (result.error) {
-		throw new ScriptError({ message: "spawn pnpm pack", cause: result.error })
+	const repo = readJson(repoManifestPath)
+	if ("optionalDependencies" in repo) {
+		throw new ScriptError({
+			message: "the committed package.json carries optionalDependencies — pins live only in the staged manifest"
+		})
 	}
-	if (result.status !== 0) {
-		throw new ScriptError({ message: `pnpm pack exited with status ${result.status}: ${result.stderr.toString()}` })
-	}
-	const parsed = Result.try(() => JSON.parse(result.stdout.toString()) as { files: ReadonlyArray<{ path: string }> })
-	if (Result.isFailure(parsed)) {
-		throw new ScriptError({ message: "parse pnpm pack --json output", cause: parsed.failure })
-	}
-	return parsed.success.files.map((file) => file.path)
+	console.log(
+		"bumbledb build: staged tarballs verified (main has no binary; platform has only the binary; pins exact; checkout untouched)"
+	)
 }
 
 build()

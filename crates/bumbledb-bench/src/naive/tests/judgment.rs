@@ -1,6 +1,6 @@
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
-    Side, StatementDescriptor, ValueType,
+    FieldId, IntervalElement, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor,
+    ValueType,
 };
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
@@ -93,12 +93,10 @@ fn matrix_schema() -> SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
+                // The successor has no generated field: `id` is ordinary
+                // application-owned data (E-NO-RESERVE).
                 name: "Target".into(),
-                fields: vec![FieldDescriptor {
-                    name: "id".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::Fresh,
-                }],
+                fields: vec![field("id", ValueType::U64)],
             },
             RelationDescriptor {
                 extension: None,

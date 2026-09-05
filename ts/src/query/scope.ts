@@ -1,11 +1,12 @@
 import type { AnyClosed } from "#closed.ts"
 import { sealedFieldsOf } from "#closed.ts"
-import { SdkInvariantError } from "#errors.ts"
+import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { AnyField, Infer, SignatureOf } from "#fields.ts"
 import { rosterOf, signaturesAgree } from "#fields.ts"
 import type { Same, SameLen } from "#judgment.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryParam } from "#native.ts"
+import type { FindColumn } from "#query/atom.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 
 const term: unique symbol = Symbol("bumbledb.query.term")
@@ -94,21 +95,136 @@ function varsMinted<R extends MatchOwner>(owner: R, record: Readonly<Record<stri
  * what you need (`const { id, holder } = v(Account)`) and reuse a value
  * across binding positions to join.
  */
-function v<R extends MatchOwner>(owner: R): VarsOf<R> {
+/**
+ * A schema-bound query template used as a relation-expression source
+ * (chapter 34's nonrecursive composition): structurally, the query value's
+ * own frozen data. Detection is structural so `scope.ts` needs no runtime
+ * import of the query module.
+ */
+interface ImportedSource {
+	readonly schema: object
+	readonly data: {
+		readonly kind: "cq" | "reach"
+		readonly finds: readonly FindColumn[]
+	}
+}
+
+function isImportedSource(value: unknown): value is ImportedSource {
+	if (typeof value !== "object" || value === null || !("data" in value) || !("schema" in value)) {
+		return false
+	}
+	const data = (value as { readonly data: unknown }).data
+	return (
+		typeof data === "object" &&
+		data !== null &&
+		"kind" in data &&
+		((data as { readonly kind: unknown }).kind === "cq" || (data as { readonly kind: unknown }).kind === "reach") &&
+		"finds" in data
+	)
+}
+
+type RowOfImport<Q> = InferredOf<Q> extends { readonly row: infer R } ? R : never
+
+type ImportVars<Q> = [RowOfImport<Q>] extends [never]
+	? Readonly<Record<string, Var<AnyField, string, string>>>
+	: { readonly [K in keyof RowOfImport<Q> & string]: Var<AnyField, string, K> }
+
+interface ImportFacade {
+	/** The pseudo-owner every import var carries (structurally an owner). */
+	readonly owner: MatchOwner & { readonly name: string }
+	readonly source: ImportedSource
+	/** Column name → the imported head column (field + carrier class). */
+	readonly columns: ReadonlyMap<string, FindColumn>
+}
+
+const facadeBySource = new WeakMap<object, ImportFacade>()
+const facadeByOwner = new WeakMap<object, ImportFacade>()
+
+let importOrdinal = 0
+
+const importLabels = new WeakMap<object, string>()
+
+/** `.named(label)` registration — a diagnostic name, never a schema relation. */
+function labelImport(source: object, label: string): void {
+	importLabels.set(source, label)
+}
+
+function importFacadeOf(source: ImportedSource): ImportFacade {
+	const cached = facadeBySource.get(source)
+	if (cached !== undefined) {
+		return cached
+	}
+	importOrdinal += 1
+	const name = importLabels.get(source) ?? `\u0000import:${importOrdinal}`
+	const columns = new Map<string, FindColumn>()
+	const fields: Array<{ readonly name: string; readonly field: AnyField }> = []
+	for (const column of source.data.finds) {
+		if (column.slot === undefined) {
+			throw new AuthoringError({
+				message: `v(query): the imported head column ${column.name} carries no descriptor — the imported query is not a mintable relation expression`
+			})
+		}
+		columns.set(column.name, column)
+		fields.push(Object.freeze({ name: column.name, field: column.slot.field }))
+	}
+	const data = Object.freeze({ name, fields: Object.freeze(fields) })
+	const owner = Object.freeze({
+		name,
+		data,
+		where(): never {
+			throw new AuthoringError({
+				message: `imported query ${name}: an imported relation expression takes no selection — filter through where() in the consuming rule`
+			})
+		}
+	}) as unknown as MatchOwner & { readonly name: string }
+	const facade: ImportFacade = Object.freeze({ owner, source, columns })
+	facadeBySource.set(source, facade)
+	facadeByOwner.set(owner, facade)
+	return facade
+}
+
+/** The import awareness the lowering's mint judgment reads. */
+function importFacadeOfOwner(owner: object): ImportFacade | undefined {
+	return facadeByOwner.get(owner)
+}
+
+function v<R extends MatchOwner>(owner: R): VarsOf<R>
+function v<Q extends ImportedSource>(imported: Q): ImportVars<Q>
+function v(owner: MatchOwner | ImportedSource): Readonly<Record<string, AnyVar>> {
+	if (isImportedSource(owner) && !("name" in owner)) {
+		const facade = importFacadeOf(owner)
+		const record: Record<string, AnyVar> = {}
+		for (const [columnName, column] of facade.columns) {
+			const slot = column.slot
+			if (slot === undefined) {
+				throw new SdkInvariantError({ message: `v(query): facade column ${columnName} lost its slot` })
+			}
+			const variable: AnyVar = Object.freeze({
+				[term]: "var" as const,
+				owner: facade.owner,
+				column: columnName,
+				field: slot.field,
+				label: `${facade.owner.name}.${columnName}`
+			})
+			Object.defineProperty(record, columnName, { value: variable, enumerable: true })
+		}
+		return Object.freeze(record)
+	}
+	const member = owner as MatchOwner
 	const record: Record<string, AnyVar> = {}
-	for (const declared of sealedFieldsOf(owner)) {
+	for (const declared of sealedFieldsOf(member)) {
 		const variable: AnyVar = Object.freeze({
 			[term]: "var" as const,
-			owner,
+			owner: member,
 			column: declared.name,
 			field: declared.field,
-			label: `${owner.name}.${declared.name}`
+			label: `${member.name}.${declared.name}`
 		})
 		Object.defineProperty(record, declared.name, { value: variable, enumerable: true })
 	}
 	Object.freeze(record)
-	if (!varsMinted(owner, record)) {
-		throw new SdkInvariantError({ message: `v(${owner.name}): variable-record minting incomplete` })
+	if (!varsMinted(member, record)) {
+		throw new SdkInvariantError({ message: `v(${member.name}): variable-record minting incomplete` })
 	}
 	return record
 }
@@ -155,7 +271,20 @@ type ShapeOf<U> = [U] extends [never] ? Record<never, never> : Flatten<UnionToIn
  */
 type SlotSignature<S extends ClassedField> = readonly [SignatureOf<S["field"]>, S["class"]]
 
-type JoinOk<A extends ClassedField, B extends ClassedField> = Same<SlotSignature<A>, SlotSignature<B>>
+/**
+ * A widened slot — a variable minted from an imported query template (its
+ * facade columns carry `AnyField`) or fully generic code — cannot be judged
+ * at the type tier. The degradation law applies: best effort degrades to
+ * SILENT, never to a wrong refusal; the runtime join judgment (real
+ * descriptors off the imported head's slots) stays authoritative.
+ */
+type WidenedSlot<S extends ClassedField> = [AnyField] extends [S["field"]] ? true : false
+
+type JoinOk<A extends ClassedField, B extends ClassedField> = WidenedSlot<A> extends true
+	? true
+	: WidenedSlot<B> extends true
+		? true
+		: Same<SlotSignature<A>, SlotSignature<B>>
 
 type U64Wire<F extends AnyField> = F extends { readonly kind: "u64" }
 	? F extends { readonly closed: unknown }
@@ -272,6 +401,8 @@ export type {
 	ClassedField,
 	ExactVars,
 	Flatten,
+	ImportedSource,
+	ImportVars,
 	InferredOf,
 	JoinOk,
 	MatchFields,
@@ -290,8 +421,12 @@ export {
 	fieldAntiJoins,
 	fieldJoins,
 	headFieldJoins,
+	importFacadeOf,
+	importFacadeOfOwner,
 	inferred,
+	isImportedSource,
 	isTerm,
+	labelImport,
 	makeParam,
 	makeSetParam,
 	renderFieldKind,

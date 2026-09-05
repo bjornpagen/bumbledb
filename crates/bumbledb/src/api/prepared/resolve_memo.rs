@@ -1,8 +1,8 @@
 use super::{Answers, ResolveMemo};
 
 use crate::error::{Error, Result};
+use crate::image::intern::InternerHandle;
 use crate::obs;
-use crate::storage::catalog::CatalogRead;
 
 impl ResolveMemo {
     pub(super) fn new() -> Self {
@@ -19,10 +19,10 @@ impl ResolveMemo {
         self.last = None;
     }
 
-    /// or copied out of the persistent arena — the LMDB descent and the
-    pub(super) fn resolve<C: CatalogRead>(
+    /// or copied out of the persistent arena — the interner read and the
+    pub(super) fn resolve(
         &mut self,
-        catalog: &C,
+        interner: &InternerHandle<'_>,
         word: u64,
         buffer: &mut Answers,
     ) -> Result<(usize, usize)> {
@@ -42,25 +42,33 @@ impl ResolveMemo {
             if let (range, false) = self.arena_ranges.get_or_insert_with(&key, || (0, 0)) {
                 (range.0 as usize, range.1 as usize)
             } else {
-                let stored = catalog.dict_resolve(crate::encoding::InternId::from_raw(word))?;
-                let raw = stored.as_ref();
+                // Projected text words are interner tokens minted by the
+                // images the answers came from; a token this interner never
+                // minted is dangling — corruption-grade, never a silent
+                // empty string.
+                let start = self.arena.len();
+                let len = interner
+                    .with_text(word, |text| {
+                        self.arena.push_str(text);
+                        text.len()
+                    })
+                    .ok_or(Error::Corruption(
+                        crate::error::CorruptionError::DanglingInternId(
+                            crate::encoding::InternId::from_raw(word),
+                        ),
+                    ))?;
                 obs::event(
                     obs::names::DICT_RESOLVE,
-                    obs::TraceArgs::Pair(word, raw.len() as u64),
+                    obs::TraceArgs::Pair(word, len as u64),
                 );
-                let text = std::str::from_utf8(raw).map_err(|_| {
-                    Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word))
-                })?;
-                let start = self.arena.len();
-                self.arena.push_str(text);
 
                 let range = (
                     u32::try_from(start).map_err(|_| Error::ResultBytesOverflow)?,
-                    u32::try_from(raw.len()).map_err(|_| Error::ResultBytesOverflow)?,
+                    u32::try_from(len).map_err(|_| Error::ResultBytesOverflow)?,
                 );
                 let (slot, _) = self.arena_ranges.get_or_insert_with(&key, || range);
                 *slot = range;
-                (start, raw.len())
+                (start, len)
             };
         let start = buffer.text.len();
         buffer

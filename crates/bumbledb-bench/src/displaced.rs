@@ -26,14 +26,20 @@ bumbledb::schema! {
     pub DisplacedWorld;
 
     relation Hub {
-        id: u64 as HubId, fresh,
+        id: u64 as HubId,
         tag: u64,
     }
     relation Spoke {
-        id: u64 as SpokeId, fresh,
+        id: u64 as SpokeId,
         hub: u64 as HubId,
         val: u64,
     }
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Hub(id)   -> Hub;
+    Spoke(id) -> Spoke;
 
     Spoke(hub) <= Hub(id);
 }

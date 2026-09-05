@@ -1,0 +1,38 @@
+{
+	"name": "bumbledb-notes-example",
+	"private": true,
+	"description": "Server-only Next.js + Alchemy notes app over bumbledb: authenticated tenant bindings, one native runtime layer, LocalHistory dev flow, HostedHistory materialization, retained command refs, outbox idempotency, generated migrations",
+	"type": "module",
+	"scripts": {
+		"dev": "next dev",
+		"build": "next build",
+		"start": "next start",
+		"typecheck": "tsc --noEmit",
+		"test": "node --conditions react-server --experimental-strip-types --test 'test/routes.test.ts'",
+		"test:deployed": "node --experimental-strip-types --test 'test/deployed.test.ts'",
+		"generate": "node --experimental-strip-types scripts/generate-history.ts",
+		"migrate": "node --experimental-strip-types scripts/migrate.ts",
+		"init-tenant": "node --experimental-strip-types scripts/init-tenant.ts",
+		"dispatch-outbox": "node --experimental-strip-types scripts/dispatch-outbox.ts"
+	},
+	"dependencies": {
+		"@aws-sdk/client-s3": "3.955.0",
+		"@bjornpagen/bumbledb": "0.20.3",
+		"@bjornpagen/bumbledb-log": "0.20.3",
+		"alchemy": "2.0.0-beta.74",
+		"effect": "4.0.0-rc.112",
+		"next": "16.1.1",
+		"react": "19.2.0",
+		"react-dom": "19.2.0",
+		"server-only": "0.0.1"
+	},
+	"devDependencies": {
+		"@types/node": "26.1.1",
+		"@types/react": "19.2.0",
+		"typescript": "7.0.2"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "pnpm@11.9.0"
+}

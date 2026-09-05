@@ -20,7 +20,7 @@ bumbledb::schema! {
     closed relation Kind as KindId = { Lesson, Assessment };
 
     relation Node {
-        id: u64 as NodeId, fresh,
+        id: u64 as NodeId,
         title: str,
         kind: u64 as KindId,
     }
@@ -34,12 +34,15 @@ bumbledb::schema! {
     Edge(dst) <= Node(id);
     Node(kind) <= Kind(id);
     Node(id) <={0..2} Edge(src);
+    Node(id) -> Node;
 }
 
-const NODE_KEY: StatementId = StatementId(0);
-const KIND_KEY: StatementId = StatementId(1);
-const EDGE_DST_CONTAINMENT: StatementId = StatementId(3);
-const OUTDEGREE_CAPACITY: StatementId = StatementId(5);
+// Materialized order: the closed Kind's auto-handle key first, then the
+// declared statements in declaration order.
+const KIND_KEY: StatementId = StatementId(0);
+const EDGE_DST_CONTAINMENT: StatementId = StatementId(2);
+const OUTDEGREE_CAPACITY: StatementId = StatementId(4);
+const NODE_KEY: StatementId = StatementId(5);
 
 fn node_row(id: u64, title: &str, kind: KindId) -> Vec<Value> {
     vec![
@@ -57,14 +60,11 @@ fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>
     let db = bumbledb::Db::create(dir.path(), Graph)
         .expect("create")
         .expect("accepted");
-    let fresh = db
-        .fresh_field(Graph::NODE, Graph::NODE_ID)
-        .expect("Node.id is fresh");
     let ids = db
         .write(|tx| {
             (0..nodes)
                 .map(|n| {
-                    let id = tx.reserve_at(fresh, 1)?.start().expect("nonempty");
+                    let id = n as u64;
                     tx.insert_dyn(
                         Graph::NODE,
                         [&node_row(id, &format!("node-{n}"), Kind::Lesson.id())],
@@ -80,7 +80,7 @@ fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>
 }
 
 #[test]
-fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
+fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
     let dir = common::TempDir::new("dyn-fresh-mint");
     let (db, ids) = seeded(&dir, 2);
     assert_eq!(ids.len(), 2);
@@ -116,34 +116,23 @@ fn dyn_fresh_minting_returns_ids_and_explicit_resupply_preserves_identity() {
 
     let next = db
         .write(|tx| {
-            let fresh = tx
-                .reserve_at(
-                    db.fresh_field(Graph::NODE, Graph::NODE_ID).expect("fresh"),
-                    1,
-                )?
-                .start()
-                .expect("nonempty");
-            tx.insert_dyn(Graph::NODE, [&node_row(fresh, "next", Kind::Lesson.id())])?;
-            Ok(fresh)
+            // Application-owned identity: pick a fresh id past everything seen.
+            let next = ids.iter().max().copied().unwrap_or(0) + 1;
+            tx.insert_dyn(Graph::NODE, [&node_row(next, "next", Kind::Lesson.id())])?;
+            Ok(next)
         })
-        .expect("mint past explicit ids")
+        .expect("insert past explicit ids")
         .unwrap()
         .value;
-    assert!(!ids.contains(&next), "never re-issues an observable id");
+    assert!(
+        !ids.contains(&next),
+        "the application never re-issues an id"
+    );
 }
 
-#[test]
-fn a_non_fresh_field_earns_no_witness() {
-    let dir = common::TempDir::new("dyn-not-fresh");
-    let (db, _) = seeded(&dir, 1);
-    let err = db
-        .fresh_field(Graph::NODE, Graph::NODE_TITLE)
-        .expect_err("title is not fresh");
-    assert!(matches!(
-        err,
-        FactShapeError::Id(DynIdError::NotAFreshField { .. })
-    ));
-}
+// The old `a_non_fresh_field_earns_no_witness` test retired with the fresh
+// machinery (E-NO-RESERVE): `fresh_field` and `NotAFreshField` no longer
+// exist.
 
 #[test]
 fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
@@ -279,9 +268,8 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
 fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     let dir = common::TempDir::new("dyn-rejection-render");
     let (db, ids) = seeded(&dir, 3);
-    let fresh = db.fresh_field(Graph::NODE, Graph::NODE_ID).expect("fresh");
     let violations = common::expect_rejected(db.write(|tx| {
-        let hub = tx.reserve_at(fresh, 1)?.start().expect("nonempty");
+        let hub = ids.iter().max().copied().unwrap_or(0) + 1;
         tx.insert_dyn(
             Graph::NODE,
             [&node_row(hub, "provisional-title", Kind::Lesson.id())],

@@ -52,19 +52,21 @@ impl std::fmt::Display for Signature {
                 ValueType::U64 => f.write_str("u64")?,
                 ValueType::I64 => f.write_str("i64")?,
                 ValueType::F64 => f.write_str("f64")?,
+                ValueType::Id128 => f.write_str("id128")?,
                 ValueType::String => f.write_str("string")?,
                 ValueType::FixedBytes { len } => write!(f, "bytes<{len}>")?,
                 ValueType::Interval { element } => {
                     let element = match element {
                         IntervalElement::U64 => "u64",
                         IntervalElement::I64 => "i64",
+                        IntervalElement::F64 => "f64",
                     };
                     write!(f, "interval<{element}>")?;
                 }
                 ValueType::FixedInterval { element, width } => {
                     let element = match element {
-                        IntervalElement::U64 => "u64",
-                        IntervalElement::I64 => "i64",
+                        bumbledb_theory::schema::FixedIntervalElement::U64 => "u64",
+                        bumbledb_theory::schema::FixedIntervalElement::I64 => "i64",
                     };
                     write!(f, "interval<{element}, {width}>")?;
                 }
@@ -166,16 +168,24 @@ pub(crate) enum ClassifiedComparison {
     PointInVarVar {
         interval: VarId,
         point: VarId,
+        /// The interval's element domain is the dense F64 line: point
+        /// membership carries the finite-probe guard through lowering.
+        dense: bool,
     },
 
     PointInVarPoint {
         interval: VarId,
         point: SealedConst,
+        /// As [`ClassifiedComparison::PointInVarVar::dense`].
+        dense: bool,
     },
 
     VarWithin {
         var: VarId,
         outer: SealedConst,
+        /// As [`ClassifiedComparison::PointInVarVar::dense`]: the scalar
+        /// side is F64, so a nonfinite value lies within no range.
+        dense: bool,
     },
 }
 
@@ -640,7 +650,10 @@ impl<'a> RuleWitness<'a> {
         let has_aggregate = self.rule.finds.iter().any(|term| {
             matches!(
                 term,
-                FindTerm::Compute(_) | FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
+                FindTerm::Compute(_)
+                    | FindTerm::Count
+                    | FindTerm::Aggregate { .. }
+                    | FindTerm::Pack { .. }
             )
         });
         if has_aggregate {

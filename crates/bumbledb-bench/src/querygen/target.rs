@@ -35,7 +35,7 @@ use bumbledb::schema::{IntervalElement, RelationDescriptor, Row, SchemaDescripto
 use bumbledb::{Admission, Db, InstanceBuilder, Schema, Value};
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
-use crate::fixture::{field, fresh};
+use crate::fixture::field;
 use crate::querygen::interval_data;
 
 /// Relation and field ids by name — declaration order is the id order,
@@ -281,13 +281,16 @@ pub fn descriptor() -> SchemaDescriptor {
                 RelationDescriptor {
                     extension: None,
                     name: "Holder".into(),
-                    fields: vec![fresh("id"), field("name", ValueType::String)],
+                    fields: vec![
+                        field("id", ValueType::U64),
+                        field("name", ValueType::String),
+                    ],
                 },
                 RelationDescriptor {
                     extension: None,
                     name: "Account".into(),
                     fields: vec![
-                        fresh("id"),
+                        field("id", ValueType::U64),
                         field("holder", ValueType::U64),
                         field("currency", ValueType::U64),
                     ],
@@ -295,13 +298,16 @@ pub fn descriptor() -> SchemaDescriptor {
                 RelationDescriptor {
                     extension: None,
                     name: "Instrument".into(),
-                    fields: vec![fresh("id"), field("symbol", ValueType::String)],
+                    fields: vec![
+                        field("id", ValueType::U64),
+                        field("symbol", ValueType::String),
+                    ],
                 },
                 RelationDescriptor {
                     extension: None,
                     name: "JournalEntry".into(),
                     fields: vec![
-                        fresh("id"),
+                        field("id", ValueType::U64),
                         field("source", ValueType::U64),
                         field("created_at", ValueType::I64),
                     ],
@@ -310,7 +316,7 @@ pub fn descriptor() -> SchemaDescriptor {
                     extension: None,
                     name: "Posting".into(),
                     fields: vec![
-                        fresh("id"),
+                        field("id", ValueType::U64),
                         field("entry", ValueType::U64),
                         field("account", ValueType::U64),
                         field("instrument", ValueType::U64),
@@ -331,7 +337,10 @@ pub fn descriptor() -> SchemaDescriptor {
                 RelationDescriptor {
                     extension: None,
                     name: "Org".into(),
-                    fields: vec![fresh("id"), field("name", ValueType::String)],
+                    fields: vec![
+                        field("id", ValueType::U64),
+                        field("name", ValueType::String),
+                    ],
                 },
                 RelationDescriptor {
                     extension: None,
@@ -360,7 +369,7 @@ pub fn descriptor() -> SchemaDescriptor {
                     name: "Transfer".into(),
                     fields: {
                         let mut fields = vec![
-                            fresh("id"),
+                            field("id", ValueType::U64),
                             field("extref", ValueType::FixedBytes { len: 32 }),
                             field(
                                 "window",
@@ -444,7 +453,7 @@ pub fn descriptor() -> SchemaDescriptor {
                         field(
                             "lane",
                             ValueType::FixedInterval {
-                                element: IntervalElement::I64,
+                                element: bumbledb::schema::FixedIntervalElement::I64,
                                 width: 5,
                             },
                         ),
@@ -471,8 +480,11 @@ pub fn descriptor() -> SchemaDescriptor {
     }
 }
 
-/// The declared statements: `ImportBatch`'s key, the ledger's nine
-/// containments (`60-validation.md`'s block, in its source order), the
+/// The declared statements: the seven id keys FIRST (the successor's
+/// declared-key reality — these were fresh auto-keys before, and sitting at
+/// the declared head they occupy exactly the slots the autos used to count,
+/// so no later statement id shifts), then `ImportBatch`'s key, the ledger's
+/// nine containments (`60-validation.md`'s block, in its source order), the
 /// DU pair as its two containments (mirror-detected at sealing), and —
 /// appended last so no earlier statement id shifts — the bytes<32> key
 /// `Transfer(extref) -> Transfer`: every corpus load writes an
@@ -497,7 +509,21 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     let containment =
         |source: Side, target: Side| StatementDescriptor::Containment { source, target };
     let import = [(ids::journal_entry::SOURCE, Value::U64(SOURCE_IMPORT))];
+    let id_key = |relation: bumbledb::RelationId, id_field: bumbledb::FieldId| {
+        StatementDescriptor::Functionality {
+            relation,
+            projection: Box::new([id_field]),
+        }
+    };
     vec![
+        // The seven declared id keys (E-NO-RESERVE), in relation order.
+        id_key(ids::HOLDER, ids::holder::ID),
+        id_key(ids::ACCOUNT, ids::account::ID),
+        id_key(ids::INSTRUMENT, ids::instrument::ID),
+        id_key(ids::JOURNAL_ENTRY, ids::journal_entry::ID),
+        id_key(ids::POSTING, ids::posting::ID),
+        id_key(ids::ORG, ids::org::ID),
+        id_key(ids::TRANSFER, ids::transfer::ID),
         StatementDescriptor::Functionality {
             relation: ids::IMPORT_BATCH,
             projection: Box::new([ids::import_batch::ENTRY]),
@@ -610,9 +636,11 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     ]
 }
 
-/// The closed-relation statement ids, pinned (materialized order: seven
-/// fresh auto-keys, four closed auto-keys (including `FloatValue`), then the declared list —
-/// asserted by `the_closed_statement_pins_hold`).
+/// The closed-relation statement ids, pinned (successor materialized order:
+/// four closed auto-keys first (including `FloatValue`), then the declared
+/// list, which leads with the seven declared id keys — so every declared
+/// statement past the id keys sits at its historical id; asserted by
+/// `the_closed_statement_pins_hold`).
 pub const VOCAB_CURRENCY: bumbledb::StatementId = bumbledb::StatementId(24);
 /// `JournalEntry(source) <= Source(id)`.
 pub const VOCAB_SOURCE: bumbledb::StatementId = bumbledb::StatementId(25);
@@ -1050,10 +1078,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The closed-relation statement pins: materialized order is seven
-    /// fresh auto-keys, the four closed auto-keys, then the declared
-    /// list — re-derived here so the differential's typed verdicts name
-    /// real statements, never guessed ids.
+    /// The closed-relation statement pins: successor materialized order is
+    /// the four closed auto-keys, then the declared list (led by the seven
+    /// declared id keys, which occupy the retired fresh autos' count) —
+    /// re-derived here so the differential's typed verdicts name real
+    /// statements, never guessed ids.
     #[test]
     fn the_closed_statement_pins_hold() {
         let schema = schema();

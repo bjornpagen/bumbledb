@@ -14,7 +14,7 @@ import type { AnyRelation, RelationField } from "#relation.ts"
 import { resolveSelection, type SelectionBinding, type SelectionInput } from "#relation.ts"
 import type { LiteralSpec } from "#spec.ts"
 
-type PayloadField = Exclude<AnyField, { readonly fresh: true }>
+type PayloadField = AnyField
 
 type PayloadColumns = Record<string, PayloadField> & { readonly id?: never }
 

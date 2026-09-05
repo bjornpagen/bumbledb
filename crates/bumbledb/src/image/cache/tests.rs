@@ -1,151 +1,51 @@
-use super::*;
-use crate::encoding::{ValueRef, encode_fact};
+//! The generation-keyed image cache: hits at the same generation, one
+//! rebuild per newer generation, query-local images for old pinned
+//! generations, per-execution rebuilds for heap ticks, once-only closed
+//! synthesis, and the memory-pressure trim.
+use std::sync::Arc;
+
+use crate::image::ViewEpoch;
+use crate::image::testsupport::TestSource;
+use crate::ir::Value;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
-use crate::storage::env::{Environment, GenerationId};
-use crate::testutil::TempDir;
+use crate::storage::GenerationId;
 use bumbledb_theory::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+    FieldDescriptor, RelationDescriptor, RelationId, Row, SchemaDescriptor, ValueType,
 };
 
+use super::ImageCache;
+
 fn schema() -> Schema {
-    SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "R".into(),
-            fields: vec![FieldDescriptor {
-                name: "x".into(),
-                value_type: ValueType::U64,
-                generation: Generation::Fresh,
-            }],
-        }],
-        statements: vec![],
-    }
-    .validate()
-    .expect("valid fixture")
-}
-
-const R: RelationId = RelationId(0);
-
-const fn gid(word: u64) -> GenerationId {
-    GenerationId::from_storage(word)
-}
-
-fn fact(schema: &Schema, x: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(&[ValueRef::U64(x)], schema.relation(R).layout(), &mut b);
-    b
-}
-
-fn insert_one(env: &Environment, schema: &Schema, x: u64) -> bool {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    delta.insert(&view, R, &fact(schema, x)).expect("insert");
-    drop(view);
-    commit(delta, env)
-        .expect("commit")
-        .expect("admitted")
-        .changed()
-}
-
-#[test]
-fn sequential_readers_share_one_image_instance() {
-    let dir = TempDir::new("cache-shared");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_one(&env, &schema, 1);
-    let cache = ImageCache::new(&schema);
-
-    let txn1 = env.read_txn().expect("txn");
-    let first = cache.get_or_build(&txn1, &schema, R).expect("build");
-    drop(txn1);
-    let txn2 = env.read_txn().expect("txn");
-    let second = cache.get_or_build(&txn2, &schema, R).expect("build");
-
-    assert!(Arc::ptr_eq(&first, &second));
-}
-
-#[test]
-fn concurrent_same_generation_builders_converge_on_one_arc() {
-    let dir = TempDir::new("cache-race");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_one(&env, &schema, 1);
-    let cache = ImageCache::new(&schema);
-
-    let images = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..2)
-            .map(|_| {
-                scope.spawn(|| {
-                    let txn = env.read_txn().expect("txn");
-                    cache.get_or_build(&txn, &schema, R).expect("build")
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().expect("thread"))
-            .collect::<Vec<_>>()
-    });
-
-    // returned before the winner inserted — impossible: adoption happens
-
-    assert!(Arc::ptr_eq(&images[0], &images[1]));
-    assert_eq!(cache.keys(), vec![(R, gid(1))]);
-}
-
-#[test]
-fn a_no_op_commit_does_not_invalidate_the_cache() {
-    let dir = TempDir::new("cache-noop");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_one(&env, &schema, 1);
-    let cache = ImageCache::new(&schema);
-
-    let txn = env.read_txn().expect("txn");
-    let before = cache.get_or_build(&txn, &schema, R).expect("build");
-    drop(txn);
-
-    // Re-inserting an existing fact: changed == false, no eviction runs
-
-    assert!(!insert_one(&env, &schema, 1));
-
-    let txn = env.read_txn().expect("txn");
-    let after = cache.get_or_build(&txn, &schema, R).expect("build");
-    assert!(Arc::ptr_eq(&before, &after), "the cache stayed warm");
-}
-
-fn closed_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 extension: None,
                 name: "R".into(),
-                fields: vec![FieldDescriptor {
-                    name: "x".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::Fresh,
-                }],
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                    },
+                    FieldDescriptor {
+                        name: "name".into(),
+                        value_type: ValueType::String,
+                    },
+                ],
             },
             RelationDescriptor {
                 extension: Some(Box::new([
-                    bumbledb_theory::schema::Row {
-                        handle: "Usd".into(),
-                        values: Box::new([crate::ir::Value::U64(2)]),
+                    Row {
+                        handle: "Open".into(),
+                        values: Box::new([]),
                     },
-                    bumbledb_theory::schema::Row {
-                        handle: "Eur".into(),
-                        values: Box::new([crate::ir::Value::U64(0)]),
+                    Row {
+                        handle: "Frozen".into(),
+                        values: Box::new([]),
                     },
                 ])),
-                name: "Currency".into(),
-                fields: vec![FieldDescriptor {
-                    name: "minor_units".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::None,
-                }],
+                name: "Status".into(),
+                fields: vec![],
             },
         ],
         statements: vec![],
@@ -154,446 +54,169 @@ fn closed_schema() -> Schema {
     .expect("valid fixture")
 }
 
-const CURRENCY: RelationId = RelationId(1);
+const R: RelationId = RelationId(0);
+const STATUS: RelationId = RelationId(1);
+
+fn fixture() -> TestSource {
+    let rows: Vec<Vec<Value>> = (0..8u64)
+        .map(|i| vec![Value::U64(i), Value::String(format!("row-{i}").into())])
+        .collect();
+    TestSource::new(&schema(), &[(R, rows)])
+}
+
+fn generation(value: u64) -> ViewEpoch {
+    ViewEpoch::Store(GenerationId::from_storage(value))
+}
 
 #[test]
-fn closed_images_synthesize_once_and_survive_eviction() {
-    let dir = TempDir::new("cache-closed");
-    let schema = closed_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
+fn same_generation_reads_hit_the_memo() {
+    let fixture = fixture();
+    let cache = ImageCache::new(fixture.schema());
+    let source = fixture.source();
+    let first = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(3))
+        .expect("build");
+    let second = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(3))
+        .expect("hit");
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "the same generation returns the same image"
+    );
+    assert!(
+        cache.peek_at(R, generation(3)).is_some(),
+        "the memo is peekable without building"
+    );
+}
 
-    let txn = env.read_txn().expect("txn");
-    let first = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
-    let second = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
-    assert!(Arc::ptr_eq(&first, &second));
+#[test]
+fn a_newer_generation_rebuilds_and_retires_the_old_entry() {
+    let fixture = fixture();
+    let cache = ImageCache::new(fixture.schema());
+    let source = fixture.source();
+    let old = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(3))
+        .expect("build old");
+    let new = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(4))
+        .expect("build new");
+    assert!(!Arc::ptr_eq(&old, &new), "a newer generation rebuilds");
+    assert!(
+        cache.peek_at(R, generation(3)).is_none(),
+        "the old generation's entry retired when the newer one landed"
+    );
+    assert!(cache.peek_at(R, generation(4)).is_some());
+    // The pinned reader's Arc keeps the old image alive query-local.
+    assert_eq!(old.row_count(), new.row_count());
+}
+
+#[test]
+fn an_old_pinned_generation_builds_query_local_after_a_newer_landed() {
+    let fixture = fixture();
+    let cache = ImageCache::new(fixture.schema());
+    let source = fixture.source();
+    let _new = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(9))
+        .expect("build new");
+    let old = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(2))
+        .expect("query-local build");
+    assert_eq!(old.row_count(), 8, "the old snapshot still gets its image");
+    assert!(
+        cache.peek_at(R, generation(2)).is_none(),
+        "old generations never displace the newest memo"
+    );
+    assert!(
+        cache.peek_at(R, generation(9)).is_some(),
+        "the newest memo survives the pinned reader"
+    );
+}
+
+#[test]
+fn heap_ticks_never_memoize() {
+    let fixture = fixture();
+    let cache = ImageCache::new(fixture.schema());
+    let source = fixture.source();
+    let epoch = source.epoch();
+    assert!(matches!(epoch, ViewEpoch::Heap(_)), "heap fixture");
+    let first = cache
+        .get_or_build_at(&source, fixture.schema(), R, epoch)
+        .expect("build");
+    let second = cache
+        .get_or_build_at(&source, fixture.schema(), R, epoch)
+        .expect("rebuild");
+    assert!(
+        !Arc::ptr_eq(&first, &second),
+        "a heap execution rebuilds every time — no durable identity to key by"
+    );
+    assert!(cache.peek_at(R, epoch).is_none(), "nothing was cached");
+}
+
+#[test]
+fn closed_relations_synthesize_once_and_never_trim() {
+    let fixture = fixture();
+    let cache = ImageCache::new(fixture.schema());
+    let source = fixture.source();
+    let first = cache
+        .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
+        .expect("synthesize");
+    let second = cache
+        .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
+        .expect("hit");
+    assert!(Arc::ptr_eq(&first, &second), "closed images build once");
     assert_eq!(first.row_count(), 2);
-    assert_eq!(cache.keys(), vec![], "never in the generation map");
-    drop(txn);
 
-    assert!(insert_one(&env, &schema, 1));
-    cache.advance(gid(u64::MAX), &[R], &[]);
-    let txn = env.read_txn().expect("txn");
-    let third = cache.get_or_build(&txn, &schema, CURRENCY).expect("build");
-    assert!(Arc::ptr_eq(&first, &third), "warm across every generation");
-
-    let peeked = cache
-        .peek(&txn, &schema, CURRENCY)
-        .expect("peek")
-        .expect("resident forever");
-    assert!(Arc::ptr_eq(&first, &peeked));
-}
-
-#[cfg(feature = "trace")]
-#[test]
-fn counters_track_hit_miss_build_evict_exactly() {
-    let dir = TempDir::new("cache-stats");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    assert!(insert_one(&env, &schema, 1));
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    let base = cache.stats();
-    cache.get_or_build(&txn, &schema, R).expect("build");
-    cache.get_or_build(&txn, &schema, R).expect("hit");
-    let after = cache.stats();
-    assert_eq!(after.misses - base.misses, 1);
-    assert_eq!(after.builds - base.builds, 1);
-    assert_eq!(after.hits - base.hits, 1);
-
-    let (images, bytes) = cache.resident();
-    assert_eq!(images, 1);
-    assert!(bytes > 0);
-
-    cache.advance(gid(u64::MAX), &[R], &[]);
-    let evicted = cache.stats();
-    assert_eq!(evicted.evicted - after.evicted, 1);
-    assert_eq!(cache.resident(), (0, 0));
-}
-
-const A: RelationId = RelationId(0);
-const B: RelationId = RelationId(1);
-
-fn two_relation_schema() -> Schema {
-    let rel = |name: &str| RelationDescriptor {
-        extension: None,
-        name: name.into(),
-        fields: vec![FieldDescriptor {
-            name: "x".into(),
-            value_type: ValueType::U64,
-            generation: Generation::None,
-        }],
-    };
-    SchemaDescriptor {
-        relations: vec![rel("A"), rel("B")],
-        statements: vec![],
-    }
-    .validate()
-    .expect("valid fixture")
-}
-
-fn rel_fact(schema: &Schema, rel: RelationId, x: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(&[ValueRef::U64(x)], schema.relation(rel).layout(), &mut b);
-    b
-}
-
-fn commit_and_advance(
-    env: &Environment,
-    cache: &ImageCache,
-    delta: WriteDelta<'_>,
-) -> GenerationId {
-    let dirty = delta.dirty_relations();
-    let floors = delta.inserted_floors();
-    let report = commit(delta, env).expect("commit").expect("admitted");
-    assert!(report.changed(), "the fixture commits are state-changing");
-    cache.advance(report.generation(), &dirty, &floors);
-    report.generation()
-}
-
-fn assert_images_identical(a: &RelationImage, b: &RelationImage, columns: usize) {
-    assert_eq!(a.row_count(), b.row_count());
-    for column in 0..columns {
-        assert_eq!(a.column(column), b.column(column), "column {column}");
-        assert_eq!(
-            a.distinct_count(column),
-            b.distinct_count(column),
-            "distinct {column}"
-        );
-    }
-}
-
-#[test]
-fn a_below_boundary_insert_evicts_the_append_base() {
-    let dir = TempDir::new("cache-non-tail-evict");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta.insert(&view, R, &fact(&schema, 5)).expect("insert");
-        drop(view);
-        commit_and_advance_one(&env, &cache, delta);
-    }
-    {
-        let txn = env.read_txn().expect("txn");
-        cache.get_or_build(&txn, &schema, R).expect("base build");
-    }
-    assert_eq!(cache.keys(), vec![(R, gid(1))]);
-
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta.insert(&view, R, &fact(&schema, 2)).expect("insert");
-        drop(view);
-        commit_and_advance_one(&env, &cache, delta);
-    }
-    assert_eq!(cache.keys(), vec![], "the non-tail insert evicted the base");
-    {
-        let txn = env.read_txn().expect("txn");
-        let image = cache.get_or_build(&txn, &schema, R).expect("full build");
-        assert_eq!(image.row_count(), 2);
-        assert_eq!(
-            image.column(0),
-            crate::image::ColumnView::Words(&[2, 5]),
-            "scan order is fresh order"
-        );
-    }
-    assert_eq!(cache.keys(), vec![(R, gid(2))]);
-
-    // boundary (Q stayed 6 after the below-boundary insert): the base
-
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta.insert(&view, R, &fact(&schema, 7)).expect("insert");
-        drop(view);
-        commit_and_advance_one(&env, &cache, delta);
-    }
-    assert_eq!(
-        cache.keys(),
-        vec![(R, gid(2))],
-        "the tail insert retained the base"
-    );
-    let txn = env.read_txn().expect("txn");
-    let image = cache.get_or_build(&txn, &schema, R).expect("append");
-    assert_eq!(image.row_count(), 3);
-    assert_eq!(image.column(0), crate::image::ColumnView::Words(&[2, 5, 7]));
-}
-
-fn commit_and_advance_one(env: &Environment, cache: &ImageCache, delta: WriteDelta<'_>) {
-    let dirty = delta.dirty_relations();
-    let floors = delta.inserted_floors();
-    let report = commit(delta, env).expect("commit").expect("admitted");
-    assert!(report.changed());
-    cache.advance(report.generation(), &dirty, &floors);
-}
-
-#[test]
-fn advance_drops_dirty_relations_and_retains_the_rest() {
-    let dir = TempDir::new("cache-advance");
-    let schema = two_relation_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta
-            .insert(&view, A, &rel_fact(&schema, A, 1))
-            .expect("insert");
-        delta
-            .insert(&view, B, &rel_fact(&schema, B, 1))
-            .expect("insert");
-        drop(view);
-        commit_and_advance(&env, &cache, delta);
-    }
-    let txn = env.read_txn().expect("txn");
-    cache.get_or_build(&txn, &schema, A).expect("build A");
-    cache.get_or_build(&txn, &schema, B).expect("build B");
-    drop(txn);
-    assert_eq!(cache.keys(), vec![(A, gid(1)), (B, gid(1))]);
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta
-        .delete(&view, A, &rel_fact(&schema, A, 1))
-        .expect("delete");
-    delta
-        .insert(&view, B, &rel_fact(&schema, B, 2))
-        .expect("insert");
-    drop(view);
-    commit_and_advance(&env, &cache, delta);
-    assert_eq!(cache.keys(), vec![(B, gid(1))]);
-}
-
-#[test]
-fn an_untouched_relation_carries_the_same_arc_forward() {
-    let dir = TempDir::new("cache-carry");
-    let schema = two_relation_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta
-            .insert(&view, A, &rel_fact(&schema, A, 1))
-            .expect("insert");
-        delta
-            .insert(&view, B, &rel_fact(&schema, B, 1))
-            .expect("insert");
-        drop(view);
-        commit_and_advance(&env, &cache, delta);
-    }
-    let txn = env.read_txn().expect("txn");
-    let b_before = cache.get_or_build(&txn, &schema, B).expect("build B");
-    drop(txn);
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta
-        .insert(&view, A, &rel_fact(&schema, A, 2))
-        .expect("insert");
-    drop(view);
-    commit_and_advance(&env, &cache, delta);
-
-    let txn = env.read_txn().expect("txn");
-    let b_after = cache.get_or_build(&txn, &schema, B).expect("carry B");
+    cache.trim();
+    let after = cache
+        .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
+        .expect("still resident");
     assert!(
-        Arc::ptr_eq(&b_before, &b_after),
-        "identical content, identical Arc — the carry-forward is zero-copy"
-    );
-    assert_eq!(
-        cache.keys(),
-        vec![(B, gid(2))],
-        "B re-keyed at the new generation, its base key removed (A was never read)"
+        Arc::ptr_eq(&first, &after),
+        "trim never evicts a closed image"
     );
 }
 
 #[test]
-fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
-    let dir = TempDir::new("cache-append-chain");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-    insert_one(&env, &schema, 1);
-    {
-        let txn = env.read_txn().expect("txn");
-        let base = cache.get_or_build(&txn, &schema, R).expect("base build");
-        assert_eq!(base.row_count(), 1);
-    }
-
-    for x in [2, 3, 4] {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta.insert(&view, R, &fact(&schema, x)).expect("insert");
-        drop(view);
-        commit_and_advance(&env, &cache, delta);
-    }
-    assert_eq!(
-        cache.keys(),
-        vec![(R, gid(1))],
-        "the base outlives the chain"
-    );
-
-    let txn = env.read_txn().expect("txn");
-    let appended = cache.get_or_build(&txn, &schema, R).expect("append");
-    assert_eq!(
-        appended.row_count(),
-        4,
-        "one append covered all three commits"
-    );
-    let rebuilt = crate::image::build(&txn.catalog(), &schema, R).expect("from-scratch rebuild");
-    assert_images_identical(&appended, &rebuilt, 1);
-    assert_eq!(
-        cache.keys(),
-        vec![(R, gid(4))],
-        "the successor replaced its base"
-    );
-
-    let again = cache.get_or_build(&txn, &schema, R).expect("hit");
-    assert!(Arc::ptr_eq(&appended, &again));
-}
-
-#[test]
-fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
-    let dir = TempDir::new("cache-race-sweep");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-
-    insert_one(&env, &schema, 1);
-    {
-        let txn = env.read_txn().expect("txn");
-        cache.get_or_build(&txn, &schema, R).expect("base build");
-    }
-    cache.advance(gid(1), &[], &[]);
-    assert_eq!(cache.keys(), vec![(R, gid(1))]);
-
-    // opens BEFORE the epilogue's `advance`, so `newest` is still 1 and
-
-    insert_one(&env, &schema, 2);
-    let racing = env.read_txn().expect("txn");
-    let image = cache.get_or_build(&racing, &schema, R).expect("full build");
-    assert_eq!(image.row_count(), 2);
-    assert_eq!(
-        cache.keys(),
-        vec![(R, gid(2))],
-        "the racing insert sweeps the stranded base instead of leaking it"
-    );
-
-    cache.advance(gid(2), &[], &[]);
-    assert_eq!(cache.keys(), vec![(R, gid(2))]);
-}
-
-#[test]
-fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
-    let dir = TempDir::new("cache-append-shrink");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-    insert_one(&env, &schema, 1);
-    insert_one(&env, &schema, 2);
-    {
-        let txn = env.read_txn().expect("txn");
-        let base = cache.get_or_build(&txn, &schema, R).expect("base build");
-        assert_eq!(base.row_count(), 2);
-    }
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta.delete(&view, R, &fact(&schema, 1)).expect("delete");
-    drop(view);
-    let report = commit(delta, &env).expect("commit").expect("admitted");
-    assert!(report.changed());
-    cache.advance(report.generation(), &[], &[]);
-
-    let txn = env.read_txn().expect("txn");
-    let err = cache
-        .get_or_build(&txn, &schema, R)
-        .expect_err("shrunk count");
+fn trim_drops_generation_entries_and_shrinks_retained_bytes() {
+    let fixture = fixture();
+    let cache = ImageCache::new(fixture.schema());
+    let source = fixture.source();
+    let image = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(1))
+        .expect("build");
+    let resident = cache.retained_bytes();
     assert!(
-        matches!(
-            err,
-            crate::error::Error::Corruption(crate::error::CorruptionError::RowCountMismatch {
-                relation: R,
-                stored: 1
-            })
-        ),
-        "{err:?}"
+        resident >= image.byte_size(),
+        "retained bytes cover the resident image"
     );
-}
 
-#[cfg(feature = "trace")]
-#[test]
-fn counters_pin_the_per_relation_arm_selection() {
-    let dir = TempDir::new("cache-arm-pin");
-    let schema = two_relation_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let cache = ImageCache::new(&schema);
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(&schema);
-        delta
-            .insert(&view, A, &rel_fact(&schema, A, 1))
-            .expect("insert");
-        delta
-            .insert(&view, B, &rel_fact(&schema, B, 1))
-            .expect("insert");
-        drop(view);
-        commit_and_advance(&env, &cache, delta);
-    }
-    let txn = env.read_txn().expect("txn");
-    cache.get_or_build(&txn, &schema, A).expect("build A");
-    cache.get_or_build(&txn, &schema, B).expect("build B");
-    drop(txn);
-    let seeded = cache.stats();
-    assert_eq!((seeded.builds, seeded.appends, seeded.carries), (2, 0, 0));
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta
-        .delete(&view, A, &rel_fact(&schema, A, 1))
-        .expect("delete");
-    delta
-        .insert(&view, B, &rel_fact(&schema, B, 2))
-        .expect("insert");
-    drop(view);
-    commit_and_advance(&env, &cache, delta);
-
-    let txn = env.read_txn().expect("txn");
-    cache.get_or_build(&txn, &schema, A).expect("rebuild A");
-    let after_a = cache.stats();
-    assert_eq!(
-        (after_a.builds, after_a.appends, after_a.carries),
-        (3, 0, 0),
-        "the deleted-from relation rebuilds from scratch"
+    cache.trim();
+    assert!(
+        cache.peek_at(R, generation(1)).is_none(),
+        "trim evicts generation-keyed images"
     );
-    cache.get_or_build(&txn, &schema, B).expect("append B");
-    let after_b = cache.stats();
-    assert_eq!(
-        (after_b.builds, after_b.appends, after_b.carries),
-        (3, 1, 0),
-        "the delete-free relation appends"
+    let trimmed = cache.retained_bytes();
+    assert!(
+        trimmed < resident,
+        "retained bytes shrink by the evicted slabs ({trimmed} < {resident})"
     );
-    drop(txn);
 
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta
-        .insert(&view, A, &rel_fact(&schema, A, 9))
-        .expect("insert");
-    drop(view);
-    commit_and_advance(&env, &cache, delta);
-    let txn = env.read_txn().expect("txn");
-    cache.get_or_build(&txn, &schema, A).expect("append A");
-    cache.get_or_build(&txn, &schema, B).expect("carry B");
-    let end = cache.stats();
+    // The interner survives the trim: token stability is the invariant.
+    let rebuilt = cache
+        .get_or_build_at(&source, fixture.schema(), R, generation(1))
+        .expect("rebuild after trim");
+    assert_eq!(rebuilt.row_count(), 8);
+    let name_column = usize::from(
+        rebuilt
+            .span(bumbledb_theory::schema::FieldId(1))
+            .first_column,
+    );
+    let mut before: Vec<u64> = image.column_words(name_column).to_vec();
+    let mut after: Vec<u64> = rebuilt.column_words(name_column).to_vec();
+    before.sort_unstable();
+    after.sort_unstable();
     assert_eq!(
-        (end.builds, end.appends, end.carries),
-        (3, 2, 1),
-        "insert-only: the touched relation appends, the untouched one carries"
+        before, after,
+        "the same texts intern to the same tokens across the trim"
     );
 }

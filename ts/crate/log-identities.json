@@ -1,68 +1,81 @@
 {
-  "comment": "The refusal-identity and outcome-tag table, generated from the bumbledb-log enums by `cargo run -p bumbledb-log --bin identities` (src/identities.rs): one array per boundary enum, refusal kinds spelled by each enum's `identity()`, outcome arms spelled as the tags consumers narrow. crates/bumbledb-log/conformance/v3/identities.json and ts/crate/log-identities.json are both this emission — the in-crate golden pins the conformance copy, the census regeneration lane diffs both — and the bridge marshal refuses to cross any kind outside its family row.",
-  "batchDecode": [
-    "Truncated",
-    "BadMagic",
-    "Version",
-    "Flags",
-    "FingerprintMismatch",
-    "UnknownBraid",
-    "UnknownOpKind",
-    "UnknownRelation",
-    "ClosedRelation",
-    "OpRelationOutsideBraid",
-    "TagMismatch",
-    "BoolByte",
-    "NonCanonicalF64",
-    "InvalidUtf8",
-    "EmptyInterval",
-    "IntervalOverflow",
-    "TrailingBytes"
+  "comment": "The successor history refusal-identity and outcome-tag table, generated from the bumbledb-log enums by `cargo run -p bumbledb-log --bin identities` (src/identities.rs): one array per boundary enum. There is no braid, sidecar, manifest, lease-counter or split-outcome family; the deleted braided roster is gone.",
+  "frame": [
+    "limitExceeded",
+    "lengthOverflow",
+    "allocation",
+    "truncated",
+    "family",
+    "layout",
+    "kind",
+    "tag",
+    "invalidEpoch",
+    "stateIdentityMismatch",
+    "emptyChangeSummary",
+    "emptyEvidence",
+    "invalidTerminalStamp",
+    "invalidPreconditionEvidence",
+    "invalidPolicy",
+    "invalidSequence",
+    "invalidCount",
+    "trailingBytes"
   ],
-  "batchEncode": [
-    "FingerprintMismatch",
-    "UnknownBraid",
-    "UnknownRelation",
-    "ClosedRelation",
-    "OpRelationOutsideBraid",
-    "Arity",
-    "Value",
-    "TooManyOps",
-    "TooManyRows"
+  "admissionRefusal": [
+    "identityMismatch",
+    "databaseDeleted",
+    "receiptExpiredUnknown",
+    "commandIdentityConflict",
+    "commandEpochClosed",
+    "commandEpochNotOpen",
+    "databaseFrozen",
+    "stateIdentityMismatch",
+    "invalidRetainedReceipt"
   ],
-  "manifest": [
-    "Malformed",
-    "Version"
+  "authority": [
+    "deleted",
+    "frozen",
+    "notFrozen",
+    "operationMismatch",
+    "activationEvidenceMismatch",
+    "invalidGenesis",
+    "exhausted",
+    "policy"
   ],
-  "checkpoint": [
-    "Malformed",
-    "Version",
-    "Overflow",
-    "UnknownBraid",
-    "BraidSet"
+  "logError": [
+    "identity",
+    "commandIdentityConflict",
+    "databaseDeleted",
+    "databaseFrozen",
+    "commandEpochClosed",
+    "receiptExpiredUnknown",
+    "notInitialized",
+    "corruption",
+    "work",
+    "core",
+    "storage",
+    "hostSeal",
+    "misuse",
+    "incompleteRejectionEvidence",
+    "backend"
   ],
-  "sidecar": [
-    "Malformed",
-    "Version",
-    "UnknownBraid",
-    "Overflow"
+  "submitOutcome": [
+    "decided",
+    "notSubmitted",
+    "outcomeUnknown"
   ],
-  "counter": [
-    "Counter",
-    "Exhausted",
-    "OverWidth"
+  "resolveOutcome": [
+    "found",
+    "notRecordedAt",
+    "commandEpochClosed",
+    "receiptExpiredUnknown"
   ],
-  "admission": [
-    "accepted",
-    "rejected"
+  "conditionalOutcome": [
+    "published",
+    "preconditionFailed",
+    "indeterminate"
   ],
-  "waited": [
-    "reached",
-    "wedged",
-    "refused"
-  ],
-  "refreshOutcome": [
-    "advanced",
-    "refused"
+  "putOutcome": [
+    "stored",
+    "indeterminate"
   ]
 }

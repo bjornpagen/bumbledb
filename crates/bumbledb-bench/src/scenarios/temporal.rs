@@ -16,14 +16,20 @@ bumbledb::schema! {
     pub Temporal;
 
     relation Key {
-        id: u64 as TpKeyId, fresh,
+        id: u64 as TpKeyId,
     }
     relation Span {
-        id: u64 as TpSpanId, fresh,
+        id: u64 as TpSpanId,
         key: u64 as TpKeyId,
         span: interval<i64>,
         weight: i64,
     }
+
+    // Declared id keys first (E-NO-RESERVE): the retired fresh auto-keys
+    // are ordinary declared statements now, at the head so the later
+    // declared statement ids keep their historical slots.
+    Key(id)  -> Key;
+    Span(id) -> Span;
 
     Span(key) <= Key(id);
 }

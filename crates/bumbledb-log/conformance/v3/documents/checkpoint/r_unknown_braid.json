@@ -1,7 +1,0 @@
-{
-  "kind": "checkpoint",
-  "expect": "refusal",
-  "schema": "kitchen",
-  "refusal": "UnknownBraid",
-  "hex": "030100000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000abababababababababababababababababababababababababababababababab000000000000000000"
-}

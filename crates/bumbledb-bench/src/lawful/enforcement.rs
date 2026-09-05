@@ -1,7 +1,9 @@
 //! The `SQLite` enforcement map AS DATA: one [`Enforcement`] row per
-//! MATERIALIZED engine statement (fresh auto-keys first, then the closed
-//! auto-keys, then the declared statements — the engine's materialized order,
-//! `SchemaDescriptor::materialized_statements`), and the twin DDL assembled
+//! MATERIALIZED engine statement (closed auto-keys first, then the declared
+//! statements in source order — the engine's materialized order,
+//! `SchemaDescriptor::materialized_statements`; the retired fresh auto-keys
+//! are now ordinary DECLARED id keys over application-owned ids), and the
+//! twin DDL assembled
 //! FROM the table ([`ddl`]) — an engine law without a `SQLite` enforcement row
 //! is a failing totality test, never where no declarative constraint form
 //! exists), appended after the
@@ -20,21 +22,6 @@ pub struct Enforcement {
 
 pub const MAP: &[Enforcement] = &[
     Enforcement {
-        law: "fresh auto-key",
-        notation: "Task(id) -> Task",
-        sqlite: "PRIMARY KEY (\"id\")",
-    },
-    Enforcement {
-        law: "fresh auto-key",
-        notation: "Attempt(id) -> Attempt",
-        sqlite: "PRIMARY KEY (\"id\")",
-    },
-    Enforcement {
-        law: "fresh auto-key",
-        notation: "Steer(id) -> Steer",
-        sqlite: "PRIMARY KEY (\"id\")",
-    },
-    Enforcement {
         law: "closed auto-key",
         notation: "TaskKinds(id) -> TaskKinds",
         sqlite: "-- unmirrored: the closed roster is static schema data; its identity lives in \
@@ -51,6 +38,21 @@ pub const MAP: &[Enforcement] = &[
         notation: "Outcome(id) -> Outcome",
         sqlite: "-- unmirrored: the closed roster is static schema data; its identity lives in \
                  the referencing outcome roster constraint on \"Verdict\"",
+    },
+    Enforcement {
+        law: "declared id key",
+        notation: "Task(id) -> Task",
+        sqlite: "PRIMARY KEY (\"id\")",
+    },
+    Enforcement {
+        law: "declared id key",
+        notation: "Attempt(id) -> Attempt",
+        sqlite: "PRIMARY KEY (\"id\")",
+    },
+    Enforcement {
+        law: "declared id key",
+        notation: "Steer(id) -> Steer",
+        sqlite: "PRIMARY KEY (\"id\")",
     },
     Enforcement {
         law: "declared key",
@@ -122,7 +124,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
     match ty {
         ValueType::Bool | ValueType::U64 | ValueType::I64 => "INTEGER",
         ValueType::String => "TEXT",
-        ValueType::FixedBytes { .. } | ValueType::F64 => "BLOB",
+        ValueType::FixedBytes { .. } | ValueType::F64 | ValueType::Id128 => "BLOB",
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
             unreachable!("the lawful world declares scalar fields only")
         }

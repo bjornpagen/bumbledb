@@ -17,8 +17,12 @@ fn owned(value: &Value) -> Owned {
         Value::F64(v) => Owned::F64(v.to_bits()),
         Value::String(text) => Owned::Str(text.to_string()),
         Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
+        Value::Id128(id) => Owned::Id128(*id.as_bytes()),
         Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
+        Value::IntervalF64(interval) => {
+            Owned::IntervalF64(interval.start().to_bits(), interval.end().to_bits())
+        }
     }
 }
 

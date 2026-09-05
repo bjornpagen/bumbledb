@@ -8,11 +8,11 @@ bumbledb::schema! {
     closed relation Kind as KindId = { Alpha, Beta };
 
     relation Grp {
-        id: u64 as GrpId, fresh,
+        id: u64 as GrpId,
         label: str,
     }
     relation Task {
-        id: u64 as TaskId, fresh,
+        id: u64 as TaskId,
         kind: u64 as KindId,
         subject: u64 as GrpId,
         note: str,
@@ -38,7 +38,7 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
         .expect("accepted");
     let (grp, task) = db
         .write(|tx| {
-            let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+            let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
                 label: "home",
@@ -47,7 +47,7 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
                 grp,
                 title: "the home group",
             }])?;
-            let task = tx.reserve::<TaskId>(1)?.start().expect("nonempty");
+            let task = TaskId(1);
             tx.insert([&Task {
                 id: task,
                 kind: Kind::Alpha.id(),
@@ -110,13 +110,16 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
 /// this test fails if the expansion's statement-id computation is off by one.
 #[test]
 fn keyed_get_statement_ids_survive_mirror_offsets() {
+    // Materialized order: the closed Kind's auto-handle key (0), then the
+    // declared statements — one containment (1), the bidirectional `==`
+    // occupying TWO slots (2, 3), then the declared keys.
     assert_eq!(
         <TaskByKindSubject as Key>::STATEMENT,
-        bumbledb::schema::StatementId(6)
+        bumbledb::schema::StatementId(4)
     );
     assert_eq!(
         <GrpByLabel as Key>::STATEMENT,
-        bumbledb::schema::StatementId(7)
+        bumbledb::schema::StatementId(5)
     );
 
     let dir = common::TempDir::new("keyed-get-mirror-offsets");
@@ -125,7 +128,7 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
         .expect("accepted");
     let grp = db
         .write(|tx| {
-            let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+            let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
                 label: "inbox",
@@ -134,7 +137,7 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
                 grp,
                 title: "the inbox",
             }])?;
-            let task = tx.reserve::<TaskId>(1)?.start().expect("nonempty");
+            let task = TaskId(1);
             tx.insert([&Task {
                 id: task,
                 kind: Kind::Beta.id(),
@@ -186,7 +189,7 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
     .expect("a never-interned label proves absence");
 
     db.write(|tx| {
-        let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+        let grp = GrpId(1);
         tx.insert([&Grp {
             id: grp,
             label: "novel-label",
@@ -225,7 +228,7 @@ fn keyed_get_observes_the_final_state_overlay() {
         .expect("accepted");
     let (grp, task) = db
         .write(|tx| {
-            let grp = tx.reserve::<GrpId>(1)?.start().expect("nonempty");
+            let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
                 label: "garden",
@@ -234,7 +237,7 @@ fn keyed_get_observes_the_final_state_overlay() {
                 grp,
                 title: "the garden",
             }])?;
-            let task = tx.reserve::<TaskId>(1)?.start().expect("nonempty");
+            let task = TaskId(1);
             let key = TaskByKindSubject {
                 kind: Kind::Alpha.id(),
                 subject: grp,

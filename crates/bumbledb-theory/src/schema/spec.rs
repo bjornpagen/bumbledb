@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    Bound, FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
+    Bound, FieldDescriptor, FieldId, LiteralSet, RelationDescriptor, RelationId, Row,
     SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 use crate::value::Value;
@@ -49,20 +49,19 @@ pub struct ClosedSpec {
     pub rows: Vec<RowSpec>,
 }
 
-/// One field: name, structural type, host newtype name, and the `fresh`
-/// mark. [`ValueType`] is the one structural-type vocabulary — `bool`,
-/// `u64`, `i64`, `str` ([`ValueType::String`]), `bytes<N>`
+/// One field: name, structural type, and host newtype name. [`ValueType`]
+/// is the one structural-type vocabulary — `bool`, `u64`, `i64`, `f64`,
+/// `id128`, `str` ([`ValueType::String`]), `bytes<N>`
 /// ([`ValueType::FixedBytes`]), and the interval family
 /// ([`ValueType::Interval`] / [`ValueType::FixedInterval`]) — so the spec can
-/// state every type the grammar can.
+/// state every type the grammar can. There is no `fresh` mark: the
+/// database issues no identity, and key laws are declared statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldSpec {
     pub name: Box<str>,
     pub value_type: ValueType,
 
     pub newtype: Option<Box<str>>,
-
-    pub fresh: bool,
 }
 
 /// One ground axiom of a closed relation: the handle plus one literal per
@@ -139,14 +138,13 @@ pub enum BoundSpec {
     Duration(Box<str>),
 }
 
-/// A capacity statement's window as spelled — the macro's surviving
-/// spellings, each otherwise unrepresentable: `{n}` exact (`{0}` the
-/// exclusion), `{lo..hi}` with lo < hi (hi may be a dependent
-/// [`BoundSpec`]), `{lo..*}` floors (unit instance: lo ≥ 2), `{0..hi}`
-/// ceilings. The banned spellings are representable here (a wire
-/// crossing carries what it carries) and rejected by
-/// [`SchemaSpec::descriptor`] with the canonical form named — the same
-/// per-aggregate ban table the macro enforces at expansion (a ban is
+/// A capacity statement's window as spelled: `{n}` exact, `{lo..hi}`
+/// (hi may be a dependent [`BoundSpec`]), `{lo..*}` floors. Harmless
+/// equivalent spellings normalize to one canonical `(lo, hi)` law —
+/// `{n..n}` is the exact window, `{0..0}` the exclusion, and unit floors
+/// (`{1..*}` existence, `{N..*}` at-least-N) are ordinary grouped-measure
+/// windows. There is no ban table: genuinely different semantics
+/// (inverted literal bounds, dependent floors, path weights) still refuse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapacityWindowSpec {
     Exact(BoundSpec),
@@ -297,33 +295,8 @@ pub enum SpecIssue {
         hi: u64,
     },
 
-    CapacityExactRespelled {
-        statement: usize,
-        count: u64,
-    },
-
-    CapacityExclusionRespelled {
-        statement: usize,
-    },
-
-    /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
-    CapacityVacuous {
-        statement: usize,
-    },
-
-    /// 2026-07-24): `<=[w]{1..*}` — "positive total" — is a different,
-    CapacityContainmentRespelled {
-        statement: usize,
-    },
-
     /// are hi-slot only (ruled 2026-07-24, C6): a dependent floor has no
     CapacityDependentFloor {
-        statement: usize,
-    },
-
-    /// Unit floors are refused whole (K16): a bare count floor `{N..*}`
-    /// has no user; floors are legal only on weighted measures.
-    CapacityUnitFloor {
         statement: usize,
     },
 
@@ -425,36 +398,11 @@ impl std::fmt::Display for SpecIssue {
                  measure satisfies it; bounds are `{{lo..hi}}` with lo < hi (an exact \
                  measure is `{{n}}`)"
             ),
-            Self::CapacityExactRespelled { statement, count } => write!(
-                f,
-                "statement {statement}: `{{{count}..{count}}}` — an exact measure is \
-                 written `{{{count}}}`"
-            ),
-            Self::CapacityExclusionRespelled { statement } => write!(
-                f,
-                "statement {statement}: `{{0..0}}` — the exclusion is written `{{0}}`"
-            ),
-            Self::CapacityVacuous { statement } => write!(
-                f,
-                "statement {statement}: the `{{0..*}}` window is vacuous — it provably \
-                 says nothing; delete the statement"
-            ),
-            Self::CapacityContainmentRespelled { statement } => write!(
-                f,
-                "statement {statement}: unit `{{1..*}}` says only what the bare \
-                 containment says — drop the annotation and write the containment"
-            ),
             Self::CapacityDependentFloor { statement } => write!(
                 f,
                 "statement {statement}: a dependent bound in the floor slot — \
                  dependent bounds are hi-slot only (ruled 2026-07-24, C6): a \
                  dependent floor has no use case; write a literal floor"
-            ),
-            Self::CapacityUnitFloor { statement } => write!(
-                f,
-                "statement {statement}: `{{N..*}}` on the unit instance — a \
-                 bare count floor is refused; weigh the source (`<=[w]{{N..*}}` \
-                 stays legal) or drop the bound"
             ),
             Self::WeightPathRefused { statement, path } => write!(
                 f,
@@ -771,10 +719,18 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
+    /// Lowers a spelled window to the one canonical `(lo, hi)` law.
+    /// Harmless equivalent spellings normalize here without an issue:
+    /// `{n..n}` is the exact window `{n}`, `{0..0}` the exclusion, and
+    /// floors (including the unit existence window `{1..*}` and the
+    /// vacuous `{0..*}`) are ordinary grouped-measure windows — the
+    /// `{0..*}` acceptance as a trivially satisfied law preserving its
+    /// authored statement attribution is a confirmed P00 decision, not a
+    /// provisional lenience. Genuinely different semantics still refuse:
+    /// inverted literal bounds and dependent bounds in the floor slot.
     fn capacity_window(
         &mut self,
         statement: usize,
-        unit: bool,
         target_rel: Option<usize>,
         window: &CapacityWindowSpec,
     ) -> (u64, Option<Bound>) {
@@ -802,37 +758,11 @@ impl<'spec> Resolver<'spec> {
                             .push(SpecIssue::CapacityInverted { statement, lo, hi });
                         (lo, None)
                     }
-                    Some(0) if lo == 0 => {
-                        self.issues
-                            .push(SpecIssue::CapacityExclusionRespelled { statement });
-                        (0, Some(Bound::Lit(0)))
-                    }
-                    Some(hi) if lo == hi => {
-                        self.issues.push(SpecIssue::CapacityExactRespelled {
-                            statement,
-                            count: lo,
-                        });
-                        (lo, Some(Bound::Lit(hi)))
-                    }
                     Some(hi) => (lo, Some(Bound::Lit(hi))),
-
                     None => (lo, Some(self.bound(statement, target_rel, hi))),
                 }
             }
             CapacityWindowSpec::Floor(bound) => match lit(self, bound, true) {
-                Some(0) => {
-                    self.issues.push(SpecIssue::CapacityVacuous { statement });
-                    (0, None)
-                }
-                Some(1) if unit => {
-                    self.issues
-                        .push(SpecIssue::CapacityContainmentRespelled { statement });
-                    (1, None)
-                }
-                Some(lo) if unit => {
-                    self.issues.push(SpecIssue::CapacityUnitFloor { statement });
-                    (lo, None)
-                }
                 Some(lo) => (lo, None),
                 None => (0, None),
             },
@@ -901,11 +831,6 @@ impl SchemaSpec {
                     .map(|field| FieldDescriptor {
                         name: field.name.clone(),
                         value_type: field.value_type,
-                        generation: if field.fresh {
-                            Generation::Fresh
-                        } else {
-                            Generation::None
-                        },
                     })
                     .collect(),
                 extension: relation.closed.as_ref().map(|closed| {
@@ -1011,10 +936,8 @@ impl SchemaSpec {
                     let source_rel = position_of(&source.relation);
                     let target_rel = position_of(&target.relation);
 
-                    // placeholder must not widen the ban table).
-                    let unit = matches!(weight, WeightSpec::Unit);
                     let weight = resolver.weight(index, source_rel, weight);
-                    let (lo, hi) = resolver.capacity_window(index, unit, target_rel, window);
+                    let (lo, hi) = resolver.capacity_window(index, target_rel, window);
                     let source = resolver.side(index, StatementSide::Source, source);
                     let target = resolver.side(index, StatementSide::Target, target);
                     statements.push(StatementDescriptor::Capacity {

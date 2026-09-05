@@ -1,6 +1,5 @@
 use crate::storemode::StoreMode;
 
-use super::engines;
 use super::ops;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,8 +7,6 @@ pub enum SqliteLaneKind {
     Bare,
 
     Maint,
-
-    Nosync,
 }
 
 impl SqliteLaneKind {
@@ -18,15 +15,6 @@ impl SqliteLaneKind {
         match self {
             Self::Bare => "sqlite-bare",
             Self::Maint => "sqlite-maint",
-            Self::Nosync => "sqlite-nosync",
-        }
-    }
-
-    #[must_use]
-    pub fn sync(self) -> engines::SqliteSync {
-        match self {
-            Self::Bare | Self::Maint => engines::SqliteSync::Full,
-            Self::Nosync => engines::SqliteSync::Nosync,
         }
     }
 
@@ -40,7 +28,6 @@ impl SqliteLaneKind {
 pub fn ours_label(mode: StoreMode) -> &'static str {
     match mode {
         StoreMode::Durable => "ours-durable",
-        StoreMode::Nosync => "ours-ephemeral",
     }
 }
 
@@ -63,12 +50,6 @@ pub fn all() -> &'static [RunSpec] {
             mix: ops::STEADY,
             ours: StoreMode::Durable,
             sqlite: &[SqliteLaneKind::Bare, SqliteLaneKind::Maint],
-        },
-        RunSpec {
-            name: "nosync",
-            mix: ops::STEADY,
-            ours: StoreMode::Nosync,
-            sqlite: &[SqliteLaneKind::Nosync],
         },
         RunSpec {
             name: "delete-heavy",

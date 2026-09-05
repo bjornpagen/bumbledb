@@ -8,39 +8,87 @@ fn float_sum_mean_share_one_exact_lane_and_preserve_compact_integer_state() {
     use bumbledb_theory::F64;
     assert!(std::mem::size_of::<Acc>() <= 32);
     let finds = [
-        FindSpec::Agg(AggSpec::Float { op: FoldOp::Sum, slot: 1 }),
-        FindSpec::Agg(AggSpec::Float { op: FoldOp::Mean, slot: 1 }),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Sum,
+            slot: 1,
+        }),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Mean,
+            slot: 1,
+        }),
         FindSpec::Agg(AggSpec::Count),
     ];
-    let mut sink = AggregateSink::new(finds, 2);
+    let mut sink = AggregateSink::new(&finds, 2);
     let bindings = Bindings::new(2);
-    let keys = [0, F64::from(1e16).to_order_key(), 1, F64::from(1.0).to_order_key(),
-        2, F64::from(-1e16).to_order_key(), 3, F64::from(99.0).to_order_key()];
+    let keys = [
+        0,
+        F64::from(1e16).to_order_key(),
+        1,
+        F64::from(1.0).to_order_key(),
+        2,
+        F64::from(-1e16).to_order_key(),
+        3,
+        F64::from(99.0).to_order_key(),
+    ];
     for _ in 0..2 {
-        sink.emit_batch(&LeafBatch { keys: &keys, arity: 2, survivors: &[0, 2, 1],
-            key_slots: &[0, 1], bindings: &bindings });
+        sink.emit_batch(&LeafBatch {
+            keys: &keys,
+            arity: 2,
+            survivors: &[0, 2, 1],
+            key_slots: &[0, 1],
+            bindings: &bindings,
+        });
     }
-    assert_eq!(sink.float_accs.len(), 1, "one exact sum/count for two output operators");
-    assert_eq!(sink.into_answers().unwrap(), vec![vec![F64::from(1.0).to_order_key(),
-        F64::from_bits(0x3fd5_5555_5555_5555).to_order_key(), 3]]);
+    assert_eq!(
+        sink.float_accs.len(),
+        1,
+        "one exact sum/count for two output operators"
+    );
+    assert_eq!(
+        sink.into_answers().unwrap(),
+        vec![vec![
+            F64::from(1.0).to_order_key(),
+            F64::from_bits(0x3fd5_5555_5555_5555).to_order_key(),
+            3
+        ]]
+    );
 
-    let mut sink = AggregateSink::new(finds, 2);
+    let mut sink = AggregateSink::new(&finds, 2);
     let mut bindings = Bindings::new(2);
     bindings.set(1, F64::from(3.0).to_order_key());
-    sink.emit_batch(&LeafBatch { keys: &[0, 1, 2], arity: 1, survivors: &[0, 1, 2],
-        key_slots: &[0], bindings: &bindings });
-    assert_eq!(sink.into_answers().unwrap(), vec![vec![F64::from(9.0).to_order_key(),
-        F64::from(3.0).to_order_key(), 3]]);
+    sink.emit_batch(&LeafBatch {
+        keys: &[0, 1, 2],
+        arity: 1,
+        survivors: &[0, 1, 2],
+        key_slots: &[0],
+        bindings: &bindings,
+    });
+    assert_eq!(
+        sink.into_answers().unwrap(),
+        vec![vec![
+            F64::from(9.0).to_order_key(),
+            F64::from(3.0).to_order_key(),
+            3
+        ]]
+    );
 }
 
 #[test]
 fn written_union_does_not_share_float_inputs_that_alias_in_only_one_rule() {
     use crate::exec::run::{Bindings, Sink as _};
     use bumbledb_theory::F64;
-    let finds = |mean_slot| [
-        FindSpec::Agg(AggSpec::Float { op: FoldOp::Sum, slot: 0 }),
-        FindSpec::Agg(AggSpec::Float { op: FoldOp::Mean, slot: mean_slot }),
-    ];
+    let finds = |mean_slot| {
+        [
+            FindSpec::Agg(AggSpec::Float {
+                op: FoldOp::Sum,
+                slot: 0,
+            }),
+            FindSpec::Agg(AggSpec::Float {
+                op: FoldOp::Mean,
+                slot: mean_slot,
+            }),
+        ]
+    };
     let mut sink = AggregateSink::for_union(&finds(0), 2, 0);
     let mut bindings = Bindings::new(2);
     bindings.set(0, F64::from(1.0).to_order_key());
@@ -51,8 +99,13 @@ fn written_union_does_not_share_float_inputs_that_alias_in_only_one_rule() {
     bindings.set(1, F64::from(20.0).to_order_key());
     sink.emit(&bindings);
     assert_eq!(sink.float_accs.len(), 2);
-    assert_eq!(sink.into_answers().unwrap(), vec![vec![F64::from(3.0).to_order_key(),
-        F64::from(10.5).to_order_key()]]);
+    assert_eq!(
+        sink.into_answers().unwrap(),
+        vec![vec![
+            F64::from(3.0).to_order_key(),
+            F64::from(10.5).to_order_key()
+        ]]
+    );
 }
 
 #[test]
@@ -60,10 +113,16 @@ fn cardinality_failure_precedes_finalization_and_reset_clears_the_failure() {
     use crate::exec::run::{Bindings, Sink as _};
     use bumbledb_theory::F64;
     for value in [F64::ZERO, F64::NAN, F64::INFINITY, F64::NEG_INFINITY] {
-        let mut sink = AggregateSink::new([
-            FindSpec::Agg(AggSpec::Float { op: FoldOp::Sum, slot: 0 }),
-            FindSpec::Agg(AggSpec::Count),
-        ], 2);
+        let mut sink = AggregateSink::new(
+            [
+                FindSpec::Agg(AggSpec::Float {
+                    op: FoldOp::Sum,
+                    slot: 0,
+                }),
+                FindSpec::Agg(AggSpec::Count),
+            ],
+            2,
+        );
         let mut bindings = Bindings::new(2);
         bindings.set(0, value.to_order_key());
         sink.emit(&bindings);
@@ -71,18 +130,25 @@ fn cardinality_failure_precedes_finalization_and_reset_clears_the_failure() {
         bindings.set(1, 1);
         sink.emit(&bindings);
         let mut emitted = 0;
-        assert_eq!(sink.finalize_into(&mut Vec::new(), |_| { emitted += 1; Ok(()) }),
-            Err(Error::Overflow(crate::error::OverflowKind::Cardinality)));
+        assert_eq!(
+            sink.finalize_into(&mut Vec::new(), |_| {
+                emitted += 1;
+                Ok(())
+            }),
+            Err(Error::Overflow(crate::error::OverflowKind::Cardinality))
+        );
         assert_eq!(emitted, 0);
         sink.reset();
         sink.emit(&bindings);
-        assert_eq!(sink.into_answers().unwrap(), vec![vec![value.to_order_key(), 1]]);
+        assert_eq!(
+            sink.into_answers().unwrap(),
+            vec![vec![value.to_order_key(), 1]]
+        );
     }
 }
 
 #[test]
 fn constant_group_batches_fold_once_per_run() {
-    let dir = TempDir::new("sink-constant-group");
     let schema = schema();
 
     let mut postings = Vec::new();
@@ -93,7 +159,7 @@ fn constant_group_batches_fold_once_per_run() {
             id += 1;
         }
     }
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -157,7 +223,6 @@ fn constant_group_batches_fold_once_per_run() {
 /// fold, identically at every batch size, with the group probe still hoisted.
 #[test]
 fn dedup_constant_group_collapses_duplicates_before_folding() {
-    let dir = TempDir::new("sink-dedup-constant");
     let schema = schema();
 
     let postings = vec![
@@ -168,7 +233,7 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
         (5, 2, 5),
         (6, 2, 5),
     ];
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
@@ -246,7 +311,6 @@ fn pack_finalize_orders_claims_by_start_word_alone() {
 
 #[test]
 fn count_only_dedup_folds_without_survivor_collection() {
-    let dir = TempDir::new("sink-dedup-count-only");
     let schema = schema();
 
     let postings = vec![
@@ -257,7 +321,7 @@ fn count_only_dedup_folds_without_survivor_collection() {
         (5, 2, 5),
         (6, 2, 5),
     ];
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
@@ -295,7 +359,6 @@ fn count_only_dedup_folds_without_survivor_collection() {
 
 #[test]
 fn constant_over_slot_folds_value_times_count() {
-    let dir = TempDir::new("sink-constant-over");
     let schema = schema();
 
     let big = u64::MAX / 2;
@@ -306,7 +369,7 @@ fn constant_over_slot_folds_value_times_count() {
     for id in 5..8u64 {
         postings.push((id, 7u64, 1i64));
     }
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -339,8 +402,7 @@ fn constant_over_slot_folds_value_times_count() {
         );
     }
     // Value parity in range: drop the big account.
-    let dir2 = TempDir::new("sink-constant-over-ok");
-    let views = views_of(&dir2, &schema, &postings[5..], &[]);
+    let views = views_of(&schema, &postings[5..], &[]);
     for distinct in [true, false] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
@@ -361,7 +423,6 @@ fn constant_over_slot_folds_value_times_count() {
 
 #[test]
 fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
-    let dir = TempDir::new("sink-batch-boundary");
     let schema = schema();
 
     let postings = vec![
@@ -372,7 +433,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
         (5, 8, i64::MAX),
         (6, 8, 1),
     ];
-    let views = views_of(&dir, &schema, &postings, &[]);
+    let views = views_of(&schema, &postings, &[]);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -410,8 +471,7 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
         );
     }
 
-    let dir2 = TempDir::new("sink-batch-boundary-ok");
-    let views = views_of(&dir2, &schema, &postings[..4], &[]);
+    let views = views_of(&schema, &postings[..4], &[]);
     let mut reference: Option<Vec<Vec<u64>>> = None;
     for batch in [1usize, 2, 7, 128] {
         let mut colts = colts_for(&plan, &views);
@@ -442,7 +502,6 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
 
 #[test]
 fn interval_group_keys_span_both_words() {
-    let dir = TempDir::new("sink-interval-group");
     let schema = schema();
 
     let rows = vec![
@@ -450,7 +509,7 @@ fn interval_group_keys_span_both_words() {
         (2, 11, (5, 9)),
         (3, 12, (5, 7)),
     ];
-    let views = payroll_views_of(&dir, &schema, &rows);
+    let views = payroll_views_of(&schema, &rows);
     let normalized = normalized(
         &schema,
         vec![occurrence(0, PAYROLL, &[(0, 0), (1, 1), (2, 2)])],
@@ -583,6 +642,219 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
         vec![vec![7, 200]],
         "Sum folds the written rule's distinct full bindings: 100 + 100"
     );
+}
+
+/// G05 (grouped-reduction half): the group tables/accumulator banks move
+/// onto the charged scratch relation at forced transition points — before
+/// the first group (zero allowance creates the scratch tier ahead of row
+/// one), during the stream (a tiny allowance flushes mid-groups) and after
+/// the first group (an allowance crossed only once several groups exist).
+/// Every regime produces identical answer words, INCLUDING exact float
+/// bits (`lean/Bumbledb/Float64/Sum.lean` merge laws license the
+/// partition merges; the limb bank round-trips bit-for-bit).
+#[test]
+fn group_state_spill_matches_resident_bits_before_during_and_after_first_group() {
+    use crate::exec::run::{Bindings, Sink as _};
+    use bumbledb_theory::F64;
+
+    let finds = vec![
+        FindSpec::Var { slot: 0, width: 1 },
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Sum,
+            slot: 1,
+        }),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Mean,
+            slot: 1,
+        }),
+        FindSpec::Agg(AggSpec::Fold {
+            op: FoldOp::Sum,
+            slot: 2,
+            width: 1,
+            signed: true,
+        }),
+        FindSpec::Agg(AggSpec::Count),
+        FindSpec::Agg(AggSpec::Fold {
+            op: FoldOp::Min,
+            slot: 2,
+            width: 1,
+            signed: true,
+        }),
+    ];
+    let feed = |sink: &mut AggregateSink| {
+        let mut bindings = Bindings::new(3);
+        // Catastrophic-cancellation floats across interleaved groups, so
+        // flush partitions cut through every group repeatedly.
+        for i in 0..96u64 {
+            let group = i % 5;
+            bindings.reset();
+            bindings.set(0, group);
+            bindings.set(
+                1,
+                F64::from(
+                    if i.is_multiple_of(2) { 1e16 } else { -1e16 }
+                        + f64::from(u32::try_from(i).expect("96 rows")) * 0.25,
+                )
+                .to_order_key(),
+            );
+            bindings.set(2, i64_to_word(i.cast_signed() - 48));
+            sink.emit(&bindings);
+        }
+    };
+    let work = crate::api::prepared::source::UNBOUNDED_POLICY
+        .start()
+        .expect("unbounded ledger");
+    let mut resident = AggregateSink::new(finds.clone(), 3);
+    feed(&mut resident);
+    assert!(!resident.group_state_spilled());
+    let mut expected = resident.into_answers().expect("resident");
+    expected.sort_unstable();
+    assert_eq!(expected.len(), 5, "five groups");
+
+    // Zero / tiny / late allowances: before, during, after the first group.
+    for ram_bytes in [0usize, 700, 2000] {
+        let mut spilled = AggregateSink::new(finds.clone(), 3);
+        spilled.begin(Some(crate::exec::sink::SinkBudget {
+            work: work.clone(),
+            ram_bytes,
+        }));
+        feed(&mut spilled);
+        assert!(
+            spilled.group_state_spilled(),
+            "allowance {ram_bytes} forces the transition"
+        );
+        let mut got = spilled.into_answers().expect("spilled");
+        got.sort_unstable();
+        assert_eq!(got, expected, "allowance {ram_bytes}: exact word parity");
+    }
+
+    // A budget that is never crossed stays resident — the spill is a
+    // pressure response, not a mode.
+    let mut roomy = AggregateSink::new(finds, 3);
+    roomy.begin(Some(crate::exec::sink::SinkBudget {
+        work,
+        ram_bytes: 1 << 20,
+    }));
+    feed(&mut roomy);
+    assert!(!roomy.group_state_spilled());
+    let mut got = roomy.into_answers().expect("roomy");
+    got.sort_unstable();
+    assert_eq!(got, expected);
+}
+
+/// The spilled Pack drain streams maximal segments from the scratch map's
+/// key order — same segments as the resident sweep, claims interleaved
+/// across groups and out of start order.
+#[test]
+fn pack_group_spill_streams_the_same_maximal_segments() {
+    use crate::exec::run::{Bindings, Sink as _};
+
+    let finds = vec![
+        FindSpec::Var { slot: 0, width: 1 },
+        FindSpec::Pack { slot: 1 },
+    ];
+    let claims: &[(u64, u64, u64)] = &[
+        (1, 30, 40),
+        (2, 10, u64::MAX),
+        (1, 10, 20),
+        (2, 1, 2),
+        (1, 10, 15),
+        (1, 5, 12),
+        (1, 30, 40), // duplicate claim from a distinct binding
+        (3, 7, 8),
+    ];
+    let feed = |sink: &mut AggregateSink| {
+        let mut bindings = Bindings::new(4);
+        for (i, (group, start, end)) in claims.iter().enumerate() {
+            bindings.reset();
+            // Slot 3 makes each binding distinct, so the duplicate claim
+            // survives dedup and exercises the scratch set's exact
+            // insert-if-absent.
+            bindings.set(0, *group);
+            bindings.set(1, *start);
+            bindings.set(2, *end);
+            bindings.set(3, i as u64);
+            sink.emit(&bindings);
+        }
+    };
+    // Pack claims sit in slots (1, 2): slot 1 carries start, slot 1+1 end.
+    let mut resident = AggregateSink::new(finds.clone(), 4);
+    feed(&mut resident);
+    let mut expected = resident.into_answers().expect("resident");
+    expected.sort_unstable();
+    assert_eq!(
+        expected,
+        vec![
+            vec![1, 5, 20],
+            vec![1, 30, 40],
+            vec![2, 1, 2],
+            vec![2, 10, u64::MAX],
+            vec![3, 7, 8],
+        ]
+    );
+
+    let work = crate::api::prepared::source::UNBOUNDED_POLICY
+        .start()
+        .expect("unbounded ledger");
+    for ram_bytes in [0usize, 96] {
+        let mut spilled = AggregateSink::new(finds.clone(), 4);
+        spilled.begin(Some(crate::exec::sink::SinkBudget {
+            work: work.clone(),
+            ram_bytes,
+        }));
+        feed(&mut spilled);
+        assert!(spilled.group_state_spilled(), "allowance {ram_bytes}");
+        let mut got = spilled.into_answers().expect("spilled");
+        got.sort_unstable();
+        assert_eq!(got, expected, "allowance {ram_bytes}");
+    }
+}
+
+/// Cardinality stays total across spilled partition merges: a merged group
+/// count past `u64::MAX` is the same typed overflow the resident fold
+/// raises, and no group publishes (Q-ATOMIC).
+#[test]
+fn spilled_partition_merge_refuses_cardinality_overflow() {
+    use crate::exec::run::{Bindings, Sink as _};
+
+    let finds = vec![
+        FindSpec::Var { slot: 0, width: 1 },
+        FindSpec::Agg(AggSpec::Count),
+    ];
+    let work = crate::api::prepared::source::UNBOUNDED_POLICY
+        .start()
+        .expect("unbounded ledger");
+    let mut sink = AggregateSink::new(finds, 2);
+    sink.begin(Some(crate::exec::sink::SinkBudget { work, ram_bytes: 0 }));
+    let mut bindings = Bindings::new(2);
+    bindings.set(0, 7);
+    bindings.set(1, 1);
+    sink.emit(&bindings); // group 7 folds in RAM
+    bindings.set(1, 2);
+    sink.emit(&bindings); // entry flush moves count 1 to scratch; folds again
+    assert!(sink.group_state_spilled());
+    // Synthetic boundary (no impossible allocation): the next flush merges
+    // RAM count u64::MAX into the spilled count 1.
+    sink.group_counts[0] = u64::MAX;
+    bindings.set(1, 3);
+    sink.emit(&bindings);
+    let mut emitted = 0;
+    let refused = sink.finalize_into(&mut Vec::new(), |_| {
+        emitted += 1;
+        Ok(())
+    });
+    assert_eq!(
+        refused,
+        Err(Error::Overflow(crate::error::OverflowKind::Cardinality))
+    );
+    assert_eq!(emitted, 0, "no partial group published");
+    // Failure → success reuse: reset disposes the scratch tier.
+    sink.reset();
+    assert!(!sink.group_state_spilled());
+    bindings.set(0, 9);
+    bindings.set(1, 1);
+    sink.emit(&bindings);
+    assert_eq!(sink.into_answers().unwrap(), vec![vec![9, 1]]);
 }
 
 #[test]

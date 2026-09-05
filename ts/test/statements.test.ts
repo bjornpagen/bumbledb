@@ -13,20 +13,22 @@ import { capacity, contained, key, mirrors, renderStatement } from "#statements.
 
 function buildLedger() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
-	const Holder = relation("Holder", { id: u64.fresh, name: str })
+	const Holder = relation("Holder", { id: u64, name: str })
 	const Account = relation("Account", {
-		id: u64.fresh,
+		id: u64,
 		holder: u64,
 		kind: Kind.id,
 		active: interval(i64)
 	})
 	const SavingsTerms = relation("SavingsTerms", { account: u64 })
 	const statements = [
+		key(Holder, ["id"]),
+		key(Account, ["id"]),
 		key(SavingsTerms, ["account"]),
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Account, "kind"), on(Kind, "id")),
 		mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account")),
-		capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
+		capacity(on(Holder, "id"), { from: on(Account, "holder"), within: within(0n, 3n) })
 	]
 	const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms }, statements)
 	return { Kind, Holder, Account, SavingsTerms, statements, Ledger }
@@ -53,18 +55,18 @@ function buildMastery() {
 			DirectPass: { mastered: true, score: 2n }
 		}
 	)
-	const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
+	const Certificate = relation("Certificate", { id: u64, grade: Grade.id })
 	const psiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
-	const psiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade"))
+	const psiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), { from: on(Certificate, "grade"), within: within(0n, 1n) })
 	const Mastery = schema("Mastery", { Grade, Certificate }, [psiContainment, psiCapacity])
 	return { Grade, Certificate, psiContainment, psiCapacity, Mastery }
 }
 
 function buildRacks() {
-	const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
-	const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64 })
-	const Room = relation("Room", { id: u64.fresh, span: interval(i64) })
-	const Booking = relation("Booking", { id: u64.fresh, room: u64, booked: interval(i64) })
+	const Pool = relation("Pool", { id: u64, supply: u64 })
+	const Device = relation("Device", { id: u64, pool: u64, watts: u64 })
+	const Room = relation("Room", { id: u64, span: interval(i64) })
+	const Booking = relation("Booking", { id: u64, room: u64, booked: interval(i64) })
 	return { Pool, Device, Room, Booking }
 }
 
@@ -103,33 +105,34 @@ describe("the Ledger example", function describeLedger() {
 				{
 					name: "Holder",
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: "Holder.id", fresh: true },
-						{ name: "name", valueType: { kind: "string" }, newtype: undefined, fresh: false }
+						{ name: "id", valueType: { kind: "u64" }, newtype: "Holder.id" },
+						{ name: "name", valueType: { kind: "string" }, newtype: undefined }
 					],
 					closed: undefined
 				},
 				{
 					name: "Account",
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: "Account.id", fresh: true },
-						{ name: "holder", valueType: { kind: "u64" }, newtype: "Holder.id", fresh: false },
-						{ name: "kind", valueType: { kind: "u64" }, newtype: "Kind.id", fresh: false },
+						{ name: "id", valueType: { kind: "u64" }, newtype: "Account.id" },
+						{ name: "holder", valueType: { kind: "u64" }, newtype: "Holder.id" },
+						{ name: "kind", valueType: { kind: "u64" }, newtype: "Kind.id" },
 						{
 							name: "active",
 							valueType: { kind: "interval", element: "i64", width: undefined },
-							newtype: undefined,
-							fresh: false
+							newtype: undefined
 						}
 					],
 					closed: undefined
 				},
 				{
 					name: "SavingsTerms",
-					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: "Account.id", fresh: false }],
+					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: "Account.id" }],
 					closed: undefined
 				}
 			],
 			statements: [
+				{ kind: "fd", relation: "Holder", projection: ["id"] },
+				{ kind: "fd", relation: "Account", projection: ["id"] },
 				{ kind: "fd", relation: "SavingsTerms", projection: ["account"] },
 				{
 					kind: "containment",
@@ -187,7 +190,7 @@ describe("the Ledger example", function describeLedger() {
 			relations: [
 				{
 					name: "Sev",
-					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level", fresh: false }],
+					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level" }],
 					closed: {
 						newtype: "Sev.id",
 						rows: [
@@ -199,8 +202,8 @@ describe("the Ledger example", function describeLedger() {
 				{
 					name: "Limit",
 					fields: [
-						{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level", fresh: false },
-						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
+						{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level" },
+						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined }
 					],
 					closed: undefined
 				}
@@ -252,27 +255,27 @@ describe("renderStatement", function describeRender() {
 		const { Holder, Account } = buildLedger()
 		const target = on(Holder, "id")
 		const source = on(Account, "holder")
-		assert.equal(renderStatement(capacity(target, within(1n), source)), "Holder(id) <={1} Account(holder)")
-		assert.equal(renderStatement(capacity(target, within(0n), source)), "Holder(id) <={0} Account(holder)")
-		assert.equal(renderStatement(capacity(target, within(1n, 3n), source)), "Holder(id) <={1..3} Account(holder)")
-		assert.equal(renderStatement(capacity(target, within(0n, 4n), source)), "Holder(id) <={0..4} Account(holder)")
+		assert.equal(renderStatement(capacity(target, { from: source, within: within(1n) })), "Holder(id) <={1} Account(holder)")
+		assert.equal(renderStatement(capacity(target, { from: source, within: within(0n) })), "Holder(id) <={0} Account(holder)")
+		assert.equal(renderStatement(capacity(target, { from: source, within: within(1n, 3n) })), "Holder(id) <={1..3} Account(holder)")
+		assert.equal(renderStatement(capacity(target, { from: source, within: within(0n, 4n) })), "Holder(id) <={0..4} Account(holder)")
 
 		const { Pool, Device, Room, Booking } = buildRacks()
 		assert.equal(
-			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, 20n), on(Device, "pool"))),
+			renderStatement(capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, 20n) })),
 			"Pool(id) <=[watts]{0..20} Device(pool)"
 		)
 		assert.equal(
-			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))),
+			renderStatement(capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref("supply")) })),
 			"Pool(id) <=[watts]{0..supply} Device(pool)"
 		)
 		assert.equal(
-			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool"))),
+			renderStatement(capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(1n, "*") })),
 			"Pool(id) <=[watts]{1..*} Device(pool)"
 		)
 		assert.equal(
 			renderStatement(
-				capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room"))
+				capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, duration("span")) })
 			),
 			"Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)"
 		)
@@ -349,7 +352,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		}, /Sev\.id is a Sev reference but Limit\.cap is a bare column/)
 		assert.throws(function aliasCapacity() {
 			// @ts-expect-error — a capacity statement's grouping join holds the roster wall exactly as containment
-			capacity(on(Sev, "id"), within(0n, 1n), on(Limit, "cap"))
+			capacity(on(Sev, "id"), { from: on(Limit, "cap"), within: within(0n, 1n) })
 		}, /Limit\.cap is a bare column but Sev\.id is a Sev reference/)
 
 		const Alert = relation("Alert", { sev: Sev.id })
@@ -375,7 +378,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		}, /Slot\(room\) and Booking\(room, during\) project 1 vs 2 fields/)
 		assert.throws(function truncatedCapacity() {
 			// @ts-expect-error — a capacity statement's grouping join holds the arity wall exactly as containment
-			capacity(on(Slot, "room"), within(0n, 1n), on(Booking, ["room", "during"]))
+			capacity(on(Slot, "room"), { from: on(Booking, ["room", "during"]), within: within(0n, 1n) })
 		}, /Booking\(room, during\) and Slot\(room\) project 2 vs 1 fields/)
 
 		assert.equal(
@@ -386,26 +389,16 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 })
 
 function banTableIsUnwritable(): unknown[] {
-	const { Pool, Device, Room, Booking } = buildRacks()
+	const { Room, Booking } = buildRacks()
 	return [
 		// @ts-expect-error — capacity bounds are u64: a negative exact measure is out of domain
 		within(-1n),
-		// @ts-expect-error — `{0..0}` — the point window is written `{0}`: use within(0n)
-		within(0n, 0n),
-		// @ts-expect-error — `{n..n}` is the exact measure respelled: write within(n)
-		within(2n, 2n),
 		// @ts-expect-error — capacity bounds are u64: a negative bound is out of domain
 		within(-1n, 3n),
 		// @ts-expect-error — capacity bounds are u64: a negative ceiling is out of domain
 		within(1n, -3n),
-		// @ts-expect-error — `{0..*}` is vacuous: it provably says nothing, delete the statement
-		within(0n, "*"),
-		// @ts-expect-error — `{1..*}` on the UNIT instance says only what the bare containment says: write contained(source, target)
-		capacity(on(Pool, "id"), within(1n, "*"), on(Device, "pool")),
-		// @ts-expect-error — `{N..*}` on the UNIT instance: bare count floors are refused whole (K16); the weighted floor stays legal
-		capacity(on(Pool, "id"), within(2n, "*"), on(Device, "pool")),
 		// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the duration() bound is banned on the UNIT instance
-		capacity(on(Room, "id"), within(0n, duration("span")), on(Booking, "room")),
+		capacity(on(Room, "id"), { from: on(Booking, "room"), within: within(0n, duration("span")) }),
 		// @ts-expect-error — a path weight is refused: the vocabulary is closed at the row — pin the column
 		weigh("model.watts"),
 		// @ts-expect-error — a path bound is refused the same way: bounds name the target's own row
@@ -416,33 +409,53 @@ function banTableIsUnwritable(): unknown[] {
 }
 
 /**
+ * The spelling-ban tables are DELETED (C01, chapter 34): `{n..n}`, `{0..0}`,
+ * unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
+ * equivalent spellings that LOWER to the one canonical `(lo, hi)` law at
+ * the mint, preserving authored-statement attribution. Compiling AND the
+ * canonical render are the pins. Genuinely different semantics (negative,
+ * inverted, C18 dimension mixing) still refuse above.
+ */
+function equivalentSpellingsLowerToTheCanonicalLaw(): unknown[] {
+	const { Pool, Device } = buildRacks()
+	return [
+		within(0n, 0n),
+		within(2n, 2n),
+		within(0n, "*"),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), within: within(1n, "*") }),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), within: within(2n, "*") }),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), within: within(0n, "*") })
+	]
+}
+
+/**
  * The weight-sensitive split's POSITIVE probe (design § 6): `<=[w]{1..*}`
  * COMPILES — on a weighted statement "positive total" admits zero-weight
- * rows and is a different, weaker law than containment, so the unit-only
- * ban must not fire here. Exported-but-uncalled; its compiling IS the pin.
+ * rows and is a different, weaker law than containment.
+ * Exported-but-uncalled; its compiling IS the pin.
  */
 function weightedFloorOneCompiles(): unknown {
 	const { Pool, Device } = buildRacks()
-	return capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool"))
+	return capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(1n, "*") })
 }
 
 function capacityWallsAreTyped(): unknown[] {
 	const { Pool, Device, Room, Booking } = buildRacks()
 	return [
-		capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool")),
-		capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room")),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref("supply")) }),
+		capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, duration("span")) }),
 		// @ts-expect-error — the weight names a field of the SOURCE's own row: Device has no field `nope`
-		capacity(on(Pool, "id"), weigh("nope"), within(0n, 3n), on(Device, "pool")),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("nope"), within: within(0n, 3n) }),
 		// @ts-expect-error — a weight is u64-encoded: an interval field needs the Duration(...) spelling
-		capacity(on(Room, "id"), weigh("span"), within(0n, 3n), on(Room, "id")),
+		capacity(on(Room, "id"), { from: on(Room, "id"), weight: weigh("span"), within: within(0n, 3n) }),
 		// @ts-expect-error — weigh(duration(...)) weighs an interval field: pool is a u64
-		capacity(on(Pool, "id"), weigh(duration("pool")), within(0n, 3n), on(Device, "pool")),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh(duration("pool")), within: within(0n, 3n) }),
 		// @ts-expect-error — a dependent bound names a field of the TARGET's own row: Pool has no field `nope`
-		capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("nope")), on(Device, "pool")),
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref("nope")) }),
 		// @ts-expect-error — ref() reads a u64 field of the TARGET row: span is an interval (write duration("span"))
-		capacity(on(Room, "id"), weigh(duration("booked")), within(0n, ref("span")), on(Booking, "room")),
+		capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, ref("span")) }),
 		// @ts-expect-error — duration() bounds by an interval field's measure: supply is a u64 (write ref("supply"))
-		capacity(on(Pool, "id"), weigh("watts"), within(0n, duration("supply")), on(Device, "pool"))
+		capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, duration("supply")) })
 	]
 }
 
@@ -455,16 +468,22 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		return name
 	}
 
-	test("a computed banned bound is a construction error naming the canonical form", function probeComputedBans() {
-		assert.throws(function computedVacuous() {
-			within(computed(0n), "*")
-		}, /vacuous — it provably says nothing/)
-		assert.throws(function computedExactRange() {
-			within(computed(2n), computed(2n))
-		}, /an exact measure is written `\{2\}`: use within\(2n\)/)
-		assert.throws(function computedZeroRange() {
-			within(computed(0n), computed(0n))
-		}, /the point window is written `\{0\}`: use within\(0n\)/)
+	test("computed equivalent spellings lower to the canonical law; only negatives refuse", function probeComputedBans() {
+		// `{0..*}` (vacuous) and `{n..n}`/`{0..0}` are ACCEPTED canonical
+		// spellings now — normalization preserves the authored statement
+		// instead of policing the style (C01, chapter 34).
+		assert.deepEqual(within(computed(0n), "*").window, {
+			kind: "floor",
+			lo: { kind: "lit", value: 0n }
+		})
+		assert.deepEqual(within(computed(2n), computed(2n)).window, {
+			kind: "exact",
+			n: { kind: "lit", value: 2n }
+		})
+		assert.deepEqual(within(computed(0n), computed(0n)).window, {
+			kind: "exact",
+			n: { kind: "lit", value: 0n }
+		})
 		assert.throws(function computedNegative() {
 			within(computed(-1n))
 		}, /capacity bounds are u64/)
@@ -476,18 +495,20 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		}, /inverted — no measure satisfies it/)
 	})
 
-	test("the unit `{1..*}` ban fires at the capacity() call when the floor was computed", function probeComputedFloorOne() {
+	test("unit floors are accepted canonical laws now — the spelling police is deleted", function probeComputedFloorOne() {
 		const { Pool, Device } = buildRacks()
-		assert.throws(function computedUnitFloorOne() {
-			// @ts-expect-error — the type tier bans every unit floor (K16); the construction twin still discriminates lo=1
-			capacity(on(Pool, "id"), within(computed(1n), "*"), on(Device, "pool"))
-		}, /says only what the bare containment says/)
-		assert.throws(function computedUnitFloorTwo() {
-			// @ts-expect-error — same ban, general arm: a bare count floor is refused whole
-			capacity(on(Pool, "id"), within(computed(2n), "*"), on(Device, "pool"))
-		}, /bare count floor is refused/)
+		const unitFloorOne = capacity(on(Pool, "id"), {
+			from: on(Device, "pool"),
+			within: within(computed(1n), "*")
+		})
+		assert.equal(renderStatement(unitFloorOne), "Pool(id) <={1..*} Device(pool)")
+		const unitFloorTwo = capacity(on(Pool, "id"), {
+			from: on(Device, "pool"),
+			within: within(computed(2n), "*")
+		})
+		assert.equal(renderStatement(unitFloorTwo), "Pool(id) <={2..*} Device(pool)")
 
-		const weighted = capacity(on(Pool, "id"), weigh("watts"), within(computed(1n), "*"), on(Device, "pool"))
+		const weighted = capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(computed(1n), "*") })
 		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")
 	})
 
@@ -495,15 +516,10 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		const { Room, Booking } = buildRacks()
 		assert.throws(function unitDurationBound() {
 			// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the type tier's ban row, with the construction wall behind it
-			return capacity(on(Room, "id"), within(0n, duration("span")), on(Booking, "room"))
+			return capacity(on(Room, "id"), { from: on(Booking, "room"), within: within(0n, duration("span")) })
 		}, /mixes dimensions \(C18\) — weigh the source with weigh\(duration\(field\)\), or bound by a u64 field or literal/)
 
-		const weighted = capacity(
-			on(Room, "id"),
-			weigh(duration("booked")),
-			within(0n, duration("span")),
-			on(Booking, "room")
-		)
+		const weighted = capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, duration("span")) })
 		assert.equal(renderStatement(weighted), "Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)")
 	})
 
@@ -519,22 +535,22 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 	test("the weight and dependent-bound walls hold at construction for untyped callers", function probeCapacityRuntimeTwins() {
 		const { Pool, Device, Room, Booking } = buildRacks()
 		assert.throws(function weightOffRoster() {
-			capacity(on(Pool, "id"), weigh(computedName("nope")), within(0n, 3n), on(Device, "pool"))
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh(computedName("nope")), within: within(0n, 3n) })
 		}, /Device has no field nope — a weight names a field of the SOURCE's own row/)
 		assert.throws(function weightNotU64() {
-			capacity(on(Room, "id"), weigh(computedName("span")), within(0n, 3n), on(Room, "id"))
+			capacity(on(Room, "id"), { from: on(Room, "id"), weight: weigh(computedName("span")), within: within(0n, 3n) })
 		}, /Room\.span is interval, not u64 — a weight is u64-encoded/)
 		assert.throws(function durationWeightNotInterval() {
-			capacity(on(Pool, "id"), weigh(duration(computedName("pool"))), within(0n, 3n), on(Device, "pool"))
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh(duration(computedName("pool"))), within: within(0n, 3n) })
 		}, /Device\.pool is u64, not an interval — Duration\(\.\.\.\) weighs/)
 		assert.throws(function boundOffRoster() {
-			capacity(on(Pool, "id"), weigh("watts"), within(0n, ref(computedName("nope"))), on(Device, "pool"))
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, ref(computedName("nope"))) })
 		}, /Pool has no field nope — a dependent bound names a field of the TARGET's own row/)
 		assert.throws(function boundNotU64() {
-			capacity(on(Room, "id"), weigh(duration("booked")), within(0n, ref(computedName("span"))), on(Booking, "room"))
+			capacity(on(Room, "id"), { from: on(Booking, "room"), weight: weigh(duration("booked")), within: within(0n, ref(computedName("span"))) })
 		}, /Room\.span is interval, not u64 — a dependent bound reads a u64 field/)
 		assert.throws(function durationBoundNotInterval() {
-			capacity(on(Pool, "id"), weigh("watts"), within(0n, duration(computedName("supply"))), on(Device, "pool"))
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, duration(computedName("supply"))) })
 		}, /Pool\.supply is u64, not an interval — Duration\(\.\.\.\) bounds/)
 	})
 
@@ -543,12 +559,12 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		const forgedWindow = { window: { kind: "range", lo: { kind: "lit", value: 0n }, hi: { kind: "lit", value: 3n } } }
 		assert.throws(function forgedWindowRefused() {
 			// @ts-expect-error — a structural window literal is not an admitted CapacityWindow (the brand forecloses it)
-			capacity(on(Pool, "id"), forgedWindow, on(Device, "pool"))
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), within: forgedWindow })
 		}, /a capacity window is minted only by within\(\)/)
 		const forgedWeight = { weight: { kind: "field", field: "watts" } }
 		assert.throws(function forgedWeightRefused() {
 			// @ts-expect-error — a structural weight literal is not an admitted CapacityWeight (the brand forecloses it)
-			capacity(on(Pool, "id"), forgedWeight, within(0n, 3n), on(Device, "pool"))
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: forgedWeight, within: within(0n, 3n) })
 		}, /a capacity weight is minted only by weigh\(\)/)
 	})
 })
@@ -562,18 +578,25 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	})
 
 	test("a same-named but different relation value is rejected", function probeIdentity() {
-		const impostor = relation("Holder", { id: u64.fresh })
-		const declared = relation("Holder", { id: u64.fresh })
+		const impostor = relation("Holder", { id: u64 })
+		const declared = relation("Holder", { id: u64 })
 		assert.throws(function differentValue() {
 			schema("Broken", { Holder: declared }, [contained(on(impostor, "id"), on(declared, "id"))])
 		}, /different relation value named Holder/)
 	})
 
-	test("an explicit duplicate of the fresh-implied key is rejected (macro parity)", function probeImpliedDuplicate() {
+	test("declared id keys are ordinary statements now — the fresh-implied key is deleted (E-NO-RESERVE)", function probeDeclaredIdKey() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
-		assert.throws(function duplicateImplied() {
-			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [key(Account, ["id"])])
-		}, /Account\(id\) -> Account is redundant here .* rejected as a duplicate/)
+		// With no fresh mint there is no implied key to duplicate: an
+		// explicit `Account(id) -> Account` is the ONE way to key an id.
+		const keyed = schema("Keyed", { Kind, Holder, Account, SavingsTerms }, [key(Account, ["id"])])
+		assert.deepStrictEqual(lower(keyed).statements, [{ kind: "fd", relation: "Account", projection: ["id"] }])
+		// A closed relation's key stays engine-materialized; an explicit one
+		// is still the duplicate it always was.
+		assert.throws(function duplicateClosed() {
+			// @ts-expect-error — a closed relation is not a key() target; the construction wall agrees
+			key(Kind, ["id"])
+		}, /closedness already materializes/)
 	})
 
 	test("duplicate statements are rejected via their canonical rendering", function probeDuplicate() {
@@ -740,7 +763,7 @@ function facesArePairedStructurally(): unknown[] {
 		// @ts-expect-error — a mirrors bijection pairs structure exactly as containment (u64 vs interval)
 		mirrors(on(Account, "id"), on(Account, "active")),
 		// @ts-expect-error — a capacity statement's grouping join pairs structure exactly as containment (u64 vs interval)
-		capacity(on(Holder, "id"), within(0n, 3n), on(Account, "active")),
+		capacity(on(Holder, "id"), { from: on(Account, "active"), within: within(0n, 3n) }),
 		// @ts-expect-error — arity mismatch: positional pairing requires equally many fields
 		contained(on(Slot, ["room", "during"]), on(Booking, "room"))
 	]
@@ -799,7 +822,7 @@ function psiFacesArePairedStructurally(): unknown[] {
 	const { Grade, Certificate } = buildMastery()
 	return [
 		contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id")),
-		capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade")),
+		capacity(on(Grade.where({ mastered: true }), "id"), { from: on(Certificate, "grade"), within: within(0n, 1n) }),
 		contained(on(Grade.where({ mastered: true }), "score"), on(Certificate, "id")),
 		// @ts-expect-error — a ψ face's projected shapes still hold the wall: bool never pairs u64
 		contained(on(Grade.where({ score: 2n }), "mastered"), on(Certificate, "grade")),

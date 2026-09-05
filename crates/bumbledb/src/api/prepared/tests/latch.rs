@@ -29,21 +29,15 @@ fn amounts(out: &Answers) -> Vec<i64> {
 
 #[test]
 fn a_str_literal_latches_on_first_execution() {
-    let dir = TempDir::new("latch-hit");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &[(1, 7, "alice", 10), (2, 7, "bob", 20)]);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
+    let fix = postings(&[(1, 7, "alice", 10), (2, 7, "bob", 20)]);
+    let mut prepared = fix.prepare(&literal_query("alice")).expect("prepare");
     assert_eq!(prepared.latch.remaining(), 1, "counted at prepare");
 
     let mut out = Answers::new();
-    prepared
-        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
+    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert_eq!(amounts(&out), vec![10]);
-    assert_eq!(prepared.latch.remaining(), 0, "the hit latched");
+    assert_eq!(prepared.latch.remaining(), 0, "the latch is final");
     let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
         panic!("free join fixture");
     };
@@ -67,63 +61,53 @@ fn a_str_literal_latches_on_first_execution() {
     });
     assert!(!pending, "the template slot was rewritten in place");
 
-    prepared
-        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
+    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("re-execute");
     assert_eq!(amounts(&out), vec![10]);
 }
 
 #[test]
-fn a_miss_stays_live_and_latches_after_interning() {
-    let dir = TempDir::new("latch-miss");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &[(1, 7, "alice", 10)]);
-    let cache = ImageCache::new(&schema);
+fn an_unmatched_literal_latches_finally_and_matches_later_rows() {
+    // The interner never misses: an absent text mints a token on the first
+    // resolution (empty result), and the SAME token identifies the text
+    // when a later write stores it — append-only latches are final.
+    let fix = posting_store("prepared-latch-late-text", &[(1, 7, "alice", 10)]);
 
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &literal_query("carol")).expect("prepare");
+    let mut prepared = fix.prepare(&literal_query("carol")).expect("prepare");
     let mut out = Answers::new();
-    prepared
-        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
+    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("execute");
-    assert!(out.is_empty(), "an uninterned Eq literal empties the rule");
-    assert_eq!(prepared.latch.remaining(), 1, "a miss never latches");
-    let (_, report) = prepared
-        .introspect(&txn, &cache, &[])
-        .expect("the missed query explains");
-    assert!(
-        report.contains(
-            "pending literals: carol — an unresolved Eq literal empties its rule at execution until latched"
-        ),
-        "{report}"
+    assert!(out.is_empty(), "no stored row carries the literal yet");
+    assert_eq!(
+        prepared.latch.remaining(),
+        0,
+        "interning latched the literal on its first resolution"
     );
     assert!(
         matches!(
             prepared.pipeline.main_rules(),
             [PreparedRule::FreeJoin(FreeJoinRule {
-                resolution: ResolutionState::Pending,
+                resolution: ResolutionState::Complete,
                 ..
             })]
         ),
-        "a short-circuited pass does not arm the skip"
+        "a complete resolution arms the fast path"
     );
-    drop(txn);
-
-    insert_postings(&env, &schema, &[(2, 8, "carol", 30)]);
-    cache.advance(crate::GenerationId::from_storage(2), &[POSTING], &[]);
-    let txn = env.read_txn().expect("txn");
-    let (latched, report) = prepared
-        .introspect(&txn, &cache, &[])
-        .expect("the newly interned literal explains and latches");
-    assert_eq!(amounts(&latched), vec![30]);
-    assert_eq!(prepared.latch.remaining(), 0);
+    let (empty, report) = fix
+        .db
+        .read(|instance| prepared.introspect(instance, &[]))
+        .expect("introspect");
+    assert!(empty.is_empty());
     assert!(!report.contains("pending literals:"), "{report}");
 
-    prepared
-        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
-        .expect("execute");
-    assert_eq!(amounts(&out), vec![30]);
+    fix.insert_dyn(POSTING, &posting_rows(&[(2, 8, "carol", 30)]));
+    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
+        .expect("execute after the write");
+    assert_eq!(
+        amounts(&out),
+        vec![30],
+        "the latched token identifies the newly stored text"
+    );
 }
 
 #[cfg(feature = "trace")]
@@ -131,18 +115,12 @@ fn a_miss_stays_live_and_latches_after_interning() {
 fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     use crate::obs;
 
-    let dir = TempDir::new("latch-trace");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_postings(&env, &schema, &[(1, 7, "alice", 10), (2, 7, "bob", 20)]);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-    let mut prepared = prepare(&txn, &cache, &schema, &literal_query("alice")).expect("prepare");
+    let fix = postings(&[(1, 7, "alice", 10), (2, 7, "bob", 20)]);
+    let mut prepared = fix.prepare(&literal_query("alice")).expect("prepare");
     let mut out = Answers::new();
 
     obs::start_capture();
-    prepared
-        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
+    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("execute");
     let events = obs::finish_capture();
     let slow = amounts(&out);
@@ -162,8 +140,7 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     );
 
     obs::start_capture();
-    prepared
-        .execute(&txn, &cache, &[] as &[BindValue], &mut out)
+    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("execute");
     let events = obs::finish_capture();
     assert_eq!(amounts(&out), slow, "fast path, identical results");
