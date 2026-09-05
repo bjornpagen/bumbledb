@@ -1,0 +1,4 @@
+# Same install policy as the core SDK: Effect's optional MessagePack addon is
+# not the database codec. Unknown dependency builds must still fail review.
+allowBuilds:
+  msgpackr-extract: false

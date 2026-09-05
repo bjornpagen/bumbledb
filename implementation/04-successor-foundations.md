@@ -165,6 +165,22 @@ corresponding release-gate families. In-progress checks are deliberately named.
 | Release-evidence checker regressions | 3 passed |
 | Pre-promotion evidence qualification | **Refused**: 306 unresolved checks; no release declared |
 
+### Clean installation follow-up
+
+Checkpoint `7f94e5e83097630ff5969f9d6a1fb56eb79076fa` was pushed. CI runs
+`33936087761` and `33936087756` failed before compilation: pnpm 11 correctly
+refused the previously unreviewed `msgpackr-extract@3.0.4` install script pulled
+in by Effect. Both package workspaces now explicitly deny that optional native
+MessagePack build (`allowBuilds: { msgpackr-extract: false }`). Unknown scripts
+remain errors; neither global script approval nor disabled install validation
+is used. The database uses its own native codec, not this optional extractor.
+
+Ordinary frozen installs using pinned pnpm 11.9.0 passed for both packages in
+isolated directories with separate initially empty package stores (14.1 and
+13.2 seconds). No `--ignore-scripts` flag or existing node_modules/cache supplied
+that evidence. This corrects installation policy, not the ownership failures
+documented above.
+
 The prior `lane_e_lease` parallel failure and nextest LEAK diagnostic remain part
 of the record in [02](02-checkpoint.md). Focused passing reruns do not establish
 their original causes or erase those observations. A LEAK report concerns output

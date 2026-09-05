@@ -6,3 +6,9 @@
 # auto-writing this file to say so. Committed deliberately; do not delete.
 minimumReleaseAgeExclude:
   - '@bjornpagen/*'
+
+# Effect includes msgpackr; its optional string-extraction addon is not used by
+# our native row codec. Keep dependency builds reviewed without requiring a
+# second native build toolchain just to install the Effect SDK.
+allowBuilds:
+  msgpackr-extract: false
