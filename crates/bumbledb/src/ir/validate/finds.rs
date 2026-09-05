@@ -16,6 +16,9 @@ impl Signature {
             .iter()
             .map(|term| match term {
                 FindTerm::Var(var) => SignatureColumn::Project { ty: var_type(var) },
+                FindTerm::Compute(expr) => SignatureColumn::Project {
+                    ty: expr.result_type(|var| typing.var_types.get(&var).copied()).expect("validated output expression"),
+                },
                 FindTerm::Count => SignatureColumn::Fold {
                     ty: ValueType::U64,
                     op: AggKind::Count,
@@ -38,6 +41,7 @@ impl AggKind {
     fn of(op: FoldOp) -> Self {
         match op {
             FoldOp::Sum => Self::Sum,
+            FoldOp::Mean => Self::Mean,
             FoldOp::Min => Self::Min,
             FoldOp::Max => Self::Max,
         }
@@ -57,6 +61,16 @@ impl Context {
         for (find_idx, term) in rule.finds.iter().enumerate() {
             let find = FindIndex(find_idx);
             match term {
+                FindTerm::Compute(expr) => {
+                    let ty = expr.result_type(|var| self.var_types.get(&var).copied())
+                        .map_err(|source| ValidationError::ScalarExpression { find, source })?;
+                    if !matches!(ty, ValueType::I64 | ValueType::U64 | ValueType::F64 | ValueType::Bool) {
+                        return Err(ValidationError::ScalarExpression { find, source: crate::ScalarError::NotNumeric });
+                    }
+                    for var in expr.variables() {
+                        if !self.atom_vars.contains(&var) { return Err(ValidationError::UnboundFindVariable { var }); }
+                    }
+                }
                 FindTerm::Var(var) => {
                     if !self.atom_vars.contains(var) {
                         return Err(ValidationError::UnboundFindVariable { var: *var });
@@ -76,11 +90,11 @@ impl Context {
                     if group_key.contains(over) {
                         return Err(ValidationError::AggregateOverGroupKey { find });
                     }
-                    let admitted = matches!(
-                        self.resolved_var_type(*over),
-                        ValueType::U64 | ValueType::I64
-                    ) || (*self.resolved_var_type(*over) == ValueType::F64
-                        && matches!(op, FoldOp::Min | FoldOp::Max));
+                    let admitted = match self.resolved_var_type(*over) {
+                        ValueType::F64 => true,
+                        ValueType::U64 | ValueType::I64 => !matches!(op, FoldOp::Mean),
+                        _ => false,
+                    };
                     if !admitted {
                         return Err(ValidationError::AggregateInputType { find });
                     }

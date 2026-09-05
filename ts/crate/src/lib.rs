@@ -1,6 +1,7 @@
 //! The dumb-bridge law: no logic beyond marshaling will EVER live in this
 //! crate. Anything smart belongs in the TypeScript SDK or the engine.
 use std::cell::{Cell, Ref, RefCell, RefMut, UnsafeCell};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -251,19 +252,62 @@ fn violations_wire(descriptor: &SchemaDescriptor, violations: &Violations) -> Ve
 
 fn assemble(db: Engine, descriptor: SchemaDescriptor, attrs: FieldAttrsTable) -> DbHandle {
     DbHandle {
-        inner: RefCell::new(Some(DbInner {
-            db: Arc::new(db),
-            sealed: Arc::new(seal(descriptor, attrs)),
-            writing: AtomicBool::new(false),
-        })),
+        inner: DbOwner::Legacy(RefCell::new(Some(assemble_inner(db, descriptor, attrs)))),
+    }
+}
+
+fn assemble_inner(db: Engine, descriptor: SchemaDescriptor, attrs: FieldAttrsTable) -> DbInner {
+    DbInner {
+        db: Arc::new(db),
+        sealed: Arc::new(seal(descriptor, attrs)),
+        writing: AtomicBool::new(false),
     }
 }
 
 pub struct DbHandle {
-    inner: RefCell<Option<DbInner>>,
+    inner: DbOwner,
 }
 
-struct DbInner {
+// The legacy SDK remains available only during the breaking implementation.
+// Managed log handles never own the environment: the runtime owns/revokes it.
+enum DbOwner {
+    Legacy(RefCell<Option<DbInner>>),
+    Managed(runtime::owners::ManagedDb),
+}
+
+enum DbAccess<'a> {
+    Legacy(Ref<'a, DbInner>),
+    Managed(runtime::owners::DbLease),
+}
+
+impl Deref for DbAccess<'_> {
+    type Target = DbInner;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Legacy(inner) => inner,
+            Self::Managed(lease) => lease,
+        }
+    }
+}
+
+impl DbHandle {
+    pub(crate) fn managed(owner: runtime::owners::ManagedDb) -> Self {
+        Self { inner: DbOwner::Managed(owner) }
+    }
+
+    fn access(&self, env: Env) -> napi::Result<DbAccess<'_>> {
+        match &self.inner {
+            DbOwner::Legacy(inner) => live(inner, "db").map(DbAccess::Legacy),
+            DbOwner::Managed(owner) => owner
+                .access()
+                .map(DbAccess::Managed)
+                .map_err(|error| runtime_wire::thrown(env, error)),
+        }
+    }
+}
+
+pub(crate) struct DbInner {
     db: Arc<Engine>,
     sealed: Arc<Sealed>,
     writing: AtomicBool,
@@ -502,13 +546,18 @@ pub fn db_open(path: String, spec: Object) -> napi::Result<AsyncTask<OpenTask>> 
 
 #[napi]
 pub fn db_close(db: &External<DbHandle>) -> napi::Result<()> {
-    take_handle(&db.inner, "db")?;
+    match &db.inner {
+        DbOwner::Legacy(inner) => { take_handle(inner, "db")?; },
+        // This legacy synchronous verb starts revocation only. The private
+        // Effect close boundary joins the same transition and reports drain.
+        DbOwner::Managed(owner) => owner.begin_close(),
+    }
     Ok(())
 }
 
 #[napi]
-pub fn db_manifest(db: &External<DbHandle>) -> napi::Result<ManifestWire> {
-    let inner = live(&db.inner, "db")?;
+pub fn db_manifest(env: Env, db: &External<DbHandle>) -> napi::Result<ManifestWire> {
+    let inner = db.access(env)?;
     Ok(ManifestWire {
         manifest: inner.sealed.descriptor.clone().manifest(),
         attrs: inner.sealed.attrs.clone(),
@@ -516,9 +565,9 @@ pub fn db_manifest(db: &External<DbHandle>) -> napi::Result<ManifestWire> {
 }
 
 #[napi]
-pub fn db_fingerprint(db: &External<DbHandle>) -> napi::Result<String> {
+pub fn db_fingerprint(env: Env, db: &External<DbHandle>) -> napi::Result<String> {
     use bumbledb::schema::ValidateDescriptor as _;
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     let schema = inner
         .sealed
         .descriptor
@@ -531,7 +580,7 @@ pub fn db_fingerprint(db: &External<DbHandle>) -> napi::Result<String> {
 
 #[napi]
 pub fn db_generation(env: Env, db: &External<DbHandle>) -> napi::Result<u64> {
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     match inner.db.generation() {
         Ok(generation) => Ok(generation.value()),
         Err(error) => Err(throw_engine(env, &error)),
@@ -543,7 +592,7 @@ pub fn db_generation(env: Env, db: &External<DbHandle>) -> napi::Result<u64> {
 /// regardless of page layout or allocation history.
 #[napi]
 pub fn db_catalog_digest(env: Env, db: &External<DbHandle>) -> napi::Result<Buffer> {
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     match inner.db.catalog_digest() {
         Ok(digest) => Ok(Buffer::from(digest.to_vec())),
         Err(error) => Err(throw_engine(env, &error)),
@@ -801,7 +850,7 @@ pub fn db_read<'a>(
         Unknown<'a>,
     >,
 ) -> napi::Result<Unknown<'a>> {
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     let sealed = Arc::clone(&inner.sealed);
     let engine = Arc::clone(&inner.db);
     let mut result = None;
@@ -1074,7 +1123,7 @@ pub fn db_write(
     db: &External<DbHandle>,
     callback: Function<External<TxHandle>, bool>,
 ) -> napi::Result<WriteOutcome> {
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     run_write(env, &inner, None, callback)
 }
 
@@ -1089,7 +1138,7 @@ pub fn db_write_from(
     witness: &External<WitnessHandle>,
     callback: Function<External<TxHandle>, bool>,
 ) -> napi::Result<WriteOutcome> {
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     let witness = live(&witness.inner, "witness")?;
     run_write(env, &inner, Some(&witness), callback)
 }
@@ -1294,7 +1343,7 @@ pub fn db_prepare(
     db: &External<DbHandle>,
     query: Object,
 ) -> napi::Result<PrepareOutcome> {
-    let inner = live(&db.inner, "db")?;
+    let inner = db.access(env)?;
     let query = marshal::query_in(&query)?;
     prepare_outcome(env, inner.db.prepare(&query))
 }

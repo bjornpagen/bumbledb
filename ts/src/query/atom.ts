@@ -65,7 +65,7 @@ type AggData =
 	| { readonly op: "count" }
 	| {
 			readonly op: "fold"
-			readonly fold: "sum" | "min" | "max"
+			readonly fold: "sum" | "mean" | "min" | "max"
 			readonly over: AnyVar
 	  }
 	| { readonly op: "pack"; readonly over: AnyVar }
@@ -216,11 +216,20 @@ type AnyNotInteriorAtom = NotInteriorAtom<unknown>
 
 type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom | AnyNotInteriorAtom
 
-type EqRight = AnyVar | Param<string> | SetParam<string> | bigint | string | boolean | Uint8Array | IntervalValue
+type EqRight =
+	| AnyVar
+	| Param<string>
+	| SetParam<string>
+	| bigint
+	| number
+	| string
+	| boolean
+	| Uint8Array
+	| IntervalValue
 
-type NeRight = AnyVar | Param<string> | bigint | string | boolean | Uint8Array | IntervalValue
+type NeRight = AnyVar | Param<string> | bigint | number | string | boolean | Uint8Array | IntervalValue
 
-type OrderSide = AnyVar | Param<string> | bigint | boolean
+type OrderSide = AnyVar | Param<string> | bigint | number | boolean
 
 type PointSide = AnyVar | Param<string> | bigint
 
@@ -354,7 +363,7 @@ function not(
 }
 
 /**
- * Whether a variable's OWN field is NUMERIC (u64/i64) — the judgment the
+ * Whether a variable's OWN field is NUMERIC (u64/i64/f64) — the judgment the
  * point side of `pointIn` and the `sum` input read: a point lives in the
  * interval's element domain, and a quantifier is not an addition, so bool
  * (orderable, never numeric) is exactly here refused. A CLOSED reference
@@ -366,7 +375,7 @@ function not(
  */
 type NumericVarOk<V extends AnyVar> = V["field"] extends { readonly closed: AnyClosedRoster }
 	? false
-	: V["field"]["kind"] extends "u64" | "i64"
+	: V["field"]["kind"] extends "u64" | "i64" | "f64"
 		? true
 		: false
 
@@ -384,9 +393,11 @@ type OrderDomain<T> = T extends AnyVar
 		? "open"
 		: T extends bigint
 			? "integer"
-			: T extends boolean
-				? "bool"
-				: never
+			: T extends number
+				? "f64"
+				: T extends boolean
+					? "bool"
+					: never
 
 type OrderDomainsOk<A, B> = [A] extends [never]
 	? false
@@ -403,9 +414,13 @@ type OrderDomainsOk<A, B> = [A] extends [never]
 					: B extends "bool"
 						? false
 						: A extends "integer"
-							? true
-							: B extends "integer"
+							? B extends "integer" | "u64" | "i64"
 								? true
+								: false
+							: B extends "integer"
+								? A extends "u64" | "i64"
+									? true
+									: false
 								: A extends B
 									? true
 									: false

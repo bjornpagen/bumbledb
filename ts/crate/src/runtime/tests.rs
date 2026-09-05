@@ -7,6 +7,8 @@ fn options() -> Options {
         workers: 1,
         queue_capacity: 2,
         cleanup_capacity: 4,
+        owner_capacity: 4,
+        native_handle_capacity: 8,
         aggregate_bytes: [100; 4],
         chunk_bytes: 100,
         cleanup_timeout: Duration::from_millis(20),

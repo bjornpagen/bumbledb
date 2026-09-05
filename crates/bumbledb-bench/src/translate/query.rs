@@ -199,6 +199,7 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
             FindTerm::Count => outer.push("COUNT(*)".to_owned()),
             FindTerm::Aggregate { op, .. } => outer.push(match op {
                 FoldOp::Sum => format!("SUM(h{position})"),
+                FoldOp::Mean => return Err("exact F64 Mean has no SQLite numerical oracle".into()),
                 FoldOp::Min => format!("MIN(h{position})"),
                 FoldOp::Max => format!("MAX(h{position})"),
             }),
@@ -275,6 +276,7 @@ fn fold_sql(
             FindTerm::Aggregate { op, over } => outer.push({
                 let agg = match op {
                     FoldOp::Sum => "SUM",
+                    FoldOp::Mean => return Err("exact F64 Mean has no SQLite numerical oracle".into()),
                     FoldOp::Min => "MIN",
                     FoldOp::Max => "MAX",
                 };

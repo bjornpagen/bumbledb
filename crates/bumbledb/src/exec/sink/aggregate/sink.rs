@@ -25,6 +25,11 @@ impl Sink for AggregateSink {
         if matches!(self.group_state, GroupState::Pack { .. }) {
             return ScanOffer::Declined;
         }
+        // Exact floating folds use the constant-group batch path, which
+        // already preserves shared Sum/Mean lanes and binding distinctness.
+        if self.finds.iter().any(|find| matches!(find, SinkSpec::Agg(AggSpec::Float { .. }))) {
+            return ScanOffer::Declined;
+        }
 
         if self
             .group_spans
@@ -70,7 +75,14 @@ impl Sink for AggregateSink {
     }
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
-        self.scan_count += run.len() as u64;
+        if self.cardinality_overflow {
+            return;
+        }
+        let Some(count) = self.scan_count.checked_add(run.len() as u64) else {
+            self.cardinality_overflow = true;
+            return;
+        };
+        self.scan_count = count;
         let mut acc_i = 0;
         let mut fold_i = 0;
         for find in &self.finds {
@@ -122,7 +134,12 @@ impl Sink for AggregateSink {
 
     fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
         let count = self.scan_count;
-        if count == 0 {
+        if count == 0 || self.cardinality_overflow {
+            return 0;
+        }
+
+        let group_idx = self.probe_group();
+        if !self.advance_group(group_idx, count) {
             return 0;
         }
 
@@ -135,6 +152,7 @@ impl Sink for AggregateSink {
             let acc = &mut self.acc_scratch[acc_i];
             acc_i += 1;
             match spec {
+                AggSpec::Float { .. } => unreachable!("float scans use the batch path"),
                 AggSpec::Count => {
                     let Acc::Count(n) = acc else {
                         unreachable!("accumulators are seeded per op");
@@ -167,7 +185,6 @@ impl Sink for AggregateSink {
             }
         }
 
-        let group_idx = self.probe_group();
         let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
             unreachable!("scan merge is the Folds arm");
         };

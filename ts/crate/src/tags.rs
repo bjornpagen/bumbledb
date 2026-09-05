@@ -204,6 +204,7 @@ wire_tags! {
     /// Count and Pack are find-term kinds, not fold ops.
     mod head_op for unit HeadOp {
         SUM: HeadOp::Sum => "sum",
+        MEAN: HeadOp::Mean => "mean",
         MIN: HeadOp::Min => "min",
         MAX: HeadOp::Max => "max",
         COUNT: HeadOp::Count => "count",

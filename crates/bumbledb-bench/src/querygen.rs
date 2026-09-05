@@ -243,6 +243,7 @@ pub struct Coverage {
     pub param_sets: u64,
     pub repeated_vars: u64,
     pub agg_sum: u64,
+    pub agg_mean: u64,
     pub agg_min: u64,
     pub agg_max: u64,
     pub agg_count: u64,

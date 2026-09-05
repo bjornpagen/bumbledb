@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 
 use bumbledb::work::{ByteReservation, ExecutionPolicy, WorkContext, WorkError};
 
+pub mod owners;
+pub mod fs;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeError {
     RuntimeAlreadyLive,
@@ -20,6 +23,9 @@ pub enum RuntimeError {
     QueueFull,
     InvalidArgument,
     Internal,
+    DirectoryBusy,
+    InvalidPath,
+    Io { kind: std::io::ErrorKind, code: Option<i32> },
     ResourceLimit {
         dimension: &'static str,
         used: u64,
@@ -40,6 +46,8 @@ pub struct Options {
     pub workers: usize,
     pub queue_capacity: usize,
     pub cleanup_capacity: usize,
+    pub owner_capacity: usize,
+    pub native_handle_capacity: usize,
     pub aggregate_bytes: [u64; 4],
     pub chunk_bytes: u64,
     pub cleanup_timeout: Duration,
@@ -58,6 +66,8 @@ pub struct Inspection {
     pub queued: usize,
     pub active: usize,
     pub retained: usize,
+    pub owners: usize,
+    pub databases: usize,
     pub reserved: [u64; 4],
 }
 
@@ -71,6 +81,9 @@ pub enum CloseReport {
 pub enum Output {
     Ready,
     Hash([u8; 32], ByteReservation),
+    Directory(owners::DirectoryOwner),
+    Db(owners::ManagedDbOutcome),
+    Fs(fs::FsOutput),
 }
 pub type Work = Box<dyn FnOnce(&WorkContext) -> Result<Output, RuntimeError> + Send>;
 type Notify = Box<dyn FnOnce() + Send>;
@@ -80,6 +93,9 @@ pub struct Operation {
     id: u64,
     context: WorkContext,
     bytes: [u64; 4],
+    owner: Option<u64>,
+    database: Option<u64>,
+    external: bool,
     // Protected exclusively by Runtime.state. Output never escapes a live worker.
     completion: Mutex<Option<Notify>>,
     output: Mutex<Option<Result<Output, RuntimeError>>>,
@@ -89,10 +105,21 @@ struct Job {
     operation: Arc<Operation>,
     work: Work,
 }
+enum Action {
+    Job(Job),
+    Cleanup(owners::Cleanup),
+}
 struct Waiter {
-    operation: Option<u64>,
+    target: WaitTarget,
     deadline: Instant,
     report: Report,
+}
+#[derive(Clone, Copy)]
+enum WaitTarget {
+    Runtime,
+    Operation(u64),
+    Owner(u64),
+    Database(u64, u64),
 }
 struct State {
     phase: Phase,
@@ -101,6 +128,7 @@ struct State {
     active: usize,
     queue: VecDeque<Job>,
     operations: BTreeMap<u64, Arc<Operation>>,
+    owners: BTreeMap<u64, owners::OwnerEntry>,
     reserved: [u64; 4],
     waiters: Vec<Waiter>,
 }
@@ -126,10 +154,12 @@ impl State {
             queued: self.queue.len(),
             active: self.active,
             retained: self.operations.len(),
+            owners: self.owners.len(),
+            databases: self.owners.values().map(|owner| owner.databases.len()).sum(),
             reserved: self.reserved,
         }
     }
-    fn remove(&mut self, id: u64) {
+    fn remove(&mut self, id: u64) -> Option<Result<Output, RuntimeError>> {
         if let Some(operation) = self.operations.remove(&id) {
             for (used, bytes) in self.reserved.iter_mut().zip(operation.bytes) {
                 *used -= bytes;
@@ -137,9 +167,10 @@ impl State {
             // Release owned output even if an inert JS operation wrapper is retained.
             let mut output = lock(&operation.output);
             if output.as_ref().is_some_and(Result::is_ok) {
-                output.take();
+                return output.take();
             }
         }
+        None
     }
 }
 
@@ -148,6 +179,8 @@ impl Runtime {
         if options.workers == 0
             || options.queue_capacity == 0
             || options.cleanup_capacity == 0
+            || options.owner_capacity == 0
+            || options.native_handle_capacity == 0
             || options.chunk_bytes == 0
             || options.cleanup_timeout.is_zero()
             || Instant::now()
@@ -165,6 +198,7 @@ impl Runtime {
                 active: 0,
                 queue: VecDeque::new(),
                 operations: BTreeMap::new(),
+                owners: BTreeMap::new(),
                 reserved: [0; 4],
                 waiters: Vec::new(),
             }),
@@ -217,6 +251,17 @@ impl Runtime {
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
+        self.submit_at(None, None, policy, notify, prepare)
+    }
+
+    fn submit_at(
+        &self,
+        owner: Option<u64>,
+        database: Option<u64>,
+        policy: ExecutionPolicy,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
+    ) -> Result<Arc<Operation>, RuntimeError> {
         // The one core clock/counter authority starts BEFORE admission/queue wait.
         let context = policy.start()?;
         context.checkpoint()?;
@@ -230,6 +275,7 @@ impl Runtime {
         if state.phase != Phase::Open {
             return Err(RuntimeError::ClosedHandle);
         }
+        state.require_owner(owner)?;
         if state.queue.len() >= self.options.queue_capacity
             || state.operations.len()
                 >= self
@@ -257,6 +303,9 @@ impl Runtime {
             id,
             context,
             bytes,
+            owner,
+            database,
+            external: false,
             completion: Mutex::new(Some(notify)),
             output: Mutex::new(None),
         });
@@ -286,8 +335,10 @@ impl Runtime {
                 } else {
                     RuntimeError::ClosedHandle
                 };
-                state.remove(id);
+                let discarded = state.remove(id);
                 self.changed.notify_all();
+                drop(state);
+                drop(discarded);
                 return Err(other.err().unwrap_or(refusal));
             }
         };
@@ -311,8 +362,10 @@ impl Runtime {
         let value = lock(&operation.output)
             .take()
             .ok_or(RuntimeError::InvalidArgument)?;
-        state.remove(operation.id);
+        let discarded = state.remove(operation.id);
         self.changed.notify_all();
+        drop(state);
+        drop(discarded);
         value
     }
 
@@ -336,7 +389,7 @@ impl Runtime {
             return;
         }
         state.waiters.push(Waiter {
-            operation: operation.map(|value| value.id),
+            target: operation.map_or(WaitTarget::Runtime, |value| WaitTarget::Operation(value.id)),
             deadline: Instant::now() + self.options.cleanup_timeout,
             report,
         });
@@ -355,18 +408,25 @@ impl Runtime {
         for operation in state.operations.values() {
             operation.context.cancel();
         }
+        for owner in state.owners.values_mut() {
+            owner.begin_close(false);
+        }
     }
 
     fn worker(&self) {
         loop {
-            let job = {
+            let action = {
                 let mut state = lock(&self.state);
                 loop {
+                    if let Some(cleanup) = state.cleanup() {
+                        state.active += 1;
+                        break Action::Cleanup(cleanup);
+                    }
                     if let Some(job) = state.queue.pop_front() {
                         state.active += 1;
-                        break job;
+                        break Action::Job(job);
                     }
-                    if state.phase != Phase::Open {
+                    if state.phase != Phase::Open && state.owners.is_empty() {
                         state.workers -= 1;
                         self.changed.notify_all();
                         return;
@@ -377,6 +437,16 @@ impl Runtime {
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                 }
             };
+            let job = match action {
+                Action::Job(job) => job,
+                Action::Cleanup(cleanup) => {
+                    self.run_cleanup(cleanup);
+                    let mut state = lock(&self.state);
+                    state.active -= 1;
+                    self.changed.notify_all();
+                    continue;
+                }
+            };
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 job.operation.context.checkpoint()?;
                 (job.work)(&job.operation.context)
@@ -385,7 +455,11 @@ impl Runtime {
             let mut outcome = outcome.unwrap_or(Err(RuntimeError::Internal));
             // A late successful acquisition cannot survive cancellation. Dropping
             // the returned owner here reclaims it before the drain is completed.
-            if let Err(error) = job.operation.context.checkpoint() {
+            // A completed store mutation is evidence, not a cancellable
+            // acquisition. Interruption may discard its delivery, never
+            // rewrite a known mutation outcome into a rollback claim.
+            if !matches!(&outcome, Ok(Output::Fs(value)) if value.mutating())
+                && let Err(error) = job.operation.context.checkpoint() {
                 outcome = Err(error.into());
             }
             let notify = lock(&job.operation.completion).take();
@@ -419,10 +493,13 @@ impl Runtime {
                     .then_some(id)
                 })
                 .collect();
-            for id in completed {
-                state.remove(id);
+            let discarded: Vec<_> = completed.into_iter().filter_map(|id| state.remove(id)).collect();
+            if !discarded.is_empty() {
+                drop(state);
+                drop(discarded);
+                state = lock(&self.state);
             }
-            if state.phase == Phase::Closing && state.workers == 0 && state.operations.is_empty() {
+            if state.phase == Phase::Closing && state.workers == 0 && state.operations.is_empty() && state.owners.is_empty() {
                 drop(state);
                 for worker in workers.take().unwrap_or_default() {
                     let _ = worker.join();
@@ -434,11 +511,11 @@ impl Runtime {
             let mut ready = Vec::new();
             let mut pending = Vec::new();
             for waiter in std::mem::take(&mut state.waiters) {
-                let done = waiter.operation.map_or(state.phase == Phase::Closed, |id| {
-                    !state.operations.contains_key(&id)
-                });
+                let done = state.target_done(waiter.target);
                 if done {
                     ready.push((waiter.report, CloseReport::Closed));
+                } else if state.target_failed(waiter.target) {
+                    ready.push((waiter.report, CloseReport::Failed));
                 } else if now >= waiter.deadline {
                     ready.push((waiter.report, CloseReport::Incomplete(state.inspection())));
                 } else {

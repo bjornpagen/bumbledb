@@ -29,6 +29,10 @@ pub struct OperationHandle {
     runtime: Arc<Runtime>,
     operation: Arc<Operation>,
 }
+pub struct DirectoryHandle {
+    identity: usize,
+    owner: crate::runtime::owners::DirectoryOwner,
+}
 
 fn identity() -> usize {
     std::ptr::from_ref(&ADDON_IDENTITY) as usize
@@ -58,6 +62,8 @@ pub struct RuntimeOptionsWire {
     pub workers: f64,
     pub queue_capacity: f64,
     pub cleanup_capacity: f64,
+    pub owner_capacity: f64,
+    pub native_handle_capacity: f64,
     pub input_bytes: BigInt,
     pub working_bytes: BigInt,
     pub scratch_bytes: BigInt,
@@ -119,6 +125,9 @@ pub const ERROR_CODES: &[&str] = &[
     "QueueFull",
     "InvalidArgument",
     "Internal",
+    "DirectoryBusy",
+    "InvalidPath",
+    "Io",
     "ResourceLimit",
     "Cancelled",
     "DeadlineExceeded",
@@ -135,6 +144,9 @@ fn error_code(error: &RuntimeError) -> &'static str {
             "InvalidArgument"
         }
         RuntimeError::Internal => "Internal",
+        RuntimeError::DirectoryBusy => "DirectoryBusy",
+        RuntimeError::InvalidPath => "InvalidPath",
+        RuntimeError::Io { .. } => "Io",
         RuntimeError::ResourceLimit { .. } | RuntimeError::Work(WorkError::Exhausted { .. }) => {
             "ResourceLimit"
         }
@@ -154,10 +166,14 @@ fn resource_name(resource: Resource) -> &'static str {
     }
 }
 
-fn thrown(env: Env, error: RuntimeError) -> napi::Error {
+pub(crate) fn thrown(env: Env, error: RuntimeError) -> napi::Error {
     let make = || -> napi::Result<()> {
         let mut object = Object::new(&env)?;
         object.set("_tag", error_code(&error))?;
+        if let RuntimeError::Io { kind, code } = error {
+            object.set("kind", format!("{kind:?}"))?;
+            object.set("osCode", code)?;
+        }
         let details = match error {
             RuntimeError::ResourceLimit {
                 dimension,
@@ -201,6 +217,8 @@ pub fn runtime_open(
             workers: unsigned(options.workers)? as usize,
             queue_capacity: unsigned(options.queue_capacity)? as usize,
             cleanup_capacity: unsigned(options.cleanup_capacity)? as usize,
+            owner_capacity: unsigned(options.owner_capacity)? as usize,
+            native_handle_capacity: unsigned(options.native_handle_capacity)? as usize,
             aggregate_bytes: [
                 integer(&options.input_bytes)?,
                 integer(&options.working_bytes)?,
@@ -237,6 +255,8 @@ pub struct InspectionWire {
     pub queued: BigInt,
     pub active: BigInt,
     pub retained: BigInt,
+    pub owners: BigInt,
+    pub databases: BigInt,
     pub input_bytes: BigInt,
     pub working_bytes: BigInt,
     pub scratch_bytes: BigInt,
@@ -255,6 +275,8 @@ impl From<Inspection> for InspectionWire {
             queued: BigInt::from(value.queued as u64),
             active: BigInt::from(value.active as u64),
             retained: BigInt::from(value.retained as u64),
+            owners: BigInt::from(value.owners as u64),
+            databases: BigInt::from(value.databases as u64),
             input_bytes: BigInt::from(value.reserved[0]),
             working_bytes: BigInt::from(value.reserved[1]),
             scratch_bytes: BigInt::from(value.reserved[2]),
@@ -506,5 +528,214 @@ pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Resul
     {
         Output::Ready => Ok(None),
         Output::Hash(value, _reservation) => Ok(Some(Buffer::from(value.to_vec()))),
+        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
+}
+
+fn notification(callback: Function<(), ()>) -> napi::Result<Box<dyn FnOnce() + Send>> {
+    let callback = callback.build_threadsafe_function().callee_handled::<false>().max_queue_size::<1>().build()?;
+    Ok(Box::new(move || { let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking); }))
+}
+
+fn reporter(callback: Function<CloseWire, ()>) -> napi::Result<Box<dyn FnOnce(CloseReport) + Send>> {
+    let callback = callback.build_threadsafe_function().callee_handled::<false>().max_queue_size::<1>().build()?;
+    Ok(Box::new(move |report| { let _ = callback.call(report.into(), ThreadsafeFunctionCallMode::NonBlocking); }))
+}
+
+fn directory(handle: &DirectoryHandle) -> Result<&crate::runtime::owners::DirectoryOwner, RuntimeError> {
+    if handle.identity != identity() { return Err(RuntimeError::ForeignRuntime); }
+    Ok(&handle.owner)
+}
+
+fn operation_handle(runtime: &Arc<Runtime>, operation: Arc<Operation>) -> External<OperationHandle> {
+    External::new(OperationHandle { identity: identity(), runtime: Arc::clone(runtime), operation })
+}
+
+fn take_output(env: Env, handle: &OperationHandle) -> napi::Result<Output> {
+    if handle.identity != identity() { return Err(thrown(env, RuntimeError::ForeignRuntime)); }
+    handle.runtime.take(&handle.operation).map_err(|error| thrown(env, error))
+}
+
+#[napi]
+pub fn runtime_directory_acquire(env: Env, handle: &External<RuntimeHandle>, policy: PolicyWire, path: String, callback: Function<(), ()>) -> napi::Result<External<OperationHandle>> {
+    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
+    if path.len() as u64 > runtime.options.chunk_bytes { return Err(thrown(env, RuntimeError::InvalidPath)); }
+    let operation = runtime.acquire_directory(path, policy.parse().map_err(|error| thrown(env, error))?, notification(callback)?).map_err(|error| thrown(env, error))?;
+    Ok(operation_handle(runtime, operation))
+}
+
+#[napi]
+pub fn runtime_directory_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<External<DirectoryHandle>> {
+    match take_output(env, handle)? {
+        Output::Directory(owner) => Ok(External::new(DirectoryHandle { identity: identity(), owner })),
+        _ => Err(thrown(env, RuntimeError::InvalidArgument)),
+    }
+}
+
+#[napi]
+pub fn runtime_directory_begin(env: Env, handle: &External<DirectoryHandle>, policy: PolicyWire) -> napi::Result<External<OperationHandle>> {
+    let owner = directory(handle).map_err(|error| thrown(env, error))?;
+    let operation = owner.begin_work(policy.parse().map_err(|error| thrown(env, error))?).map_err(|error| thrown(env, error))?;
+    Ok(operation_handle(owner.runtime(), operation))
+}
+
+#[napi]
+pub fn runtime_directory_check(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
+    if handle.identity != identity() { return Err(thrown(env, RuntimeError::ForeignRuntime)); }
+    handle.runtime.checkpoint_external(&handle.operation).map_err(|error| thrown(env, error))
+}
+
+#[napi]
+pub fn runtime_directory_end(env: Env, handle: &External<OperationHandle>) -> napi::Result<()> {
+    if handle.identity != identity() { return Err(thrown(env, RuntimeError::ForeignRuntime)); }
+    if !handle.operation.external { return Err(thrown(env, RuntimeError::InvalidArgument)); }
+    handle.runtime.end_external(&handle.operation);
+    Ok(())
+}
+
+#[napi]
+pub fn runtime_directory_close(env: Env, handle: &External<DirectoryHandle>, remove: bool, callback: Function<CloseWire, ()>) -> napi::Result<()> {
+    let owner = directory(handle).map_err(|error| thrown(env, error))?;
+    let report = reporter(callback)?;
+    owner.close_with(remove);
+    owner.drain(report);
+    Ok(())
+}
+
+#[napi]
+pub fn runtime_directory_db_open(env: Env, handle: &External<DirectoryHandle>, policy: PolicyWire, child_name: String, spec: Object, create: bool, callback: Function<(), ()>) -> napi::Result<External<OperationHandle>> {
+    use crate::runtime::owners::ManagedDbOutcome;
+    let owner = directory(handle).map_err(|error| thrown(env, error))?;
+    if child_name.len() as u64 > owner.runtime().options.chunk_bytes { return Err(thrown(env, RuntimeError::InvalidPath)); }
+    let reference = owner.reference();
+    // The legacy schema converter remains on the JS thread. The operation is
+    // registered before conversion; only owned Rust descriptors reach workers.
+    let mut marshal_error = None;
+    let operation = owner.runtime().submit_owned(owner, policy.parse().map_err(|error| thrown(env, error))?, notification(callback)?, |context| {
+        context.input(child_name.len() as u64)?;
+        let parsed = match crate::descriptor_of(&spec) {
+            Ok(parsed) => parsed,
+            Err(error) => { marshal_error = Some(error); return Err(RuntimeError::InvalidArgument); }
+        };
+        Ok(Box::new(move |context| {
+            let (descriptor, attrs) = match parsed {
+                Ok(parsed) => parsed,
+                Err(crate::OpenOutcome::SchemaError(message)) => return Ok(Output::Db(ManagedDbOutcome::Refused { kind: "schemaError", message })),
+                Err(crate::OpenOutcome::NewtypeMismatch(message)) => return Ok(Output::Db(ManagedDbOutcome::Refused { kind: "newtypeMismatch", message })),
+                Err(_) => return Err(RuntimeError::Internal),
+            };
+            let path = reference.child_path(&child_name)?;
+            context.checkpoint()?;
+            let opened = if create {
+                match crate::Engine::create(&path, descriptor.clone()) {
+                    Ok(bumbledb::Admission::Accepted(db)) => Ok(db),
+                    Ok(bumbledb::Admission::Rejected(violations)) => return Ok(Output::Db(ManagedDbOutcome::Rejected(crate::violations_wire(&descriptor, &violations)))),
+                    Err(error) => Err(error),
+                }
+            } else { crate::Engine::open(&path, descriptor.clone()) };
+            match opened {
+                Ok(db) => {
+                    let managed = reference.attach_db(crate::assemble_inner(db, descriptor, attrs))?;
+                    Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
+                }
+                Err(bumbledb::Error::Schema(error)) => Ok(Output::Db(ManagedDbOutcome::Refused { kind: "schemaError", message: error.to_string() })),
+                Err(error @ bumbledb::Error::SchemaMismatch { .. }) => Ok(Output::Db(ManagedDbOutcome::Refused { kind: "fingerprintMismatch", message: crate::marshal::engine_message(&error) })),
+                Err(bumbledb::Error::EnvironmentLocked) => Err(RuntimeError::DirectoryBusy),
+                Err(_) => Err(RuntimeError::Io { kind: std::io::ErrorKind::Other, code: None }),
+            }
+        }))
+    });
+    if let Some(error) = marshal_error { return Err(error); }
+    let operation = operation.map_err(|error| thrown(env, error))?;
+    Ok(operation_handle(owner.runtime(), operation))
+}
+
+#[napi]
+pub fn runtime_db_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<Object<'_>> {
+    use crate::runtime::owners::ManagedDbOutcome;
+    let mut object = Object::new(&env)?;
+    match take_output(env, handle)? {
+        Output::Db(ManagedDbOutcome::Opened(db)) => { object.set("tag", "accepted")?; object.set("db", External::new(crate::DbHandle::managed(db)))?; }
+        Output::Db(ManagedDbOutcome::Rejected(violations)) => { object.set("tag", "rejected")?; object.set("violations", violations)?; }
+        Output::Db(ManagedDbOutcome::Refused { kind, message }) => { object.set("tag", "refused")?; object.set("kind", kind)?; object.set("message", message)?; }
+        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
+    }
+    Ok(object)
+}
+
+#[napi]
+pub fn runtime_managed_db_close(env: Env, db: &External<crate::DbHandle>, callback: Function<CloseWire, ()>) -> napi::Result<()> {
+    match &db.inner {
+        crate::DbOwner::Managed(owner) => { owner.drain(reporter(callback)?); Ok(()) }
+        crate::DbOwner::Legacy(_) => Err(thrown(env, RuntimeError::InvalidArgument)),
+    }
+}
+
+#[napi]
+pub fn runtime_fs(env: Env, handle: &External<RuntimeHandle>, policy: PolicyWire, request: Object, callback: Function<(), ()>) -> napi::Result<External<OperationHandle>> {
+    use crate::runtime::fs::FsVerb;
+    let runtime = owner(handle).map_err(|error| thrown(env, error))?;
+    let root: String = request.get_named_property("root")?;
+    let raw_key: String = request.get_named_property("key")?;
+    let name: String = request.get_named_property("verb")?;
+    let etag: Option<String> = request.get_named_property("etag")?;
+    let token: Option<BigInt> = request.get_named_property("token")?;
+    let token = token.as_ref().map(integer).transpose().map_err(|error| thrown(env, error))?.unwrap_or(0);
+    let key = bumbledb_log::store::StoreKey::parse(&raw_key).map_err(|_| thrown(env, RuntimeError::InvalidPath))?;
+    let length = root.len().checked_add(raw_key.len()).and_then(|size| size.checked_add(etag.as_ref().map_or(0, String::len))).ok_or_else(|| thrown(env, RuntimeError::InvalidArgument))?;
+    if length as u64 > runtime.options.chunk_bytes { return Err(thrown(env, RuntimeError::InvalidPath)); }
+    let input = if matches!(name.as_str(), "create" | "swap") {
+        Some(unshared_input(env, request.get_named_property::<Unknown>("bytes")?, runtime.options.chunk_bytes)?)
+    } else { None };
+    let operation = runtime.submit(policy.parse().map_err(|error| thrown(env, error))?, notification(callback)?, |context| {
+        let body_length = input.as_ref().map_or(0, |value| value.len()) as u64;
+        let total = (length as u64).checked_add(body_length).ok_or(RuntimeError::InvalidArgument)?;
+        context.input(total)?;
+        let reservation = context.reserve(ByteKind::Working, total)?;
+        let body = input.as_ref().map(|value| value.to_vec()).unwrap_or_default();
+        let verb = match name.as_str() {
+            "get" => FsVerb::Get,
+            "poll" => FsVerb::Poll(bumbledb_log::store::Etag(etag.ok_or(RuntimeError::InvalidArgument)?)),
+            "create" => FsVerb::Create { bytes: body, token },
+            "swap" => FsVerb::Swap { bytes: body, token, etag: bumbledb_log::store::Etag(etag.ok_or(RuntimeError::InvalidArgument)?) },
+            "delete" => FsVerb::Delete,
+            _ => return Err(RuntimeError::InvalidArgument),
+        };
+        Ok(Box::new(move |context| {
+            let result = crate::runtime::fs::execute(root, key, verb, context)?;
+            drop(reservation);
+            Ok(Output::Fs(result))
+        }))
+    }).map_err(|error| thrown(env, error))?;
+    Ok(operation_handle(runtime, operation))
+}
+
+#[napi]
+pub fn runtime_fs_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<Object<'_>> {
+    use crate::runtime::fs::FsOutput;
+    use bumbledb_log::store::{Create, Poll, Swap};
+    let mut object = Object::new(&env)?;
+    let output = take_output(env, handle)?;
+    let tag = match output {
+        Output::Fs(FsOutput::Get(value)) => match value.value {
+            None => "absent",
+            Some(fetched) => { object.set("bytes", Buffer::from(fetched.bytes))?; object.set("etag", fetched.etag.0)?; "fetched" }
+        },
+        Output::Fs(FsOutput::Poll(value)) => match value.value {
+            Poll::Unchanged => "unchanged",
+            Poll::Changed(fetched) => { object.set("bytes", Buffer::from(fetched.bytes))?; object.set("etag", fetched.etag.0)?; "changed" }
+        },
+        Output::Fs(FsOutput::Create(value)) => match value.value {
+            Create::Created(etag) => { object.set("etag", etag.0)?; "created" },
+            Create::Exists => "exists", Create::Ambiguous => "ambiguous",
+        },
+        Output::Fs(FsOutput::Swap(value)) => match value.value {
+            Swap::Swapped(etag) => { object.set("etag", etag.0)?; "swapped" },
+            Swap::Moved => "moved", Swap::Ambiguous => "ambiguous",
+        },
+        Output::Fs(FsOutput::Delete(_)) => "deleted",
+        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
+    };
+    object.set("tag", tag)?;
+    Ok(object)
 }

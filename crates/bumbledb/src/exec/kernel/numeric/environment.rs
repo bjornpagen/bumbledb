@@ -12,7 +12,7 @@
 use super::UnsupportedNumericalPlatform;
 use bumbledb_theory::F64;
 
-pub(super) struct NumericalGuard {
+pub(crate) struct NumericalGuard {
     saved: Environment,
     // A guard may neither migrate to another thread nor be used concurrently.
     _thread: core::marker::PhantomData<std::rc::Rc<()>>,
@@ -36,7 +36,7 @@ impl NumericalGuard {
             reason = "unsupported targets return a typed refusal with the identical API"
         )
     )]
-    pub(super) fn enter() -> Result<Self, UnsupportedNumericalPlatform> {
+    pub(crate) fn enter() -> Result<Self, UnsupportedNumericalPlatform> {
         #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         {
             // SAFETY: only this thread's architected numerical registers are
@@ -128,7 +128,13 @@ impl Environment {
 macro_rules! binary {
     ($name:ident, $arm:literal, $x86:literal) => {
         impl NumericalGuard {
-            pub(super) fn $name(&self, left: F64, right: F64) -> F64 {
+            pub(crate) fn $name(&self, left: F64, right: F64) -> F64 {
+                $name(left, right)
+            }
+        }
+        /// Internal operation body. The owning engine/evaluator operation
+        /// holds a NumericalGuard; never call this across a host callback.
+        pub(crate) fn $name(left: F64, right: F64) -> F64 {
                 #[cfg(target_arch = "aarch64")]
                 {
                     let bits: u64;
@@ -160,7 +166,6 @@ macro_rules! binary {
                     // No NumericalGuard can be constructed on this target.
                     unreachable!("unsupported targets refuse NumericalGuard::enter")
                 }
-            }
         }
     };
 }

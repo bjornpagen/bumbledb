@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use bumbledb::work::{ByteKind, WorkContext, WorkError};
+
 use super::{LEASE_NAMESPACE, StoreKey, TEMP_NAMESPACE};
 
 /// A bound on waiting for an emulator mutation, NOT the owner's lifetime.
@@ -17,6 +19,41 @@ use super::{LEASE_NAMESPACE, StoreKey, TEMP_NAMESPACE};
 const MUTATION_WAIT: Duration = Duration::from_secs(5);
 const LOCK_RETRY: Duration = Duration::from_millis(5);
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Preserve cooperative refusal separately from filesystem failure.
+#[derive(Debug)]
+pub enum WorkIoError {
+    Io(io::Error),
+    Work(WorkError),
+}
+
+impl From<io::Error> for WorkIoError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl From<WorkError> for WorkIoError {
+    fn from(value: WorkError) -> Self {
+        Self::Work(value)
+    }
+}
+
+impl WorkIoError {
+    pub(crate) fn into_io(self) -> io::Error {
+        match self {
+            Self::Io(error) => error,
+            Self::Work(error) => io::Error::other(error),
+        }
+    }
+}
+
+fn checkpoint(work: Option<&WorkContext>) -> Result<(), WorkIoError> {
+    if let Some(work) = work {
+        work.checkpoint()?;
+    }
+    Ok(())
+}
 
 /// Exclusive local mutation ownership, released by the file's destructor.
 /// No clone, caller-controlled unlock, renewal, expiry, or historical token exists.
@@ -137,20 +174,54 @@ pub fn acquire_directory(directory: &Path) -> io::Result<DirectoryLock> {
 /// # Errors
 /// Invalid keys, lock contention and filesystem failures are explicit.
 pub fn acquire_mutation(root: &Path, key: &StoreKey) -> io::Result<HeldLock> {
+    acquire_mutation_checked(root, key, None).map_err(WorkIoError::into_io)
+}
+
+/// The same lock and legacy wait ceiling, with an operation's earlier stop.
+/// # Errors
+/// Refuses filesystem errors, exhausted legacy wait, cancellation or deadline.
+pub fn acquire_mutation_with(
+    root: &Path,
+    key: &StoreKey,
+    work: &WorkContext,
+) -> Result<HeldLock, WorkIoError> {
+    acquire_mutation_checked(root, key, Some(work))
+}
+
+pub(crate) fn acquire_mutation_checked(
+    root: &Path,
+    key: &StoreKey,
+    work: Option<&WorkContext>,
+) -> Result<HeldLock, WorkIoError> {
+    checkpoint(work)?;
+    let _paths = work
+        .map(|work| {
+            let root = root.as_os_str().len() as u64;
+            let key = key.as_str().len() as u64;
+            let bytes = root
+                .checked_mul(3)
+                .and_then(|bytes| key.checked_mul(2).and_then(|key| bytes.checked_add(key)))
+                .and_then(|bytes| bytes.checked_add(96))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "lock path size overflow"))?;
+            work.reserve(ByteKind::Working, bytes).map_err(WorkIoError::from)
+        })
+        .transpose()?;
     let namespace = root.join(LEASE_NAMESPACE);
     refuse_symlink(&namespace)?;
     let file = open_lock(&namespace.join(key.as_str()), "mutation.lock")?;
     let start = Instant::now();
     loop {
+        checkpoint(work)?;
         match file.try_lock() {
             Ok(()) => return Ok(HeldLock { file }),
-            Err(TryLockError::Error(err)) => return Err(err),
+            Err(TryLockError::Error(err)) => return Err(err.into()),
             Err(TryLockError::WouldBlock) => {
                 let Some(remaining) = MUTATION_WAIT.checked_sub(start.elapsed()) else {
                     return Err(io::Error::new(
                         io::ErrorKind::WouldBlock,
                         "local mutation wait exhausted",
-                    ));
+                    )
+                    .into());
                 };
                 std::thread::sleep(remaining.min(LOCK_RETRY));
             }

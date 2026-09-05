@@ -21,6 +21,7 @@ mod answers;
 mod correctness;
 mod disjoint;
 mod folded;
+mod float_aggregates;
 mod ground;
 mod key_probe;
 mod latch;

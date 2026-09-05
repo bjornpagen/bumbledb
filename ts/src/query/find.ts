@@ -3,7 +3,7 @@ import type { SchemaClasses } from "#law.ts"
 import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyVar, MintSlotOf } from "#query/scope.ts"
 
-type FoldOpName = "sum" | "min" | "max" | "pack"
+type FoldOpName = "sum" | "mean" | "min" | "max" | "pack"
 
 interface CountAgg {
 	readonly agg: "count"
@@ -29,13 +29,18 @@ function count(): CountAgg {
 }
 
 /**
- * Exact checked sum over a NUMERIC (u64/i64) variable — wide accumulator,
+ * Exact checked sum over a NUMERIC (u64/i64/f64) variable — wide accumulator,
  * one finalize range check; overflow is the engine's typed runtime error —
  * or over the measure (`r.sum(r.duration(w))`). Bool stays refused: a
  * quantifier is not an addition (R3).
  */
 function sum<const O extends AnyVar>(over: O): Agg<"sum", O> {
 	return aggregate("sum", over)
+}
+
+/** Exact sum divided by the binding count, rounded once. F64 inputs only. */
+function mean<const O extends AnyVar>(over: O): Agg<"mean", O> {
+	return aggregate("mean", over)
 }
 
 function min<const O extends AnyVar>(over: O): Agg<"min", O> {
@@ -54,11 +59,15 @@ type FindEntryOk<E> = E extends AnyVar
 	? true
 	: E extends CountAgg
 		? true
-		: E extends Agg<"sum" | "min" | "max", infer O extends AnyVar>
-			? NumericVarOk<O>
-			: E extends Agg<"pack", infer V extends AnyVar>
-				? IntervalVarOk<V>
+		: E extends Agg<"mean", infer O extends AnyVar>
+			? O["field"]["kind"] extends "f64"
+				? true
 				: false
+			: E extends Agg<"sum" | "min" | "max", infer O extends AnyVar>
+				? NumericVarOk<O>
+				: E extends Agg<"pack", infer V extends AnyVar>
+					? IntervalVarOk<V>
+					: false
 
 type CheckFind<F extends FindShape> = {
 	readonly [K in keyof F]: FindEntryOk<F[K]> extends true ? F[K] : never
@@ -72,7 +81,7 @@ type FindValue<E> = E extends AnyVar
 	? Infer<E["field"]>
 	: E extends CountAgg
 		? bigint
-		: E extends Agg<"sum" | "min" | "max", infer O extends AnyVar>
+		: E extends Agg<"sum" | "mean" | "min" | "max", infer O extends AnyVar>
 			? Infer<O["field"]>
 			: E extends Agg<"pack", infer V extends AnyVar>
 				? Infer<V["field"]>
@@ -90,4 +99,4 @@ type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
 }
 
 export type { Agg, CheckFind, CheckRecFind, FindEntry, FindShape, HeadRecordOf, RowOfFind }
-export { count, max, min, pack, sum }
+export { count, max, mean, min, pack, sum }

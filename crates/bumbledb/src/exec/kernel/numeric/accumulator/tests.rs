@@ -121,6 +121,11 @@ fn u64_max_count_bound_and_error_are_numerical_state_independent() {
             panic!("nonempty");
         };
         assert_eq!(count.get(), u64::MAX);
+        let mut repeated = ExactF64Accumulator::default();
+        repeated.push_repeated(value, u64::MAX).unwrap();
+        assert_eq!(repeated, full, "scaled constant input equals disjoint exact merges");
+        repeated.push_repeated(F64::NAN, 0).unwrap();
+        assert_eq!(repeated, full, "zero multiplicity contributes no numerical state");
         if let Total::Finite(finite) = total {
             // 2162 is an upper bound independent of the storage's 2176 bits.
             assert_eq!(finite.limbs[33] >> 50, 0);

@@ -73,6 +73,7 @@ pub mod ir;
 pub mod obs;
 pub(crate) mod plan;
 pub mod schema;
+pub mod scalar;
 pub(crate) mod storage;
 mod value;
 mod verify_store;
@@ -92,6 +93,7 @@ pub use api::prepared::{
 };
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Id128, Id128ParseError};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
+pub use scalar::{NumericCast, ScalarError, ScalarEvaluator, ScalarExpr};
 /// Narrow native wrapper seam; not a public key/value database product.
 #[doc(hidden)]
 pub mod integration {

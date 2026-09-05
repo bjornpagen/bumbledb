@@ -12,6 +12,8 @@ const configuration: NativeRuntimeOptions = {
 	workers: 2,
 	queueCapacity: 8,
 	cleanupCapacity: 16,
+	ownerCapacity: 16,
+	nativeHandleCapacity: 32,
 	inputBytes: 8_000_000n,
 	workingBytes: 8_000_000n,
 	scratchBytes: 0n,

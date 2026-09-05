@@ -116,6 +116,12 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 			}
 			return value
 		}
+		case "f64": {
+			if (typeof value !== "number") {
+				throw literalShapeError(context, "number", value)
+			}
+			return value
+		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
 				throw literalShapeError(context, "Uint8Array", value)

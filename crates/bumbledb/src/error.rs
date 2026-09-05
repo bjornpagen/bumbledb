@@ -575,6 +575,7 @@ impl From<DynIdError> for FactShapeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {
     EmptyRuleSet,
+    ScalarExpression { find: FindIndex, source: crate::ScalarError },
 
     TooManyRules {
         count: usize,
@@ -1184,6 +1185,9 @@ impl<'a> IntoIterator for &'a Violations {
 pub enum OverflowKind {
     Aggregate { find: FindIndex },
 
+    /// A group has more than u64::MAX distinct contributing bindings.
+    Cardinality,
+
     OriginCapacity,
 }
 
@@ -1369,6 +1373,7 @@ pub enum Error {
     },
 
     Overflow(OverflowKind),
+    Scalar { find: FindIndex, source: crate::ScalarError },
 
     /// limit — NOT the map size; do not sweep it with the map constant.)
     ResultBytesOverflow,
@@ -1405,6 +1410,7 @@ pub enum ErrorFamily {
     CapacityRayMeasure,
     DerivedBudgetExceeded,
     Overflow,
+    Scalar,
     ResultBytesOverflow,
     Corruption,
 }
@@ -1479,6 +1485,7 @@ impl Error {
             Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
             Self::DerivedBudgetExceeded { .. } => family_only(ErrorFamily::DerivedBudgetExceeded),
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),
+            Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),
         }

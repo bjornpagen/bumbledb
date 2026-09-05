@@ -421,6 +421,7 @@ impl Coverage {
                     aggregates += 1;
                     match op {
                         FoldOp::Sum => self.agg_sum += 1,
+                        FoldOp::Mean => self.agg_mean += 1,
                         FoldOp::Min => self.agg_min += 1,
                         FoldOp::Max => self.agg_max += 1,
                     }

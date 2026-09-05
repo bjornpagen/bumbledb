@@ -7,6 +7,9 @@ export const runtimeErrorCodes = [
 	"QueueFull",
 	"InvalidArgument",
 	"Internal",
+	"DirectoryBusy",
+	"InvalidPath",
+	"Io",
 	"ResourceLimit",
 	"Cancelled",
 	"DeadlineExceeded"

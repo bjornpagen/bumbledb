@@ -11,9 +11,14 @@ const ResourceLimit = Schema.Struct({
 	limit: Schema.BigInt
 })
 const PlainReason = Schema.Struct({
-	_tag: Schema.Literals(runtimeErrorCodes.filter((code) => code !== "ResourceLimit"))
+	_tag: Schema.Literals(runtimeErrorCodes.filter((code) => code !== "ResourceLimit" && code !== "Io"))
 })
-export const DbReason = Schema.Union([ResourceLimit, PlainReason])
+const Io = Schema.Struct({
+	_tag: Schema.Literal("Io"),
+	kind: Schema.String,
+	osCode: Schema.optional(Schema.Number)
+})
+export const DbReason = Schema.Union([ResourceLimit, Io, PlainReason])
 export class DbError extends Schema.TaggedError<DbError>()("DbError", {
 	operation: Schema.String,
 	reason: DbReason
@@ -34,6 +39,8 @@ const Outstanding = Schema.Struct({
 	queued: Schema.BigInt,
 	active: Schema.BigInt,
 	retained: Schema.BigInt,
+	owners: Schema.BigInt,
+	databases: Schema.BigInt,
 	inputBytes: Schema.BigInt,
 	workingBytes: Schema.BigInt,
 	scratchBytes: Schema.BigInt,

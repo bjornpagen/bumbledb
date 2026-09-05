@@ -855,7 +855,14 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
 
 fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |row| &row.0[index]);
+    if matches!(op, FoldOp::Sum | FoldOp::Mean) && matches!(values().next(), Some(Value::F64(_))) {
+        return Ok(Value::F64(crate::float::reduce(values().map(|value| {
+            let Value::F64(value) = value else { unreachable!("typed float group") };
+            *value
+        }), op == FoldOp::Mean)));
+    }
     match op {
+        FoldOp::Mean => unreachable!("validated: Mean requires F64"),
         FoldOp::Sum => {
             let total: i128 = values()
                 .map(|value| point(value).expect("validated: Sum takes integers"))
@@ -888,7 +895,14 @@ fn fold_position(op: FoldOp, index: usize, group: &[&Tuple]) -> Result<Value, Qu
 
 fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value, QueryError> {
     let values = || group.iter().map(move |b| &b.0[usize::from(over.0)]);
+    if matches!(op, FoldOp::Sum | FoldOp::Mean) && matches!(values().next(), Some(Value::F64(_))) {
+        return Ok(Value::F64(crate::float::reduce(values().map(|value| {
+            let Value::F64(value) = value else { unreachable!("typed float group") };
+            *value
+        }), op == FoldOp::Mean)));
+    }
     match op {
+        FoldOp::Mean => unreachable!("validated: Mean requires F64"),
         FoldOp::Sum => {
             let total: i128 = values()
                 .map(|value| point(value).expect("validated: Sum takes integers"))

@@ -48,12 +48,25 @@ enum State {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct ExactF64Accumulator {
+pub(crate) struct ExactF64Accumulator {
     state: State,
 }
 
 impl ExactF64Accumulator {
-    pub(super) fn push(&mut self, value: F64) -> Result<(), FloatCardinalityOverflow> {
+    pub(crate) fn push(&mut self, value: F64) -> Result<(), FloatCardinalityOverflow> {
+        self.push_repeated(value, 1)
+    }
+
+    /// Add one constant argument at a checked binding multiplicity without
+    /// executing a loop proportional to that multiplicity.
+    pub(crate) fn push_repeated(
+        &mut self,
+        value: F64,
+        count: u64,
+    ) -> Result<(), FloatCardinalityOverflow> {
+        let Some(count) = NonZeroU64::new(count) else {
+            return Ok(());
+        };
         let total = if value.is_nan() {
             Total::NaN
         } else if value == F64::INFINITY {
@@ -61,11 +74,13 @@ impl ExactF64Accumulator {
         } else if value == F64::NEG_INFINITY {
             Total::NegativeInfinity
         } else {
-            Total::Finite(Finite::from_value(value))
+            let mut finite = Finite::from_value(value);
+            finite.multiply(count.get());
+            Total::Finite(finite)
         };
         self.merge(&Self {
             state: State::NonEmpty {
-                count: NonZeroU64::MIN,
+                count,
                 total,
             },
         })
@@ -74,7 +89,7 @@ impl ExactF64Accumulator {
     /// Partitions must be disjoint after binding deduplication. Merge is not
     /// idempotent, and this numerical state carries no binding provenance.
     /// Cardinality failure leaves the original accumulator unchanged.
-    pub(super) fn merge(&mut self, other: &Self) -> Result<(), FloatCardinalityOverflow> {
+    pub(crate) fn merge(&mut self, other: &Self) -> Result<(), FloatCardinalityOverflow> {
         let State::NonEmpty {
             count: other_count,
             total: other_total,
@@ -95,11 +110,11 @@ impl ExactF64Accumulator {
         Ok(())
     }
 
-    pub(super) fn sum(&self) -> Option<F64> {
+    pub(crate) fn sum(&self) -> Option<F64> {
         self.round(NonZeroU64::MIN)
     }
 
-    pub(super) fn mean(&self) -> Option<F64> {
+    pub(crate) fn mean(&self) -> Option<F64> {
         match &self.state {
             State::Empty => None,
             State::NonEmpty { count, .. } => self.round(*count),
@@ -135,6 +150,17 @@ impl Total {
 }
 
 impl Finite {
+    #[expect(clippy::cast_possible_truncation, reason = "low limb of a base-2^64 product")]
+    fn multiply(&mut self, count: u64) {
+        let mut carry = 0u128;
+        for limb in &mut self.limbs {
+            let product = u128::from(*limb) * u128::from(count) + carry;
+            *limb = product as u64;
+            carry = product >> 64;
+        }
+        debug_assert_eq!(carry, 0, "count-proved 2162-bit finite bound");
+    }
+
     fn from_value(value: F64) -> Self {
         let bits = value.to_bits();
         let exponent = ((bits >> 52) & 0x7ff) as usize;

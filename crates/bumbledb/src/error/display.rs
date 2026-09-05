@@ -773,6 +773,7 @@ impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
+            Self::ScalarExpression { find, source } => write!(f, "find {find}: {source}"),
             Self::TooManyRules { count } => {
                 write!(f, "{count} rules exceed the rule cap")
             }
@@ -1129,6 +1130,10 @@ impl fmt::Display for Error {
             Self::Overflow(super::OverflowKind::OriginCapacity) => {
                 write!(f, "origin capacity exceeded")
             }
+            Self::Overflow(super::OverflowKind::Cardinality) => {
+                write!(f, "aggregate binding cardinality exceeds u64::MAX")
+            }
+            Self::Scalar { find, source } => write!(f, "find {find}: {source}"),
             Self::TransactionPoisoned { source } => {
                 write!(f, "write transaction poisoned: {source}")
             }

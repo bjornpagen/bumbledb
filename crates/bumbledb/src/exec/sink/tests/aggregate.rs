@@ -3,6 +3,84 @@ use crate::error::{Error, FindIndex};
 use crate::ir::FoldOp;
 
 #[test]
+fn float_sum_mean_share_one_exact_lane_and_preserve_compact_integer_state() {
+    use crate::exec::run::{Bindings, LeafBatch, Sink as _};
+    use bumbledb_theory::F64;
+    assert!(std::mem::size_of::<Acc>() <= 32);
+    let finds = [
+        FindSpec::Agg(AggSpec::Float { op: FoldOp::Sum, slot: 1 }),
+        FindSpec::Agg(AggSpec::Float { op: FoldOp::Mean, slot: 1 }),
+        FindSpec::Agg(AggSpec::Count),
+    ];
+    let mut sink = AggregateSink::new(finds, 2);
+    let bindings = Bindings::new(2);
+    let keys = [0, F64::from(1e16).to_order_key(), 1, F64::from(1.0).to_order_key(),
+        2, F64::from(-1e16).to_order_key(), 3, F64::from(99.0).to_order_key()];
+    for _ in 0..2 {
+        sink.emit_batch(&LeafBatch { keys: &keys, arity: 2, survivors: &[0, 2, 1],
+            key_slots: &[0, 1], bindings: &bindings });
+    }
+    assert_eq!(sink.float_accs.len(), 1, "one exact sum/count for two output operators");
+    assert_eq!(sink.into_answers().unwrap(), vec![vec![F64::from(1.0).to_order_key(),
+        F64::from_bits(0x3fd5_5555_5555_5555).to_order_key(), 3]]);
+
+    let mut sink = AggregateSink::new(finds, 2);
+    let mut bindings = Bindings::new(2);
+    bindings.set(1, F64::from(3.0).to_order_key());
+    sink.emit_batch(&LeafBatch { keys: &[0, 1, 2], arity: 1, survivors: &[0, 1, 2],
+        key_slots: &[0], bindings: &bindings });
+    assert_eq!(sink.into_answers().unwrap(), vec![vec![F64::from(9.0).to_order_key(),
+        F64::from(3.0).to_order_key(), 3]]);
+}
+
+#[test]
+fn written_union_does_not_share_float_inputs_that_alias_in_only_one_rule() {
+    use crate::exec::run::{Bindings, Sink as _};
+    use bumbledb_theory::F64;
+    let finds = |mean_slot| [
+        FindSpec::Agg(AggSpec::Float { op: FoldOp::Sum, slot: 0 }),
+        FindSpec::Agg(AggSpec::Float { op: FoldOp::Mean, slot: mean_slot }),
+    ];
+    let mut sink = AggregateSink::for_union(&finds(0), 2, 0);
+    let mut bindings = Bindings::new(2);
+    bindings.set(0, F64::from(1.0).to_order_key());
+    bindings.set(1, F64::from(10.0).to_order_key());
+    sink.emit(&bindings);
+    sink.aim(&finds(1), 2, &[]);
+    bindings.set(0, F64::from(2.0).to_order_key());
+    bindings.set(1, F64::from(20.0).to_order_key());
+    sink.emit(&bindings);
+    assert_eq!(sink.float_accs.len(), 2);
+    assert_eq!(sink.into_answers().unwrap(), vec![vec![F64::from(3.0).to_order_key(),
+        F64::from(10.5).to_order_key()]]);
+}
+
+#[test]
+fn cardinality_failure_precedes_finalization_and_reset_clears_the_failure() {
+    use crate::exec::run::{Bindings, Sink as _};
+    use bumbledb_theory::F64;
+    for value in [F64::ZERO, F64::NAN, F64::INFINITY, F64::NEG_INFINITY] {
+        let mut sink = AggregateSink::new([
+            FindSpec::Agg(AggSpec::Float { op: FoldOp::Sum, slot: 0 }),
+            FindSpec::Agg(AggSpec::Count),
+        ], 2);
+        let mut bindings = Bindings::new(2);
+        bindings.set(0, value.to_order_key());
+        sink.emit(&bindings);
+        sink.group_counts[0] = u64::MAX; // synthetic boundary; no impossible allocation
+        bindings.set(1, 1);
+        sink.emit(&bindings);
+        let mut emitted = 0;
+        assert_eq!(sink.finalize_into(&mut Vec::new(), |_| { emitted += 1; Ok(()) }),
+            Err(Error::Overflow(crate::error::OverflowKind::Cardinality)));
+        assert_eq!(emitted, 0);
+        sink.reset();
+        sink.emit(&bindings);
+        assert_eq!(sink.into_answers().unwrap(), vec![vec![value.to_order_key(), 1]]);
+    }
+}
+
+#[test]
 fn constant_group_batches_fold_once_per_run() {
     let dir = TempDir::new("sink-constant-group");
     let schema = schema();

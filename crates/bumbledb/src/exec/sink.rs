@@ -22,6 +22,8 @@ pub use crate::ir::FoldOp;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggSpec {
     Count,
+    /// Exact F64 Sum/Mean; Min/Max operate directly on total-order words.
+    Float { op: FoldOp, slot: usize },
     Fold {
         op: FoldOp,
         slot: usize,
@@ -35,6 +37,7 @@ pub enum AggSpec {
 impl AggSpec {
     pub(in crate::exec::sink) fn seed_acc(self) -> Acc {
         match self {
+            Self::Float { .. } => unreachable!("float groups seed their separate accumulator bank"),
             Self::Count => Acc::Count(0),
             Self::Fold {
                 op: FoldOp::Sum,
@@ -52,6 +55,7 @@ impl AggSpec {
             Self::Fold {
                 op: FoldOp::Max, ..
             } => Acc::Max(u64::MIN),
+            Self::Fold { op: FoldOp::Mean, .. } => unreachable!("Mean has F64 input"),
         }
     }
 }
@@ -59,9 +63,11 @@ impl AggSpec {
 /// One find term in execution form: a projected slot span or a fold
 /// aggregate. Widths come from the plan's
 /// binding-slot layout (`ValidatedPlan::slots`) — never assumed 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindSpec {
     Var { slot: usize, width: usize },
+
+    Compute(std::sync::Arc<crate::api::prepared::computed::OutputProgram>),
 
     Agg(AggSpec),
 
@@ -240,6 +246,9 @@ enum Acc {
     Min(u64),
     Max(u64),
     Count(u64),
+    /// Small handle, so integer accumulator arrays remain compact. Aliases
+    /// share an exact total/count but never accumulate an argument twice.
+    Float { index: usize, primary: bool },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -280,6 +289,11 @@ pub struct AggregateSink {
     groups: GroupTable,
 
     group_state: GroupState,
+
+    float_accs: Vec<crate::exec::kernel::numeric::ExactF64Accumulator>,
+    share_float_inputs: bool,
+    group_counts: Vec<u64>,
+    cardinality_overflow: bool,
 
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,

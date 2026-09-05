@@ -435,6 +435,7 @@ fn push_find(out: &mut String, find: &FindTerm) {
         FindTerm::Aggregate { op, over } => {
             let name = match op {
                 FoldOp::Sum => "sum",
+                FoldOp::Mean => "mean",
                 FoldOp::Min => "min",
                 FoldOp::Max => "max",
             };
@@ -904,6 +905,7 @@ fn push_head(out: &mut String, head: &[HeadTerm]) {
             HeadTerm::Aggregate(op) => {
                 let name = match op {
                     HeadOp::Sum => "sum",
+                    HeadOp::Mean => "mean",
                     HeadOp::Min => "min",
                     HeadOp::Max => "max",
                     HeadOp::Count => "count",

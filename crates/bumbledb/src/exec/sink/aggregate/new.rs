@@ -17,10 +17,11 @@ pub(in crate::exec::sink) fn parse_finds_into(
 ) {
     parsed.clear();
     for find in finds {
-        let spec = match *find {
-            FindSpec::Var { slot, width } => SinkSpec::Var { slot, width },
-            FindSpec::Agg(spec) => SinkSpec::Agg(spec),
-            FindSpec::Pack { slot } => SinkSpec::Pack { slot },
+        let spec = match find {
+            FindSpec::Var { slot, width } => SinkSpec::Var { slot: *slot, width: *width },
+            FindSpec::Agg(spec) => SinkSpec::Agg(*spec),
+            FindSpec::Pack { slot } => SinkSpec::Pack { slot: *slot },
+            FindSpec::Compute(_) => unreachable!("computed adapter lowers output slots before constructing inner sink"),
         };
         parsed.push(spec);
     }
@@ -127,6 +128,9 @@ impl AggregateSink {
         dense_groups: &[u16],
     ) -> Self {
         let finds = parse_finds(finds, slot_count);
+        // Written unions can change which argument positions alias in each
+        // rule. Only single-rule and DNF-origin heads have stable input aliases.
+        let share_float_inputs = !matches!(regime, DedupRegime::Union);
         let scratch_words = slot_count;
         let group_spans: Vec<(usize, usize)> = finds
             .iter()
@@ -204,6 +208,10 @@ impl AggregateSink {
             }
         };
         Self {
+            float_accs: Vec::new(),
+            share_float_inputs,
+            group_counts: Vec::new(),
+            cardinality_overflow: false,
             dedup,
             groups,
             key_scratch: vec![0; key_words],
@@ -277,6 +285,9 @@ impl AggregateSink {
 
     pub fn reset(&mut self) {
         self.groups.clear();
+        self.float_accs.clear();
+        self.group_counts.clear();
+        self.cardinality_overflow = false;
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
             accs.clear();
         }
@@ -303,6 +314,7 @@ fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
             Some((*slot, *width))
         }
         SinkSpec::Pack { slot } => Some((*slot, 2)),
+        SinkSpec::Agg(AggSpec::Float { slot, .. }) => Some((*slot, 1)),
         SinkSpec::Agg(AggSpec::Count) => None,
     }
 }

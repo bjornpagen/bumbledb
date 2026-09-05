@@ -72,6 +72,10 @@ interface I64Field {
 	readonly kind: "i64"
 }
 
+interface F64Field {
+	readonly kind: "f64"
+}
+
 interface BytesField<Width extends number = number> {
 	readonly kind: "bytes"
 	readonly width: Width
@@ -100,6 +104,7 @@ type AnyField =
 	| U64Field
 	| FreshU64Field
 	| I64Field
+	| F64Field
 	| BytesField
 	| IntervalField
 	| AnyClosedIdField
@@ -133,11 +138,13 @@ type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 				? bigint
 				: F extends { readonly kind: "i64" }
 					? bigint
-					: F extends { readonly kind: "bytes" }
-						? Uint8Array
-						: F extends { readonly kind: "interval" }
-							? IntervalValue
-							: never
+					: F extends { readonly kind: "f64" }
+						? number
+						: F extends { readonly kind: "bytes" }
+							? Uint8Array
+							: F extends { readonly kind: "interval" }
+								? IntervalValue
+								: never
 
 /**
  * The typed shape refusal shared by every literal machine — the selection
@@ -248,6 +255,9 @@ const u64: U64Field = Object.freeze({ kind: "u64", fresh: freshU64 })
 
 const i64: I64Field = Object.freeze({ kind: "i64" })
 
+/** Binary64. The native value boundary canonicalizes NaN and signed zero. */
+const f64: F64Field = Object.freeze({ kind: "f64" })
+
 const bool: BoolField = Object.freeze({ kind: "bool" })
 
 const str: StrField = Object.freeze({ kind: "str" })
@@ -315,6 +325,12 @@ function literalOf(field: AnyField, value: unknown): LiteralSpec {
 			}
 			return { kind: "value", value: { kind: "string", value } }
 		}
+		case "f64": {
+			if (typeof value !== "number") {
+				throw literalShapeError("selection literal", "number", value)
+			}
+			return { kind: "value", value: { kind: "f64", value } }
+		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
 				throw literalShapeError("selection literal", "Uint8Array", value)
@@ -335,6 +351,7 @@ export type {
 	ClosedHandleTuple,
 	ClosedIdField,
 	ClosedRoster,
+	F64Field,
 	FreshU64Field,
 	I64Field,
 	Infer,
@@ -349,6 +366,7 @@ export {
 	assertDeclarationRecord,
 	bool,
 	bytes,
+	f64,
 	i64,
 	interval,
 	isIntervalValue,

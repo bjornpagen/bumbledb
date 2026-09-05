@@ -9,6 +9,9 @@ use std::cmp::Ordering;
 
 use bumbledb::F64;
 
+mod reduce;
+pub(crate) use reduce::reduce;
+
 #[cfg(test)]
 mod relational_tests;
 

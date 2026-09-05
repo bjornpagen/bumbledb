@@ -2,7 +2,7 @@ use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpe
 
 impl AggregateSink {
     pub(super) fn fold_scratch_row(&mut self) {
-        if !self
+        if self.cardinality_overflow || !self
             .dedup
             .consider(&self.binding_scratch, &mut self.union_scratch)
         {
@@ -13,6 +13,9 @@ impl AggregateSink {
             self.binding_scratch[slot]
         });
         let group_idx = self.probe_group();
+        if matches!(self.group_state, GroupState::Folds { .. }) && !self.advance_group(group_idx, 1) {
+            return;
+        }
 
         match &mut self.group_state {
             GroupState::Pack { slot, claims } => {
@@ -29,6 +32,19 @@ impl AggregateSink {
                     let acc = &mut accs[group_idx * n_aggs + acc_cursor];
                     acc_cursor += 1;
                     match spec {
+                        AggSpec::Float { slot, .. } => {
+                            let Acc::Float { index, primary } = acc else {
+                                unreachable!("float accumulator handle")
+                            };
+                            if *primary {
+                                let value = bumbledb_theory::F64::from_order_key(self.binding_scratch[*slot])
+                                    .expect("validated canonical F64 binding");
+                                if self.float_accs[*index].push(value).is_err() {
+                                    self.cardinality_overflow = true;
+                                    return;
+                                }
+                            }
+                        }
                         AggSpec::Count => {
                             let Acc::Count(n) = acc else {
                                 unreachable!("accumulators are seeded per op");

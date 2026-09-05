@@ -513,7 +513,7 @@ fn validate_rule(
         .iter()
         .filter_map(|term| match term {
             FindTerm::Var(var) => Some(*var),
-            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => None,
+            FindTerm::Compute(_) | FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => None,
         })
         .collect();
     ctx.check_finds(rule, &group_key)?;
@@ -542,6 +542,7 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
         .iter()
         .map(|term| match term {
             FindTerm::Var(var) => var_type(var),
+            FindTerm::Compute(expr) => expr.result_type(|var| typing.var_types.get(&var).copied()).expect("validated output expression"),
             FindTerm::Count => ValueType::U64,
             FindTerm::Aggregate { over, .. } | FindTerm::Pack { over } => var_type(over),
         })

@@ -39,6 +39,8 @@ function valueTypeOf(field: AnyField): ValueTypeSpec {
 			return { kind: "u64" }
 		case "i64":
 			return { kind: "i64" }
+		case "f64":
+			return { kind: "f64" }
 		case "str":
 			return { kind: "string" }
 		case "bytes":

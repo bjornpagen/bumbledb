@@ -3,11 +3,11 @@
 //! numerical environment guard. No fast-math/reassociation/FMA is involved.
 
 mod accumulator;
-mod environment;
+pub(crate) mod environment;
 
-use accumulator::ExactF64Accumulator;
+pub(crate) use accumulator::ExactF64Accumulator;
 use bumbledb_theory::F64;
-use environment::NumericalGuard;
+pub(crate) use environment::NumericalGuard;
 
 /// A float reduction exceeded the representable number of contributing
 /// bindings. This is independent of finite/infinite/NaN numerical state.

@@ -773,6 +773,7 @@ struct ViewMemo {
 // query holds exactly one sink, and the pipeline scratch answers
 // that tripped the lint are the working set itself.
 enum EitherSink {
+    Computed(Box<computed::ComputedSink>),
     Projection(ProjectionSink),
     /// Boxed: the batch-fold scratch grew the sink past the
     /// variant-size lint; one prepared query holds one sink, and the

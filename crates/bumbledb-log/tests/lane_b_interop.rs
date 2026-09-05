@@ -9,6 +9,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+use std::{io, io::BufRead, io::Write};
 
 use bumbledb_log::store::fs::{FsStore, content_etag};
 use bumbledb_log::store::{Create, ObjectStore, StoreKey, Swap};
@@ -334,5 +338,165 @@ fn mixed_fleet_cas_linearizes() {
         4 * SWAPS_PER_CONTENDER,
         "no swap was lost and none applied twice across the mixed fleet"
     );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An owned subprocess with an event gate, never a timing-based assertion.
+/// The watchdog only fails a wedged harness; expiration cannot pass a test.
+struct CasChild {
+    child: Child,
+    events: Receiver<String>,
+    reader: Option<JoinHandle<()>>,
+}
+
+impl CasChild {
+    fn spawn(base: &Path, mode: &str, expected: &str) -> Self {
+        let script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ts-log/test/interop-cas-child.ts");
+        let mut child = Command::new("node")
+            .arg(script)
+            .arg(mode)
+            .arg(store_root(base))
+            .arg(expected)
+            .env_remove("NODE_OPTIONS")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .current_dir(base)
+            .spawn()
+            .expect("spawn one-shot Node CAS child");
+        let stdout = child.stdout.take().unwrap();
+        let (send, events) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            for line in io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if let Some(event) = line.strip_prefix("INTEROP_CAS ")
+                    && send.send(event.to_owned()).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Self {
+            child,
+            events,
+            reader: Some(reader),
+        }
+    }
+
+    fn event(&self) -> serde_json::Value {
+        let event = self
+            .events
+            .recv_timeout(Duration::from_secs(20))
+            .expect("child event, not an elapsed-time ownership assumption");
+        serde_json::from_str(&event).expect("structured child event")
+    }
+
+    fn release(&mut self) {
+        self.child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"continue\n")
+            .expect("release paused compare-read");
+    }
+
+    fn finish(&mut self) {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                assert!(status.success(), "Node CAS child failed: {status}");
+                return;
+            }
+            assert!(start.elapsed() < Duration::from_secs(20), "child wedged");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for CasChild {
+    fn drop(&mut self) {
+        // Reap even when an assertion fails while the child is at the gate.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+#[test]
+fn mixed_cas_paused_compare_has_exactly_one_winner() {
+    let base = base_dir("staged_swap");
+    let store = FsStore::new(store_root(&base));
+    let key = StoreKey::of("race/counter");
+    let Create::Created(before) = store.put_create(&key, b"before").unwrap() else {
+        panic!("counter birth");
+    };
+    let mut child = CasChild::spawn(&base, "pause-read", &before.0);
+    let first = child.event();
+    let rust = store.put_swap(&key, b"rust-after", &before).unwrap();
+    let node = match field(&first, "event") {
+        "read-paused" => {
+            assert_eq!(field(&first, "bytes"), "before");
+            child.release();
+            child.event()
+        }
+        "completed" => first,
+        other => panic!("unexpected first CAS event: {other}"),
+    };
+    assert_eq!(field(&node, "event"), "completed");
+    child.finish();
+    let node_won = match field(&node, "outcome") {
+        "swapped" => true,
+        "moved" => false,
+        other => panic!("one-shot CAS did not decide: {other}"),
+    };
+    let rust_won = matches!(rust, Swap::Swapped(_));
+    assert_eq!(
+        usize::from(rust_won) + usize::from(node_won),
+        1,
+        "both real adapters accepted one predecessor etag: Rust={rust:?}, Node={node}"
+    );
+    let expected = if rust_won {
+        b"rust-after"
+    } else {
+        b"node-after"
+    };
+    let final_object = store.get(&key).unwrap().unwrap();
+    assert_eq!(final_object.bytes, expected);
+    assert_eq!(final_object.etag, content_etag(expected));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn node_cas_refuses_a_symlinked_rust_mutation_lock() {
+    use std::os::unix::fs::symlink;
+    let base = base_dir("poison_lock");
+    let root = store_root(&base);
+    let store = FsStore::new(&root);
+    let key = StoreKey::of("race/counter");
+    let Create::Created(before) = store.put_create(&key, b"before").unwrap() else {
+        panic!("counter birth");
+    };
+    let sentinel = base.join("lock-sentinel");
+    std::fs::write(&sentinel, b"must remain untouched").unwrap();
+    let lock = root.join("~lease/race/counter/mutation.lock");
+    std::fs::remove_file(&lock).unwrap();
+    symlink(&sentinel, &lock).unwrap();
+    // Verify this fixture is a real refusal at Rust's mutation boundary.
+    let refused = store.put_swap(&key, b"rust-after", &before).unwrap_err();
+    assert_eq!(refused.source.kind(), io::ErrorKind::InvalidInput);
+    let mut child = CasChild::spawn(&base, "poison-lock", &before.0);
+    let result = child.event();
+    child.finish();
+    assert_eq!(
+        field(&result, "event"),
+        "refused",
+        "Node must enforce the same poisoned lock refusal: {result}"
+    );
+    assert_eq!(store.get(&key).unwrap().unwrap().bytes, b"before");
+    assert_eq!(std::fs::read(sentinel).unwrap(), b"must remain untouched");
     let _ = std::fs::remove_dir_all(&base);
 }

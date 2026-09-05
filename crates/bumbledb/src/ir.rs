@@ -135,6 +135,7 @@ pub struct Atom {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggOp {
     Sum,
+    Mean,
 
     /// (ruled 2026-07-23, R3: `Min` over bool is **All**); intervals and
     Min,
@@ -147,12 +148,13 @@ pub enum AggOp {
     Pack,
 }
 
-/// A fold over a variable: `Sum`/`Min`/`Max` only. Nullary [`FindTerm::Count`]
+/// A fold over a variable: `Sum`/`Mean`/`Min`/`Max`. Nullary [`FindTerm::Count`]
 /// and coalescing [`FindTerm::Pack`] are sibling constructors — Count-with-
 /// variable and Sum-without are unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FoldOp {
     Sum,
+    Mean,
     Min,
     Max,
 }
@@ -162,6 +164,7 @@ impl FoldOp {
     pub fn head_op(self) -> HeadOp {
         match self {
             Self::Sum => HeadOp::Sum,
+            Self::Mean => HeadOp::Mean,
             Self::Min => HeadOp::Min,
             Self::Max => HeadOp::Max,
         }
@@ -176,6 +179,8 @@ impl FoldOp {
 pub enum FindTerm {
     Var(VarId),
 
+    Compute(crate::ScalarExpr),
+
     Count,
 
     Aggregate { op: FoldOp, over: VarId },
@@ -188,6 +193,7 @@ impl FindTerm {
     pub fn head_term(&self) -> HeadTerm {
         match self {
             Self::Var(_) => HeadTerm::Var,
+            Self::Compute(_) => HeadTerm::Compute,
             Self::Count => HeadTerm::Aggregate(HeadOp::Count),
             Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
             Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),
@@ -201,6 +207,7 @@ impl FindTerm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadOp {
     Sum,
+    Mean,
     Min,
     Max,
     Count,
@@ -212,6 +219,7 @@ impl AggOp {
     pub fn head_op(self) -> HeadOp {
         match self {
             Self::Sum => HeadOp::Sum,
+            Self::Mean => HeadOp::Mean,
             Self::Min => HeadOp::Min,
             Self::Max => HeadOp::Max,
             Self::Count => HeadOp::Count,
@@ -228,6 +236,7 @@ impl AggOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadTerm {
     Var,
+    Compute,
     Aggregate(HeadOp),
 }
 

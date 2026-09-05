@@ -915,6 +915,7 @@ fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
         .ok_or_else(|| err(format!("bumbledb marshal: unknown fold op `{kind}`")))?;
     match op {
         HeadOp::Sum => Ok(FoldOp::Sum),
+        HeadOp::Mean => Ok(FoldOp::Mean),
         HeadOp::Min => Ok(FoldOp::Min),
         HeadOp::Max => Ok(FoldOp::Max),
         HeadOp::Count => Err(err(

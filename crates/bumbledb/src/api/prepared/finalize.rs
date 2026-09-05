@@ -18,6 +18,10 @@ pub(super) fn finalize<C: CatalogRead>(
 ) -> Result<()> {
     memo.clear();
     match sink {
+        EitherSink::Computed(sink) => {
+            if let Some(error) = &sink.error { return Err(error.clone()); }
+            finalize(&mut sink.inner, answer_scratch, memo, catalog, columns, out)
+        }
         EitherSink::Projection(sink) => {
             let base = out.cells.len();
             let result = fill_resolved_answers(out, catalog, memo, columns, sink);

@@ -108,6 +108,7 @@ impl SignatureColumn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggKind {
     Sum,
+    Mean,
 
     Min,
 
@@ -122,6 +123,7 @@ impl std::fmt::Display for AggKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Sum => "Sum",
+            Self::Mean => "Mean",
             Self::Min => "Min",
             Self::Max => "Max",
             Self::Count => "Count",
@@ -638,7 +640,7 @@ impl<'a> RuleWitness<'a> {
         let has_aggregate = self.rule.finds.iter().any(|term| {
             matches!(
                 term,
-                FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
+                FindTerm::Compute(_) | FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
             )
         });
         if has_aggregate {

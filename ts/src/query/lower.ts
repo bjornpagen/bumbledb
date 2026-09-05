@@ -45,7 +45,7 @@ import type {
 } from "#query/atom.ts"
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
-import { count, max, min, pack, sum } from "#query/find.ts"
+import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 import type {
 	AnyVar,
@@ -121,6 +121,7 @@ interface TermOps {
 	readonly not: typeof not
 	readonly count: typeof count
 	readonly sum: typeof sum
+	readonly mean: typeof mean
 	readonly min: typeof min
 	readonly max: typeof max
 	readonly pack: typeof pack
@@ -395,6 +396,7 @@ const termOps: TermOps = Object.freeze({
 	not,
 	count,
 	sum,
+	mean,
 	min,
 	max,
 	pack
@@ -726,6 +728,7 @@ function aggDataOf(name: string, entry: { readonly agg: string; readonly over?: 
 	const over = entry.over
 	switch (entry.agg) {
 		case "sum":
+		case "mean":
 		case "min":
 		case "max": {
 			if (isTerm(over) && over[term] === "var") {
@@ -803,9 +806,9 @@ function assertNotClosed(where: string, position: string, ref: AnyVar): void {
 }
 
 function assertNumeric(where: string, position: string, ref: AnyVar): void {
-	if (ref.field.kind !== "u64" && ref.field.kind !== "i64") {
+	if (ref.field.kind !== "u64" && ref.field.kind !== "i64" && ref.field.kind !== "f64") {
 		throw new AuthoringError({
-			message: `${where}: ${position} ${ref.label} is ${ref.field.kind}, not numeric — a fold reads u64/i64 only`
+			message: `${where}: ${position} ${ref.label} is ${ref.field.kind}, not numeric — a fold reads u64/i64/f64 only`
 		})
 	}
 }
@@ -833,6 +836,9 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 			assertBound(where, bound, agg.over)
 			assertNotClosed(where, `the ${agg.fold} input`, agg.over)
 			assertNumeric(where, `the ${agg.fold} input`, agg.over)
+			if (agg.fold === "mean" && agg.over.field.kind !== "f64") {
+				throw new AuthoringError({ message: `${where}: mean requires an f64 input; cast integers explicitly` })
+			}
 			return
 		}
 		case "pack":
@@ -1649,6 +1655,12 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
 				throw literalShapeError(context, "bigint", value)
 			}
 			return { kind: "i64", value }
+		}
+		case "f64": {
+			if (typeof value !== "number") {
+				throw literalShapeError(context, "number", value)
+			}
+			return { kind: "f64", value }
 		}
 		case "str": {
 			if (typeof value !== "string") {

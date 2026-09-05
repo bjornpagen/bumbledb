@@ -46,7 +46,7 @@ pub(super) fn refuse_float_arithmetic(query: &Query, schema: &Schema) -> Result<
     for rule in &query.rules {
         for find in &rule.finds {
             if let FindTerm::Aggregate {
-                op: bumbledb::FoldOp::Sum,
+                op: bumbledb::FoldOp::Sum | bumbledb::FoldOp::Mean,
                 over,
             } = find
                 && float_var(*over, rule, schema, &float_columns)

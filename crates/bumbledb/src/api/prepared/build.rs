@@ -886,6 +886,15 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
             FindTerm::Pack { over } => FindSpec::Pack {
                 slot: layout.slot_of(*over),
             },
+            FindTerm::Aggregate { op, over }
+                if *rule.var_type(*over) == ValueType::F64
+                    && matches!(op, crate::ir::FoldOp::Sum | crate::ir::FoldOp::Mean) =>
+            {
+                FindSpec::Agg(crate::exec::sink::AggSpec::Float {
+                    op: *op,
+                    slot: layout.slot_of(*over),
+                })
+            }
             FindTerm::Aggregate { op, over } => FindSpec::Agg(crate::exec::sink::AggSpec::Fold {
                 op: *op,
                 slot: layout.slot_of(*over),

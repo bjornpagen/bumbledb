@@ -20,7 +20,7 @@ impl AggregateSink {
         }
 
         let key_sourced = self.finds.iter().any(|find| match find {
-            SinkSpec::Agg(AggSpec::Fold { slot, .. }) => {
+            SinkSpec::Agg(AggSpec::Fold { slot, .. } | AggSpec::Float { slot, .. }) => {
                 matches!(batch.source_of(*slot), LeafSource::Key(_))
             }
             _ => false,
@@ -68,11 +68,17 @@ impl AggregateSink {
 
     /// every `Key` arm below asserts it non-empty before gathering.
     fn fold_constant_group(&mut self, batch: &LeafBatch<'_>, count: u64, survivors: &[u32]) {
+        if self.cardinality_overflow {
+            return;
+        }
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             batch.bindings.get(slot)
         });
 
         let group_idx = self.probe_group();
+        if !self.advance_group(group_idx, count) {
+            return;
+        }
 
         let n_aggs = match &self.group_state {
             GroupState::Folds { accs, n_aggs } => {
@@ -92,6 +98,33 @@ impl AggregateSink {
             let acc = &mut self.acc_scratch[cursor];
             cursor += 1;
             match spec {
+                AggSpec::Float { slot, .. } => {
+                    let Acc::Float { index, primary } = acc else {
+                        unreachable!("float accumulator handle")
+                    };
+                    if !*primary {
+                        continue;
+                    }
+                    let accumulator = &mut self.float_accs[*index];
+                    let result = match batch.source_of(*slot) {
+                        LeafSource::Outer => accumulator.push_repeated(
+                            bumbledb_theory::F64::from_order_key(batch.bindings.get(*slot))
+                                .expect("validated canonical F64 binding"),
+                            count,
+                        ),
+                        LeafSource::Key(word) => {
+                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
+                            survivors.iter().try_for_each(|&entry| {
+                                accumulator.push(bumbledb_theory::F64::from_order_key(batch.key(entry, word))
+                                    .expect("validated canonical F64 binding"))
+                            })
+                        }
+                    };
+                    if result.is_err() {
+                        self.cardinality_overflow = true;
+                        return;
+                    }
+                }
                 AggSpec::Count => {
                     let Acc::Count(n) = acc else {
                         unreachable!("accumulators are seeded per op");

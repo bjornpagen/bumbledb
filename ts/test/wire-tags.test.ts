@@ -47,7 +47,7 @@ const ROSTERS = {
 	statement: ["fd", "containment", "capacity"],
 	statementKind: ["functionality", "containment", "capacity"],
 	term: ["var", "param", "paramSet", "literal"],
-	aggregateOp: ["sum", "min", "max", "count", "pack"],
+	aggregateOp: ["sum", "mean", "min", "max", "count", "pack"],
 	headTerm: ["var", "aggregate"],
 	findTerm: ["var", "count", "aggregate", "pack"],
 	atomSource: ["edb", "interior"],

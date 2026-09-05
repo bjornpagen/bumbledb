@@ -73,7 +73,7 @@ interface RecIr {
 
 type HeadTermIr = { readonly kind: "var" } | { readonly kind: "aggregate"; readonly op: HeadOpIr }
 
-type HeadOpIr = "sum" | "min" | "max" | "count" | "pack"
+type HeadOpIr = "sum" | "mean" | "min" | "max" | "count" | "pack"
 
 interface RuleIr {
 	readonly finds: readonly FindTermIr[]
@@ -82,7 +82,11 @@ interface RuleIr {
 	readonly conditions: readonly ConditionTreeIr[]
 }
 
-type FoldOpIr = { readonly kind: "sum" } | { readonly kind: "min" } | { readonly kind: "max" }
+type FoldOpIr =
+	| { readonly kind: "sum" }
+	| { readonly kind: "mean" }
+	| { readonly kind: "min" }
+	| { readonly kind: "max" }
 
 type FindTermIr =
 	| { readonly kind: "var"; readonly var: number }
@@ -96,6 +100,7 @@ type ParsedQuery = QueryIr & { readonly [parsedQueryBrand]: true }
 
 type AggOpIr =
 	| { readonly kind: "sum" }
+	| { readonly kind: "mean" }
 	| { readonly kind: "min" }
 	| { readonly kind: "max" }
 	| { readonly kind: "count" }

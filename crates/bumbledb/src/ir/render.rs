@@ -182,6 +182,10 @@ fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule
 fn find_term(out: &mut String, term: &FindTerm) {
     match term {
         FindTerm::Var(var) => var_name(out, *var),
+        FindTerm::Compute(expr) => {
+            use std::fmt::Write as _;
+            write!(out, "Compute({expr:?})").expect("writing to String");
+        }
         FindTerm::Count => out.push_str("Count"),
         FindTerm::Aggregate { op, over } => {
             aggregate(out, *op, *over);
@@ -197,6 +201,7 @@ fn find_term(out: &mut String, term: &FindTerm) {
 fn aggregate(out: &mut String, op: crate::ir::FoldOp, over: crate::ir::VarId) {
     let name = match op {
         crate::ir::FoldOp::Sum => "Sum",
+        crate::ir::FoldOp::Mean => "Mean",
         crate::ir::FoldOp::Min => "Min",
         crate::ir::FoldOp::Max => "Max",
     };

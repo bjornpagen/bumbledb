@@ -18,6 +18,8 @@ export interface NativeRuntimeOptions {
 	readonly workers: number
 	readonly queueCapacity: number
 	readonly cleanupCapacity: number
+	readonly ownerCapacity: number
+	readonly nativeHandleCapacity: number
 	readonly inputBytes: bigint
 	readonly workingBytes: bigint
 	readonly scratchBytes: bigint
@@ -53,7 +55,7 @@ function millis(value: Duration.Input, operation: string): number {
 	return Math.ceil(duration)
 }
 
-function policy(work: ExecutionPolicy, operation: string): PolicyWire {
+export function policyWire(work: ExecutionPolicy, operation: string): PolicyWire {
 	return {
 		inputBytes: bytes(work.inputBytes, operation),
 		workingBytes: bytes(work.workingBytes, operation),
@@ -71,6 +73,8 @@ function options(value: NativeRuntimeOptions): OptionsWire {
 		workers: count(value.workers, operation),
 		queueCapacity: count(value.queueCapacity, operation),
 		cleanupCapacity: count(value.cleanupCapacity, operation),
+		ownerCapacity: count(value.ownerCapacity, operation),
+		nativeHandleCapacity: count(value.nativeHandleCapacity, operation),
 		inputBytes: bytes(value.inputBytes, operation),
 		workingBytes: bytes(value.workingBytes, operation),
 		scratchBytes: bytes(value.scratchBytes, operation),
@@ -115,13 +119,22 @@ export function nativeOperation<A>(
 	start: (callback: () => void) => OperationHandle,
 	accept: (value: Uint8Array | null) => A
 ): Effect.Effect<A, DbError> {
+	return nativeOperationWith(operation, start, runtimeNative.runtimeTake, accept)
+}
+
+export function nativeOperationWith<A, Value>(
+	operation: string,
+	start: (callback: () => void) => OperationHandle,
+	take: (operation: OperationHandle) => Value,
+	accept: (value: Value) => A
+): Effect.Effect<A, DbError> {
 	return Effect.callback((resume, signal) => {
 		let lease: OperationHandle
 		try {
 			lease = start(() => {
 				if (signal.aborted) return
 				try {
-					resume(Effect.succeed(accept(runtimeNative.runtimeTake(lease))))
+					resume(Effect.succeed(accept(take(lease))))
 				} catch (cause) {
 					resume(Effect.fail(failure(operation, cause)))
 				}
@@ -164,7 +177,7 @@ const acquire = Effect.fn("NativeRuntime.acquire")(function* (configuration: Nat
 								inspect: Effect.fn("NativeRuntime.inspect")(function* (work) {
 									yield* nativeOperation(
 										"NativeRuntime.inspect",
-										(callback) => runtimeNative.runtimeReady(owner, policy(work, "NativeRuntime.inspect"), callback),
+										(callback) => runtimeNative.runtimeReady(owner, policyWire(work, "NativeRuntime.inspect"), callback),
 										() => undefined
 									)
 									return runtimeNative.runtimeInspect(owner)
@@ -210,6 +223,14 @@ export class NativeRuntime extends Context.Service<NativeRuntime, RuntimeService
 	}
 }
 
+/** Private core/log integration: captures the already acquired shared service. */
+export const runtimeHandle = Effect.fn("NativeRuntime.handle")(function* () {
+	const runtime = yield* NativeRuntime
+	const handle = owners.get(runtime)
+	if (handle === undefined) return yield* Effect.fail(invalid("NativeRuntime.handle"))
+	return handle
+})
+
 /** Internal first executor consumer; not a replacement row codec or public hash API. */
 export const hashChunk = Effect.fn("bumbledb.hashChunk")(function* (input: Uint8Array, work: ExecutionPolicy) {
 	const runtime = yield* NativeRuntime
@@ -219,7 +240,7 @@ export const hashChunk = Effect.fn("bumbledb.hashChunk")(function* (input: Uint8
 		"hashChunk",
 		(callback) => {
 			if (!(input instanceof Uint8Array) || !(input.buffer instanceof ArrayBuffer)) throw invalid("hashChunk")
-			return runtimeNative.runtimeHash(handle, policy(work, "hashChunk"), input, callback)
+			return runtimeNative.runtimeHash(handle, policyWire(work, "hashChunk"), input, callback)
 		},
 		(value) => {
 			if (value === null) throw dbError("hashChunk", { _tag: "Internal" })

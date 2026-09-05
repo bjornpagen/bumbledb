@@ -220,6 +220,7 @@ enum Item {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AggOp {
     Sum,
+    Mean,
     Min,
     Max,
     Count,
@@ -230,6 +231,7 @@ impl AggOp {
     fn fold_ir_name(self) -> &'static str {
         match self {
             Self::Sum => "Sum",
+            Self::Mean => "Mean",
             Self::Min => "Min",
             Self::Max => "Max",
             Self::Count | Self::Pack => {
@@ -547,8 +549,9 @@ fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
     }
 }
 
-const AGG_NAMES: [(&str, AggOp); 5] = [
+const AGG_NAMES: [(&str, AggOp); 6] = [
     ("Sum", AggOp::Sum),
+    ("Mean", AggOp::Mean),
     ("Min", AggOp::Min),
     ("Max", AggOp::Max),
     ("Count", AggOp::Count),

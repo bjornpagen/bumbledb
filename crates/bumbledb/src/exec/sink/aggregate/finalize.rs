@@ -9,6 +9,9 @@ impl AggregateSink {
         answer_scratch: &mut Vec<u64>,
         mut emit: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<()> {
+        if self.cardinality_overflow {
+            return Err(Error::Overflow(OverflowKind::Cardinality));
+        }
         let live = self.group_count();
         if let GroupState::Pack { claims, .. } = &mut self.group_state {
             for claims in &mut claims[..live] {
@@ -59,8 +62,21 @@ impl AggregateSink {
                             answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
                             key_cursor += width;
                         }
-                        SinkSpec::Agg(_) => {
-                            answer_scratch.push(Self::finalize_acc(accs[acc_cursor], find_idx)?);
+                        SinkSpec::Agg(spec) => {
+                            let word = if let Acc::Float { index, .. } = accs[acc_cursor] {
+                                let crate::exec::sink::AggSpec::Float { op, .. } = spec else {
+                                    unreachable!("float accumulator has float find")
+                                };
+                                let value = match op {
+                                    crate::ir::FoldOp::Sum => self.float_accs[index].sum(),
+                                    crate::ir::FoldOp::Mean => self.float_accs[index].mean(),
+                                    _ => unreachable!("exact float bank is Sum/Mean only"),
+                                }.expect("groups exist only after at least one binding");
+                                value.to_order_key()
+                            } else {
+                                Self::finalize_acc(accs[acc_cursor], find_idx)?
+                            };
+                            answer_scratch.push(word);
                             acc_cursor += 1;
                         }
                         SinkSpec::Pack { .. } => {
@@ -148,6 +164,7 @@ impl AggregateSink {
                 })
             }),
             Acc::Min(word) | Acc::Max(word) | Acc::Count(word) => Ok(word),
+            Acc::Float { .. } => unreachable!("float results round from the separate bank"),
         }
     }
 

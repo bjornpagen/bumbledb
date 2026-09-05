@@ -116,6 +116,7 @@ export type {
 	ClosedHandleTuple,
 	ClosedIdField,
 	ClosedRoster,
+	F64Field,
 	FreshU64Field,
 	I64Field,
 	Infer,
@@ -125,7 +126,7 @@ export type {
 	StrField,
 	U64Field
 } from "#fields.ts"
-export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
+export { bool, bytes, f64, i64, interval, span, str, u64 } from "#fields.ts"
 export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower } from "#lower.ts"
