@@ -1,5 +1,7 @@
 # 50 — Every known audit issue has a successor obligation
 
+Execution routing: P00 owns the single closure ledger; 62 assigns a primary owner to every audit ID; P12 independently reviews coverage. 70 remains the complete gate inventory. No ownership assignment is a fix. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 **All rows are specified work, not implemented fixes or closed findings.** The 1.0 release gate requires the implementation, named regressions, supported-platform evidence and independent closure review. The original [audit register](../audit/00-findings.md) remains the record of what was observed.
 
 The audit has 47 indexed implementation observations; several share a root cause and some are explicit contract/design limitations. Architectural, operational, performance and assurance IDs are also covered below. Removing an obsolete mechanism is a valid breaking design choice only when its replacement passes the safety property the old defect exposed.
@@ -145,7 +147,7 @@ These were discussed in the audit without separate implementation IDs. They are 
 | Porous SDKs with one core vocabulary and aesthetic syntax | [30](30-client-apis.md), [34](34-sdk-syntax-and-composition.md): same core ChangeSet/query/read/result/codec through Rust, TS core and TS log; no writable log escape or duplicate addon engine; API-12/FFI-08/PKG-03 and G01/G13 |
 | Apple Silicon performance identity; Graviton and x86 Vercel portability | [40](40-performance-contract.md), existing in-repo and M2 Max evidence, application workloads, regime-qualified constants and actual target execution; G15 |
 | Explain/reduce storage amplification and right-size hashing | [41](41-storage-and-hashing.md), physical namespace accounting, indexed-SQLite parity, hash-role/collision budget and TigerBeetle comparison; G02/G03/G05/G15 |
-| Commit and push proposal before coding | Documentation-only commit; no release tag, format mutation, source fix or production migration in this phase |
+| Current stopped-source and executable-proposal handoff | Preserve/push unfinished implementation, refactor proposal and write PROMPT.md; no new implementation, tests, release tag, publication or production migration in this phase. Future execution follows 61–64 |
 
 ## Closure record format
 

@@ -1,5 +1,7 @@
 # 33 — Write TypeScript schemas; generate the migrations
 
+Execution routing: P10 generator/repo workflow; P09 native plan execution; P08 admin API; P13 app/deployment examples; P12 crash/drift evidence. C01/C10/C11 prevent duplicate schema/scalar/plan implementations. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed 1.0 contracts and release obligations. No source implementation, generated migration, package, cloud deployment or platform qualification is performed by this document. It supersedes the earlier handwritten TypeScript migration-callback design.
 
 ## The application product

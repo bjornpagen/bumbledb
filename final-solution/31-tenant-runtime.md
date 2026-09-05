@@ -1,5 +1,7 @@
 # 31 — Deterministic ownership and a bounded tenant runtime
 
+Execution routing: P06 native lifecycle/affinity; P08 typed cache/borrow surface; P02 LMDB owner; P12 adversarial schedules. C04/C07/C09 define ownership. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed 1.0 design. No implementation or qualification claim. This chapter covers the minimum runtime needed to embed the database safely; it does **not** introduce a fleet manager, placement service, orchestration framework or generic plugin system.
 
 ## Keep the runtime smaller than the database

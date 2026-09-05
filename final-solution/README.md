@@ -4,7 +4,9 @@
 
 This is the coordinated breaking-release proposal, dated 2026-09-04. It incorporates the complete existing audit, the representation-first essay, the original design intent and the owner's subsequent decisions. It is a design and implementation contract, **not a claim that the rewrite, bug fixes or release qualification have already happened**. The preserved [audit](../audit/README.md) describes the old working tree; this folder selects what replaces it.
 
-The [whole-tree checkpoint](../implementation/02-checkpoint.md) records partial implementation, the final Effect review and current failing checks. The Effect contract is specified for both packages but not implemented; the branch is not release-ready.
+**Current handoff: all implementation agents stopped; incomplete source preserved and pushed as `4b127782`.** Read [06 — frozen implementation](../implementation/06-frozen-implementation-handoff.md), not the older checkpoints alone. The branch is intentionally unverified and not release-ready. This proposal refactor changes the execution plan, not production behavior.
+
+To orchestrate the successor, give the next model the root **[PROMPT.md](../PROMPT.md)**. Its executable plan is [61 — parallel pipeline](61-orchestration-and-dependency-graph.md), [62 — work packets](62-work-packets.md), [63 — shared contracts](63-shared-interface-contracts.md), and [64 — final verification](64-final-verification-and-handoff.md). Detailed chapters below remain normative. Each has packet routing; no model must infer subsystem ownership from a giant undifferentiated goal.
 
 ## The thesis, taken seriously
 
@@ -75,7 +77,7 @@ These scope cuts are the point. The test suite may be extensive; the production 
 
 ## Read the proposal
 
-For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 34 → 35 → 60 → 70**. Chapter 34 is the owner's syntax checkpoint before implementation; the other chapters specify the exact subsystem contracts.
+For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 34 → 35 → 60 → 70**. For execution, read **PROMPT → frozen handoff → 61 → 62 → 63 → 64**, then the assigned detailed chapters and audit/gates. Chapter 34 specifies target syntax; its examples are not claims about existing exports.
 
 | Document | Contents |
 | --- | --- |
@@ -98,13 +100,17 @@ For the decision path, read **00 → 01 → 02 → 10 → 20 → 33 → 34 → 3
 | [40 — Performance contract](40-performance-contract.md) | M2 Max evidence, application workload matrix and portable target qualification |
 | [41 — Storage and hashing](41-storage-and-hashing.md) | Indexed-SQLite storage gap, physical byte accounting, TigerBeetle AEGIS and right-sized hashes |
 | [50 — Audit closure matrix](50-audit-closure-matrix.md) | Every indexed bug/limitation plus architecture, operations, performance and assurance disposition |
-| [60 — Implementation plan](60-implementation-and-release-plan.md) | Dependency-ordered rewrite, clean format break, deletions and exit gates |
+| [60 — Implementation scope](60-implementation-and-release-plan.md) | Acceptance milestones, clean format break, deletions and exit properties |
+| [61 — Parallel pipeline](61-orchestration-and-dependency-graph.md) | Contract-ready versus implementation-ready dependencies, phase barriers, agent/file ownership and resumption |
+| [62 — Work packets](62-work-packets.md) | P00–P14 deliverables, actual source domains, deletions, tests to author and all 68 audit owners |
+| [63 — Shared contracts](63-shared-interface-contracts.md) | C01–C12 producers/consumers, ownership, certainty, codecs, API and migration handoffs |
+| [64 — Final verification](64-final-verification-and-handoff.md) | Final-only execution, measured format selection, exact artifacts, Git handoff and safe proposal retirement |
 | [70 — Test and release gates](70-test-and-release-gates.md) | Complete evidence matrix, detailed child gates and exact-artifact promotion |
 | [90 — Provenance and review](90-provenance-and-review.md) | Source/history inputs, cross-review, actual evidence and unverified obligations |
 
 ## How this becomes 1.0
 
-The implementation starts with canonical semantic examples, distinct format families and regression/model inventories. Physical golden bytes freeze after the targeted storage/hash/long-key probes, not before measurements exist. Values/admission, LMDB ownership and a real application vertical slice anchor parallel work on Free Join/fallback execution, the internal log machine, recovery/retention and schema generation. Performance measurements start early, before deleting existing hot paths; equivalence and cost must justify both additions and deletions.
+The implementation starts with concrete shared declarations, exclusive file ownership, canonical semantic examples and authored regression/model inventories. Broad engine, history, runtime/SDK and migration lanes proceed as their interface contracts arrive, alongside independent proof/test/package/performance authors. Per the owner's instruction, all tests, typechecks, builds and performance probes execute only after the entire implementation is integrated. Preserve baseline source/evidence now; physical golden bytes freeze after final-phase storage/hash/long-key measurements and any required corrections. Equivalence and cost must still justify additions and deletions.
 
 The old audit has **47 indexed implementation observations**, plus architectural, operational, performance, assurance and unindexed boundary issues. Every one has an explicit successor obligation in [50](50-audit-closure-matrix.md). None is marked fixed by writing prose.
 
@@ -116,8 +122,8 @@ This proposal is ambitious about quality and conservative about mechanism count.
 
 ## Final consistency verdict
 
-**Effect API contract review before implementation resumes; not qualified for release.** The final cross-review reconciled migration abort versus activation/genesis, terminal deletion versus GC roots, receipt lookup versus new-command admission, shared-worker costs, and client health/ownership. The corrections use the existing authority, transaction and ownership mechanisms; they do not introduce another service or protocol. Existing gate families now explicitly exercise those edges.
+**Executable handoff prepared; implementation stopped, incomplete and unqualified.** The selected design remains a minimal LMDB/Free Join core plus one native log machine and porous Effect-only SDKs. Earlier reviews reconciled migration abort versus activation/genesis, terminal deletion versus GC roots, receipt lookup versus new-command admission, shared-worker costs, and client health/ownership; those remain binding requirements, not proven implementation facts.
 
-The owner's subsequent measure/query-composition decisions are integrated, and chapter 34 presents proposed SDK syntax for owner review before proceeding. That review does not claim these names already compile against 0.x. No source rewrite begins as part of this documentation phase.
+The orchestration refactor assigns the full scope to 15 work packets and 12 shared contracts, records actual stopped boundaries, and separates authored tests from final execution. It neither starts new agents nor claims source compilation. No selected audit/gate is retired or waived.
 
-Start with one end-to-end slice: canonical facts → final-state judgment → LMDB → Free Join/query → TypeScript → reopen, followed by LocalHistory named retry and hosted lost-response recovery. Force the disk path against the warm path early. The Effect-only API in chapters 34–35 is the current syntax checkpoint. The remaining uncertainty is implementation/proof/performance evidence—not an invitation to expand the feature list. A new production mechanism must displace existing machinery or satisfy a selected contract that the existing mechanisms cannot; another paragraph or test family is not sufficient justification.
+Integrate one end-to-end application slice while the other packets proceed, then verify all paths in F3. The remaining uncertainty is implementation/proof/performance evidence—not an invitation to expand the feature list. A new production mechanism must displace existing machinery or satisfy a selected contract that existing mechanisms cannot. Keep this proposal until its obligations and permanent documentation are complete; the release checker currently depends on it.

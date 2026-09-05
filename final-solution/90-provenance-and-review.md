@@ -2,6 +2,29 @@
 
 Date: 2026-09-04. This file records the scope of the successor proposal; [audit/90-evidence.md](../audit/90-evidence.md) separately preserves the preceding code audit and executed reproductions.
 
+## Latest state — stopped implementation and orchestrated handoff
+
+The owner subsequently stopped the broad implementation campaign and requested
+that all source be preserved/pushed before refactoring this proposal for a
+different orchestrator. All three agents are stopped. Source checkpoint
+`4b127782` includes incomplete, unverified engine/native/SDK/migration work on
+top of `80e6b750`; [implementation/06](../implementation/06-frozen-implementation-handoff.md)
+records the actual boundaries and known failures. It is not release-ready.
+
+This solo documentation refactor adds root PROMPT.md and chapters 61–64,
+reconciles chapter 60's serial/early-testing wording with broad pipeline work
+and final-only execution, assigns primary owners to all 68 audit IDs, and routes
+the detailed chapters to work packets. Semantic chapters and all 220 detailed
+gate families remain binding. No tests, typechecks, builds or probes were run
+for the preservation/proposal pass; no implementation agents were restarted.
+Preservation/proposal pushes intentionally skip CI; completed implementation
+must not. These documents are orchestration instructions, not new correctness
+evidence or a claim about another model's ability.
+
+The entries below are historical reviews of earlier proposal revisions. Their
+“current,” “before resuming,” and measured-status statements refer to those
+revisions. Use implementation/06 and chapters 61–64 for present status and timing.
+
 ## Inputs
 
 - The repository working tree at base commit `dc078489c98777600e92cbc49590219e0e2f6122`, including existing owner changes. The audit identifies that working tree as 0.20.3 even though the committed base is an earlier packaging release.

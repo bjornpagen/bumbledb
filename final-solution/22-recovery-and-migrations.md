@@ -1,5 +1,7 @@
 # 22 — Recovery, backups, erasure, and migration belong to the log
 
+Execution routing: P05 recovery/backup/restore/erase; P09 native migration/cutover; P10 generator; P04 authority; P08 public admin; P12 independent crash schedules. C08/C11 bind generation and execution. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed 1.0 design and release gates, not implemented recovery tooling. This chapter specifies the TypeScript log package's recovery/migration runner plus operator procedures, **not** a fleet control plane, scheduler, migration service, or consensus system. The Rust protocol/build machinery is internal; no public Rust or C log API/header is required for 1.0.
 
 The boundary is explicit: `bumbledb` provides an owned consistent snapshot, checked construction/admission, queries, and durable LMDB storage. **The TypeScript `bumbledb-log` package owns schema-generated migration assets, explicit execution, export/import orchestration, retained history, backups, restore provenance, incarnation changes, schema transformations, and cutover procedures.** A generic core snapshot/copy/builder is not branded as a backup or a migration API. Chapter 33 supplies the Drizzle/Expo-style repository ergonomics and Next.js/Alchemy setup; this chapter supplies their durable meaning. Users describe schemas and resolve ambiguous intent; they do not handwrite migration programs.

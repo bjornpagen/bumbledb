@@ -1,5 +1,7 @@
 # 40 — A fast application database, measured where the application lives
 
+Execution routing: P14 leads workload/cost evidence; P03 engine and P06/P07 runtime implement measured changes; P00 approves decisions. Author harnesses during implementation; execute only in final F3 under 64. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **documentation-only successor contract**. Existing source, the repository README/benchmark machinery, and the sibling `bumblebench` ledger were inspected. No new benchmark was run, no tuning constant was changed, and no successor speedup is claimed. Historical measurements below retain their machine, workload and provenance limits.
 
 ## 1. The product we are making fast

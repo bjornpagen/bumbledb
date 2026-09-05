@@ -1,42 +1,37 @@
-# 60 — Implement the successor in dependency order
+# 60 — Implementation scope and acceptance milestones
 
-Status: proposed implementation campaign. This documentation phase does not start the rewrite, migrate a tenant, reset a shipped version, or publish a package. Its commit is the reviewed starting point, not 1.0 qualification. Implementation had begun before the owner paused it for this Effect API revision; leave those existing edits untouched and complete chapters 34–35 before continuing.
+Status: implementation stopped and preserved; proposal refactored for an orchestrated restart, 2026-09-04. All agents are stopped. The incomplete source checkpoint is `4b127782`; read [the frozen handoff](../implementation/06-frozen-implementation-handoff.md). This documentation pass does not extend implementation or run verification. It commits/pushes the preserved work and executable proposal, not a release.
+
+Start the next campaign with [PROMPT.md](../PROMPT.md). Read [61 — orchestration](61-orchestration-and-dependency-graph.md), [62 — packets](62-work-packets.md), [63 — shared contracts](63-shared-interface-contracts.md) and [64 — final verification](64-final-verification-and-handoff.md). They own scheduling, file ownership and execution timing. M0–M8 below remain **scope/acceptance families**, not serial implementation queues or permission to run tests early.
 
 ## Rules for the rewrite
 
 - Preserve the dated audit and counterexamples. Port their safety properties before deleting the old mechanisms; an API disappearing is not by itself a regression pass.
 - Break the representation once, deliberately. Do not maintain old braid publication, fresh counters, dictionary encodings and new semantics simultaneously inside the core to ease a pre-1.0 compatibility burden the owner explicitly rejected.
-- Keep intermediate changes reviewable and buildable where practical. A succession of dependency-ordered commits can implement one large breaking release; there is no requirement to publish transitional formats.
+- Keep shared interfaces and file ownership explicit while implementing broad packets concurrently. Temporary integration breakage is allowed; declaration scaffolds do not count as completion. No per-agent commits or implementation-phase checkpoint churn. The orchestrator owns final-stage candidate/evidence commits and push.
 - Every packet names its deletions, normative contract, proof/test changes and measured cost. If it adds a new authority or independently mutable cache, justify that addition against [01](01-representation-first.md).
 - Native Rust implements semantics and the log machine once. The public log product is TypeScript-only; the core supports Rust/TypeScript. Delete all public C code, headers, examples and release machinery; preserve applicable native-safety tests for Rust/Node.
 - TypeScript schema declarations generate migration plan/history data. There are no user-authored migration callbacks, manual coverage lists, JavaScript purity framework, core migration DSL or fleet control plane.
-- Benchmark the current engine and proposed replacements from M0 onward. Read the in-repo README/bench sources and sibling M2 Max ledger; classify constants by derivation, backend limit or measured policy. Chapters 40–41 are binding performance/space obligations, not post-rewrite polish.
+- Read baseline source/evidence and author benchmarks/models/regressions from F0 onward, but **execute no tests, typechecks, builds, linters or probes until F3**, after all implementation is integrated. Chapters 40–41 remain binding; physical layout/hash choices freeze after final-phase measurements, with affected code and goldens requalified. Preserve baseline revisions so deleted hot paths can still be compared.
 
-## Dependency graph
+## Acceptance families, implemented through a parallel graph
 
 ```text
-M0: contract, regression/model skeletons, format families
-          |
-          +--> M1: canonical values + admission + semantic proofs
-          |                |
-          +--> M2: LMDB ownership + snapshots + sealed host adjunct
+F0: real shared contracts + exclusive write ownership + authored model/test plans
                            |
-                    M3: Free Join + bounded disk path + floats
+F1: engine/storage/query || history/recovery || native/SDK/migrations
+    + independent proof/model, adversarial, package/app and performance authors
                            |
-                    M4: one internal log machine + receipts
+F2: all selected behavior integrated + source review + complete coverage mapping
                            |
-                    M5: checkpoints + retained roots + recovery/GC
+F3: final builds/tests/probes -> repairs -> format freeze -> full qualification
                            |
-                    M6: thin clients + generated schema evolution
-                           |
-                    M7: complete qualification + performance closure
-                           |
-                    M8: exact-artifact release promotion
+F4: final Git handoff (release promotion needs separate authorization)
 ```
 
-Independent prototypes, test models and binding scaffolds can proceed in parallel. The arrows constrain integration evidence, not who may read or work first. Floats' value/proof work begins in M1 and their executor/native qualification continues through M7. A real per-user application vertical slice is an early integration target, including reopen and lost-response recovery. Preserve measured warm Free Join behavior while building the bounded fallback; do not delete the existing fast path and defer discovering the regression until M7.
+Chapter 61 gives the actual per-packet dependency graph, including contract-ready versus implementation-ready handoffs. A real per-user application slice is authored/integrated alongside the engine, including reopen and named retry/lost-response recovery. Source review protects warm Free Join while bounded fallback is built; measurements run only in F3. No SDK or log lane waits for an entire predecessor milestone's tests before starting.
 
-M0–M6 exits cover the implemented dependency-ready portion of their named gates, with exact test names recorded in the single chapter 70 ledger. Cross-packet tests remain explicitly pending until their dependencies exist: receipt/GC histories need M5, migration histories and packaged consumers need M6, and complete workload/platform qualification closes in M7. Never label an entire G-family passed merely because its early substrate tests passed. `PKG-07B` alone is post-promotion distribution verification, completed in M8.
+M0–M6 exit properties below are evaluated during F3, not at intermediate packet handoff. Before then, all test execution status remains NotRun. Map exact test names to the single chapter 70 ledger. Never label an entire G-family passed because a substrate test passed historically. `PKG-07B` alone is post-promotion distribution verification, completed only after separately authorized M8.
 
 ## M0 — Freeze the contract and make failures durable evidence
 
@@ -46,7 +41,7 @@ Freeze the finite scalar/law/query roster, same-command add-wins normalization, 
 
 Review [34's syntax](34-sdk-syntax-and-composition.md) and [35's complete Effect contract](35-effect-typescript-contract.md) before implementation resumes. Freeze the exact Effect 4 dependency, A/E/R, Scope/Stream/error ownership, interruption/finalizer rules, stable intent and V8 conversion budget. No optional Effect adapter or Promise/sync twin. Freeze the core/log import ownership and common read/change interfaces alongside those examples: the log envelopes core changes and imports core operators/results, never records its own fact DSL. Freeze the grouped-measure normal form and typed query-composition boundaries; do not preserve obsolete spelling bans or projection-only interiors just to reuse old fixtures.
 
-Freeze semantic examples before dependent implementation; do not mistake this for freezing an unmeasured physical layout before any prototype exists. Short-lived storage/hash/long-key probes precede final physical golden bytes. Select one layout and one algorithm per role after those probes, remove losing variants, then freeze persistent encodings before format qualification. The first vertical slice is canonical insert/judge/query/reopen through LMDB and TypeScript, with warm Free Join versus forced-disk equivalence and a LocalHistory named retry; hosted lost-response recovery extends that same slice as M4 lands.
+Freeze semantic examples and shared declarations before dependent implementation; do not freeze unmeasured physical layout. Author storage/hash/long-key probes now; execute them in F3 before final physical golden bytes. Select one layout and one algorithm per role, remove losing variants, update affected implementation and then qualify persistent encodings. The first authored/integrated vertical slice is canonical insert/judge/query/reopen through LMDB and TypeScript, warm Free Join versus forced disk and LocalHistory named retry; hosted lost-response recovery extends that same slice as the history implementation lands.
 
 Freeze the initial supported OS/CPU/libc/Node/backend matrix in chapter 32: Apple Silicon, ARM Graviton and x86 Vercel Node are canonical targets. Core runs natively; the TypeScript log requires supported Node/native execution and fitting local storage. Browser, Edge, Expo/React Native and WebAssembly support are not implied. ARM/x86 portable correctness is required now; specialized tuning beyond Apple Silicon is not.
 
@@ -82,7 +77,7 @@ Implement the private candidate path and the narrow host adjunct: checked prepar
 
 Keep the transaction on its owning worker across a bounded hosted attempt. Map-full before publication aborts/retries immutable work after safe resize; it never reruns application code. Local failure after known hosted publication preserves the published outcome and faults only the materialization.
 
-Delete: expiring local leases, separately committed generation authority, GC-only close, snapshot metadata gathered from multiple source transactions, core fresh reservations and benchmark durability escape hatches in ordinary production API. Exit: G06/G11 substrate obligations and deterministic crash/resize/visibility schedules pass. Larger-data qualification begins here and finishes on complete product artifacts.
+Delete: expiring local leases, separately committed generation authority, GC-only close, snapshot metadata gathered from multiple source transactions, core fresh reservations and benchmark durability escape hatches in ordinary production API. Exit, evaluated in F3: G06/G11 substrate obligations and deterministic crash/resize/visibility schedules pass. Larger-data harnesses are authored with this work and qualified on complete product artifacts.
 
 ## M3 — Excellent application queries with a complete bounded fallback
 
@@ -94,7 +89,7 @@ Replace projection-only interior special cases with typed relation-expression de
 
 Implement exact integer widened sums and deterministic F64 arithmetic/reductions. Qualify the floating environment guard, architecture/compiler behavior, exact 34-limb accumulation and exact-rational mean rounding. The independent bit/rational oracle must not reuse production numerical helpers. Do not weaken deterministic answers for faster reduction.
 
-Retain warm SIMD/Free Join behind correct budget reservation and fallback. Forced scalar/cursor/spill execution must agree with optimized paths, including errors and float bits. Measure changes against the existing warm/post-write/cold workload record as they land. Tune batch, prefetch, table load and scratch thresholds through adversarial sweeps; neither missing measurements nor a fast kernel excuses requiring a whole relation in RAM.
+Retain warm SIMD/Free Join behind correct budget reservation and fallback. Forced scalar/cursor/spill execution must agree with optimized paths, including errors and float bits. Author matched comparisons now and measure changes against preserved warm/post-write/cold baseline revisions in F3. Tune batch, prefetch, table load and scratch thresholds through final-phase adversarial sweeps; neither missing measurements nor a fast kernel excuses requiring a whole relation in RAM.
 
 Delete: mandatory full images, output mutation on failure, hidden unbounded prepare/recursive paths, order-sensitive float reduction, invalid numerical rewrite rules. Exit: G04/G05/G12 semantic/fallback tests pass on small forced-spill fixtures, and controlled large-store campaign is executable.
 
@@ -104,9 +99,9 @@ Implement LocalHistory and HostedHistory as explicit variants using the same can
 
 Add stable command identity, exact-state condition, durable no-change/rejection outcomes and three distinct coordinates. Resolve uncertainty by retained receipts; closed/retired command epochs cannot become new commands by absence. Application IDs are already concrete sealed values, preserved through retries/restores with no allocation result mapping. TypeScript supplies owned commands, not retryable arbitrary host callbacks.
 
-Run the independent history model through client-visible schedules during implementation, not as a final cleanup exercise. Include candidate reads, delayed CAS, lost response, later decisions, checkpoint/receipt movement, live-handle next commands, close and post-publication local failure. Distinguish exact known success, definite precondition failure and unknown transport outcome at the real adapter boundary.
+Author the independent history model and client-visible schedules during implementation; execute them in the final F3 campaign. Include candidate reads, delayed CAS, lost response, later decisions, checkpoint/receipt movement, live-handle next commands, close and post-publication local failure. Distinguish exact known success, definite precondition failure and unknown transport outcome at the real adapter boundary.
 
-Delete: per-braid slots, vector recovery floors, split commits, writer-ID fencing/counter objects, public raw mutable replica access and the second TypeScript protocol. Exit: the implemented command/publication portion of G07/G09 and PROTO passes in deterministic models and real local adapter tests; checkpoint/GC histories and whole-product performance remain recorded dependencies for M5–M7. Preliminary real-S3 qualification begins in an explicitly authorized disposable environment.
+Delete: per-braid slots, vector recovery floors, split commits, writer-ID fencing/counter objects, public raw mutable replica access and the second TypeScript protocol. Exit, evaluated in F3: the implemented command/publication portion of G07/G09 and PROTO passes in deterministic models and real local adapter tests; checkpoint/GC histories and whole-product performance remain recorded M5–M7 acceptance dependencies. Real-S3 qualification executes only in F3 in an explicitly authorized disposable environment.
 
 ## M5 — Recovery and deletion that preserve the one history
 
@@ -148,7 +143,7 @@ Build release artifacts once in staging from the clean candidate revision. Recor
 
 Complete G16's **pre-promotion packet**, including `PKG-07A`, before release authorization/tagging. Publish the tested platform dependencies and packages in the declared order; then complete `PKG-07B` by verifying downloaded artifacts equal the staged artifacts and exact native pins resolve. Only then is G16/release completion final. Do not rebuild a different binary during publication. If post-publication installation verification fails, report and repair the release; do not pretend a tag means success.
 
-No source implementation, production migration, cloud resource creation, package publication, or 1.0 tag is authorized by the current proposal-writing phase. The next authorized campaign starts at M0/M1 with these documents and the preserved audit as its contract.
+The current phase authorizes preservation/push and proposal refactoring only. A future invocation of PROMPT.md starts the F0–F4 implementation campaign. It does not authorize production migration, cloud provisioning, package publication, version bump or a 1.0 tag. Missing required external qualification remains a release blocker, not a reason to waive a gate.
 
 ## Stop conditions that protect the design
 

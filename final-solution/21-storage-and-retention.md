@@ -1,5 +1,7 @@
 # 21 — Bounded materialization, checkpoints, and safe deletion
 
+Execution routing: P05 leads; P04 authority; P02 coherent export; P09 staged targets; P08 wrappers; P12/P14 schedules/cost. C06/C07/C08 own shared transitions. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed 1.0 requirements. These are internal mechanisms behind the TypeScript `bumbledb-log` product; the main engine supplies ordinary consistent storage/snapshot primitives. No public Rust/C log storage API is implied. None of the new protocol or qualification tests is claimed implemented.
 
 Keep LMDB. Remove the old arbitrary 32 GiB limit. A database larger than RAM is normal: LMDB pages through the operating system, performance degrades with locality, and the database continues to work when its data and temporary work fit available storage and address space. A map-size reservation is not an RSS reservation. A configured host disk quota can refuse placement or growth, but it is not a semantic maximum database size.

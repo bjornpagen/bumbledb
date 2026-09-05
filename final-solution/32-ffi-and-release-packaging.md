@@ -1,5 +1,7 @@
 # 32 — One internal Node boundary; no C product
 
+Execution routing: P06 bridge safety; P13 C deletion/artifacts/platforms; P00 manifests/CI/pins; P12 independent consumers. C09/C12 define artifact identity. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed 1.0 replacement, not an implementation or qualification result. The supported public languages are Rust and TypeScript for the core, and TypeScript for the log. This chapter intentionally replaces the earlier proposal to retain a public C API.
 
 ## Delete the whole C surface

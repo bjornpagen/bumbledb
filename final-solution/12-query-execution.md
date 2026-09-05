@@ -1,5 +1,7 @@
 # 12 — Free Join first, one query meaning beyond RAM
 
+Execution routing: P03 leads; P02 cursor/snapshot substrate; P06 managed lifetime; P07 SDK; P11/P12 independent equivalence; P14 performance. C04/C05/C09 are dependencies. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **proposed successor, not implemented or benchmarked**. Bumbledb is a high-performance application database, not an analytical warehouse. **Direct key probes and Free Join/COLT remain the preferred production paths**, with prepared reuse, measured batching and SIMD. Add complete bounded LMDB-cursor execution so memory pressure and a large tenant do not make valid data inaccessible. The fallback must not become an excuse to replace a measured fast path with universally slow execution.
 
 ## 1. Small architecture

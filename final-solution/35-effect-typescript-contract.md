@@ -1,5 +1,7 @@
 # 35 — Effect is the TypeScript API
 
+Execution routing: P06 native runtime; P07 core API; P08 log API; P10 migrations; P13 actual app integration; P12 lifecycle review. C02/C09/C10/C11 bind the shared implementation. This chapter owns Effect semantics. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **binding proposed API, not implemented or release-qualified**. This chapter fixes the TypeScript signatures and Effect semantics before implementation resumes. Chapters 30–34 supply domain/runtime detail; this chapter owns their Effect interpretation. Rust keeps ordinary native `Result`, ownership and RAII. No new storage or publication mechanism is introduced.
 
 ## One cut, not an adapter
@@ -233,7 +235,7 @@ The hot unit is **one native operation or page**, not one Effect per tuple, fiel
 
 Qualification compares a native/direct-bridge baseline, Effect-wrapped native operations and the full app path on identical semantics. Record bytes copied, allocations per operation/page, live heap/GC pause and retained external memory, event-loop p50/p95/p99/max delay, queue wait, native time, conversion time and end-to-end latency. Exercise cold/warm/post-write/small-result/large-ingestion/page-stream/concurrent-tenant paths. Observe JIT warmup and shape polymorphism; do not assert a V8 optimization from coding style alone. Inspect opt/deopt/GC diagnostics when a measured regression warrants it; do not make unstable V8 flags part of the shipped API. Apple Silicon is the first measured tuning target; qualified Node 24/26 versions and portable Graviton/x86 paths retain the same semantics.
 
-No numeric slowdown budget is fabricated here. M0 records the matched baseline and M7 reports deltas with the chapter 40 method; material regressions require an explicit decision. Effect overhead is real and acceptable only with evidence at the intended application granularity. It does not justify keeping a second non-Effect production surface as a permanent benchmark escape hatch.
+No numeric slowdown budget is fabricated here. Initial planning preserves matched baseline source/evidence; all new baseline/candidate measurements run in final F3 and M7 reports deltas with the chapter 40 method. Material regressions require an explicit decision. Effect overhead is real and acceptable only with evidence at the intended application granularity. It does not justify keeping a second non-Effect production surface as a permanent benchmark escape hatch.
 
 ## Consumer cutover, grounded in Edullm
 

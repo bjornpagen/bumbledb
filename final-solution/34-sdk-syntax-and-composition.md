@@ -1,5 +1,7 @@
 # 34 — One relational vocabulary, three ways to run it
 
+Execution routing: P07 Rust/core-TS syntax; P08 log reuse; P10 migration intent; P13 installed consumer fixtures. C01/C05/C10 and chapter 35 govern signatures; examples are targets, not current exports. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **proposed 1.0 syntax, not current compile-tested exports**. These are the concrete examples to implement and qualify under API-12/PKG-03, not source changes made by this proposal. All snippets describe the same `Learning` schema. Application paths, authenticated bindings and measured execution policies are inputs, not SDK-provided authentication or invented deployment services.
 
 The aesthetic is deliberate: recognizable `schema!`/`query!` in Rust; ordinary `relation`/`schema` and `query(...).rule(...)` values in TypeScript; one small core change builder. The log adds a durable envelope around that change. It does not make the developer learn a second database API.

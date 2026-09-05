@@ -1,5 +1,7 @@
 # 41 — Earn every stored byte; use hashes for their actual job
 
+Execution routing: P14 probes/accounting; P02 physical layout; P01 canonical equality; P04/P09 authoritative digests; P00 selects C12 format decisions. Probes execute only in final F3 before physical format qualification, per 64. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposal and source-backed cost analysis, 2026-09-04. No new storage benchmark or hash race was executed here. The reported engine/SQLite numbers are the repository's historical results, not a measurement of the successor. This chapter answers the owner's storage-size, magic-number and TigerBeetle questions and adds binding pre-format qualification work.
 
 ## Conclusion first

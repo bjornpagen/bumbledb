@@ -1,5 +1,7 @@
 # 30 — A Rust/TypeScript core and a TypeScript application log
 
+Execution routing: P07 core; P08 log; P06 private native boundary; P13 consumers/docs. C09/C10 and chapter 35 fix the actual Effect interpretation. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed 1.0 design, not implemented. This deliberately replaces incompatible 0.x APIs. It incorporates the full audit, including its preserved reproductions, and the representation-first brief. The objective is a small excellent database library, not a hosting platform.
 
 ## Decision

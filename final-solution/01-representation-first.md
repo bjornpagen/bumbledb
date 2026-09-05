@@ -1,5 +1,7 @@
 # Representation first, including the machine around the facts
 
+Execution routing: All packets; P00 reviews mechanism subtraction and P11/P12 challenge the resulting guarantees. The pipeline is in 61–64. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 ## The design move
 
 The user-supplied essay makes the right demand: when a new case appears, change the representation before extending the trace of the computation. Bumbledb already applies this to set-valued facts, final-state judgment, and relational vocabularies. The audit shows where that discipline stopped too early: ownership, publication, snapshots, and cleanup were represented by observations and flags rather than by the evidence their transitions require.

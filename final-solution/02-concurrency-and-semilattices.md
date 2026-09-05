@@ -1,5 +1,7 @@
 # 02 — Use the algebra; do not invent another database around it
 
+Execution routing: P01/P03 algebra; P04 history; P11 independent proofs/models; P12 concurrency schedules. C03/C05/C06 are the shared handoffs. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: selected 1.0 concurrency contract and required proofs/tests, not a claim that the successor already implements them.
 
 The owner's instinct is right: if a useful multiwriter property follows from the representation, take it. The important distinction is **what merges**, **which laws survive that merge**, and **what a successful application command promises**. A join-semilattice theorem about sets does not settle all three.

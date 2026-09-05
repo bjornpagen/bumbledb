@@ -1,5 +1,7 @@
 # 70 — The complete 1.0 test and release contract
 
+Execution routing: all P00–P14 packets in [62](62-work-packets.md); P00 owns the single evidence ledger and P12 independently checks coverage. [64](64-final-verification-and-handoff.md) controls timing: author tests during implementation, execute only after the F2 integration barrier. This changes no required property or child-gate inventory. Historical runs are not current qualification.
+
 **Status: required future work. None of the successor gates below is claimed passed by writing this proposal.** The previous audit's 2,049 passing Rust tests, 209 selected SDK tests, and 277 conformance cases describe the audited 0.x tree, not 1.0 qualification.
 
 The owner's release rule is binding: flesh out the missing suite, fix every known issue, and pass every required gate before 1.0. This chapter makes that rule executable without inventing another testing platform. Keep Cargo/nextest, Lean, the Node runner, ordinary subprocesses, small independent models, and the existing measurement discipline. Add a small release-result manifest/check, not a workflow engine.

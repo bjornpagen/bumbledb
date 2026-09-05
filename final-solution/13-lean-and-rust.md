@@ -1,5 +1,7 @@
 # 13 — Proofs, Rust, and a release that earns its claims
 
+Execution routing: P11 leads proof/model correspondence; P01/P03 implement semantics; P12 native adversarial evidence; P00 toolchain and final gates. C01/C03/C05/C06 are model inputs. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **successor obligations, not completed implementation/proofs/tests**. This chapter selects what to retain and what to stop treating as permanent doctrine. The root release-gate document owns the complete product matrix; the stable gate labels here and in 10–12 are inputs to it, not a competing checklist.
 
 ## 1. The proof program should help the program get smaller

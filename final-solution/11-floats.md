@@ -1,5 +1,7 @@
 # 11 — Real floats without ambiguous set identity
 
+Execution routing: P01 values/casts/intervals; P03 arithmetic/reductions; P07 Rust/TS syntax; P11 independent oracle/proofs; P14 cost. C01/C05 own shared semantics. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **normative proposal for the successor; no new float implementation, proof, benchmark, or test run is claimed here**. This is a first-class scalar across the schema, fact codec, query language, indexes, laws, clients, snapshots, and log replay. It is not `bytes<8>` with a conversion example.
 
 ## 1. One deliberately chosen binary64 domain

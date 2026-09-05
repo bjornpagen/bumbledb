@@ -1,5 +1,7 @@
 # 20 — One tenant, one publication authority
 
+Execution routing: P04 leads; P02 atomic host adjunct; P05 backend/recovery; P06 worker affinity; P08 public Effect surface; P11/P12 independent histories. C04/C06/C07 are shared contracts. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed breaking 1.0 design, not an implemented or verified protocol. This document supersedes the audit's conservative repair roadmap where that roadmap preserves the old log. The dated counterexamples remain evidence, not compatibility requirements.
 
 The choice is a single, never-reused tenant `HEAD`, changed by compare-and-swap, over immutable decision records and a bounded replay tail. LMDB remains the local database. A checkpoint replaces an older recovery base without changing the application state. There is no per-braid publication, distributed writer lease, shared ID-range allocator, universal commit DAG, or custom remote page engine.

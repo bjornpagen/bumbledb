@@ -1,5 +1,7 @@
 # Bumbledb 1.0: the design contract
 
+Execution routing: P00 owns scope/consistency; all packets obey this contract. Scheduling and the current stopped-source handoff are in 61–64. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: proposed successor, 2026-09-04. This folder specifies implementation work; it does not claim that work or its release tests have passed. The owner explicitly permits breaking every pre-1.0 representation, API, axiom, and storage format. The goal is the best small core, not maximum churn for its own sake.
 
 ## The owner's non-negotiables
@@ -13,7 +15,7 @@ Status: proposed successor, 2026-09-04. This folder specifies implementation wor
 7. Backup, restore, and migration belong to **`bumbledb-log`**, not the core `bumbledb` engine. A consistent snapshot or admitted-state construction primitive is not a migration framework.
 8. Nightly Rust is welcome when it materially improves representation or the machine. Pin and test the compiler; do not add an unstable feature merely to advertise it.
 9. Every known audit issue gets an explicit successor disposition and regression obligation. All required release gates must pass before 1.0. A proposal, skipped test, or narrowed comment is not a fix.
-10. This resumed phase updates/reviews the proposal before further implementation. Preserve already-started implementation changes without extending them; commit/push only the reviewed documentation, never release/tag/publish from this phase.
+10. The latest owner direction stops all implementation agents, preserves/commits/pushes all unfinished source, and refactors this proposal for a future orchestrated campaign. Do not extend implementation in this handoff. The future campaign uses [61–64](61-orchestration-and-dependency-graph.md), broad parallel packets, one file owner, and tests authored during implementation but executed only after all lanes are integrated. No tests/typechecks/builds/probes now. Neither this handoff nor the future implementation prompt authorizes version bump/tag/publication or production migration.
 11. Rust and TypeScript are the only public languages. Hard-delete the entire C API, not merely deprecate it. The public log product is TypeScript-only; its authoritative implementation remains Rust internally. Internal Node native-boundary safety remains required.
 12. Users declare schemas/types, not migrations. A high-level TypeScript schema SDK generates canonical migration plans and repo-local history, in the same AST-first style as the query SDK. No SQL/textual query parser, authored migration callbacks, arbitrary JavaScript transformation runner, or new compiler framework.
 13. This is a per-student/per-user application database, not an analytics warehouse. Preserve excellent warm Free Join execution. Apple Silicon is the first optimization target; ARM Graviton and x86 Vercel are canonical portable targets, with specialized tuning deferred. The M2 Max ledger in `../bumblebench` supplies regime-specific evidence and methodology, not constants valid on every chip.

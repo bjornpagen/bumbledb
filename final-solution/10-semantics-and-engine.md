@@ -1,5 +1,7 @@
 # 10 — A small semantic engine on LMDB
 
+Execution routing: P01 values/admission; P02 storage/snapshots; P03 execution integration; P11 proof/model review. C01–C05 define cross-lane seams. See [work packets](62-work-packets.md) for source ownership and complete deliverables.
+
 Status: **proposed Bumbledb 1.0 design, not implemented or verified**. This replaces, rather than incrementally repairs, the affected 0.20.3 contracts. The dated [engine audit](../audit/20-engine-semantics.md), [query audit](../audit/21-query-runtime.md), and their counterexamples remain evidence about the old implementation.
 
 ## The decision
